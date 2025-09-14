@@ -5,3 +5,6 @@ edition = "2024"
 
 [dependencies]
 rand = "0.9.2"
+tyche = "0.3.1"  # for dice
+ratatui = "0.29"
+crossterm = "0.28"

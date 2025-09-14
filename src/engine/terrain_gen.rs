@@ -31,8 +31,8 @@ fn collect_leaves<'a>(node: &'a mut BSPNode, leaves: &mut Vec<&'a mut BSPNode>) 
     if is_leaf {
         leaves.push(node);
     } else {
-        // this should always be true; I could not come up with a cleaner way to do this unfortunately
         if let Some((child1, child2)) = &mut node.children {
+            // this should always be true; I could not come up with a cleaner way to do this unfortunately
             collect_leaves(child1, leaves);
             collect_leaves(child2, leaves);
         }
@@ -63,10 +63,10 @@ fn binary_space_partition<R: RngCore>(params: &TerrainGenParams, rng: &mut R) ->
 
         for node in leaves {
             if node.width <= MIN_ROOM_WIDTH * 2 && node.height <= MIN_ROOM_WIDTH * 2{
-                break;
+                continue;
             }
             if rng.random::<f32>() > params.branch_prob {
-                break;
+                continue;
             }
             let horizontal_chop = node.width <= node.height;
 
