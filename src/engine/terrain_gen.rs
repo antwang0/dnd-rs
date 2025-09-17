@@ -12,20 +12,20 @@ struct BSPNode {
     y: usize,
     width: usize,
     height: usize,
-    children: Option<(Box<BSPNode>, Box<BSPNode>)>
+    children: Option<(Box<BSPNode>, Box<BSPNode>)>,
 }
 
 pub struct TerrainGenParams {
     pub width: usize,
     pub height: usize,
     pub branch_depth: usize,
-    pub branch_prob: f32
+    pub branch_prob: f32,
 }
 
 fn collect_leaves<'a>(node: &'a mut BSPNode, leaves: &mut Vec<&'a mut BSPNode>) {
     let is_leaf = match &node.children {
         None => true,
-        Some(_) => false
+        Some(_) => false,
     };
 
     if is_leaf {
@@ -45,12 +45,12 @@ fn get_leaves<'a>(root: &'a mut BSPNode) -> Vec<&'a mut BSPNode> {
     leaves
 }
 
-fn idx(x: usize, y: usize, params: &TerrainGenParams) -> usize{
+fn idx(x: usize, y: usize, params: &TerrainGenParams) -> usize {
     x + y * params.width
 }
 
 fn binary_space_partition<R: RngCore>(params: &TerrainGenParams, rng: &mut R) -> Vec<TerrainInfo> {
-    let mut root = BSPNode{
+    let mut root = BSPNode {
         x: 0,
         y: 0,
         width: params.width,
@@ -62,7 +62,7 @@ fn binary_space_partition<R: RngCore>(params: &TerrainGenParams, rng: &mut R) ->
         let leaves = get_leaves(&mut root);
 
         for node in leaves {
-            if node.width <= MIN_ROOM_WIDTH * 2 && node.height <= MIN_ROOM_WIDTH * 2{
+            if node.width <= MIN_ROOM_WIDTH * 2 && node.height <= MIN_ROOM_WIDTH * 2 {
                 continue;
             }
             if rng.random::<f32>() > params.branch_prob {
@@ -70,31 +70,60 @@ fn binary_space_partition<R: RngCore>(params: &TerrainGenParams, rng: &mut R) ->
             }
             let horizontal_chop = node.width <= node.height;
 
-            let child1_width = if horizontal_chop {node.width} else {rng.random_range(MIN_ROOM_WIDTH..node.width - MIN_ROOM_WIDTH)};
-            let child2_width = if horizontal_chop {node.width} else {node.width - child1_width};
-            let child1_height = if !horizontal_chop {node.height} else {rng.random_range(MIN_ROOM_WIDTH..node.height - MIN_ROOM_WIDTH)};
-            let child2_height = if !horizontal_chop {node.height} else {node.height - child1_height};
+            let child1_width = if horizontal_chop {
+                node.width
+            } else {
+                rng.random_range(MIN_ROOM_WIDTH..node.width - MIN_ROOM_WIDTH)
+            };
+            let child2_width = if horizontal_chop {
+                node.width
+            } else {
+                node.width - child1_width
+            };
+            let child1_height = if !horizontal_chop {
+                node.height
+            } else {
+                rng.random_range(MIN_ROOM_WIDTH..node.height - MIN_ROOM_WIDTH)
+            };
+            let child2_height = if !horizontal_chop {
+                node.height
+            } else {
+                node.height - child1_height
+            };
 
             let child1 = BSPNode {
                 x: node.x,
                 y: node.y,
                 width: child1_width,
                 height: child1_height,
-                children: None
+                children: None,
             };
 
             let child2 = BSPNode {
-                x: if horizontal_chop {node.x} else {node.x + child1_width},
-                y: if !horizontal_chop{node.y} else {node.y + child1_height},
+                x: if horizontal_chop {
+                    node.x
+                } else {
+                    node.x + child1_width
+                },
+                y: if !horizontal_chop {
+                    node.y
+                } else {
+                    node.y + child1_height
+                },
                 width: child2_width,
                 height: child2_height,
-                children: None
+                children: None,
             };
             node.children = Some((Box::new(child1), Box::new(child2)));
         }
     }
 
-    let mut terrain = vec![TerrainInfo{terrain_type: TerrainType::Empty}; params.width * params.height];
+    let mut terrain = vec![
+        TerrainInfo {
+            terrain_type: TerrainType::Empty
+        };
+        params.width * params.height
+    ];
     let leaves = get_leaves(&mut root);
 
     for node in leaves {
@@ -114,32 +143,34 @@ fn binary_space_partition<R: RngCore>(params: &TerrainGenParams, rng: &mut R) ->
         }
 
         // maker doors
-        let door_width_horizontal = rng.random_range(MIN_WIDTH..(node.width - 1).min(MIN_WIDTH * 2));
+        let door_width_horizontal =
+            rng.random_range(MIN_WIDTH..(node.width - 1).min(MIN_WIDTH * 2));
         let door_offset_horizontal = rng.random_range(0..node.width - door_width_horizontal);
         for i in 0..door_width_horizontal {
-            terrain[
-                idx(
-                    node.x + i + door_offset_horizontal,
-                    node.y + node.height - 1, params)
-                ].terrain_type = TerrainType::Floor;
+            terrain[idx(
+                node.x + i + door_offset_horizontal,
+                node.y + node.height - 1,
+                params,
+            )]
+            .terrain_type = TerrainType::Floor;
         }
 
         let door_width_vertical = rng.random_range(MIN_WIDTH..(node.height - 1).min(MIN_WIDTH * 2));
         let door_offset_vertical = rng.random_range(0..node.height - door_width_vertical);
         for i in 0..door_width_vertical {
-            terrain[
-                idx(
-                    node.x + node.width - 1,
-                    node.y + i + door_offset_vertical,
-                    params)
-                ].terrain_type = TerrainType::Floor;
+            terrain[idx(
+                node.x + node.width - 1,
+                node.y + i + door_offset_vertical,
+                params,
+            )]
+            .terrain_type = TerrainType::Floor;
         }
     }
 
     terrain
 }
 
-pub fn generate_terrain(params: &TerrainGenParams) -> Vec<TerrainInfo>{
+pub fn generate_terrain(params: &TerrainGenParams) -> Vec<TerrainInfo> {
     let mut rng = rand::rng();
     let terrain = binary_space_partition(params, &mut rng);
     // TODO: modify terrain

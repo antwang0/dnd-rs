@@ -1,7 +1,4 @@
-use tyche::Expr;
-use crate::{actions::action_template::Action, units::unit_template::ActorInstance};
-
-use std::collections::HashSet;
+use std::fmt;
 
 #[derive(Clone, PartialEq)]
 pub enum AbilityScoreType {
@@ -10,7 +7,7 @@ pub enum AbilityScoreType {
     Constitution,
     Intelligence,
     Wisdom,
-    Charisma
+    Charisma,
 }
 
 #[derive(Clone, PartialEq, Hash, Eq)]
@@ -32,7 +29,7 @@ pub enum Skill {
     Religion,
     SlightOfHand,
     Stealth,
-    Survival
+    Survival,
 }
 
 #[derive(Clone, PartialEq)]
@@ -49,25 +46,17 @@ pub enum DamageType {
     Psychic,
     Radiant,
     Slashing,
-    Thunder
+    Thunder,
 }
 
-pub struct Damage<'a> {
-    source: &'a mut ActorInstance,
-    target: &'a mut ActorInstance,
-    dice: Expr,
-    is_crit: bool,
-    damage_type: DamageType
-}
-
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Copy)]
 pub enum Size {
     Tiny,
     Small,
     Medium,
     Large,
     Huge,
-    Gargantuan
+    Gargantuan,
 }
 
 #[derive(Clone, PartialEq, Hash, Eq)]
@@ -87,10 +76,10 @@ pub enum Language {
     DeepSpeech,
     Druidic,
     Infernal,
-    Primordial,  //Aquan, Auran, Ignan, Terran
+    Primordial, //Aquan, Auran, Ignan, Terran
     Sylvan,
     ThievesCant,
-    Undercommon
+    Undercommon,
 }
 
 #[derive(Clone, PartialEq, Hash, Eq)]
@@ -98,5 +87,27 @@ pub enum SpecialSense {
     Blindsight(u32),
     Darkvision(u32),
     Tremorsense(u32),
-    Truesight(u32)
+    Truesight(u32),
 }
+
+#[derive(Debug, Clone)]
+pub struct RngTryError;
+
+impl fmt::Display for RngTryError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "exceede max tries for rng")
+    }
+}
+
+impl std::error::Error for RngTryError {}
+
+#[derive(Debug, Clone)]
+pub struct NoLegalPosition;
+
+impl fmt::Display for NoLegalPosition {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "could not find a legal position")
+    }
+}
+
+impl std::error::Error for NoLegalPosition {}

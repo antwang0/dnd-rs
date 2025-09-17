@@ -1,2 +1,2 @@
-pub struct Item {
-}
+#[derive(PartialEq, Clone)]
+pub struct Item {}
