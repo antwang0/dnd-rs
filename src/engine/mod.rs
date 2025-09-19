@@ -5,3 +5,7 @@ pub mod terrain;
 pub mod terrain_gen;
 pub mod types;
 pub mod util;
+pub mod prompt;
+pub mod action_overrides;
+pub mod errors;
+pub mod triggers;

@@ -3,9 +3,9 @@ use std::error::Error;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::actors::creatures::zombies::zombie_template;
 use crate::engine::encounter::EncounterInstance;
-use crate::engine::types::RngTryError;
+use crate::engine::errors::RngTryError;
 
-use rand::seq::IndexedRandom;
+use rand::seq::IndexedMutRandom;
 
 const MAX_TRIES: usize = 512;
 
@@ -32,7 +32,7 @@ pub fn generate_actors(
             }
             tries += 1;
             let creature_template = template_pool
-                .choose(&mut rand::rng())
+                .choose_mut(&mut rand::rng())
                 .ok_or(Box::new(RngTryError))?;
             let location_result = ei.get_random_spawn(creature_template.size);
             match location_result {

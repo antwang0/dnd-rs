@@ -1,17 +1,19 @@
 use crate::engine::{
-    types::AbilityScoreType,
-    types::{Language, Size, Skill, SpecialSense},
+    types::{AbilityScoreType, Language, Size, Skill, SpecialSense},
+    util::modifier_from_score,
 };
 use crate::items::item_template::Item;
 use std::collections::HashSet;
 
-use tyche::Expr;
+use tyche::{Dice, Expr};
 use tyche::dice::roller::Roller;
 
 use std::error::Error;
 
 #[derive(Clone, PartialEq)]
 pub struct CreatureTemplate {
+    pub name: &'static str,
+    pub n_instances: usize,
     pub ac: u32,
     pub hitpoints: Expr,
     pub speed: f32,
@@ -136,13 +138,14 @@ impl SpellSlotManager {
 
 #[derive(Clone, PartialEq)]
 pub struct ActorInstance {
+    name: String,
     location: (usize, usize),
     team_id: usize,
     base_ac: u32,
     base_hipoints: u32,
     base_speed: f32,
     base_size: Size,
-    initiative: u32,
+    initiative: Option<i32>,
     strength: u32,
     intelligence: u32,
     dexterity: u32,
@@ -165,7 +168,7 @@ pub struct ActorInstance {
 
 impl ActorInstance {
     pub fn from_creature_template(
-        ct: &CreatureTemplate,
+        ct: &mut CreatureTemplate,
         location: (usize, usize),
         team_id: usize,
         roller: &mut impl Roller,
@@ -173,16 +176,20 @@ impl ActorInstance {
         let hp_roll_result = ct.hitpoints.eval(roller)?;
         let hp_roll_val = hp_roll_result.calc()? as u32;
 
+        let name: String = format!("{} {}", ct.name, ct.n_instances);
+        ct.n_instances += 1;
+
         // variable stats should derive from below calls(such as max_hitpoints())
         // as they can be affected by item, effects, etc
         Result::Ok(ActorInstance {
+            name: name,
             location: location,
             team_id: team_id,
             base_ac: ct.ac,
             base_hipoints: hp_roll_val,
             base_speed: ct.speed,
             base_size: ct.size.clone(),
-            initiative: 0, // TODO?
+            initiative: None,
             strength: ct.strength,
             intelligence: ct.intelligence,
             dexterity: ct.dexterity,
@@ -209,6 +216,10 @@ impl ActorInstance {
                 warlock_spell_slot_lvl: 0,
             },
         })
+    }
+
+    pub fn name(&self) -> String {
+        self.name.clone()
     }
 
     pub fn team(&self) -> usize {
@@ -258,5 +269,21 @@ impl ActorInstance {
 
     pub fn set_location(&mut self, target: (usize, usize)) {
         self.location = target;
+    }
+
+    pub fn initiative(&self) -> Option<i32> {
+        self.initiative
+    }
+
+    pub fn initiative_mod(&self) -> i32 {
+        // TODO: apply modifiers to ability scores (such as feats)
+        modifier_from_score(self.dexterity)
+    }
+
+    pub fn roll_initiative(&mut self, roller: &mut impl Roller) {
+        let dice = Dice::new(1, 6);
+        let rolled = roller.roll(&dice, true).expect("somehow roll failed").total().expect("roll conversion failed");
+
+        self.initiative = Some(rolled as i32 + self.initiative_mod());
     }
 }

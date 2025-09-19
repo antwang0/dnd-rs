@@ -5,6 +5,8 @@ use std::collections::HashSet;
 
 pub fn zombie_template() -> CreatureTemplate {
     CreatureTemplate{
+        name: &"Zombie",
+        n_instances: 0,
         ac: 8,
         hitpoints: "2d8+6".parse().unwrap(),
         speed: 20.,
