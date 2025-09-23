@@ -1,2 +1,1 @@
-pub trait Condition {
-}
+pub trait Condition {}

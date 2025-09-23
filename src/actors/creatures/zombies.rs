@@ -1,10 +1,11 @@
+use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{Size, SpecialSense, Language};
+use crate::engine::types::{Language, Size, SpecialSense};
 use std::collections::HashSet;
+use std::sync::LazyLock;
 
-
-pub fn zombie_template() -> CreatureTemplate {
-    CreatureTemplate{
+pub static ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    CreatureTemplate {
         name: &"Zombie",
         n_instances: 0,
         ac: 8,
@@ -16,11 +17,12 @@ pub fn zombie_template() -> CreatureTemplate {
         wisdom: 6,
         constitution: 16,
         charisma: 5,
-        skills: HashSet::new(),  // TODO
+        skills: HashSet::new(), // TODO
         items: Vec::new(),
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
-        languages: HashSet::from([Language::Common]),  // plus one other
+        languages: HashSet::from([Language::Common]), // plus one other
         cr: 0.25,
-        size: Size::Medium
+        size: Size::Medium,
+        actions: DEFAULT_ACTIONS.clone(), // TODO
     }
-}
+});

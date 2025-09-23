@@ -1,16 +1,19 @@
-use crate::engine::{
-    types::{AbilityScoreType, Language, Size, Skill, SpecialSense},
-    util::modifier_from_score,
-};
+use crate::engine::side_effects::Resource;
 use crate::items::item_template::Item;
+use crate::{
+    actions::action_template::Action,
+    engine::{
+        types::{AbilityScoreType, Language, Size, Skill, SpecialSense},
+        util::modifier_from_score,
+    },
+};
 use std::collections::HashSet;
 
-use tyche::{Dice, Expr};
 use tyche::dice::roller::Roller;
+use tyche::{Dice, Expr};
 
 use std::error::Error;
 
-#[derive(Clone, PartialEq)]
 pub struct CreatureTemplate {
     pub name: &'static str,
     pub n_instances: usize,
@@ -29,6 +32,7 @@ pub struct CreatureTemplate {
     pub languages: HashSet<Language>,
     pub cr: f32,
     pub size: Size,
+    pub actions: Vec<&'static (dyn Action + Send + Sync)>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -136,7 +140,7 @@ impl SpellSlotManager {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub struct ActorInstance {
     name: String,
     location: (usize, usize),
@@ -162,22 +166,24 @@ pub struct ActorInstance {
     action_slots: u32,
     bonus_action_slots: u32,
     reaction_slots: u32,
+    legendary_action_slots: u32,
     size: Size,
     pub spell_slot_manager: SpellSlotManager,
+    pub actions: Vec<&'static (dyn Action + Send + Sync)>,
 }
 
 impl ActorInstance {
     pub fn from_creature_template(
-        ct: &mut CreatureTemplate,
+        ct: &'static CreatureTemplate,
         location: (usize, usize),
         team_id: usize,
         roller: &mut impl Roller,
+        instance_n: usize,
     ) -> Result<ActorInstance, Box<dyn Error>> {
         let hp_roll_result = ct.hitpoints.eval(roller)?;
         let hp_roll_val = hp_roll_result.calc()? as u32;
 
-        let name: String = format!("{} {}", ct.name, ct.n_instances);
-        ct.n_instances += 1;
+        let name: String = format!("{} {}", ct.name, instance_n);
 
         // variable stats should derive from below calls(such as max_hitpoints())
         // as they can be affected by item, effects, etc
@@ -206,6 +212,7 @@ impl ActorInstance {
             action_slots: 0,
             bonus_action_slots: 0,
             reaction_slots: 0,
+            legendary_action_slots: 0,
             size: ct.size.clone(), // TODO: should derive from function call
             spell_slot_manager: SpellSlotManager {
                 ssi_by_lvl: Vec::new(),
@@ -215,6 +222,7 @@ impl ActorInstance {
                 },
                 warlock_spell_slot_lvl: 0,
             },
+            actions: ct.actions.clone(),
         })
     }
 
@@ -235,6 +243,55 @@ impl ActorInstance {
             AbilityScoreType::Wisdom => self.wisdom,
             AbilityScoreType::Constitution => self.constitution,
             AbilityScoreType::Charisma => self.charisma,
+        }
+    }
+
+    pub fn can_consume_resource(&self, resource: Resource) -> bool {
+        match resource {
+            Resource::Movement(movement_amt) => {
+                movement_amt >= self.movement
+            },
+            Resource::SpellSlot(spell_lvl) => {
+                self.spell_slot_manager.spell_slots(spell_lvl).spell_slots >= 1
+            },
+            Resource::Action => {
+                self.action_slots >= 1
+            },
+            Resource::BonusAction => {
+                self.bonus_action_slots >= 1
+            },
+            Resource::Reaction => {
+                self.reaction_slots >= 1
+            }
+            Resource::LegendaryAction => {
+                self.legendary_action_slots >= 1
+            }
+        }
+    }
+
+    pub fn consume_resource(&mut self, resource: Resource) {
+        if !self.can_consume_resource(resource) {
+            panic!("illegal resource consumption")
+        }
+        match resource {
+            Resource::Movement(movement_amt) => {
+                self.movement -= movement_amt;
+            },
+            Resource::SpellSlot(spell_lvl) => {
+                self.spell_slot_manager.consume_spell_slot(spell_lvl);
+            },
+            Resource::Action => {
+                self.action_slots -= 1;
+            },
+            Resource::BonusAction => {
+                self.bonus_action_slots -= 1;
+            },
+            Resource::Reaction => {
+                self.reaction_slots -= 1;
+            }
+            Resource::LegendaryAction => {
+                self.legendary_action_slots -= 1;
+            }
         }
     }
 
@@ -271,6 +328,10 @@ impl ActorInstance {
         self.location = target;
     }
 
+    pub fn location(&self) -> (usize, usize) {
+        self.location
+    }
+
     pub fn initiative(&self) -> Option<i32> {
         self.initiative
     }
@@ -282,7 +343,11 @@ impl ActorInstance {
 
     pub fn roll_initiative(&mut self, roller: &mut impl Roller) {
         let dice = Dice::new(1, 6);
-        let rolled = roller.roll(&dice, true).expect("somehow roll failed").total().expect("roll conversion failed");
+        let rolled = roller
+            .roll(&dice, true)
+            .expect("somehow roll failed")
+            .total()
+            .expect("roll conversion failed");
 
         self.initiative = Some(rolled as i32 + self.initiative_mod());
     }
