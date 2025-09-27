@@ -72,7 +72,7 @@ fn main() -> io::Result<()> {
             let info_area = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
-                    Constraint::Length(terrain_params.width as u16),
+                    Constraint::Length(terrain_params.width as u16 + 2),
                     Constraint::Min(1),
                 ])
                 .split(chunks[0]);
