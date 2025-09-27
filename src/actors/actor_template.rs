@@ -1,4 +1,5 @@
 use crate::engine::side_effects::Resource;
+use crate::engine::types::Coordinate;
 use crate::items::item_template::Item;
 use crate::{
     actions::action_template::Action,
@@ -143,7 +144,7 @@ impl SpellSlotManager {
 #[derive(Clone)]
 pub struct ActorInstance {
     name: String,
-    location: (usize, usize),
+    location: Coordinate,
     team_id: usize,
     base_ac: u32,
     base_hipoints: u32,
@@ -175,7 +176,7 @@ pub struct ActorInstance {
 impl ActorInstance {
     pub fn from_creature_template(
         ct: &'static CreatureTemplate,
-        location: (usize, usize),
+        location: Coordinate,
         team_id: usize,
         roller: &mut impl Roller,
         instance_n: usize,
@@ -207,7 +208,7 @@ impl ActorInstance {
             senses: ct.senses.clone(),
             languages: ct.languages.clone(),
             cr: ct.cr,
-            hitpoints: 0,
+            hitpoints: hp_roll_val,
             movement: 0.0,
             action_slots: 0,
             bonus_action_slots: 0,
@@ -248,24 +249,14 @@ impl ActorInstance {
 
     pub fn can_consume_resource(&self, resource: Resource) -> bool {
         match resource {
-            Resource::Movement(movement_amt) => {
-                movement_amt >= self.movement
-            },
+            Resource::Movement(movement_amt) => movement_amt <= self.movement,
             Resource::SpellSlot(spell_lvl) => {
                 self.spell_slot_manager.spell_slots(spell_lvl).spell_slots >= 1
-            },
-            Resource::Action => {
-                self.action_slots >= 1
-            },
-            Resource::BonusAction => {
-                self.bonus_action_slots >= 1
-            },
-            Resource::Reaction => {
-                self.reaction_slots >= 1
             }
-            Resource::LegendaryAction => {
-                self.legendary_action_slots >= 1
-            }
+            Resource::Action => self.action_slots >= 1,
+            Resource::BonusAction => self.bonus_action_slots >= 1,
+            Resource::Reaction => self.reaction_slots >= 1,
+            Resource::LegendaryAction => self.legendary_action_slots >= 1,
         }
     }
 
@@ -276,21 +267,44 @@ impl ActorInstance {
         match resource {
             Resource::Movement(movement_amt) => {
                 self.movement -= movement_amt;
-            },
+            }
             Resource::SpellSlot(spell_lvl) => {
                 self.spell_slot_manager.consume_spell_slot(spell_lvl);
-            },
+            }
             Resource::Action => {
                 self.action_slots -= 1;
-            },
+            }
             Resource::BonusAction => {
                 self.bonus_action_slots -= 1;
-            },
+            }
             Resource::Reaction => {
                 self.reaction_slots -= 1;
             }
             Resource::LegendaryAction => {
                 self.legendary_action_slots -= 1;
+            }
+        }
+    }
+
+    pub fn give_resource(&mut self, resource: Resource) {
+        match resource {
+            Resource::Movement(movement_amt) => {
+                self.movement += movement_amt;
+            }
+            Resource::SpellSlot(spell_lvl) => {
+                self.spell_slot_manager.restore_spell_slot(spell_lvl, 1);
+            }
+            Resource::Action => {
+                self.action_slots += 1;
+            }
+            Resource::BonusAction => {
+                self.bonus_action_slots += 1;
+            }
+            Resource::Reaction => {
+                self.reaction_slots += 1;
+            }
+            Resource::LegendaryAction => {
+                self.legendary_action_slots += 1;
             }
         }
     }
@@ -324,11 +338,11 @@ impl ActorInstance {
         self.size.clone()
     }
 
-    pub fn set_location(&mut self, target: (usize, usize)) {
+    pub fn set_location(&mut self, target: Coordinate) {
         self.location = target;
     }
 
-    pub fn location(&self) -> (usize, usize) {
+    pub fn location(&self) -> Coordinate {
         self.location
     }
 
@@ -350,5 +364,15 @@ impl ActorInstance {
             .expect("roll conversion failed");
 
         self.initiative = Some(rolled as i32 + self.initiative_mod());
+    }
+
+    pub fn reset_for_new_round(&mut self) {
+        self.movement = self.speed();
+
+        // TODO: pull from function
+        self.action_slots = 1;
+        self.bonus_action_slots = 1;
+        self.reaction_slots = 1;
+        // TODO: legendary actions
     }
 }

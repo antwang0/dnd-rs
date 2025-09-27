@@ -5,13 +5,13 @@ use std::error::Error;
 use crate::actions::action_template::ActionExecutionInfo;
 use crate::actors::actor_template::{ActorInstance, CreatureTemplate};
 use crate::engine::actor_gen::{ActorGenParams, generate_actors};
-use crate::engine::errors::NoLegalPosition;
+use crate::engine::errors::{NegativeAbsCoord, NoLegalPosition};
 use crate::engine::prompt::Prompt;
 use crate::engine::side_effects::ApplicableSideEffect;
 use crate::engine::terrain::{TerrainInfo, TerrainType};
 use crate::engine::terrain_gen::{TerrainGenParams, generate_terrain};
 use crate::engine::triggers::TriggerEventType;
-use crate::engine::types::Size;
+use crate::engine::types::{Coordinate, Size};
 use crate::engine::util::{get_colored_span, get_tiles_from_size};
 use rand::seq::SliceRandom;
 use ratatui::Frame;
@@ -151,70 +151,116 @@ impl EncounterInstance {
         }
     }
 
-    pub fn idx(&self, x: usize, y: usize) -> usize {
-        x + y * self.width
+    pub fn idx(&self, coord: Coordinate) -> Result<usize, NegativeAbsCoord> {
+        if coord.x < 0 || coord.y < 0 {
+            return Err(NegativeAbsCoord::new(coord));
+        }
+        Ok(coord.x as usize + coord.y as usize * self.width)
     }
 
-    pub fn is_spawnable(&self, x: usize, y: usize) -> bool {
-        if x >= self.width || y >= self.height {
+    pub fn is_spawnable(&self, coord: Coordinate) -> bool {
+        if coord.x < 0 || coord.y < 0 {
             return false;
         }
 
-        if let Some(_) = self.actor_id_at(x, y) {
+        if coord.x as usize >= self.width || coord.y as usize >= self.height {
             return false;
         }
 
-        let ti = self.terrain_at(x, y);
+        if let Some(_) = self.actor_id_at(coord) {
+            return false;
+        }
+
+        let ti = self.terrain_at(coord);
         match ti.terrain_type {
             TerrainType::Floor => true,
             _ => false,
         }
     }
 
-    fn get_random_coord_list(&self) -> Vec<(usize, usize)> {
+    fn can_move_to_subtile(&self, coord: Coordinate, actor_id: usize) -> bool {
+        if coord.x < 0 || coord.y < 0 {
+            return false;
+        }
+
+        if coord.x as usize >= self.width || coord.y as usize >= self.height {
+            return false;
+        }
+
+        if let Some(other_id) = self.actor_id_at(coord) {
+            if other_id != actor_id {
+                return false;
+            }
+        }
+
+        let ti = self.terrain_at(coord);
+        match ti.terrain_type {
+            TerrainType::Floor => true,
+            _ => false,
+        }
+    }
+
+    fn get_random_coord_list(&self) -> Vec<Coordinate> {
         // TODO: probably try random order of one axis first
-        let mut all_coords: Vec<(usize, usize)> = Vec::new();
+        let mut all_coords: Vec<Coordinate> = Vec::new();
         for x in 0..self.width {
             for y in 0..self.height {
-                all_coords.push((x, y));
+                all_coords.push(Coordinate::new(x as isize, y as isize));
             }
         }
         all_coords.shuffle(&mut rand::rng());
         all_coords
     }
 
-    pub fn get_random_spawn(&mut self, size: Size) -> Result<(usize, usize), NoLegalPosition> {
+    pub fn get_random_spawn(&mut self, size: Size) -> Result<Coordinate, NoLegalPosition> {
         let actor_width: usize = get_tiles_from_size(size);
         let coords = self.get_random_coord_list();
 
-        'coord_loop: for (x, y) in coords.iter() {
+        'coord_loop: for &coord in coords.iter() {
             for x_off in 0..actor_width {
                 for y_off in 0..actor_width {
-                    if !self.is_spawnable(x + x_off, y + y_off) {
+                    let offset = Coordinate::new(x_off as isize, y_off as isize);
+                    if !self.is_spawnable(coord + offset) {
                         continue 'coord_loop;
                     }
                 }
             }
-            return Ok((*x, *y));
+            return Ok(coord);
         }
         Err(NoLegalPosition)
     }
 
-    pub fn actor_id_at(&self, x: usize, y: usize) -> Option<usize> {
-        if let Some(r) = self.actor_map.get(self.idx(x, y)) {
+    pub fn actor_id_at(&self, coord: Coordinate) -> Option<usize> {
+        if let Some(r) = self.actor_map.get(self.idx(coord).unwrap()) {
             *r
         } else {
             None
         }
     }
 
-    fn set_actor_id_at(&mut self, actor_id: Option<usize>, x: usize, y: usize) {
-        let idx = self.idx(x, y);
+    fn set_actor_id_at(&mut self, actor_id: Option<usize>, coord: Coordinate) {
+        let idx = self.idx(coord).unwrap();
         self.actor_map[idx] = actor_id;
     }
 
-    pub fn terrain_at(&self, x: usize, y: usize) -> &TerrainInfo {
-        &self.terrain[self.idx(x, y)]
+    pub fn terrain_at(&self, coord: Coordinate) -> &TerrainInfo {
+        &self.terrain[self.idx(coord).unwrap()]
+    }
+
+    pub fn can_move_to(&self, actor_id: usize, coord: Coordinate) -> bool {
+        if let Some(actor) = self.actors.get(&actor_id) {
+            let actor_width = get_tiles_from_size(actor.size());
+            for x_off in 0..actor_width {
+                for y_off in 0..actor_width {
+                    let offset: Coordinate = Coordinate::new(x_off as isize, y_off as isize);
+                    if !self.can_move_to_subtile(coord + offset, actor_id) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+        false
     }
 
     pub fn render_map(&self, frame: &mut Frame, area: Rect) {
@@ -223,7 +269,8 @@ impl EncounterInstance {
         for y in 0..self.height {
             let mut row: Vec<Span> = Vec::new();
             for x in 0..self.width {
-                if let Some(actor_id) = self.actor_id_at(x, y) {
+                let coord = Coordinate::new(x as isize, y as isize);
+                if let Some(actor_id) = self.actor_id_at(coord) {
                     match self.actors.get(&actor_id) {
                         Some(actor) => {
                             let (s, c, bg): (String, Color, Color) =
@@ -236,7 +283,7 @@ impl EncounterInstance {
                     }
                 } else {
                     let s = Span::from(
-                        match self.terrain_at(x, y).terrain_type {
+                        match self.terrain_at(coord).terrain_type {
                             TerrainType::Empty => ' ',
                             TerrainType::Floor => '░',
                             TerrainType::Wall => '█',
@@ -257,7 +304,7 @@ impl EncounterInstance {
     pub fn render_sideinfo(&mut self, frame: &mut Frame, area: Rect) {
         let area_split = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Min(1)])
+            .constraints([Constraint::Min(1), Constraint::Min(1), Constraint::Min(1)])
             .split(area);
 
         if let Some(StackElement::Prompt(prmpt)) = self.encounter_stack.last() {
@@ -272,7 +319,16 @@ impl EncounterInstance {
             let mut txt: Vec<Line> = Vec::new();
             txt.push(Line::from(initiative_bar));
 
-            let mut action_info = String::new();
+            let mut stats_info: String = String::new();
+            stats_info.push_str(&format!(
+                "HP: {}/{}\n",
+                curr_actor.hitpoints(),
+                curr_actor.max_hitpoints()
+            ));
+            stats_info.push_str(&format!("AC: {}\n", curr_actor.armor_class()));
+            stats_info.push_str(&format!("Movement: {}\n", curr_actor.remaining_movement()));
+
+            let mut action_info: String = String::new();
             for &action in prmpt.actions().iter() {
                 action_info.push_str(action.name());
                 action_info.push('\n');
@@ -284,20 +340,20 @@ impl EncounterInstance {
                 area_split[0],
             );
             frame.render_widget(
-                Paragraph::new(action_info)
+                Paragraph::new(stats_info)
                     .block(Block::default().borders(Borders::ALL).title("Actions")),
                 area_split[1],
+            );
+            frame.render_widget(
+                Paragraph::new(action_info)
+                    .block(Block::default().borders(Borders::ALL).title("Actions")),
+                area_split[2],
             );
         } else {
             frame.render_widget(
                 Paragraph::new("ERROR")
                     .block(Block::default().borders(Borders::ALL).title("Initiative")),
                 area_split[0],
-            );
-            frame.render_widget(
-                Paragraph::new("ERROR")
-                    .block(Block::default().borders(Borders::ALL).title("Actions")),
-                area_split[1],
             );
 
             self.messages.push(format!(
@@ -342,33 +398,46 @@ impl EncounterInstance {
 
     pub fn skip_turn(&mut self) {
         self.initiative_tracker.advance();
+        let curr_actor = self
+            .actors
+            .get_mut(
+                &self
+                    .initiative_tracker
+                    .current_player()
+                    .expect("empty initiative tracker"),
+            )
+            .unwrap();
+        curr_actor.reset_for_new_round();
     }
 
     pub fn set_actor_map(
         &mut self,
         actor_id: usize,
-        (x, y): (usize, usize),
+        coord: Coordinate,
     ) -> Result<(), Box<dyn Error>> {
         if let Some(actor) = self.actors.get(&actor_id) {
             let actor_width = get_tiles_from_size(actor.size());
 
             // assumes unit is square
-            let (old_x, old_y) = actor.location();
-            for i in old_x..self.width {
-                if self.actor_id_at(i, old_y) == None {
+            let coord_old = actor.location();
+            for i in coord_old.x..self.width as isize {
+                let coord_tmp = Coordinate::new(i, coord_old.y);
+                if self.actor_id_at(coord_tmp) != Some(actor_id) {
                     break;
                 }
-                for j in old_y..self.height {
-                    if self.actor_id_at(i, j) == None {
+                for j in coord_old.y..self.height as isize {
+                    let coord_tmp = Coordinate::new(i, j);
+                    if self.actor_id_at(coord_tmp) != Some(actor_id) {
                         break;
                     }
-                    self.set_actor_id_at(None, i, j);
+                    self.set_actor_id_at(None, coord_tmp);
                 }
             }
 
             for x_off in 0..actor_width {
                 for y_off in 0..actor_width {
-                    self.set_actor_id_at(Some(actor_id), x + x_off, y + y_off);
+                    let offset = Coordinate::new(x_off as isize, y_off as isize);
+                    self.set_actor_id_at(Some(actor_id), coord + offset);
                 }
             }
             return Ok(());
@@ -379,7 +448,7 @@ impl EncounterInstance {
     pub fn instantiate_creature(
         &mut self,
         creature_template: &'static CreatureTemplate,
-        location: (usize, usize),
+        location: Coordinate,
         team_id: usize,
         instance_n: usize,
     ) -> Result<usize, Box<dyn Error>> {
@@ -392,6 +461,7 @@ impl EncounterInstance {
             &mut self.roller,
             instance_n,
         )?);
+        ai_box.reset_for_new_round();
 
         if self.initialized {
             ai_box.roll_initiative(&mut self.roller);
@@ -434,7 +504,7 @@ impl EncounterInstance {
         self.encounter_stack.push(se);
     }
 
-    pub fn peek_prompt(&mut self) -> Option<&Prompt> {
+    pub fn peek_prompt(&self) -> Option<&Prompt> {
         let last = self.encounter_stack.last();
         match last {
             None => None,

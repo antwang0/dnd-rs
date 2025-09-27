@@ -36,10 +36,11 @@ fn main() -> io::Result<()> {
 
     // TODO: move to handler obj
     let mut input_str: String = String::new();
+    let mut tmp_message: String = String::new();
 
     let terrain_params = TerrainGenParams {
-        width: 64,
-        height: 32,
+        width: 40,
+        height: 20,
         branch_depth: 8,
         branch_prob: 0.5,
     };
@@ -47,7 +48,7 @@ fn main() -> io::Result<()> {
     let mut encounter_instance: EncounterInstance = EncounterInstance::from_params(
         &terrain_params,
         &ActorGenParams {
-            cr_target: 3.0,
+            cr_target: 1.0,
             n_teams: 2,
         },
     );
@@ -62,7 +63,8 @@ fn main() -> io::Result<()> {
                 .constraints([
                     Constraint::Length(HEIGHT.min(terrain_params.height) as u16 + 2), // Map area
                     Constraint::Length(3),                                            // Input area
-                    Constraint::Min(1),                                               // Message log
+                    Constraint::Length(3), // Temp message
+                    Constraint::Min(1),    // Message log
                 ])
                 .split(f.area());
 
@@ -82,6 +84,10 @@ fn main() -> io::Result<()> {
                 .block(Block::default().borders(Borders::ALL).title("Input"));
             f.render_widget(input_widget, chunks[1]);
 
+            let tmp_message_widget: Paragraph<'_> = Paragraph::new(tmp_message.as_str())
+                .block(Block::default().borders(Borders::ALL).title("Message"));
+            f.render_widget(tmp_message_widget, chunks[2]);
+
             // Messages
             let messages_text: Text = encounter_instance
                 .messages()
@@ -92,7 +98,7 @@ fn main() -> io::Result<()> {
                 .collect();
             let messages_widget = Paragraph::new(messages_text)
                 .block(Block::default().borders(Borders::ALL).title("Log"));
-            f.render_widget(messages_widget, chunks[2]);
+            f.render_widget(messages_widget, chunks[3]);
         })?;
 
         // Handle input
@@ -110,13 +116,17 @@ fn main() -> io::Result<()> {
                                 running = false;
                             }
                             if let Some(prompt) = encounter_instance.peek_prompt() {
-                                match prompt.process_input(trimmed) {
+                                match prompt.process_input(trimmed, &encounter_instance) {
                                     Ok(aei) => {
                                         encounter_instance.pop_prompt();
                                         encounter_instance.push_action(aei);
                                         input_str.clear();
+                                        tmp_message.clear();
                                     }
-                                    Err(e) => {}
+                                    Err(e) => {
+                                        tmp_message.clear();
+                                        tmp_message.push_str(&e.to_string());
+                                    }
                                 }
                             }
                             // game.process_command(input_str);
