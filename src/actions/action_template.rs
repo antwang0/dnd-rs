@@ -10,6 +10,7 @@ use crate::engine::{
 pub enum TargetingSchema {
     NoArgs,
     SinglePoint,
+    SingleActor,
     Custom,
 }
 
@@ -48,6 +49,7 @@ pub trait Action {
     ) -> bool {
         // TODO: overrides
         // TODO: validate points and target ids
+        // TODO this is gross
         let schema_validation = match self.targeting_schema() {
             TargetingSchema::NoArgs => {
                 if target_ids != None {
@@ -73,6 +75,13 @@ pub trait Action {
                     return false;
                 }
                 true
+            }
+            TargetingSchema::SingleActor => {
+                return if let Some(target_ids) = target_ids {
+                    if target_ids.len() == 0 { false } else { true }
+                } else {
+                    false
+                };
             }
             TargetingSchema::Custom => {
                 panic!(
