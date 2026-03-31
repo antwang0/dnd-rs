@@ -1,12 +1,13 @@
 use crate::engine::terrain::{TerrainInfo, TerrainType};
 use crate::engine::terrain_gen::{TerrainGenParams, generate_terrain};
-use crate::engine::unit::Unit;
+use crate::units::unit_template::ActorInstance;
 
 pub struct EncounterInstance<'a> {
     width: usize,
     height: usize,
     terrain: Vec<TerrainInfo>,
-    units: Vec<Option<&'a dyn Unit>>
+    unit_map: Vec<Option<&'a ActorInstance>>,
+    units: Vec<Box<ActorInstance>>
 }
 
 impl EncounterInstance<'_> {
@@ -37,6 +38,7 @@ pub fn construct_encounter_instance<'a>(params: &TerrainGenParams) -> EncounterI
         width: params.width,
         height: params.height,
         terrain: generate_terrain(params),
-        units: vec![None; params.width * params.height]
+        unit_map: vec![None; params.width * params.height],
+        units: Vec::new()
     }
 }
