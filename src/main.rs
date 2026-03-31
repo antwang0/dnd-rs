@@ -1,15 +1,12 @@
-#[macro_use]
-mod macros;
-
 pub mod actions;
 pub mod actors;
 pub mod conditions;
 pub mod engine;
 pub mod items;
 
+use crate::engine::actor_gen::ActorGenParams;
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::terrain_gen::TerrainGenParams;
-use crate::engine::{actor_gen::ActorGenParams, terrain};
 
 use crossterm::{
     event::{self, Event, KeyCode},
@@ -51,12 +48,14 @@ fn main() -> io::Result<()> {
     let mut encounter_instance: EncounterInstance = EncounterInstance::from_params(
         &terrain_params,
         &ActorGenParams {
-            cr_target: 5.0,
+            cr_target: 3.0,
             n_teams: 2,
         },
     );
 
     while running {
+        encounter_instance.process_stack();
+
         // Draw UI
         terminal.draw(|f| {
             let chunks = Layout::default()
@@ -68,11 +67,19 @@ fn main() -> io::Result<()> {
                 ])
                 .split(f.area());
 
-            // Map
-            encounter_instance.render(f, chunks[0]);
+            // Map and current actions
+            let info_area = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Length(terrain_params.width as u16),
+                    Constraint::Min(1),
+                ])
+                .split(chunks[0]);
+            encounter_instance.render_map(f, info_area[0]);
+            encounter_instance.render_sideinfo(f, info_area[1]);
 
             // Input
-            let input_widget = Paragraph::new(input_str.as_str())
+            let input_widget: Paragraph<'_> = Paragraph::new(input_str.as_str())
                 .block(Block::default().borders(Borders::ALL).title("Input"));
             f.render_widget(input_widget, chunks[1]);
 
@@ -101,7 +108,12 @@ fn main() -> io::Result<()> {
                             if input_str.trim() == "quit" {
                                 running = false;
                             }
-                            // game.process_command();
+                            // TODO: move below to process_command(*)
+                            if input_str.trim() == "s" {
+                                encounter_instance.skip_turn();
+                                input_str.clear();
+                            }
+                            // game.process_command(input_str);
                         }
                         KeyCode::Esc => running = false,
                         _ => {}

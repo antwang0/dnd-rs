@@ -1,7 +1,4 @@
-use ratatui::{
-    style::{Color, Stylize},
-    text::Span,
-};
+use ratatui::style::Color;
 
 use crate::engine::types::Size;
 
@@ -22,18 +19,19 @@ const ACTOR_CHARS: [char; 28] = [
 ];
 
 pub fn get_colored_span(n: usize, team: usize) -> (String, Color, Color) {
-    // pick from the Basic Multilingual Plane (BMP) for simplicity
-    // let code = (n % 0xD7FF) as u32; // avoid surrogate range
-    // let s = std::char::from_u32(code).unwrap_or('?').to_string();
     let s = ACTOR_CHARS[n % ACTOR_CHARS.len()].to_string();
 
     let team_u8: u8 = (team % 16) as u8;
     let color = Color::Indexed(team_u8);
     let bg = if team_u8 < 1 {
-        Color::DarkGray
+        Color::LightCyan
     } else {
         Color::Black
     };
 
     (s, color, bg)
+}
+
+pub fn modifier_from_score(score: u32) -> i32 {
+    (score as i32 / 2) - 5
 }

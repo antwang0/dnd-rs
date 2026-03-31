@@ -1,22 +1,32 @@
-use crate::actors::actor_template::ActorInstance;
-pub struct Action<'a> {
-    name: &'a str,
-    lambda: &'a action_closure_type!(),
+use std::collections::HashSet;
+
+use crate::engine::{
+    action_overrides::ActionOverride, encounter::EncounterInstance,
+    side_effects::ApplicableSideEffect,
+};
+
+pub trait Action {
+    fn name(&self) -> &str;
+    fn execute(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: &Option<Vec<usize>>,
+        target_locations: &Option<Vec<(usize, usize)>>,
+        overrides: &HashSet<ActionOverride>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>>;
 }
 
-impl Action<'_> {
-    pub const fn new<'a>(name: &'a str, lambda: &'a action_closure_type!()) -> Action<'a> {
-        Action {
-            name: name,
-            lambda: lambda,
-        }
-    }
+pub struct ActionExecutionInfo {
+    action: &'static dyn Action,
+    caster_id: usize,
+    target_ids: Option<Vec<usize>>,
+    target_locations: Option<Vec<(usize, usize)>>,
+    overrides: HashSet<ActionOverride>,
+}
 
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn lambda(&self) -> &action_closure_type!() {
-        self.lambda
+impl ActionExecutionInfo {
+    pub fn execute(&self, encounter: &mut EncounterInstance) -> Vec<Box<dyn ApplicableSideEffect>> {
+        return self.action.execute(encounter, self.caster_id, &self.target_ids, &self.target_locations, &self.overrides)
     }
 }
