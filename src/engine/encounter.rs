@@ -26,10 +26,16 @@ use ratatui::{
 use std::cmp::Ordering;
 use tyche::dice::roller::FastRand as FastRandRoller;
 
-pub enum StackElement {
+pub enum StackElementEntry {
     SideEffect(Box<dyn ApplicableSideEffect>),
     Action(Box<ActionExecutionInfo>),
     Prompt(Prompt),
+}
+
+pub struct StackElement {
+    pub entry: StackElementEntry,
+    pub id: usize,
+    pub success_dependencies: Option<Vec<usize>>,
 }
 
 #[derive(Eq, PartialEq)]
@@ -111,6 +117,43 @@ impl InitiativeTracker {
     }
 }
 
+struct OutcomeTracker {
+    next_id: usize,
+    successes: HashMap<usize, bool>,
+}
+
+impl OutcomeTracker {
+    pub fn new() -> OutcomeTracker {
+        OutcomeTracker {
+            next_id: 0,
+            successes: HashMap::new(),
+        }
+    }
+
+    pub fn next_id(&mut self) -> usize {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
+
+    pub fn set_outcome(&mut self, id: usize, success: bool) {
+        self.successes.insert(id, success);
+    }
+
+    pub fn get_outcome(&self, id: usize) -> Option<bool> {
+        if let Some(s) = self.successes.get(&id) {
+            Some(*s)
+        } else {
+            None
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.next_id = 0;
+        self.successes.clear();
+    }
+}
+
 // TODO: having all pub is not very good
 pub struct EncounterInstance {
     initialized: bool,
@@ -126,6 +169,7 @@ pub struct EncounterInstance {
     pub roller: FastRandRoller,
     messages: Vec<String>,
     tmp_message: String,
+    outcome_tracker: OutcomeTracker,
 }
 
 impl EncounterInstance {
@@ -307,53 +351,67 @@ impl EncounterInstance {
             .constraints([Constraint::Min(1), Constraint::Min(1), Constraint::Min(1)])
             .split(area);
 
-        if let Some(StackElement::Prompt(prmpt)) = self.encounter_stack.last() {
-            let curr_actor_id = prmpt.actor_id();
-            let curr_actor = self.actors.get(&curr_actor_id).expect("missing actor");
-            let (s, c, bg): (String, Color, Color) =
-                get_colored_span(curr_actor_id, curr_actor.team());
+        if let Some(se) = self.encounter_stack.last() {
+            if let StackElementEntry::Prompt(prmpt) = &se.entry {
+                let curr_actor_id = prmpt.actor_id();
+                let curr_actor = self.actors.get(&curr_actor_id).expect("missing actor");
+                let (s, c, bg): (String, Color, Color) =
+                    get_colored_span(curr_actor_id, curr_actor.team());
 
-            let mut initiative_bar: Vec<Span> = Vec::new();
-            initiative_bar.push(Span::from(format!("Current actor: {} ", curr_actor.name())));
-            initiative_bar.push(Span::styled(s, Style::default().fg(c).bg(bg)));
-            let mut txt: Vec<Line> = Vec::new();
-            txt.push(Line::from(initiative_bar));
+                let mut initiative_bar: Vec<Span> = Vec::new();
+                initiative_bar.push(Span::from(format!("Current actor: {} ", curr_actor.name())));
+                initiative_bar.push(Span::styled(s, Style::default().fg(c).bg(bg)));
+                let mut txt: Vec<Line> = Vec::new();
+                txt.push(Line::from(initiative_bar));
 
-            let mut stats_info: String = String::new();
-            stats_info.push_str(&format!(
-                "HP: {}/{}\n",
-                curr_actor.hitpoints(),
-                curr_actor.max_hitpoints()
-            ));
-            stats_info.push_str(&format!("AC: {}\n", curr_actor.armor_class()));
-            stats_info.push_str(&format!("Movement: {}\n", curr_actor.remaining_movement()));
-            stats_info.push_str(&format!(
-                "Actions: {} Bonus Actions: {}\n",
-                curr_actor.action_slots(),
-                curr_actor.bonus_action_slots()
-            ));
+                let mut stats_info: String = String::new();
+                stats_info.push_str(&format!(
+                    "HP: {}/{}\n",
+                    curr_actor.hitpoints(),
+                    curr_actor.max_hitpoints()
+                ));
+                stats_info.push_str(&format!("AC: {}\n", curr_actor.armor_class()));
+                stats_info.push_str(&format!("Movement: {}\n", curr_actor.remaining_movement()));
+                stats_info.push_str(&format!(
+                    "Actions: {} Bonus Actions: {}\n",
+                    curr_actor.action_slots(),
+                    curr_actor.bonus_action_slots()
+                ));
 
-            let mut action_info: String = String::new();
-            for &action in prmpt.actions().iter() {
-                action_info.push_str(action.name());
-                action_info.push('\n');
+                let mut action_info: String = String::new();
+                for &action in prmpt.actions().iter() {
+                    action_info.push_str(action.name());
+                    action_info.push('\n');
+                }
+
+                frame.render_widget(
+                    Paragraph::new(txt)
+                        .block(Block::default().borders(Borders::ALL).title("Initiative")),
+                    area_split[0],
+                );
+                frame.render_widget(
+                    Paragraph::new(stats_info)
+                        .block(Block::default().borders(Borders::ALL).title("Resources")),
+                    area_split[1],
+                );
+                frame.render_widget(
+                    Paragraph::new(action_info)
+                        .block(Block::default().borders(Borders::ALL).title("Actions")),
+                    area_split[2],
+                );
+            } else {
+                frame.render_widget(
+                    Paragraph::new("ERROR")
+                        .block(Block::default().borders(Borders::ALL).title("Initiative")),
+                    area_split[0],
+                );
+
+                self.messages.push(format!(
+                    "non prompt on top of stack {:?} {:?}",
+                    self.messages.len(),
+                    self.encounter_stack.len()
+                ));
             }
-
-            frame.render_widget(
-                Paragraph::new(txt)
-                    .block(Block::default().borders(Borders::ALL).title("Initiative")),
-                area_split[0],
-            );
-            frame.render_widget(
-                Paragraph::new(stats_info)
-                    .block(Block::default().borders(Borders::ALL).title("Resources")),
-                area_split[1],
-            );
-            frame.render_widget(
-                Paragraph::new(action_info)
-                    .block(Block::default().borders(Borders::ALL).title("Actions")),
-                area_split[2],
-            );
         } else {
             frame.render_widget(
                 Paragraph::new("ERROR")
@@ -387,6 +445,7 @@ impl EncounterInstance {
             roller: FastRandRoller::default(), // TODO: seed https://docs.rs/tyche/latest/tyche/#rolling-dice
             messages: Vec::new(),
             tmp_message: String::new(),
+            outcome_tracker: OutcomeTracker::new(),
         };
 
         // TODO: move pool to fn
@@ -492,29 +551,39 @@ impl EncounterInstance {
         self.initialized = true;
     }
 
-    pub fn check_triggers(&mut self, event: &StackElement, _event_type: TriggerEventType) {
+    pub fn check_triggers(&mut self, event: &StackElementEntry, _event_type: TriggerEventType) {
         match event {
-            StackElement::Prompt(_) => return,
-            StackElement::Action(_a) => {
+            StackElementEntry::Prompt(_) => return,
+            StackElementEntry::Action(_a) => {
                 // TODO
             }
-            StackElement::SideEffect(_se) => {
+            StackElementEntry::SideEffect(_se) => {
                 // TODO
             }
         }
     }
 
-    pub fn enqueue_event(&mut self, se: StackElement) {
+    pub fn enqueue_event(
+        &mut self,
+        se: StackElementEntry,
+        success_dependencies: Option<Vec<usize>>,
+    ) {
         self.check_triggers(&se, TriggerEventType::Enqueue);
-        self.encounter_stack.push(se);
+        self.encounter_stack.push(StackElement {
+            entry: se,
+            id: self.outcome_tracker.next_id(),
+            success_dependencies: success_dependencies,
+        });
     }
 
     pub fn peek_prompt(&self) -> Option<&Prompt> {
         let last = self.encounter_stack.last();
         match last {
             None => None,
-            Some(StackElement::Prompt(p)) => Some(p),
-            Some(_) => None,
+            Some(se) => match &se.entry {
+                StackElementEntry::Prompt(p) => Some(&p),
+                _ => None,
+            },
         }
     }
 
@@ -522,11 +591,13 @@ impl EncounterInstance {
         let last = self.encounter_stack.pop();
         match last {
             None => None,
-            Some(StackElement::Prompt(p)) => Some(p),
-            Some(ls) => {
-                self.encounter_stack.push(ls);
-                None
-            }
+            Some(se) => match &se.entry {
+                StackElementEntry::Prompt(p) => Some(p),
+                other => {
+                    self.encounter_stack.push(se);
+                    None
+                }
+            },
         }
     }
 
@@ -585,6 +656,9 @@ impl EncounterInstance {
         if let Some(StackElement::Prompt(_)) = self.encounter_stack.last() {
             // exit on prompt
             return;
+        }
+        if self.encounter_stack.is_empty() {
+            self.outcome_tracker.reset();
         }
         let current_player_id = self
             .initiative_tracker
