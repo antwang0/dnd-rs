@@ -73,6 +73,7 @@ impl Prompt {
         );
 
         if !aei.validate(&encounter_instance) {
+            // TODO: better error for insufficient resources etc
             return Err(ParseError::new(&format!(
                 "argument validation failed for {}",
                 input

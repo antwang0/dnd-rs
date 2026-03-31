@@ -1,6 +1,6 @@
 use crate::{
     actions::action_template::TargetingSchema,
-    engine::{encounter, side_effects::GiveResource, types::Coordinate},
+    engine::{side_effects::GiveResource, types::Coordinate},
 };
 use std::{collections::HashSet, sync::LazyLock};
 
@@ -9,7 +9,7 @@ use crate::{
     engine::{
         action_overrides::ActionOverride,
         encounter::EncounterInstance,
-        side_effects::{ConsumeResource, MoveActor, Resource, SkipTurn},
+        side_effects::{MoveActor, Resource, SkipTurn},
         util::tile_center_dist,
     },
 };
@@ -57,15 +57,13 @@ impl Action for Move {
 
     fn side_effects(
         &self,
-        encounter: &mut EncounterInstance,
+        _encounter: &mut EncounterInstance,
         caster_id: usize,
         _target_ids: Option<&Vec<usize>>,
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
         let target_location: Coordinate = target_locations.unwrap().first().unwrap().clone();
-        let actor = encounter.actors.get(&caster_id).expect("missing actor");
-        let dist = tile_center_dist(actor.location(), target_location);
         vec![Box::new(MoveActor {
             actor_id: caster_id,
             target: target_location,
@@ -138,7 +136,7 @@ impl Action for Dash {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Option<Resource> {
-        None
+        Some(Resource::Action)
     }
 
     fn side_effects(

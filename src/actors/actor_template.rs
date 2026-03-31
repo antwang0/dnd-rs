@@ -375,4 +375,12 @@ impl ActorInstance {
         self.reaction_slots = 1;
         // TODO: legendary actions
     }
+
+    pub fn action_slots(&self) -> u32 {
+        self.action_slots
+    }
+
+    pub fn bonus_action_slots(&self) -> u32 {
+        self.bonus_action_slots
+    }
 }

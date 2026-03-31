@@ -266,7 +266,7 @@ impl EncounterInstance {
     pub fn render_map(&self, frame: &mut Frame, area: Rect) {
         let mut text: Vec<Line> = Vec::new();
 
-        for y in 0..self.height {
+        for y in (0..self.height).rev() {
             let mut row: Vec<Span> = Vec::new();
             for x in 0..self.width {
                 let coord = Coordinate::new(x as isize, y as isize);
@@ -327,6 +327,11 @@ impl EncounterInstance {
             ));
             stats_info.push_str(&format!("AC: {}\n", curr_actor.armor_class()));
             stats_info.push_str(&format!("Movement: {}\n", curr_actor.remaining_movement()));
+            stats_info.push_str(&format!(
+                "Actions: {} Bonus Actions: {}\n",
+                curr_actor.action_slots(),
+                curr_actor.bonus_action_slots()
+            ));
 
             let mut action_info: String = String::new();
             for &action in prmpt.actions().iter() {
@@ -341,7 +346,7 @@ impl EncounterInstance {
             );
             frame.render_widget(
                 Paragraph::new(stats_info)
-                    .block(Block::default().borders(Borders::ALL).title("Actions")),
+                    .block(Block::default().borders(Borders::ALL).title("Resources")),
                 area_split[1],
             );
             frame.render_widget(
