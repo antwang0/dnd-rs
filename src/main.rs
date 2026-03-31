@@ -36,7 +36,6 @@ fn main() -> io::Result<()> {
 
     // TODO: move to handler obj
     let mut input_str: String = String::new();
-    let mut messages: Vec<String> = Vec::new();
 
     let terrain_params = TerrainGenParams {
         width: 64,
@@ -84,7 +83,8 @@ fn main() -> io::Result<()> {
             f.render_widget(input_widget, chunks[1]);
 
             // Messages
-            let messages_text: Text = messages
+            let messages_text: Text = encounter_instance
+                .messages()
                 .iter()
                 .rev()
                 .take(5)
@@ -105,13 +105,19 @@ fn main() -> io::Result<()> {
                             input_str.pop();
                         }
                         KeyCode::Enter => {
-                            if input_str.trim() == "quit" {
+                            let trimmed = input_str.trim();
+                            if trimmed == "quit" {
                                 running = false;
                             }
-                            // TODO: move below to process_command(*)
-                            if input_str.trim() == "s" {
-                                encounter_instance.skip_turn();
-                                input_str.clear();
+                            if let Some(prompt) = encounter_instance.peek_prompt() {
+                                match prompt.process_input(trimmed) {
+                                    Ok(aei) => {
+                                        encounter_instance.pop_prompt();
+                                        encounter_instance.push_action(aei);
+                                        input_str.clear();
+                                    }
+                                    Err(e) => {}
+                                }
                             }
                             // game.process_command(input_str);
                         }

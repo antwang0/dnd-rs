@@ -21,3 +21,25 @@ impl fmt::Display for NoLegalPosition {
 }
 
 impl std::error::Error for NoLegalPosition {}
+
+#[derive(Debug, Clone)]
+pub struct ParseError {
+    input: String,
+}
+
+impl ParseError {
+    pub fn new(s: &str) -> Self {
+        Self{input: s.to_string()}
+    }
+    pub fn input(&self) -> &str {
+        &self.input
+    }
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "failed to parse input: {:?}", self.input())
+    }
+}
+
+impl std::error::Error for ParseError {}

@@ -1,3 +1,4 @@
+use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
 use std::collections::{HashMap, LinkedList};
 use std::error::Error;
 
@@ -15,10 +16,13 @@ use crate::engine::util::{get_colored_span, get_tiles_from_size};
 use rand::seq::SliceRandom;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Paragraph};
-use ratatui::{style::Color, text::Span};
+use ratatui::{
+    layout::{Constraint, Direction, Layout},
+    text::Span,
+    widgets::{Block, Borders, Paragraph},
+};
 use std::cmp::Ordering;
 use tyche::dice::roller::FastRand as FastRandRoller;
 
@@ -120,13 +124,31 @@ pub struct EncounterInstance {
     pub encounter_stack: Vec<StackElement>,
     pub temp_encounter_queue: LinkedList<StackElement>, // for handling multiple reactions
     pub roller: FastRandRoller,
+    messages: Vec<String>,
+    tmp_message: String,
 }
 
 impl EncounterInstance {
+    pub fn messages(&self) -> &Vec<String> {
+        &self.messages
+    }
+
+    pub fn tmp_message(&self) -> &String {
+        &self.tmp_message
+    }
+
     pub fn next_actor_id(&mut self) -> usize {
         let next_actor_id = self.actor_id_next;
         self.actor_id_next += 1;
         next_actor_id
+    }
+
+    pub fn get_actor(&mut self, actor_id: usize) -> Option<&mut ActorInstance> {
+        if let Some(a) = self.actors.get_mut(&actor_id) {
+            return Some(a);
+        } else {
+            return None;
+        }
     }
 
     pub fn idx(&self, x: usize, y: usize) -> usize {
@@ -186,7 +208,7 @@ impl EncounterInstance {
         }
     }
 
-    pub fn set_actor_id_at(&mut self, actor_id: Option<usize>, x: usize, y: usize) {
+    fn set_actor_id_at(&mut self, actor_id: Option<usize>, x: usize, y: usize) {
         let idx = self.idx(x, y);
         self.actor_map[idx] = actor_id;
     }
@@ -232,24 +254,58 @@ impl EncounterInstance {
         );
     }
 
-    pub fn render_sideinfo(&self, frame: &mut Frame, area: Rect) {
-        let curr_actor_id = self
-            .initiative_tracker
-            .current_player()
-            .expect("tried to render sideinfo for uninit initiative");
-        let curr_actor = self.actors.get(&curr_actor_id).expect("missing actor");
-        let (s, c, bg): (String, Color, Color) = get_colored_span(curr_actor_id, curr_actor.team());
+    pub fn render_sideinfo(&mut self, frame: &mut Frame, area: Rect) {
+        let area_split = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Min(1)])
+            .split(area);
 
-        let mut initiative_bar: Vec<Span> = Vec::new();
-        initiative_bar.push(Span::from(format!("Current actor: {} ", curr_actor.name())));
-        initiative_bar.push(Span::styled(s, Style::default().fg(c).bg(bg)));
-        let mut txt: Vec<Line> = Vec::new();
-        txt.push(Line::from(initiative_bar));
+        if let Some(StackElement::Prompt(prmpt)) = self.encounter_stack.last() {
+            let curr_actor_id = prmpt.actor_id();
+            let curr_actor = self.actors.get(&curr_actor_id).expect("missing actor");
+            let (s, c, bg): (String, Color, Color) =
+                get_colored_span(curr_actor_id, curr_actor.team());
 
-        frame.render_widget(
-            Paragraph::new(txt).block(Block::default().borders(Borders::ALL).title("Initiative")),
-            area,
-        );
+            let mut initiative_bar: Vec<Span> = Vec::new();
+            initiative_bar.push(Span::from(format!("Current actor: {} ", curr_actor.name())));
+            initiative_bar.push(Span::styled(s, Style::default().fg(c).bg(bg)));
+            let mut txt: Vec<Line> = Vec::new();
+            txt.push(Line::from(initiative_bar));
+
+            let mut action_info = String::new();
+            for &action in prmpt.actions().iter() {
+                action_info.push_str(action.name());
+                action_info.push('\n');
+            }
+
+            frame.render_widget(
+                Paragraph::new(txt)
+                    .block(Block::default().borders(Borders::ALL).title("Initiative")),
+                area_split[0],
+            );
+            frame.render_widget(
+                Paragraph::new(action_info)
+                    .block(Block::default().borders(Borders::ALL).title("Actions")),
+                area_split[1],
+            );
+        } else {
+            frame.render_widget(
+                Paragraph::new("ERROR")
+                    .block(Block::default().borders(Borders::ALL).title("Initiative")),
+                area_split[0],
+            );
+            frame.render_widget(
+                Paragraph::new("ERROR")
+                    .block(Block::default().borders(Borders::ALL).title("Actions")),
+                area_split[1],
+            );
+
+            self.messages.push(format!(
+                "else {:?} {:?}",
+                self.messages.len(),
+                self.encounter_stack.len()
+            ));
+        }
     }
 
     pub fn from_params(
@@ -268,8 +324,15 @@ impl EncounterInstance {
             encounter_stack: Vec::new(),
             temp_encounter_queue: LinkedList::new(),
             roller: FastRandRoller::default(), // TODO: seed https://docs.rs/tyche/latest/tyche/#rolling-dice
+            messages: Vec::new(),
+            tmp_message: String::new(),
         };
-        match generate_actors(&mut ei, actor_params) {
+
+        // TODO: move pool to fn
+        let mut template_pool: Vec<&'static CreatureTemplate> = Vec::new();
+        template_pool.push(&ZOMBIE_TEMPLATE);
+
+        match generate_actors(&mut ei, actor_params, &template_pool) {
             Ok(()) => {}
             Err(_) => panic!("failed to generate actors"),
         }
@@ -277,14 +340,20 @@ impl EncounterInstance {
         ei
     }
 
+    pub fn skip_turn(&mut self) {
+        self.initiative_tracker.advance();
+    }
+
     pub fn set_actor_map(
         &mut self,
         actor_id: usize,
         (x, y): (usize, usize),
-        old_location_opt: Option<(usize, usize)>,
     ) -> Result<(), Box<dyn Error>> {
-        // assumes unit is square
-        if let Some((old_x, old_y)) = old_location_opt {
+        if let Some(actor) = self.actors.get(&actor_id) {
+            let actor_width = get_tiles_from_size(actor.size());
+
+            // assumes unit is square
+            let (old_x, old_y) = actor.location();
             for i in old_x..self.width {
                 if self.actor_id_at(i, old_y) == None {
                     break;
@@ -296,9 +365,6 @@ impl EncounterInstance {
                     self.set_actor_id_at(None, i, j);
                 }
             }
-        }
-        if let Some(actor) = self.actors.get(&actor_id) {
-            let actor_width = get_tiles_from_size(actor.size());
 
             for x_off in 0..actor_width {
                 for y_off in 0..actor_width {
@@ -312,9 +378,10 @@ impl EncounterInstance {
 
     pub fn instantiate_creature(
         &mut self,
-        creature_template: &mut CreatureTemplate,
+        creature_template: &'static CreatureTemplate,
         location: (usize, usize),
         team_id: usize,
+        instance_n: usize,
     ) -> Result<usize, Box<dyn Error>> {
         let actor_id = self.next_actor_id();
 
@@ -323,6 +390,7 @@ impl EncounterInstance {
             location,
             team_id,
             &mut self.roller,
+            instance_n,
         )?);
 
         if self.initialized {
@@ -333,7 +401,7 @@ impl EncounterInstance {
 
         self.actors.insert(actor_id, ai_box);
 
-        self.set_actor_map(actor_id, location, None)?;
+        self.set_actor_map(actor_id, location)?;
 
         Ok(actor_id)
     }
@@ -349,13 +417,13 @@ impl EncounterInstance {
         self.initialized = true;
     }
 
-    pub fn check_triggers(&mut self, event: &StackElement, event_type: TriggerEventType) {
+    pub fn check_triggers(&mut self, event: &StackElement, _event_type: TriggerEventType) {
         match event {
             StackElement::Prompt(_) => return,
-            StackElement::Action(a) => {
+            StackElement::Action(_a) => {
                 // TODO
             }
-            StackElement::SideEffect(se) => {
+            StackElement::SideEffect(_se) => {
                 // TODO
             }
         }
@@ -366,6 +434,33 @@ impl EncounterInstance {
         self.encounter_stack.push(se);
     }
 
+    pub fn peek_prompt(&mut self) -> Option<&Prompt> {
+        let last = self.encounter_stack.last();
+        match last {
+            None => None,
+            Some(StackElement::Prompt(p)) => Some(p),
+            Some(_) => None,
+        }
+    }
+
+    pub fn pop_prompt(&mut self) -> Option<Prompt> {
+        let last = self.encounter_stack.pop();
+        match last {
+            None => None,
+            Some(StackElement::Prompt(p)) => Some(p),
+            Some(ls) => {
+                self.encounter_stack.push(ls);
+                None
+            }
+        }
+    }
+
+    pub fn push_action(&mut self, action_execution_info: ActionExecutionInfo) {
+        // TODO: temp stack for reactions
+        self.encounter_stack
+            .push(StackElement::Action(Box::new(action_execution_info)));
+    }
+
     pub fn process_stack(&mut self) {
         if !self.initialized {
             panic!("attempted to run uninitialized encounter");
@@ -374,7 +469,7 @@ impl EncounterInstance {
         // should stop processing the stack
 
         // check if we are done processing the current batch of possible reactions
-        if let Some(StackElement::Prompt(_)) = self.encounter_stack.last() {
+        if let Some(_) = self.peek_prompt() {
             // exit on prompt
             return;
         }
@@ -388,10 +483,16 @@ impl EncounterInstance {
         }
 
         while !self.encounter_stack.is_empty() {
+            if let Some(_) = self.peek_prompt() {
+                return;
+            }
+
             let se = self.encounter_stack.pop().expect("unexpected empty stack");
             self.check_triggers(&se, TriggerEventType::Execute);
             match se {
-                StackElement::Prompt(_) => return,
+                StackElement::Prompt(_) => {
+                    panic!("should be unreachable: prompt case")
+                }
                 StackElement::Action(a) => {
                     let mut side_effects = a.execute(self);
                     for sen in side_effects.drain(..) {
@@ -410,9 +511,17 @@ impl EncounterInstance {
             // exit on prompt
             return;
         }
-    }
-
-    pub fn skip_turn(&mut self) {
-        self.initiative_tracker.advance();
+        let current_player_id = self
+            .initiative_tracker
+            .current_player()
+            .expect("empty initiative tracker");
+        let current_player = self
+            .actors
+            .get(&current_player_id)
+            .expect("missing player_id");
+        self.encounter_stack.push(StackElement::Prompt(Prompt::new(
+            current_player_id,
+            current_player.actions.clone(), // TODO: filter for legal actions (action, bonus action; no reaction)
+        )));
     }
 }
