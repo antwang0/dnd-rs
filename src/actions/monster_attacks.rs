@@ -1,12 +1,21 @@
 use std::collections::HashSet;
+use std::sync::LazyLock;
+
+use tyche::Dice;
+use tyche::dice::roller::Roller;
 
 use crate::{
     actions::action_template::{Action, TargetingSchema},
     engine::{
-        action_overrides::ActionOverride, encounter::EncounterInstance, side_effects::Resource,
-        types::Coordinate,
+        action_overrides::ActionOverride,
+        encounter::EncounterInstance,
+        side_effects::{DealDamage, Resource},
+        types::{Coordinate, DamageType},
+        util::modifier_from_score,
     },
 };
+
+pub static SLAM: LazyLock<Slam> = LazyLock::new(|| Slam {});
 
 pub struct Slam {}
 
@@ -43,26 +52,39 @@ impl Action for Slam {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
         let mut effects: Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> = vec![];
-        // TODO
-        // if let Some(target_ids) = target_ids {
-        //     let target_id = target_ids[0];
-        //     let caster = encounter.actors.get(&caster_id).unwrap();
-        //     let target = encounter.actors.get(&target_id).unwrap();
+        if let Some(target_ids) = target_ids {
+            let target_id = target_ids[0];
+            let caster_strength = encounter.actors.get(&caster_id).unwrap().ability_score(
+                crate::engine::types::AbilityScoreType::Strength,
+            );
+            let attack_bonus = encounter.actors.get(&caster_id).unwrap().attack_bonus();
+            let target_ac = encounter.actors.get(&target_id).unwrap().armor_class();
 
-        //     // Attack roll
-        //     let attack_roll = Roll::d20().roll() + caster.attack_bonus();
-        //     let attack_successful = attack_roll >= target.armor_class();
+            let d20 = Dice::new(1, 20);
+            let attack_roll = encounter
+                .roller
+                .roll(&d20, true)
+                .unwrap()
+                .total()
+                .unwrap() as i32
+                + attack_bonus;
 
-        //     if attack_successful {
-        //         // Damage roll
-        //         let damage_roll = Roll::from_str("2d6").unwrap().roll() + caster.damage_bonus();
-        //         effects.push(Box::new(DealDamage {
-        //             actor_id: target_id,
-        //             amount: damage_roll,
-        //             damage_type: DamageType::Bludgeoning,
-        //         }));
-        //     }
-        // }
+            if attack_roll >= target_ac as i32 {
+                let damage_dice = Dice::new(2, 6);
+                let damage_roll = encounter
+                    .roller
+                    .roll(&damage_dice, true)
+                    .unwrap()
+                    .total()
+                    .unwrap() as i32
+                    + modifier_from_score(caster_strength);
+                effects.push(Box::new(DealDamage {
+                    actor_id: target_id,
+                    amount: damage_roll.max(0) as u32,
+                    damage_type: DamageType::Bludgeoning,
+                }));
+            }
+        }
 
         effects
     }

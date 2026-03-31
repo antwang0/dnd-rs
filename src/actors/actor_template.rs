@@ -383,4 +383,17 @@ impl ActorInstance {
     pub fn bonus_action_slots(&self) -> u32 {
         self.bonus_action_slots
     }
+
+    pub fn take_damage(&mut self, amount: u32) {
+        self.hitpoints = self.hitpoints.saturating_sub(amount);
+    }
+
+    pub fn attack_bonus(&self) -> i32 {
+        // TODO: add proficiency bonus once it's tracked
+        modifier_from_score(self.strength)
+    }
+
+    pub fn damage_bonus(&self) -> i32 {
+        modifier_from_score(self.strength)
+    }
 }

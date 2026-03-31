@@ -4,7 +4,7 @@ use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::errors::RngTryError;
 
-use rand::Rng;
+use rand::RngExt;
 
 const MAX_TRIES: usize = 512;
 

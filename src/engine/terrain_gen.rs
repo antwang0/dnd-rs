@@ -1,7 +1,6 @@
 use crate::engine::terrain::{TerrainInfo, TerrainType};
 
-use rand::Rng;
-use rand::RngCore;
+use rand::RngExt;
 
 const MIN_WIDTH: usize = 4;
 const MIN_ROOM_WIDTH: usize = 6;
@@ -49,7 +48,7 @@ fn idx(x: usize, y: usize, params: &TerrainGenParams) -> usize {
     x + y * params.width
 }
 
-fn binary_space_partition<R: RngCore>(params: &TerrainGenParams, rng: &mut R) -> Vec<TerrainInfo> {
+fn binary_space_partition<R: RngExt>(params: &TerrainGenParams, rng: &mut R) -> Vec<TerrainInfo> {
     let mut root = BSPNode {
         x: 0,
         y: 0,

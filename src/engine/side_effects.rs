@@ -1,5 +1,5 @@
 use crate::engine::encounter::EncounterInstance;
-use crate::engine::types::Coordinate;
+use crate::engine::types::{Coordinate, DamageType};
 
 pub trait ApplicableSideEffect {
     fn apply(&self, ei: &mut EncounterInstance);
@@ -53,6 +53,20 @@ impl ApplicableSideEffect for MoveActor {
             .expect("failed to move actor");
         let actor = ei.actors.get_mut(&self.actor_id).expect("missing actor id");
         actor.set_location(self.target);
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct DealDamage {
+    pub actor_id: usize,
+    pub amount: u32,
+    pub damage_type: DamageType,
+}
+
+impl ApplicableSideEffect for DealDamage {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let actor = ei.actors.get_mut(&self.actor_id).unwrap();
+        actor.take_damage(self.amount);
     }
 }
 

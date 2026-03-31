@@ -591,10 +591,14 @@ impl EncounterInstance {
         let last = self.encounter_stack.pop();
         match last {
             None => None,
-            Some(se) => match &se.entry {
+            Some(se) => match se.entry {
                 StackElementEntry::Prompt(p) => Some(p),
                 other => {
-                    self.encounter_stack.push(se);
+                    self.encounter_stack.push(StackElement {
+                        entry: other,
+                        id: se.id,
+                        success_dependencies: se.success_dependencies,
+                    });
                     None
                 }
             },
@@ -603,8 +607,10 @@ impl EncounterInstance {
 
     pub fn push_action(&mut self, action_execution_info: ActionExecutionInfo) {
         // TODO: temp stack for reactions
-        self.encounter_stack
-            .push(StackElement::Action(Box::new(action_execution_info)));
+        self.enqueue_event(
+            StackElementEntry::Action(Box::new(action_execution_info)),
+            None,
+        );
     }
 
     pub fn process_stack(&mut self) {
@@ -634,18 +640,18 @@ impl EncounterInstance {
             }
 
             let se = self.encounter_stack.pop().expect("unexpected empty stack");
-            self.check_triggers(&se, TriggerEventType::Execute);
-            match se {
-                StackElement::Prompt(_) => {
+            self.check_triggers(&se.entry, TriggerEventType::Execute);
+            match se.entry {
+                StackElementEntry::Prompt(_) => {
                     panic!("should be unreachable: prompt case")
                 }
-                StackElement::Action(a) => {
+                StackElementEntry::Action(a) => {
                     let mut side_effects = a.execute(self);
                     for sen in side_effects.drain(..) {
-                        self.enqueue_event(StackElement::SideEffect(sen));
+                        self.enqueue_event(StackElementEntry::SideEffect(sen), None);
                     }
                 }
-                StackElement::SideEffect(s) => {
+                StackElementEntry::SideEffect(s) => {
                     s.apply(self);
                 }
             };
@@ -653,9 +659,10 @@ impl EncounterInstance {
 
         // TODO: get the next prompt if necessary
         // the stack should contain a prompt at the top always
-        if let Some(StackElement::Prompt(_)) = self.encounter_stack.last() {
-            // exit on prompt
-            return;
+        if let Some(se) = self.encounter_stack.last() {
+            if let StackElementEntry::Prompt(_) = &se.entry {
+                return;
+            }
         }
         if self.encounter_stack.is_empty() {
             self.outcome_tracker.reset();
@@ -668,9 +675,12 @@ impl EncounterInstance {
             .actors
             .get(&current_player_id)
             .expect("missing player_id");
-        self.encounter_stack.push(StackElement::Prompt(Prompt::new(
-            current_player_id,
-            current_player.actions.clone(), // TODO: filter for legal actions (action, bonus action; no reaction)
-        )));
+        self.enqueue_event(
+            StackElementEntry::Prompt(Prompt::new(
+                current_player_id,
+                current_player.actions.clone(), // TODO: filter for legal actions (action, bonus action; no reaction)
+            )),
+            None,
+        );
     }
 }
