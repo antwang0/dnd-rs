@@ -166,6 +166,7 @@ dependencies = [
  "crossterm",
  "rand",
  "ratatui",
+ "regex",
  "tyche",
 ]
 

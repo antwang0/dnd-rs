@@ -8,10 +8,14 @@ rand = "0.9.2"
 tyche = "0.3.1"  # for dice
 ratatui = "0.29"
 crossterm = "0.28"
+regex = "1.11.2"
 
 # Enable a small amount of optimization in the dev profile.
 [profile.dev]
-opt-level = 1
+opt-level = 0
+debug = true
+debug-assertions = true
+overflow-checks = true
 
 # Enable a large amount of optimization in the dev profile for dependencies.
 [profile.dev.package."*"]
