@@ -63,7 +63,7 @@ impl Action for Move {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let target_location: Coordinate = target_locations.unwrap().first().unwrap().clone();
+        let target_location: Coordinate = *target_locations.unwrap().first().unwrap();
         vec![Box::new(MoveActor {
             actor_id: caster_id,
             target: target_location,

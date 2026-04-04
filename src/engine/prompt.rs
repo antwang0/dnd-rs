@@ -59,12 +59,12 @@ impl Prompt {
         let aei: ActionExecutionInfo = ActionExecutionInfo::new(
             action,
             self.actor_id,
-            if target_ids.len() > 0 {
+            if !target_ids.is_empty() {
                 Some(target_ids)
             } else {
                 None
             },
-            if target_locations.len() > 0 {
+            if !target_locations.is_empty() {
                 Some(target_locations)
             } else {
                 None
@@ -72,13 +72,13 @@ impl Prompt {
             None, // TODO: overrides
         );
 
-        if !aei.validate(&encounter_instance) {
+        if !aei.validate(encounter_instance) {
             // TODO: better error for insufficient resources etc
             return Err(ParseError::new(&format!(
                 "argument validation failed for {}",
                 input
             )));
         }
-        return Ok(aei);
+        Ok(aei)
     }
 }

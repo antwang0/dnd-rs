@@ -23,8 +23,9 @@ pub struct ConsumeResource {
 
 impl ApplicableSideEffect for ConsumeResource {
     fn apply(&self, ei: &mut EncounterInstance) {
-        let actor = ei.actors.get_mut(&self.actor_id).unwrap();
-        actor.consume_resource(self.resource);
+        if let Some(actor) = ei.actors.get_mut(&self.actor_id) {
+            actor.consume_resource(self.resource);
+        }
     }
 }
 
@@ -36,8 +37,9 @@ pub struct GiveResource {
 
 impl ApplicableSideEffect for GiveResource {
     fn apply(&self, ei: &mut EncounterInstance) {
-        let actor = ei.actors.get_mut(&self.actor_id).unwrap();
-        actor.give_resource(self.resource);
+        if let Some(actor) = ei.actors.get_mut(&self.actor_id) {
+            actor.give_resource(self.resource);
+        }
     }
 }
 
@@ -49,10 +51,12 @@ pub struct MoveActor {
 
 impl ApplicableSideEffect for MoveActor {
     fn apply(&self, ei: &mut EncounterInstance) {
-        ei.set_actor_map(self.actor_id, self.target)
-            .expect("failed to move actor");
-        let actor = ei.actors.get_mut(&self.actor_id).expect("missing actor id");
-        actor.set_location(self.target);
+        if ei.set_actor_map(self.actor_id, self.target).is_err() {
+            return;
+        }
+        if let Some(actor) = ei.actors.get_mut(&self.actor_id) {
+            actor.set_location(self.target);
+        }
     }
 }
 
@@ -65,8 +69,9 @@ pub struct DealDamage {
 
 impl ApplicableSideEffect for DealDamage {
     fn apply(&self, ei: &mut EncounterInstance) {
-        let actor = ei.actors.get_mut(&self.actor_id).unwrap();
-        actor.take_damage(self.amount);
+        if let Some(actor) = ei.actors.get_mut(&self.actor_id) {
+            actor.take_damage(self.amount);
+        }
     }
 }
 

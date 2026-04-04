@@ -55,7 +55,7 @@ pub struct NegativeAbsCoord {
 
 impl NegativeAbsCoord {
     pub fn new(coord: Coordinate) -> Self {
-        Self { coord: coord }
+        Self { coord }
     }
     pub fn coord(&self) -> Coordinate {
         self.coord

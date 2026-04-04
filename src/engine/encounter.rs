@@ -13,7 +13,7 @@ use crate::engine::terrain_gen::{TerrainGenParams, generate_terrain};
 use crate::engine::triggers::TriggerEventType;
 use crate::engine::types::{Coordinate, Size};
 use crate::engine::util::{get_colored_span, get_tiles_from_size};
-use rand::seq::SliceRandom;
+use fastrand::Rng;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
@@ -71,11 +71,7 @@ impl InitiativeTracker {
     }
 
     pub fn current_player(&self) -> Option<usize> {
-        if let Some(ie) = self.initiatives.get(self.curr_index) {
-            Some(ie.actor_id)
-        } else {
-            None
-        }
+        self.initiatives.get(self.curr_index).map(|ie| ie.actor_id)
     }
 
     pub fn advance(&mut self) {
@@ -97,8 +93,8 @@ impl InitiativeTracker {
         self.initiatives.insert(
             idx,
             InitiativeElement {
-                actor_id: actor_id,
-                initiative: initiative,
+                actor_id,
+                initiative,
             },
         );
         if idx <= self.curr_index {
@@ -141,11 +137,7 @@ impl OutcomeTracker {
     }
 
     pub fn get_outcome(&self, id: usize) -> Option<bool> {
-        if let Some(s) = self.successes.get(&id) {
-            Some(*s)
-        } else {
-            None
-        }
+        self.successes.get(&id).copied()
     }
 
     pub fn reset(&mut self) {
@@ -167,6 +159,7 @@ pub struct EncounterInstance {
     pub encounter_stack: Vec<StackElement>,
     pub temp_encounter_queue: LinkedList<StackElement>, // for handling multiple reactions
     pub roller: FastRandRoller,
+    pub rng: Rng,
     messages: Vec<String>,
     tmp_message: String,
     outcome_tracker: OutcomeTracker,
@@ -189,9 +182,9 @@ impl EncounterInstance {
 
     pub fn get_actor(&mut self, actor_id: usize) -> Option<&mut ActorInstance> {
         if let Some(a) = self.actors.get_mut(&actor_id) {
-            return Some(a);
+            Some(a)
         } else {
-            return None;
+            None
         }
     }
 
@@ -211,15 +204,11 @@ impl EncounterInstance {
             return false;
         }
 
-        if let Some(_) = self.actor_id_at(coord) {
+        if self.actor_id_at(coord).is_some() {
             return false;
         }
 
-        let ti = self.terrain_at(coord);
-        match ti.terrain_type {
-            TerrainType::Floor => true,
-            _ => false,
-        }
+        matches!(self.terrain_at(coord), Some(ti) if ti.terrain_type == TerrainType::Floor)
     }
 
     fn can_move_to_subtile(&self, coord: Coordinate, actor_id: usize) -> bool {
@@ -231,20 +220,15 @@ impl EncounterInstance {
             return false;
         }
 
-        if let Some(other_id) = self.actor_id_at(coord) {
-            if other_id != actor_id {
+        if let Some(other_id) = self.actor_id_at(coord)
+            && other_id != actor_id {
                 return false;
             }
-        }
 
-        let ti = self.terrain_at(coord);
-        match ti.terrain_type {
-            TerrainType::Floor => true,
-            _ => false,
-        }
+        matches!(self.terrain_at(coord), Some(ti) if ti.terrain_type == TerrainType::Floor)
     }
 
-    fn get_random_coord_list(&self) -> Vec<Coordinate> {
+    fn get_random_coord_list(&mut self) -> Vec<Coordinate> {
         // TODO: probably try random order of one axis first
         let mut all_coords: Vec<Coordinate> = Vec::new();
         for x in 0..self.width {
@@ -252,7 +236,7 @@ impl EncounterInstance {
                 all_coords.push(Coordinate::new(x as isize, y as isize));
             }
         }
-        all_coords.shuffle(&mut rand::rng());
+        self.rng.shuffle(&mut all_coords);
         all_coords
     }
 
@@ -275,20 +259,20 @@ impl EncounterInstance {
     }
 
     pub fn actor_id_at(&self, coord: Coordinate) -> Option<usize> {
-        if let Some(r) = self.actor_map.get(self.idx(coord).unwrap()) {
-            *r
-        } else {
-            None
-        }
+        let idx = self.idx(coord).ok()?;
+        self.actor_map.get(idx).copied().flatten()
     }
 
     fn set_actor_id_at(&mut self, actor_id: Option<usize>, coord: Coordinate) {
-        let idx = self.idx(coord).unwrap();
-        self.actor_map[idx] = actor_id;
+        if let Ok(idx) = self.idx(coord)
+            && let Some(slot) = self.actor_map.get_mut(idx) {
+                *slot = actor_id;
+            }
     }
 
-    pub fn terrain_at(&self, coord: Coordinate) -> &TerrainInfo {
-        &self.terrain[self.idx(coord).unwrap()]
+    pub fn terrain_at(&self, coord: Coordinate) -> Option<&TerrainInfo> {
+        let idx = self.idx(coord).ok()?;
+        self.terrain.get(idx)
     }
 
     pub fn can_move_to(&self, actor_id: usize, coord: Coordinate) -> bool {
@@ -327,10 +311,10 @@ impl EncounterInstance {
                     }
                 } else {
                     let s = Span::from(
-                        match self.terrain_at(coord).terrain_type {
-                            TerrainType::Empty => ' ',
-                            TerrainType::Floor => '░',
-                            TerrainType::Wall => '█',
+                        match self.terrain_at(coord).map(|t| &t.terrain_type) {
+                            Some(TerrainType::Floor) => '░',
+                            Some(TerrainType::Wall) => '█',
+                            _ => ' ',
                         }
                         .to_string(),
                     );
@@ -361,8 +345,7 @@ impl EncounterInstance {
                 let mut initiative_bar: Vec<Span> = Vec::new();
                 initiative_bar.push(Span::from(format!("Current actor: {} ", curr_actor.name())));
                 initiative_bar.push(Span::styled(s, Style::default().fg(c).bg(bg)));
-                let mut txt: Vec<Line> = Vec::new();
-                txt.push(Line::from(initiative_bar));
+                let txt: Vec<Line> = vec![Line::from(initiative_bar)];
 
                 let mut stats_info: String = String::new();
                 stats_info.push_str(&format!(
@@ -430,34 +413,37 @@ impl EncounterInstance {
     pub fn from_params(
         terrain_params: &TerrainGenParams,
         actor_params: &ActorGenParams,
-    ) -> EncounterInstance {
+        seed: Option<u64>,
+    ) -> Result<EncounterInstance, Box<dyn Error>> {
+        let (roller, mut rng) = match seed {
+            Some(s) => (FastRandRoller::with_seed(s), Rng::with_seed(s)),
+            None => (FastRandRoller::default(), Rng::new()),
+        };
+
         let mut ei = EncounterInstance {
             initialized: false,
             width: terrain_params.width,
             height: terrain_params.height,
-            terrain: generate_terrain(terrain_params),
+            terrain: generate_terrain(terrain_params, &mut rng),
             actor_id_next: 0,
             actor_map: vec![None; terrain_params.width * terrain_params.height],
             actors: HashMap::new(),
             initiative_tracker: InitiativeTracker::new(),
             encounter_stack: Vec::new(),
             temp_encounter_queue: LinkedList::new(),
-            roller: FastRandRoller::default(), // TODO: seed https://docs.rs/tyche/latest/tyche/#rolling-dice
+            roller,
+            rng,
             messages: Vec::new(),
             tmp_message: String::new(),
             outcome_tracker: OutcomeTracker::new(),
         };
 
         // TODO: move pool to fn
-        let mut template_pool: Vec<&'static CreatureTemplate> = Vec::new();
-        template_pool.push(&ZOMBIE_TEMPLATE);
+        let template_pool: Vec<&'static CreatureTemplate> = vec![&ZOMBIE_TEMPLATE];
 
-        match generate_actors(&mut ei, actor_params, &template_pool) {
-            Ok(()) => {}
-            Err(_) => panic!("failed to generate actors"),
-        }
-        ei.initialize();
-        ei
+        generate_actors(&mut ei, actor_params, &template_pool)?;
+        ei.initialize()?;
+        Ok(ei)
     }
 
     pub fn skip_turn(&mut self) {
@@ -482,19 +468,11 @@ impl EncounterInstance {
         if let Some(actor) = self.actors.get(&actor_id) {
             let actor_width = get_tiles_from_size(actor.size());
 
-            // assumes unit is square
             let coord_old = actor.location();
-            for i in coord_old.x..self.width as isize {
-                let coord_tmp = Coordinate::new(i, coord_old.y);
-                if self.actor_id_at(coord_tmp) != Some(actor_id) {
-                    break;
-                }
-                for j in coord_old.y..self.height as isize {
-                    let coord_tmp = Coordinate::new(i, j);
-                    if self.actor_id_at(coord_tmp) != Some(actor_id) {
-                        break;
-                    }
-                    self.set_actor_id_at(None, coord_tmp);
+            for x_off in 0..actor_width {
+                for y_off in 0..actor_width {
+                    let offset = Coordinate::new(x_off as isize, y_off as isize);
+                    self.set_actor_id_at(None, coord_old + offset);
                 }
             }
 
@@ -540,20 +518,21 @@ impl EncounterInstance {
         Ok(actor_id)
     }
 
-    pub fn initialize(&mut self) {
+    pub fn initialize(&mut self) -> Result<(), &'static str> {
         if self.initialized {
-            panic!("attempted to initialize already initialized encounter")
+            return Err("attempted to initialize already initialized encounter");
         }
         for (_, actor) in self.actors.iter_mut() {
             actor.roll_initiative(&mut self.roller);
         }
         self.initiative_tracker.initialize_actors(&self.actors);
         self.initialized = true;
+        Ok(())
     }
 
     pub fn check_triggers(&mut self, event: &StackElementEntry, _event_type: TriggerEventType) {
         match event {
-            StackElementEntry::Prompt(_) => return,
+            StackElementEntry::Prompt(_) => (),
             StackElementEntry::Action(_a) => {
                 // TODO
             }
@@ -572,7 +551,7 @@ impl EncounterInstance {
         self.encounter_stack.push(StackElement {
             entry: se,
             id: self.outcome_tracker.next_id(),
-            success_dependencies: success_dependencies,
+            success_dependencies,
         });
     }
 
@@ -581,7 +560,7 @@ impl EncounterInstance {
         match last {
             None => None,
             Some(se) => match &se.entry {
-                StackElementEntry::Prompt(p) => Some(&p),
+                StackElementEntry::Prompt(p) => Some(p),
                 _ => None,
             },
         }
@@ -615,13 +594,13 @@ impl EncounterInstance {
 
     pub fn process_stack(&mut self) {
         if !self.initialized {
-            panic!("attempted to run uninitialized encounter");
+            return;
         }
         // if we ever encounter something that prompts a user/AI input, we
         // should stop processing the stack
 
         // check if we are done processing the current batch of possible reactions
-        if let Some(_) = self.peek_prompt() {
+        if self.peek_prompt().is_some() {
             // exit on prompt
             return;
         }
@@ -635,15 +614,21 @@ impl EncounterInstance {
         }
 
         while !self.encounter_stack.is_empty() {
-            if let Some(_) = self.peek_prompt() {
+            if self.peek_prompt().is_some() {
                 return;
             }
 
             let se = self.encounter_stack.pop().expect("unexpected empty stack");
             self.check_triggers(&se.entry, TriggerEventType::Execute);
             match se.entry {
-                StackElementEntry::Prompt(_) => {
-                    panic!("should be unreachable: prompt case")
+                StackElementEntry::Prompt(p) => {
+                    // Prompt appeared between peek and pop — push it back
+                    self.encounter_stack.push(StackElement {
+                        entry: StackElementEntry::Prompt(p),
+                        id: se.id,
+                        success_dependencies: se.success_dependencies,
+                    });
+                    return;
                 }
                 StackElementEntry::Action(a) => {
                     let mut side_effects = a.execute(self);
@@ -659,11 +644,10 @@ impl EncounterInstance {
 
         // TODO: get the next prompt if necessary
         // the stack should contain a prompt at the top always
-        if let Some(se) = self.encounter_stack.last() {
-            if let StackElementEntry::Prompt(_) = &se.entry {
+        if let Some(se) = self.encounter_stack.last()
+            && let StackElementEntry::Prompt(_) = &se.entry {
                 return;
             }
-        }
         if self.encounter_stack.is_empty() {
             self.outcome_tracker.reset();
         }

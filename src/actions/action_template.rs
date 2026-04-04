@@ -52,19 +52,19 @@ pub trait Action {
         // TODO this is gross
         let schema_validation = match self.targeting_schema() {
             TargetingSchema::NoArgs => {
-                if target_ids != None {
+                if target_ids.is_some() {
                     return false;
                 }
-                if target_locations != None {
+                if target_locations.is_some() {
                     return false;
                 }
-                if overrides != None {
+                if overrides.is_some() {
                     return false;
                 }
                 true
             }
             TargetingSchema::SinglePoint => {
-                if target_ids != None {
+                if target_ids.is_some() {
                     return false;
                 }
                 if let Some(tl) = target_locations {
@@ -78,7 +78,7 @@ pub trait Action {
             }
             TargetingSchema::SingleActor => {
                 return if let Some(target_ids) = target_ids {
-                    if target_ids.len() == 0 { false } else { true }
+                    !target_ids.is_empty()
                 } else {
                     false
                 };
@@ -105,13 +105,13 @@ pub trait Action {
                 return false;
             }
         }
-        return self.custom_validate_input(
+        self.custom_validate_input(
             encounter,
             caster_id,
             target_ids,
             target_locations,
             overrides,
-        );
+        )
     }
 
     fn custom_validate_input(
@@ -185,31 +185,31 @@ impl ActionExecutionInfo {
         overrides: Option<HashSet<ActionOverride>>,
     ) -> Self {
         Self {
-            action: action,
-            caster_id: caster_id,
-            target_ids: target_ids,
-            target_locations: target_locations,
-            overrides: overrides,
+            action,
+            caster_id,
+            target_ids,
+            target_locations,
+            overrides,
         }
     }
 
     pub fn validate(&self, encounter: &EncounterInstance) -> bool {
-        return self.action.validate_input(
+        self.action.validate_input(
             encounter,
             self.caster_id,
             self.target_ids.as_ref(),
             self.target_locations.as_ref(),
             self.overrides.as_ref(),
-        );
+        )
     }
 
     pub fn execute(&self, encounter: &mut EncounterInstance) -> Vec<Box<dyn ApplicableSideEffect>> {
-        return self.action.execute(
+        self.action.execute(
             encounter,
             self.caster_id,
             self.target_ids.as_ref(),
             self.target_locations.as_ref(),
             self.overrides.as_ref(),
-        );
+        )
     }
 }

@@ -45,13 +45,19 @@ fn main() -> io::Result<()> {
         branch_prob: 0.5,
     };
 
+    let seed: Option<u64> = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse::<u64>().ok());
+
     let mut encounter_instance: EncounterInstance = EncounterInstance::from_params(
         &terrain_params,
         &ActorGenParams {
             cr_target: 1.0,
             n_teams: 2,
         },
-    );
+        seed,
+    )
+    .expect("failed to create encounter");
 
     while running {
         encounter_instance.process_stack();
@@ -102,9 +108,9 @@ fn main() -> io::Result<()> {
         })?;
 
         // Handle input
-        if event::poll(std::time::Duration::from_millis(200))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
+        if event::poll(std::time::Duration::from_millis(200))?
+            && let Event::Key(key) = event::read()?
+                && key.kind == KeyEventKind::Press {
                     match key.code {
                         KeyCode::Char(c) => input_str.push(c),
                         KeyCode::Backspace => {
@@ -135,8 +141,6 @@ fn main() -> io::Result<()> {
                         _ => {}
                     }
                 }
-            }
-        }
     }
 
     // Restore terminal

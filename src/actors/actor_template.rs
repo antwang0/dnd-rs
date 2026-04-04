@@ -147,7 +147,7 @@ pub struct ActorInstance {
     location: Coordinate,
     team_id: usize,
     base_ac: u32,
-    base_hipoints: u32,
+    base_hitpoints: u32,
     base_speed: f32,
     base_size: Size,
     initiative: Option<i32>,
@@ -189,13 +189,13 @@ impl ActorInstance {
         // variable stats should derive from below calls(such as max_hitpoints())
         // as they can be affected by item, effects, etc
         Result::Ok(ActorInstance {
-            name: name,
-            location: location,
-            team_id: team_id,
+            name,
+            location,
+            team_id,
             base_ac: ct.ac,
-            base_hipoints: hp_roll_val,
+            base_hitpoints: hp_roll_val,
             base_speed: ct.speed,
-            base_size: ct.size.clone(),
+            base_size: ct.size,
             initiative: None,
             strength: ct.strength,
             intelligence: ct.intelligence,
@@ -214,7 +214,7 @@ impl ActorInstance {
             bonus_action_slots: 0,
             reaction_slots: 0,
             legendary_action_slots: 0,
-            size: ct.size.clone(), // TODO: should derive from function call
+            size: ct.size, // TODO: should derive from function call
             spell_slot_manager: SpellSlotManager {
                 ssi_by_lvl: Vec::new(),
                 warlock_ssi: SpellSlotInfo {
@@ -321,13 +321,13 @@ impl ActorInstance {
 
     pub fn max_hitpoints(&self) -> u32 {
         // TODO: apply modifiers to ability scores (such as temporary buffs)
-        self.base_hipoints
+        self.base_hitpoints
     }
     // TODO: bonus hitpoints?
 
     pub fn speed(&self) -> f32 {
         // TODO: apply modifiers to ability scores (such as temporary buffs)
-        return self.base_speed;
+        self.base_speed
     }
 
     pub fn remaining_movement(&self) -> f32 {
@@ -335,7 +335,7 @@ impl ActorInstance {
     }
 
     pub fn size(&self) -> Size {
-        self.size.clone()
+        self.size
     }
 
     pub fn set_location(&mut self, target: Coordinate) {

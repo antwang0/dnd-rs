@@ -99,7 +99,7 @@ pub struct Coordinate {
 
 impl Coordinate {
     pub fn new(x: isize, y: isize) -> Self {
-        Self { x: x, y: y }
+        Self { x, y }
     }
 }
 

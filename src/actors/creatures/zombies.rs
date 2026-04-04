@@ -9,7 +9,7 @@ pub static ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*SLAM);
     CreatureTemplate {
-        name: &"Zombie",
+        name: "Zombie",
         n_instances: 0,
         ac: 8,
         hitpoints: "2d8+6".parse().unwrap(),
