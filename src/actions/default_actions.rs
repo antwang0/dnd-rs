@@ -10,7 +10,6 @@ use crate::{
         action_overrides::ActionOverride,
         encounter::EncounterInstance,
         side_effects::{MoveActor, Resource, SkipTurn},
-        util::tile_center_dist,
     },
 };
 
@@ -37,9 +36,8 @@ impl Action for Move {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Option<Resource> {
-        let actor = encounter.actors.get(&caster_id)?;
         let dest = *target_locations?.first()?;
-        let dist = tile_center_dist(actor.location(), dest);
+        let dist = encounter.path_cost_to(caster_id, dest)?;
         Some(Resource::Movement(dist))
     }
 
@@ -57,7 +55,9 @@ impl Action for Move {
         let Some(&coord) = tl.first() else {
             return false;
         };
-        encounter.can_move_to(caster_id, coord)
+        // path_cost_to verifies destination footprint AND walkable path
+        // within remaining movement budget.
+        encounter.path_cost_to(caster_id, coord).is_some()
     }
 
     fn side_effects(

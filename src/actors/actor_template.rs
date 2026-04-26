@@ -360,7 +360,7 @@ impl ActorInstance {
     }
 
     pub fn roll_initiative(&mut self, roller: &mut impl Roller) {
-        let dice = Dice::new(1, 6);
+        let dice = Dice::new(1, 20);
         let rolled = match roller.roll(&dice, true).and_then(|r| r.total()) {
             Ok(v) => v as i32,
             Err(_) => self.initiative_mod(),

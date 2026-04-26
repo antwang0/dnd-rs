@@ -35,7 +35,7 @@ fn blink_on() -> bool {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    (millis / 500) % 2 == 0
+    (millis / 500).is_multiple_of(2)
 }
 
 pub enum StackElementEntry {
@@ -87,21 +87,21 @@ impl InitiativeTracker {
     }
 
     pub fn advance(&mut self) {
-        if self.curr_index >= self.initiatives.len() - 1 {
+        if self.initiatives.is_empty() {
             self.curr_index = 0;
-        } else {
-            self.curr_index += 1;
+            return;
         }
+        self.curr_index = (self.curr_index + 1) % self.initiatives.len();
     }
 
     pub fn add_actor(&mut self, actor_id: usize, initiative: i32) {
-        let mut idx: usize = 0;
-        for (i, ie) in self.initiatives.iter().enumerate() {
-            idx = i;
-            if initiative > ie.initiative {
-                break;
-            }
-        }
+        // Find the first slot whose initiative is strictly less than the new
+        // value; insert before it so higher initiatives stay first.
+        let idx = self
+            .initiatives
+            .iter()
+            .position(|ie| initiative > ie.initiative)
+            .unwrap_or(self.initiatives.len());
         self.initiatives.insert(
             idx,
             InitiativeElement {
@@ -109,12 +109,33 @@ impl InitiativeTracker {
                 initiative,
             },
         );
-        if idx <= self.curr_index {
-            self.curr_index += 1;
+        // If we inserted at or before the active slot, the active actor
+        // shifted down by one; bump curr_index to keep pointing at them.
+        if idx <= self.curr_index && !self.initiatives.is_empty() {
+            self.curr_index = (self.curr_index + 1).min(self.initiatives.len() - 1);
         }
     }
 
-    pub fn initialize_actors(&mut self, actors: &HashMap<usize, Box<ActorInstance>>) {
+    pub fn remove_actor(&mut self, actor_id: usize) {
+        let Some(idx) = self.initiatives.iter().position(|ie| ie.actor_id == actor_id) else {
+            return;
+        };
+        self.initiatives.remove(idx);
+        if self.initiatives.is_empty() {
+            self.curr_index = 0;
+            return;
+        }
+        // Removing at or before curr shifts the active slot up by one; if we
+        // removed the active slot itself, the next actor naturally takes its
+        // place at the same index.
+        if idx < self.curr_index {
+            self.curr_index -= 1;
+        } else if self.curr_index >= self.initiatives.len() {
+            self.curr_index = 0;
+        }
+    }
+
+    pub fn initialize_actors(&mut self, actors: &HashMap<usize, ActorInstance>) {
         for (id, actor) in actors.iter() {
             self.initiatives.push(InitiativeElement {
                 actor_id: *id,
@@ -144,14 +165,6 @@ impl OutcomeTracker {
         id
     }
 
-    pub fn set_outcome(&mut self, id: usize, success: bool) {
-        self.successes.insert(id, success);
-    }
-
-    pub fn get_outcome(&self, id: usize) -> Option<bool> {
-        self.successes.get(&id).copied()
-    }
-
     pub fn reset(&mut self) {
         self.next_id = 0;
         self.successes.clear();
@@ -166,7 +179,7 @@ pub struct EncounterInstance {
     pub terrain: Vec<TerrainInfo>,
     pub actor_id_next: usize,
     pub actor_map: Vec<Option<usize>>,
-    pub actors: HashMap<usize, Box<ActorInstance>>,
+    pub actors: HashMap<usize, ActorInstance>,
     initiative_tracker: InitiativeTracker,
     pub encounter_stack: Vec<StackElement>,
     pub temp_encounter_queue: LinkedList<StackElement>, // for handling multiple reactions
@@ -197,11 +210,7 @@ impl EncounterInstance {
     }
 
     pub fn get_actor(&mut self, actor_id: usize) -> Option<&mut ActorInstance> {
-        if let Some(a) = self.actors.get_mut(&actor_id) {
-            Some(a)
-        } else {
-            None
-        }
+        self.actors.get_mut(&actor_id)
     }
 
     pub fn idx(&self, coord: Coordinate) -> Result<usize, NegativeAbsCoord> {
@@ -307,6 +316,77 @@ impl EncounterInstance {
         false
     }
 
+    /// Min movement cost to walk from the actor's current location to `dest`,
+    /// bounded by their remaining movement. Returns `None` if `dest` is
+    /// unreachable on floor tiles within budget. 8-connected; cardinal steps
+    /// cost 5ft, diagonal steps cost ~7.07ft (Euclidean).
+    pub fn path_cost_to(&self, actor_id: usize, dest: Coordinate) -> Option<f32> {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+
+        let actor = self.actors.get(&actor_id)?;
+        let start = actor.location();
+        if start == dest {
+            return Some(0.0);
+        }
+        if !self.can_move_to(actor_id, dest) {
+            return None;
+        }
+
+        // Encode floats as millifeet so we can use integer ordering / Eq.
+        let to_mft = |f: f32| -> u32 { (f * 1000.0) as u32 };
+        let cardinal_mft = to_mft(2.5); // 5ft via tile_center_dist semantics (2.5 * 1)
+        let diagonal_mft = to_mft(2.5 * std::f32::consts::SQRT_2);
+        let budget_mft = to_mft(actor.remaining_movement() + 0.5);
+
+        let start_idx = self.idx(start).ok()?;
+        let dest_idx = self.idx(dest).ok()?;
+        let mut dist: Vec<u32> = vec![u32::MAX; self.width * self.height];
+        dist[start_idx] = 0;
+
+        let mut heap: BinaryHeap<Reverse<(u32, usize)>> = BinaryHeap::new();
+        heap.push(Reverse((0, start_idx)));
+
+        while let Some(Reverse((cost, idx))) = heap.pop() {
+            if idx == dest_idx {
+                return Some(cost as f32 / 1000.0);
+            }
+            if cost > dist[idx] {
+                continue;
+            }
+            let cx = (idx % self.width) as isize;
+            let cy = (idx / self.width) as isize;
+            for dy in -1..=1isize {
+                for dx in -1..=1isize {
+                    if dx == 0 && dy == 0 {
+                        continue;
+                    }
+                    let next = Coordinate::new(cx + dx, cy + dy);
+                    if !self.can_move_to(actor_id, next) {
+                        continue;
+                    }
+                    let step = if dx == 0 || dy == 0 {
+                        cardinal_mft
+                    } else {
+                        diagonal_mft
+                    };
+                    let next_cost = cost.saturating_add(step);
+                    if next_cost > budget_mft {
+                        continue;
+                    }
+                    let Ok(next_idx) = self.idx(next) else {
+                        continue;
+                    };
+                    if next_cost < dist[next_idx] {
+                        dist[next_idx] = next_cost;
+                        heap.push(Reverse((next_cost, next_idx)));
+                    }
+                }
+            }
+        }
+        None
+    }
+
     pub fn render_map(&self, frame: &mut Frame, area: Rect) {
         let mut text: Vec<Line> = Vec::new();
 
@@ -322,21 +402,18 @@ impl EncounterInstance {
             let mut row: Vec<Span> = Vec::new();
             for x in 0..self.width {
                 let coord = Coordinate::new(x as isize, y as isize);
-                if let Some(actor_id) = self.actor_id_at(coord) {
-                    match self.actors.get(&actor_id) {
-                        Some(actor) => {
-                            let (s, c, bg): (String, Color, Color) =
-                                get_colored_span(actor_id, actor.team());
-                            let mut style = Style::default().fg(c).bg(bg);
-                            if Some(actor_id) == active_actor_id && !blink_on() {
-                                style = style.add_modifier(Modifier::REVERSED);
-                            }
-                            row.push(Span::styled(s, style));
-                        }
-                        None => {
-                            panic!("Actor not found");
-                        }
+                if let Some(actor_id) = self.actor_id_at(coord)
+                    && let Some(actor) = self.actors.get(&actor_id)
+                {
+                    // Stale id (cleanup race between damage tick and frame draw)
+                    // would otherwise crash the renderer; skip to the terrain branch.
+                    let (s, c, bg): (String, Color, Color) =
+                        get_colored_span(actor_id, actor.team());
+                    let mut style = Style::default().fg(c).bg(bg);
+                    if Some(actor_id) == active_actor_id && !blink_on() {
+                        style = style.add_modifier(Modifier::REVERSED);
                     }
+                    row.push(Span::styled(s, style));
                 } else {
                     let s = Span::from(
                         match self.terrain_at(coord).map(|t| &t.terrain_type) {
@@ -574,16 +651,12 @@ impl EncounterInstance {
 
     pub fn skip_turn(&mut self) {
         self.initiative_tracker.advance();
-        let curr_actor = self
-            .actors
-            .get_mut(
-                &self
-                    .initiative_tracker
-                    .current_player()
-                    .expect("empty initiative tracker"),
-            )
-            .unwrap();
-        curr_actor.reset_for_new_round();
+        let Some(next_id) = self.initiative_tracker.current_player() else {
+            return;
+        };
+        if let Some(curr_actor) = self.actors.get_mut(&next_id) {
+            curr_actor.reset_for_new_round();
+        }
     }
 
     pub fn set_actor_map(
@@ -622,26 +695,51 @@ impl EncounterInstance {
     ) -> Result<usize, Box<dyn Error>> {
         let actor_id = self.next_actor_id();
 
-        let mut ai_box = Box::new(ActorInstance::from_creature_template(
+        let mut actor = ActorInstance::from_creature_template(
             creature_template,
             location,
             team_id,
             &mut self.roller,
             instance_n,
-        )?);
-        ai_box.reset_for_new_round();
+        )?;
+        actor.reset_for_new_round();
 
         if self.initialized {
-            ai_box.roll_initiative(&mut self.roller);
+            actor.roll_initiative(&mut self.roller);
             self.initiative_tracker
-                .add_actor(actor_id, ai_box.initiative().unwrap());
+                .add_actor(actor_id, actor.initiative().unwrap());
         }
 
-        self.actors.insert(actor_id, ai_box);
+        self.actors.insert(actor_id, actor);
 
         self.set_actor_map(actor_id, location)?;
 
         Ok(actor_id)
+    }
+
+    /// Removes any actor with 0 HP from the initiative queue, the actor map,
+    /// and the actors table. Logs each death. Idempotent.
+    pub fn cleanup_dead_actors(&mut self) {
+        let dead: Vec<usize> = self
+            .actors
+            .iter()
+            .filter_map(|(id, a)| if a.hitpoints() == 0 { Some(*id) } else { None })
+            .collect();
+        for id in dead {
+            let Some(actor) = self.actors.remove(&id) else {
+                continue;
+            };
+            self.log(format!("{} dies.", actor.name()));
+            let actor_width = get_tiles_from_size(actor.size());
+            let loc = actor.location();
+            for x_off in 0..actor_width {
+                for y_off in 0..actor_width {
+                    let offset = Coordinate::new(x_off as isize, y_off as isize);
+                    self.set_actor_id_at(None, loc + offset);
+                }
+            }
+            self.initiative_tracker.remove_actor(id);
+        }
     }
 
     pub fn initialize(&mut self) -> Result<(), &'static str> {
@@ -722,33 +820,22 @@ impl EncounterInstance {
         if !self.initialized {
             return;
         }
-        // if we ever encounter something that prompts a user/AI input, we
-        // should stop processing the stack
 
-        // check if we are done processing the current batch of possible reactions
+        // Bail if we are already waiting on a player prompt.
         if self.peek_prompt().is_some() {
-            // exit on prompt
             return;
         }
-        // transfer the temp queue to the stack
-        while !self.temp_encounter_queue.is_empty() {
-            self.encounter_stack.push(
-                self.temp_encounter_queue
-                    .pop_front()
-                    .expect("temp queue should not be empty"),
-            );
+
+        // Transfer the reaction queue onto the main stack before draining.
+        while let Some(se) = self.temp_encounter_queue.pop_front() {
+            self.encounter_stack.push(se);
         }
 
-        while !self.encounter_stack.is_empty() {
-            if self.peek_prompt().is_some() {
-                return;
-            }
-
-            let se = self.encounter_stack.pop().expect("unexpected empty stack");
+        while let Some(se) = self.encounter_stack.pop() {
             self.check_triggers(&se.entry, TriggerEventType::Execute);
             match se.entry {
                 StackElementEntry::Prompt(p) => {
-                    // Prompt appeared between peek and pop — push it back
+                    // A prompt was already on the stack; put it back and bail.
                     self.encounter_stack.push(StackElement {
                         entry: StackElementEntry::Prompt(p),
                         id: se.id,
@@ -764,27 +851,20 @@ impl EncounterInstance {
                 }
                 StackElementEntry::SideEffect(s) => {
                     s.apply(self);
+                    self.cleanup_dead_actors();
                 }
-            };
+            }
         }
 
-        // TODO: get the next prompt if necessary
-        // the stack should contain a prompt at the top always
-        if let Some(se) = self.encounter_stack.last()
-            && let StackElementEntry::Prompt(_) = &se.entry {
-                return;
-            }
-        if self.encounter_stack.is_empty() {
-            self.outcome_tracker.reset();
-        }
-        let current_player_id = self
-            .initiative_tracker
-            .current_player()
-            .expect("empty initiative tracker");
-        let current_player = self
-            .actors
-            .get(&current_player_id)
-            .expect("missing player_id");
+        self.outcome_tracker.reset();
+
+        // Skip the prompt if the encounter has wound down (everyone died).
+        let Some(current_player_id) = self.initiative_tracker.current_player() else {
+            return;
+        };
+        let Some(current_player) = self.actors.get(&current_player_id) else {
+            return;
+        };
         self.enqueue_event(
             StackElementEntry::Prompt(Prompt::new(
                 current_player_id,

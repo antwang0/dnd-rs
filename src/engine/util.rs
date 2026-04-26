@@ -7,8 +7,7 @@ use crate::engine::types::{Coordinate, Size};
 pub fn get_tiles_from_size(size: Size) -> usize {
     match size {
         Size::Tiny => 1,
-        Size::Small => 2,
-        Size::Medium => 2,
+        Size::Small | Size::Medium => 2,
         Size::Large => 4,
         Size::Huge => 6,
         Size::Gargantuan => 8,
