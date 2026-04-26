@@ -37,8 +37,8 @@ impl Action for Move {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Option<Resource> {
-        let actor = encounter.actors.get(&caster_id).expect("missing actor");
-        let dest: Coordinate = *target_locations.unwrap().first().unwrap();
+        let actor = encounter.actors.get(&caster_id)?;
+        let dest = *target_locations?.first()?;
         let dist = tile_center_dist(actor.location(), dest);
         Some(Resource::Movement(dist))
     }
@@ -51,7 +51,12 @@ impl Action for Move {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        let coord: Coordinate = *target_locations.unwrap().first().unwrap();
+        let Some(tl) = target_locations else {
+            return false;
+        };
+        let Some(&coord) = tl.first() else {
+            return false;
+        };
         encounter.can_move_to(caster_id, coord)
     }
 
@@ -63,7 +68,9 @@ impl Action for Move {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let target_location: Coordinate = *target_locations.unwrap().first().unwrap();
+        let Some(target_location) = target_locations.and_then(|v| v.first().copied()) else {
+            return Vec::new();
+        };
         vec![Box::new(MoveActor {
             actor_id: caster_id,
             target: target_location,
@@ -147,10 +154,10 @@ impl Action for Dash {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let speed = encounter
-            .get_actor(caster_id)
-            .expect("missing actor")
-            .speed();
+        let Some(actor) = encounter.get_actor(caster_id) else {
+            return Vec::new();
+        };
+        let speed = actor.speed();
         vec![Box::new(GiveResource {
             actor_id: caster_id,
             resource: Resource::Movement(speed),

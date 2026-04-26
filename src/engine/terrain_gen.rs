@@ -167,7 +167,6 @@ fn binary_space_partition(params: &TerrainGenParams, rng: &mut Rng) -> Vec<Terra
 }
 
 pub fn generate_terrain(params: &TerrainGenParams, rng: &mut Rng) -> Vec<TerrainInfo> {
-    
     // TODO: modify terrain
     binary_space_partition(params, rng)
 }

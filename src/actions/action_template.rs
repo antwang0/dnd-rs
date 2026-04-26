@@ -83,12 +83,7 @@ pub trait Action {
                     false
                 };
             }
-            TargetingSchema::Custom => {
-                panic!(
-                    "custom targeting validation not implemented for {:?}",
-                    self.name()
-                )
-            }
+            TargetingSchema::Custom => true,
         };
         if !schema_validation {
             return false;
@@ -100,7 +95,9 @@ pub trait Action {
             target_locations,
             overrides,
         ) {
-            let actor = encounter.actors.get(&caster_id).expect("missing actor");
+            let Some(actor) = encounter.actors.get(&caster_id) else {
+                return false;
+            };
             if !actor.can_consume_resource(cost) {
                 return false;
             }
@@ -140,10 +137,9 @@ pub trait Action {
             target_locations,
             overrides,
         ) {
-            panic!(
-                "Tried to execute action {:?} with illegal args",
-                self.name()
-            )
+            // The action became invalid between enqueue and execute (e.g. target died,
+            // resource was consumed elsewhere). Skip silently; the engine logs context.
+            return Vec::new();
         }
         let mut side_effects = self.side_effects(
             encounter,

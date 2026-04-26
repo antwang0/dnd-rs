@@ -54,9 +54,11 @@ impl Action for Slam {
         let mut effects: Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> = vec![];
         if let Some(target_ids) = target_ids {
             let target_id = target_ids[0];
-            let caster_strength = encounter.actors.get(&caster_id).unwrap().ability_score(
-                crate::engine::types::AbilityScoreType::Strength,
-            );
+            let caster_strength = encounter
+                .actors
+                .get(&caster_id)
+                .unwrap()
+                .ability_score(crate::engine::types::AbilityScoreType::Strength);
             let attack_bonus = encounter.actors.get(&caster_id).unwrap().attack_bonus();
             let target_ac = encounter.actors.get(&target_id).unwrap().armor_class();
 

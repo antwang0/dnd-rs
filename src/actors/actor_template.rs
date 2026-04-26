@@ -142,6 +142,7 @@ impl SpellSlotManager {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)] // many fields are placeholders for not-yet-wired systems
 pub struct ActorInstance {
     name: String,
     location: Coordinate,
@@ -227,8 +228,8 @@ impl ActorInstance {
         })
     }
 
-    pub fn name(&self) -> String {
-        self.name.clone()
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     pub fn team(&self) -> usize {
@@ -260,9 +261,11 @@ impl ActorInstance {
         }
     }
 
-    pub fn consume_resource(&mut self, resource: Resource) {
+    /// Consumes the resource. Returns false (and changes nothing) if the
+    /// actor lacks it; callers should pre-check with `can_consume_resource`.
+    pub fn consume_resource(&mut self, resource: Resource) -> bool {
         if !self.can_consume_resource(resource) {
-            panic!("illegal resource consumption")
+            return false;
         }
         match resource {
             Resource::Movement(movement_amt) => {
@@ -284,6 +287,7 @@ impl ActorInstance {
                 self.legendary_action_slots -= 1;
             }
         }
+        true
     }
 
     pub fn give_resource(&mut self, resource: Resource) {
@@ -357,13 +361,11 @@ impl ActorInstance {
 
     pub fn roll_initiative(&mut self, roller: &mut impl Roller) {
         let dice = Dice::new(1, 6);
-        let rolled = roller
-            .roll(&dice, true)
-            .expect("somehow roll failed")
-            .total()
-            .expect("roll conversion failed");
-
-        self.initiative = Some(rolled as i32 + self.initiative_mod());
+        let rolled = match roller.roll(&dice, true).and_then(|r| r.total()) {
+            Ok(v) => v as i32,
+            Err(_) => self.initiative_mod(),
+        };
+        self.initiative = Some(rolled + self.initiative_mod());
     }
 
     pub fn reset_for_new_round(&mut self) {

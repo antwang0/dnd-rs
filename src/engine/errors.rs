@@ -7,7 +7,7 @@ pub struct RngTryError;
 
 impl fmt::Display for RngTryError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "exceede max tries for rng")
+        write!(f, "exceeded max tries for rng")
     }
 }
 
@@ -26,23 +26,40 @@ impl std::error::Error for NoLegalPosition {}
 
 #[derive(Debug, Clone)]
 pub struct ParseError {
-    input: String,
+    msg: String,
+    input: Option<String>,
 }
 
 impl ParseError {
-    pub fn new(s: &str) -> Self {
+    pub fn new(msg: impl Into<String>) -> Self {
         Self {
-            input: s.to_string(),
+            msg: msg.into(),
+            input: None,
         }
     }
-    pub fn input(&self) -> &str {
-        &self.input
+
+    pub fn with_input(msg: impl Into<String>, input: impl Into<String>) -> Self {
+        Self {
+            msg: msg.into(),
+            input: Some(input.into()),
+        }
+    }
+
+    pub fn message(&self) -> &str {
+        &self.msg
+    }
+
+    pub fn input(&self) -> Option<&str> {
+        self.input.as_deref()
     }
 }
 
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "failed to parse input: {}", self.input())
+        match &self.input {
+            Some(input) => write!(f, "{}: {:?}", self.msg, input),
+            None => write!(f, "{}", self.msg),
+        }
     }
 }
 
@@ -73,3 +90,26 @@ impl fmt::Display for NegativeAbsCoord {
 }
 
 impl std::error::Error for NegativeAbsCoord {}
+
+#[derive(Debug, Clone)]
+pub enum ActionError {
+    InvalidArgs(String),
+    InsufficientResources,
+    UnknownActor(usize),
+    UnknownAction(String),
+    InvalidTarget(String),
+}
+
+impl fmt::Display for ActionError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::InvalidArgs(s) => write!(f, "invalid args: {}", s),
+            Self::InsufficientResources => write!(f, "insufficient resources"),
+            Self::UnknownActor(id) => write!(f, "unknown actor id {}", id),
+            Self::UnknownAction(n) => write!(f, "unknown action {:?}", n),
+            Self::InvalidTarget(s) => write!(f, "invalid target: {}", s),
+        }
+    }
+}
+
+impl std::error::Error for ActionError {}

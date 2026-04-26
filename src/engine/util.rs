@@ -1,5 +1,6 @@
 use ratatui::style::Color;
 use regex::Regex;
+use std::sync::LazyLock;
 
 use crate::engine::types::{Coordinate, Size};
 
@@ -42,17 +43,18 @@ pub fn tile_center_dist(c1: Coordinate, c2: Coordinate) -> f32 {
     2.5 * ((diff.x.pow(2) + diff.y.pow(2)) as f32).sqrt()
 }
 
-pub fn parse_coord(input: &str, base_coord: Coordinate) -> Option<Coordinate> {
-    let re_abs = Regex::new(r"^(\d+),(\d+)$").unwrap();
-    let re_rel = Regex::new(r"^(r|l)(\d+),?(u|d)(\d+)$").unwrap();
+static RE_ABS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d+),(\d+)$").unwrap());
+static RE_REL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(r|l)(\d+),?(u|d)(\d+)$").unwrap());
 
-    if let Some(caps) = re_abs.captures(input) {
+pub fn parse_coord(input: &str, base_coord: Coordinate) -> Option<Coordinate> {
+    if let Some(caps) = RE_ABS.captures(input) {
         let x = caps[1].parse::<isize>().ok()?;
         let y = caps[2].parse::<isize>().ok()?;
         return Some(Coordinate::new(x, y));
     }
 
-    if let Some(caps) = re_rel.captures(input) {
+    if let Some(caps) = RE_REL.captures(input) {
         let pos_x: bool = &caps[1] == "r";
         let pos_y: bool = &caps[3] == "u";
         let x_off = caps[2].parse::<isize>().ok()? * if pos_x { 1 } else { -1 };
@@ -61,4 +63,35 @@ pub fn parse_coord(input: &str, base_coord: Coordinate) -> Option<Coordinate> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_coord_absolute() {
+        let base = Coordinate::new(0, 0);
+        assert_eq!(parse_coord("3,5", base), Some(Coordinate::new(3, 5)));
+    }
+
+    #[test]
+    fn parse_coord_relative() {
+        let base = Coordinate::new(10, 10);
+        assert_eq!(parse_coord("r2u3", base), Some(Coordinate::new(12, 13)));
+        assert_eq!(parse_coord("l4d1", base), Some(Coordinate::new(6, 9)));
+    }
+
+    #[test]
+    fn parse_coord_invalid() {
+        assert_eq!(parse_coord("garbage", Coordinate::new(0, 0)), None);
+        assert_eq!(parse_coord("1,", Coordinate::new(0, 0)), None);
+    }
+
+    #[test]
+    fn modifier_from_score_examples() {
+        assert_eq!(modifier_from_score(10), 0);
+        assert_eq!(modifier_from_score(8), -1);
+        assert_eq!(modifier_from_score(20), 5);
+    }
 }

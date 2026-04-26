@@ -1,7 +1,7 @@
 use std::fmt;
 use std::ops::{Add, Sub};
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AbilityScoreType {
     Strength,
     Dexterity,
@@ -33,7 +33,7 @@ pub enum Skill {
     Survival,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DamageType {
     Acid,
     Bludgeoning,
@@ -50,7 +50,7 @@ pub enum DamageType {
     Thunder,
 }
 
-#[derive(Clone, PartialEq, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Size {
     Tiny,
     Small,

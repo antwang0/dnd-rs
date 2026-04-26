@@ -16,7 +16,7 @@ use crate::engine::util::{get_colored_span, get_tiles_from_size};
 use fastrand::Rng;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 use ratatui::{
     layout::{Constraint, Direction, Layout},
@@ -25,6 +25,18 @@ use ratatui::{
 };
 use std::cmp::Ordering;
 use tyche::dice::roller::FastRand as FastRandRoller;
+
+/// True/false toggle that flips every ~500ms based on wall-clock time.
+/// Used to manually blink UI elements; ANSI SLOW_BLINK is unreliable on
+/// many terminals (notably Windows Terminal).
+fn blink_on() -> bool {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    (millis / 500) % 2 == 0
+}
 
 pub enum StackElementEntry {
     SideEffect(Box<dyn ApplicableSideEffect>),
@@ -174,6 +186,10 @@ impl EncounterInstance {
         &self.tmp_message
     }
 
+    pub fn log(&mut self, msg: impl Into<String>) {
+        self.messages.push(msg.into());
+    }
+
     pub fn next_actor_id(&mut self) -> usize {
         let next_actor_id = self.actor_id_next;
         self.actor_id_next += 1;
@@ -294,6 +310,14 @@ impl EncounterInstance {
     pub fn render_map(&self, frame: &mut Frame, area: Rect) {
         let mut text: Vec<Line> = Vec::new();
 
+        let active_actor_id: Option<usize> = self.encounter_stack.last().and_then(|se| {
+            if let StackElementEntry::Prompt(p) = &se.entry {
+                Some(p.actor_id())
+            } else {
+                None
+            }
+        });
+
         for y in (0..self.height).rev() {
             let mut row: Vec<Span> = Vec::new();
             for x in 0..self.width {
@@ -303,7 +327,11 @@ impl EncounterInstance {
                         Some(actor) => {
                             let (s, c, bg): (String, Color, Color) =
                                 get_colored_span(actor_id, actor.team());
-                            row.push(Span::styled(s, Style::default().fg(c).bg(bg)));
+                            let mut style = Style::default().fg(c).bg(bg);
+                            if Some(actor_id) == active_actor_id && !blink_on() {
+                                style = style.add_modifier(Modifier::REVERSED);
+                            }
+                            row.push(Span::styled(s, style));
                         }
                         None => {
                             panic!("Actor not found");
@@ -329,85 +357,183 @@ impl EncounterInstance {
         );
     }
 
-    pub fn render_sideinfo(&mut self, frame: &mut Frame, area: Rect) {
+    pub fn render_sideinfo(&mut self, frame: &mut Frame, area: Rect, selected_action_idx: usize) {
+        fn hp_bar_spans(current: u32, max: u32, width: usize) -> Vec<Span<'static>> {
+            if max == 0 {
+                return vec![];
+            }
+            let ratio = current as f64 / max as f64;
+            let filled = ((ratio * width as f64).round() as usize).min(width);
+            let empty = width - filled;
+            let color = if ratio > 0.5 {
+                Color::Green
+            } else if ratio > 0.25 {
+                Color::Yellow
+            } else {
+                Color::Red
+            };
+            let mut spans: Vec<Span<'static>> = Vec::new();
+            if filled > 0 {
+                spans.push(Span::styled(
+                    "█".repeat(filled),
+                    Style::default().fg(color),
+                ));
+            }
+            if empty > 0 {
+                spans.push(Span::styled(
+                    "░".repeat(empty),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+            spans
+        }
+
         let area_split = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(1), Constraint::Min(1), Constraint::Min(1)])
             .split(area);
 
-        if let Some(se) = self.encounter_stack.last() {
-            if let StackElementEntry::Prompt(prmpt) = &se.entry {
-                let curr_actor_id = prmpt.actor_id();
-                let curr_actor = self.actors.get(&curr_actor_id).expect("missing actor");
-                let (s, c, bg): (String, Color, Color) =
-                    get_colored_span(curr_actor_id, curr_actor.team());
-
-                let mut initiative_bar: Vec<Span> = Vec::new();
-                initiative_bar.push(Span::from(format!("Current actor: {} ", curr_actor.name())));
-                initiative_bar.push(Span::styled(s, Style::default().fg(c).bg(bg)));
-                let txt: Vec<Line> = vec![Line::from(initiative_bar)];
-
-                let mut stats_info: String = String::new();
-                stats_info.push_str(&format!(
-                    "HP: {}/{}\n",
-                    curr_actor.hitpoints(),
-                    curr_actor.max_hitpoints()
-                ));
-                stats_info.push_str(&format!("AC: {}\n", curr_actor.armor_class()));
-                stats_info.push_str(&format!("Movement: {}\n", curr_actor.remaining_movement()));
-                stats_info.push_str(&format!(
-                    "Actions: {} Bonus Actions: {}\n",
-                    curr_actor.action_slots(),
-                    curr_actor.bonus_action_slots()
-                ));
-
-                let mut action_info: String = String::new();
-                for &action in prmpt.actions().iter() {
-                    action_info.push_str(action.name());
-                    action_info.push('\n');
+        // Extract prompt data early to avoid holding a borrow across field accesses.
+        let prompt_info: Option<(usize, Vec<String>)> =
+            self.encounter_stack.last().and_then(|se| {
+                if let StackElementEntry::Prompt(p) = &se.entry {
+                    Some((
+                        p.actor_id(),
+                        p.actions().iter().map(|a| a.name().to_string()).collect(),
+                    ))
+                } else {
+                    None
                 }
+            });
+        let stack_status = match self.encounter_stack.last() {
+            None => "no_prompt",
+            Some(se) if matches!(se.entry, StackElementEntry::Prompt(_)) => "prompt",
+            Some(_) => "processing",
+        };
 
-                frame.render_widget(
-                    Paragraph::new(txt)
-                        .block(Block::default().borders(Borders::ALL).title("Initiative")),
-                    area_split[0],
-                );
-                frame.render_widget(
-                    Paragraph::new(stats_info)
-                        .block(Block::default().borders(Borders::ALL).title("Resources")),
-                    area_split[1],
-                );
-                frame.render_widget(
-                    Paragraph::new(action_info)
-                        .block(Block::default().borders(Borders::ALL).title("Actions")),
-                    area_split[2],
-                );
-            } else {
-                frame.render_widget(
-                    Paragraph::new("ERROR")
-                        .block(Block::default().borders(Borders::ALL).title("Initiative")),
-                    area_split[0],
-                );
-
-                self.messages.push(format!(
-                    "non prompt on top of stack {:?} {:?}",
-                    self.messages.len(),
-                    self.encounter_stack.len()
-                ));
+        // Initiative queue: show all actors in turn order, starting from the
+        // current actor; highlight + blink-glyph the active one.
+        let init_len = self.initiative_tracker.initiatives.len();
+        let curr_idx = self.initiative_tracker.curr_index;
+        let mut initiative_lines: Vec<Line<'static>> = Vec::new();
+        for i in 0..init_len {
+            let slot = (curr_idx + i) % init_len;
+            let actor_id = self.initiative_tracker.initiatives[slot].actor_id;
+            let is_current = prompt_info.as_ref().is_some_and(|(id, _)| *id == actor_id);
+            if let Some(actor) = self.actors.get(&actor_id) {
+                let (s, c, bg) = get_colored_span(actor_id, actor.team());
+                let prefix = if is_current { "> " } else { "  " };
+                let mut glyph_style = Style::default().fg(c).bg(bg);
+                let name_style = if is_current {
+                    if !blink_on() {
+                        glyph_style = glyph_style.add_modifier(Modifier::REVERSED);
+                    }
+                    Style::default().add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                let mut spans: Vec<Span<'static>> = vec![
+                    Span::raw(prefix),
+                    Span::styled(s, glyph_style),
+                    Span::raw(" "),
+                    Span::styled(actor.name().to_string(), name_style),
+                    Span::raw(" "),
+                ];
+                spans.extend(hp_bar_spans(actor.hitpoints(), actor.max_hitpoints(), 8));
+                initiative_lines.push(Line::from(spans));
             }
-        } else {
-            frame.render_widget(
-                Paragraph::new("ERROR")
-                    .block(Block::default().borders(Borders::ALL).title("Initiative")),
-                area_split[0],
-            );
-
-            self.messages.push(format!(
-                "else {:?} {:?}",
-                self.messages.len(),
-                self.encounter_stack.len()
-            ));
         }
+        frame.render_widget(
+            Paragraph::new(initiative_lines)
+                .block(Block::default().borders(Borders::ALL).title("Initiative")),
+            area_split[0],
+        );
+
+        // Resources / Actions panels need a valid prompt with a known actor.
+        let Some((curr_actor_id, action_names)) = prompt_info else {
+            let msg = match stack_status {
+                "processing" => "(processing...)",
+                _ => "(no prompt)",
+            };
+            frame.render_widget(
+                Paragraph::new(msg)
+                    .block(Block::default().borders(Borders::ALL).title("Resources")),
+                area_split[1],
+            );
+            frame.render_widget(
+                Paragraph::new("").block(Block::default().borders(Borders::ALL).title("Actions")),
+                area_split[2],
+            );
+            return;
+        };
+
+        let Some(curr_actor) = self.actors.get(&curr_actor_id) else {
+            frame.render_widget(
+                Paragraph::new("(missing actor)")
+                    .block(Block::default().borders(Borders::ALL).title("Resources")),
+                area_split[1],
+            );
+            frame.render_widget(
+                Paragraph::new("").block(Block::default().borders(Borders::ALL).title("Actions")),
+                area_split[2],
+            );
+            return;
+        };
+
+        let hp = curr_actor.hitpoints();
+        let max_hp = curr_actor.max_hitpoints();
+        let ac = curr_actor.armor_class();
+        let movement = curr_actor.remaining_movement();
+        let action_slots = curr_actor.action_slots();
+        let bonus_slots = curr_actor.bonus_action_slots();
+
+        let mut hp_spans: Vec<Span<'static>> = vec![Span::raw("HP: ")];
+        hp_spans.extend(hp_bar_spans(hp, max_hp, 10));
+        hp_spans.push(Span::raw(format!(" {}/{}", hp, max_hp)));
+
+        let stats_lines: Vec<Line<'static>> = vec![
+            Line::from(hp_spans),
+            Line::from(Span::raw(format!("AC: {}", ac))),
+            Line::from(Span::raw(format!("Movement: {:.0}", movement))),
+            Line::from(Span::raw(format!(
+                "Actions: {}  Bonus: {}",
+                action_slots, bonus_slots
+            ))),
+        ];
+        frame.render_widget(
+            Paragraph::new(stats_lines)
+                .block(Block::default().borders(Borders::ALL).title("Resources")),
+            area_split[1],
+        );
+
+        let n_actions = action_names.len();
+        let highlight_idx = if n_actions > 0 {
+            selected_action_idx % n_actions
+        } else {
+            0
+        };
+        let action_lines: Vec<Line<'static>> = action_names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let is_selected = i == highlight_idx && n_actions > 0;
+                let prefix = if is_selected { "> " } else { "  " };
+                let style = if is_selected {
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::White)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                Line::from(vec![Span::raw(prefix), Span::styled(name.clone(), style)])
+            })
+            .collect();
+        frame.render_widget(
+            Paragraph::new(action_lines)
+                .block(Block::default().borders(Borders::ALL).title("Actions")),
+            area_split[2],
+        );
     }
 
     pub fn from_params(
