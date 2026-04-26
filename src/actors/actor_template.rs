@@ -1,3 +1,4 @@
+use crate::engine::dice::{Dice, DiceExpr, Roller};
 use crate::engine::side_effects::Resource;
 use crate::engine::types::Coordinate;
 use crate::items::item_template::Item;
@@ -10,16 +11,13 @@ use crate::{
 };
 use std::collections::HashSet;
 
-use tyche::dice::roller::Roller;
-use tyche::{Dice, Expr};
-
 use std::error::Error;
 
 pub struct CreatureTemplate {
     pub name: &'static str,
     pub n_instances: usize,
     pub ac: u32,
-    pub hitpoints: Expr,
+    pub hitpoints: DiceExpr,
     pub speed: f32,
     pub strength: u32,
     pub intelligence: u32,
@@ -182,8 +180,7 @@ impl ActorInstance {
         roller: &mut impl Roller,
         instance_n: usize,
     ) -> Result<ActorInstance, Box<dyn Error>> {
-        let hp_roll_result = ct.hitpoints.eval(roller)?;
-        let hp_roll_val = hp_roll_result.calc()? as u32;
+        let hp_roll_val: u32 = ct.hitpoints.eval(roller).max(0) as u32;
 
         let name: String = format!("{} {}", ct.name, instance_n);
 
@@ -360,11 +357,7 @@ impl ActorInstance {
     }
 
     pub fn roll_initiative(&mut self, roller: &mut impl Roller) {
-        let dice = Dice::new(1, 20);
-        let rolled = match roller.roll(&dice, true).and_then(|r| r.total()) {
-            Ok(v) => v as i32,
-            Err(_) => self.initiative_mod(),
-        };
+        let rolled = roller.roll(&Dice::new(1, 20)) as i32;
         self.initiative = Some(rolled + self.initiative_mod());
     }
 

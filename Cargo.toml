@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 fastrand = "2.4.1"
-tyche = "0.3.1"  # for dice
 ratatui = "0.30"
 crossterm = "0.29"
 regex = "1.12.3"

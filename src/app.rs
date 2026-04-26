@@ -3,15 +3,20 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::text::{Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph};
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io;
 use std::time::Duration;
 
-use crate::actions::action_template::ActionExecutionInfo;
+use crate::actions::action_template::{ActionExecutionInfo, TargetingSchema};
+use crate::ai::{Controller, ControllerDecision, PlayerController};
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::types::Coordinate;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
+/// Cap how many AI decisions we resolve per frame so a runaway controller
+/// can't lock the UI thread.
+const MAX_AI_STEPS_PER_TICK: usize = 64;
 
 /// Outcome of handling a single key press.
 pub enum Tick {
@@ -22,31 +27,80 @@ pub enum Tick {
 /// Holds the loop's mutable UI/input state so main.rs can stay slim.
 pub struct App {
     pub encounter: EncounterInstance,
+    /// Per-team turn driver. Teams without an entry default to the player
+    /// controller (i.e. the App pumps the keyboard for them).
+    controllers: HashMap<usize, Box<dyn Controller>>,
+    default_controller: Box<dyn Controller>,
     map_width: u16,
     map_height: u16,
     input_str: String,
     tmp_message: String,
     selected_action_idx: usize,
+    /// Index into the cached `valid_targets` list. Only meaningful when the
+    /// selected action's schema is `SingleActor`.
+    selected_target_idx: usize,
+    /// Recomputed each refresh from the active prompt + selected action.
+    /// Holds actor ids of every enemy the selected action validates against.
+    valid_targets: Vec<usize>,
     last_actor_id: Option<usize>,
+    last_action_idx: Option<usize>,
 }
 
 impl App {
     pub fn new(encounter: EncounterInstance, map_width: usize, map_height: usize) -> Self {
         Self {
             encounter,
+            controllers: HashMap::new(),
+            default_controller: Box::new(PlayerController),
             map_width: u16::try_from(map_width).unwrap_or(u16::MAX),
             map_height: u16::try_from(map_height).unwrap_or(u16::MAX),
             input_str: String::new(),
             tmp_message: String::new(),
             selected_action_idx: 0,
+            selected_target_idx: 0,
+            valid_targets: Vec::new(),
             last_actor_id: None,
+            last_action_idx: None,
         }
     }
 
+    /// Assigns a controller to a team. Replaces any existing one.
+    pub fn set_controller(&mut self, team_id: usize, controller: Box<dyn Controller>) {
+        self.controllers.insert(team_id, controller);
+    }
+
+    fn controller_for(&self, team_id: usize) -> &dyn Controller {
+        self.controllers
+            .get(&team_id)
+            .map_or(self.default_controller.as_ref(), |c| c.as_ref())
+    }
+
     /// Resync derived UI state with the engine — call once per loop iteration
-    /// before drawing.
+    /// before drawing. Drives AI controllers to completion so the player only
+    /// sees the engine when it's their turn (or when the encounter ends).
     pub fn refresh(&mut self) {
-        self.encounter.process_stack();
+        for _ in 0..MAX_AI_STEPS_PER_TICK {
+            self.encounter.process_stack();
+            if self.encounter.is_complete() {
+                break;
+            }
+
+            let Some(prompt) = self.encounter.peek_prompt() else {
+                break;
+            };
+            let actor_id = prompt.actor_id();
+            let Some(team) = self.encounter.actors.get(&actor_id).map(|a| a.team()) else {
+                break;
+            };
+
+            match self.controller_for(team).decide(&self.encounter, actor_id) {
+                ControllerDecision::AwaitInput => break,
+                ControllerDecision::Act(aei) => {
+                    self.encounter.pop_prompt();
+                    self.encounter.push_action(aei);
+                }
+            }
+        }
 
         let curr_actor_id = self
             .encounter
@@ -64,6 +118,64 @@ impl App {
                 self.selected_action_idx = 0;
             }
         }
+
+        // Recompute valid targets when the active actor or action changes,
+        // and clamp the target cursor when the list shrinks.
+        if Some(self.selected_action_idx) != self.last_action_idx
+            || curr_actor_id != self.last_actor_id
+        {
+            self.selected_target_idx = 0;
+        }
+        self.valid_targets = self.compute_valid_targets();
+        if !self.valid_targets.is_empty() {
+            self.selected_target_idx %= self.valid_targets.len();
+        } else {
+            self.selected_target_idx = 0;
+        }
+        self.last_action_idx = Some(self.selected_action_idx);
+    }
+
+    fn selected_action(&self) -> Option<&'static (dyn crate::actions::action_template::Action + Send + Sync)> {
+        self.encounter
+            .peek_prompt()?
+            .actions()
+            .get(self.selected_action_idx)
+            .copied()
+    }
+
+    fn compute_valid_targets(&self) -> Vec<usize> {
+        let Some(prompt) = self.encounter.peek_prompt() else {
+            return Vec::new();
+        };
+        let Some(action) = self.selected_action() else {
+            return Vec::new();
+        };
+        if !matches!(action.targeting_schema(), TargetingSchema::SingleActor) {
+            return Vec::new();
+        }
+        let caster_id = prompt.actor_id();
+        let mut targets: Vec<usize> = self
+            .encounter
+            .actors
+            .keys()
+            .filter_map(|id| {
+                if *id == caster_id {
+                    return None;
+                }
+                let aei = ActionExecutionInfo::new(action, caster_id, Some(vec![*id]), None, None);
+                if aei.validate(&self.encounter) {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        targets.sort_unstable();
+        targets
+    }
+
+    fn highlighted_target(&self) -> Option<usize> {
+        self.valid_targets.get(self.selected_target_idx).copied()
     }
 
     pub fn draw(&mut self, f: &mut Frame) {
@@ -82,7 +194,8 @@ impl App {
             .constraints([Constraint::Length(self.map_width + 2), Constraint::Min(1)])
             .split(chunks[0]);
 
-        self.encounter.render_map(f, info_area[0]);
+        let highlighted = self.highlighted_target();
+        self.encounter.render_map_with(f, info_area[0], highlighted);
         self.encounter
             .render_sideinfo(f, info_area[1], self.selected_action_idx);
 
@@ -91,7 +204,13 @@ impl App {
                 .block(Block::default().borders(Borders::ALL).title("Input"));
         f.render_widget(input_widget, chunks[1]);
 
-        let tmp_message_widget = Paragraph::new(self.tmp_message.as_str())
+        let banner = self.completion_banner();
+        let target_line = self.target_line();
+        let msg_text = banner
+            .as_deref()
+            .or(target_line.as_deref())
+            .unwrap_or(self.tmp_message.as_str());
+        let tmp_message_widget = Paragraph::new(msg_text)
             .block(Block::default().borders(Borders::ALL).title("Message"));
         f.render_widget(tmp_message_widget, chunks[2]);
 
@@ -123,6 +242,15 @@ impl App {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Tick {
+        // Once the encounter is decided, the only key that matters is quit;
+        // ignore everything else so stray input doesn't get logged into the
+        // input box behind the banner.
+        if self.encounter.is_complete() {
+            return match key.code {
+                KeyCode::Esc => Tick::Quit,
+                _ => Tick::Continue,
+            };
+        }
         match key.code {
             KeyCode::Char(c) => self.input_str.push(c),
             KeyCode::Backspace => {
@@ -137,6 +265,57 @@ impl App {
             _ => {}
         }
         Tick::Continue
+    }
+
+    fn completion_banner(&self) -> Option<String> {
+        if !self.encounter.is_complete() {
+            return None;
+        }
+        match self.encounter.winning_team() {
+            Some(team) => Some(format!("Team {} wins! (Esc to quit)", team)),
+            None => Some("No survivors. (Esc to quit)".to_string()),
+        }
+    }
+
+    fn target_line(&self) -> Option<String> {
+        let prompt = self.encounter.peek_prompt()?;
+        let action = self.selected_action()?;
+        if !matches!(action.targeting_schema(), TargetingSchema::SingleActor) {
+            return None;
+        }
+        if self.valid_targets.is_empty() {
+            // Distinguish "I can't afford this" from "no enemy is reachable":
+            // both produce an empty target list but the player needs a
+            // different next move (switch action vs. close distance / wait).
+            let caster_id = prompt.actor_id();
+            let cost = action.cost(&self.encounter, caster_id, None, None, None);
+            let unaffordable = cost.is_some_and(|c| {
+                self.encounter
+                    .actors
+                    .get(&caster_id)
+                    .is_none_or(|a| !a.can_consume_resource(c))
+            });
+            let reason = if unaffordable {
+                cost.unwrap().lack_description()
+            } else {
+                "no targets in reach".to_string()
+            };
+            return Some(format!(
+                "{}: {} (Tab to switch action)",
+                action.name(),
+                reason
+            ));
+        }
+        let id = self.highlighted_target()?;
+        let target = self.encounter.actors.get(&id)?;
+        Some(format!(
+            "{}: target {} (HP {}/{}, team {}) — \u{2190}/\u{2192} cycle, Enter confirm",
+            action.name(),
+            target.name(),
+            target.hitpoints(),
+            target.max_hitpoints(),
+            target.team()
+        ))
     }
 
     fn cycle_action(&mut self) {
@@ -158,43 +337,70 @@ impl App {
             return;
         }
         let actor_id = prompt.actor_id();
-        let selected = prompt.actions().get(self.selected_action_idx).copied();
-        let selected_is_move = selected.map(|a| a.name()) == Some("move");
-
-        if selected_is_move {
-            let Some(action) = selected else { return };
-            let Some(actor) = self.encounter.actors.get(&actor_id) else {
-                return;
-            };
-            let dest = match code {
-                KeyCode::Up => actor.location() + Coordinate::new(0, 1),
-                KeyCode::Down => actor.location() + Coordinate::new(0, -1),
-                KeyCode::Left => actor.location() + Coordinate::new(-1, 0),
-                KeyCode::Right => actor.location() + Coordinate::new(1, 0),
-                _ => return,
-            };
-            let aei = ActionExecutionInfo::new(action, actor_id, None, Some(vec![dest]), None);
-            if aei.validate(&self.encounter) {
-                self.encounter.pop_prompt();
-                self.encounter.push_action(aei);
-                self.input_str.clear();
-                self.tmp_message.clear();
-            } else {
-                self.tmp_message.clear();
-                self.tmp_message.push_str("cannot move there");
-            }
+        let Some(action) = self.selected_action() else {
             return;
-        }
+        };
 
-        match code {
-            KeyCode::Up => {
-                self.selected_action_idx =
-                    (self.selected_action_idx + action_count - 1) % action_count;
+        match action.targeting_schema() {
+            TargetingSchema::SinglePoint => {
+                // Move-style action: arrows step the actor one tile.
+                let Some(actor) = self.encounter.actors.get(&actor_id) else {
+                    return;
+                };
+                let dest = match code {
+                    KeyCode::Up => actor.location() + Coordinate::new(0, 1),
+                    KeyCode::Down => actor.location() + Coordinate::new(0, -1),
+                    KeyCode::Left => actor.location() + Coordinate::new(-1, 0),
+                    KeyCode::Right => actor.location() + Coordinate::new(1, 0),
+                    _ => return,
+                };
+                let aei = ActionExecutionInfo::new(action, actor_id, None, Some(vec![dest]), None);
+                if aei.validate(&self.encounter) {
+                    self.encounter.pop_prompt();
+                    self.encounter.push_action(aei);
+                    self.input_str.clear();
+                    self.tmp_message.clear();
+                } else {
+                    self.tmp_message.clear();
+                    self.tmp_message.push_str("cannot move there");
+                }
             }
-            KeyCode::Down => {
-                self.selected_action_idx = (self.selected_action_idx + 1) % action_count;
+            TargetingSchema::SingleActor => {
+                // Target picker: left/right cycle the highlighted enemy,
+                // up/down cycle through actions (so the player can switch
+                // off an actor-target action without leaving the keyboard).
+                let n = self.valid_targets.len();
+                match code {
+                    KeyCode::Left if n > 0 => {
+                        self.selected_target_idx = (self.selected_target_idx + n - 1) % n;
+                    }
+                    KeyCode::Right if n > 0 => {
+                        self.selected_target_idx = (self.selected_target_idx + 1) % n;
+                    }
+                    KeyCode::Up => {
+                        self.selected_action_idx =
+                            (self.selected_action_idx + action_count - 1) % action_count;
+                    }
+                    KeyCode::Down => {
+                        self.selected_action_idx = (self.selected_action_idx + 1) % action_count;
+                    }
+                    _ => {}
+                }
             }
-            _ => {}
+            TargetingSchema::NoArgs | TargetingSchema::Custom => {
+                // Up/Down cycle the action; Left/Right ignored (avoid
+                // accidental selection-changes during command typing).
+                match code {
+                    KeyCode::Up => {
+                        self.selected_action_idx =
+                            (self.selected_action_idx + action_count - 1) % action_count;
+                    }
+                    KeyCode::Down => {
+                        self.selected_action_idx = (self.selected_action_idx + 1) % action_count;
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 
@@ -222,16 +428,41 @@ impl App {
             return Tick::Continue;
         }
 
-        // Empty input: execute the currently selected action if it doesn't
-        // need targeting (e.g. dash, skip).
+        // Empty input: confirm the current selection. Behavior depends on
+        // the selected action's targeting schema:
+        //   - SingleActor: invoke it against the currently highlighted target
+        //   - NoArgs:      invoke it as-is (dash, skip)
+        //   - SinglePoint: needs an arrow-key destination; tell the player
+        //   - Custom:      try invocation with no args and surface any error
         let Some(prompt) = self.encounter.peek_prompt() else {
             return Tick::Continue;
         };
         let actor_id = prompt.actor_id();
-        let Some(action) = prompt.actions().get(self.selected_action_idx).copied() else {
+        let Some(action) = self.selected_action() else {
             return Tick::Continue;
         };
-        let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
+        let aei = match action.targeting_schema() {
+            TargetingSchema::SingleActor => {
+                let Some(target_id) = self.highlighted_target() else {
+                    self.tmp_message.clear();
+                    let _ = write!(self.tmp_message, "'{}' has no valid targets", action.name());
+                    return Tick::Continue;
+                };
+                ActionExecutionInfo::new(action, actor_id, Some(vec![target_id]), None, None)
+            }
+            TargetingSchema::SinglePoint => {
+                self.tmp_message.clear();
+                let _ = write!(
+                    self.tmp_message,
+                    "'{}' needs a destination — use arrow keys",
+                    action.name()
+                );
+                return Tick::Continue;
+            }
+            TargetingSchema::NoArgs | TargetingSchema::Custom => {
+                ActionExecutionInfo::new(action, actor_id, None, None, None)
+            }
+        };
         if aei.validate(&self.encounter) {
             self.encounter.pop_prompt();
             self.encounter.push_action(aei);
@@ -239,7 +470,7 @@ impl App {
             self.tmp_message.clear();
         } else {
             self.tmp_message.clear();
-            let _ = write!(self.tmp_message, "'{}' needs a target", action.name());
+            let _ = write!(self.tmp_message, "'{}' is not valid right now", action.name());
         }
         Tick::Continue
     }

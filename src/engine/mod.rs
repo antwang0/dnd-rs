@@ -1,5 +1,6 @@
 pub mod action_overrides;
 pub mod actor_gen;
+pub mod dice;
 pub mod encounter;
 pub mod errors;
 pub mod prompt;

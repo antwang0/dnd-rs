@@ -15,6 +15,22 @@ pub enum Resource {
     LegendaryAction,
 }
 
+impl Resource {
+    /// Player-facing reason an actor cannot afford this resource right now.
+    /// Used by the picker UI to explain why an action is greyed out instead
+    /// of the misleading "no targets in reach".
+    pub fn lack_description(&self) -> String {
+        match self {
+            Resource::Action => "out of actions".to_string(),
+            Resource::BonusAction => "out of bonus actions".to_string(),
+            Resource::Reaction => "no reaction available".to_string(),
+            Resource::LegendaryAction => "out of legendary actions".to_string(),
+            Resource::Movement(_) => "out of movement".to_string(),
+            Resource::SpellSlot(lvl) => format!("no level-{} spell slot", lvl),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ConsumeResource {
     pub actor_id: usize,

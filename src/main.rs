@@ -1,10 +1,12 @@
 pub mod actions;
 pub mod actors;
+pub mod ai;
 pub mod app;
 pub mod conditions;
 pub mod engine;
 pub mod items;
 
+use crate::ai::SimpleAi;
 use crate::app::{App, Tick};
 use crate::engine::actor_gen::ActorGenParams;
 use crate::engine::encounter::EncounterInstance;
@@ -47,6 +49,12 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> 
         .expect("failed to create encounter");
 
     let mut app = App::new(encounter, terrain_params.width, terrain_params.height);
+    // Team 0 is the player by default; everyone else gets the baseline AI.
+    // Swap in custom controllers via App::set_controller when you want
+    // smarter or bespoke behavior.
+    for team_id in 1..actor_params.n_teams {
+        app.set_controller(team_id, Box::new(SimpleAi));
+    }
 
     loop {
         app.refresh();

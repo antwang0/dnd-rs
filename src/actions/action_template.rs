@@ -7,6 +7,11 @@ use crate::engine::{
     types::Coordinate,
 };
 
+/// Reach for melee/touch actions, expressed as a footprint-Chebyshev gap cap.
+/// 5e melee weapons are 5ft = 1-tile gap in this 2.5ft grid. Polearms /
+/// reach weapons would be 2. Ranged actions return their max range here.
+pub const MELEE_REACH: isize = 1;
+
 pub enum TargetingSchema {
     NoArgs,
     SinglePoint,
@@ -20,6 +25,21 @@ pub trait Action {
     fn aliases(&self) -> Vec<&str>;
 
     fn targeting_schema(&self) -> TargetingSchema;
+
+    /// Maximum footprint-Chebyshev gap from caster to target for this action
+    /// to be valid. `None` disables the spatial check (non-targeted actions
+    /// or actions that do their own range logic). Used both by the engine
+    /// (validation) and by the UI (target picker filters by reach).
+    fn reach_tiles(&self) -> Option<isize> {
+        None
+    }
+
+    /// Whether this action requires unobstructed line-of-sight from caster
+    /// to target. True for ranged attacks and most spells; false for melee
+    /// (you have to be touching). Walls block, actors don't.
+    fn requires_los(&self) -> bool {
+        false
+    }
 
     fn side_effects(
         &self,
@@ -77,16 +97,32 @@ pub trait Action {
                 true
             }
             TargetingSchema::SingleActor => {
-                return if let Some(target_ids) = target_ids {
-                    !target_ids.is_empty()
-                } else {
-                    false
-                };
+                if target_locations.is_some() {
+                    return false;
+                }
+                target_ids.is_some_and(|ids| !ids.is_empty())
             }
             TargetingSchema::Custom => true,
         };
         if !schema_validation {
             return false;
+        }
+        // Reach + LOS for actor-targeted actions. Skipped if reach_tiles is
+        // None or if there are no target ids (covered by schema check above).
+        if let Some(targets) = target_ids
+            && let Some(&target_id) = targets.first()
+        {
+            if let Some(reach) = self.reach_tiles() {
+                let Some(dist) = encounter.footprint_distance(caster_id, target_id) else {
+                    return false;
+                };
+                if dist > reach {
+                    return false;
+                }
+            }
+            if self.requires_los() && !encounter.actor_has_line_of_sight(caster_id, target_id) {
+                return false;
+            }
         }
         if let Some(cost) = self.cost(
             encounter,
@@ -187,6 +223,34 @@ impl ActionExecutionInfo {
             target_locations,
             overrides,
         }
+    }
+
+    pub fn action(&self) -> &'static dyn Action {
+        self.action
+    }
+
+    pub fn caster_id(&self) -> usize {
+        self.caster_id
+    }
+
+    pub fn target_ids(&self) -> Option<&[usize]> {
+        self.target_ids.as_deref()
+    }
+
+    pub fn target_locations(&self) -> Option<&[Coordinate]> {
+        self.target_locations.as_deref()
+    }
+
+    /// Resolved cost of this specific invocation (uses the stored target/loc
+    /// args, not None placeholders) — useful for the engine log filter.
+    pub fn cost(&self, encounter: &EncounterInstance) -> Option<Resource> {
+        self.action.cost(
+            encounter,
+            self.caster_id,
+            self.target_ids.as_ref(),
+            self.target_locations.as_ref(),
+            self.overrides.as_ref(),
+        )
     }
 
     pub fn validate(&self, encounter: &EncounterInstance) -> bool {

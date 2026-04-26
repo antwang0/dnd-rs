@@ -1,3 +1,4 @@
+use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
 use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
 use std::collections::{HashMap, LinkedList};
 use std::error::Error;
@@ -12,7 +13,7 @@ use crate::engine::terrain::{TerrainInfo, TerrainType};
 use crate::engine::terrain_gen::{TerrainGenParams, generate_terrain};
 use crate::engine::triggers::TriggerEventType;
 use crate::engine::types::{Coordinate, Size};
-use crate::engine::util::{get_colored_span, get_tiles_from_size};
+use crate::engine::util::{footprint_chebyshev, get_colored_span, get_tiles_from_size};
 use fastrand::Rng;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -24,7 +25,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 use std::cmp::Ordering;
-use tyche::dice::roller::FastRand as FastRandRoller;
+use crate::engine::dice::FastRandRoller;
 
 /// True/false toggle that flips every ~500ms based on wall-clock time.
 /// Used to manually blink UI elements; ANSI SLOW_BLINK is unreliable on
@@ -203,6 +204,41 @@ impl EncounterInstance {
         self.messages.push(msg.into());
     }
 
+    /// Logs a play-by-play line for an action that consumes the
+    /// action-economy (Action / BonusAction / Reaction / LegendaryAction).
+    /// Movement and free actions are intentionally excluded — the AI takes
+    /// many move-steps per turn and they'd drown out useful events.
+    fn log_action_use(&mut self, aei: &ActionExecutionInfo) {
+        let cost = aei.cost(self);
+        let Some(slot) = (match cost {
+            Some(crate::engine::side_effects::Resource::Action) => Some("action"),
+            Some(crate::engine::side_effects::Resource::BonusAction) => Some("bonus action"),
+            Some(crate::engine::side_effects::Resource::Reaction) => Some("reaction"),
+            Some(crate::engine::side_effects::Resource::LegendaryAction) => Some("legendary"),
+            _ => None,
+        }) else {
+            return;
+        };
+
+        let caster_name = self
+            .actors
+            .get(&aei.caster_id())
+            .map(|a| a.name().to_string())
+            .unwrap_or_else(|| format!("actor#{}", aei.caster_id()));
+        let action_name = aei.action().name();
+        let target_suffix = aei
+            .target_ids()
+            .and_then(|ids| ids.first().copied())
+            .and_then(|id| self.actors.get(&id))
+            .map(|a| format!(" on {}", a.name()))
+            .unwrap_or_default();
+
+        self.log(format!(
+            "[{}] {} uses {}{}",
+            slot, caster_name, action_name, target_suffix
+        ));
+    }
+
     pub fn next_actor_id(&mut self) -> usize {
         let next_actor_id = self.actor_id_next;
         self.actor_id_next += 1;
@@ -316,6 +352,144 @@ impl EncounterInstance {
         false
     }
 
+    /// True if a straight Bresenham line from `from` to `to` passes through
+    /// only non-wall tiles between (exclusive of endpoints). Endpoints are
+    /// not checked so callers can target the tile they currently occupy or
+    /// the tile they want to attack into. Actors do *not* block LOS — only
+    /// walls do (matches 5e's "creatures don't grant cover" default).
+    pub fn has_line_of_sight(&self, from: Coordinate, to: Coordinate) -> bool {
+        if from == to {
+            return true;
+        }
+        let mut x0 = from.x;
+        let mut y0 = from.y;
+        let x1 = to.x;
+        let y1 = to.y;
+        let dx = (x1 - x0).abs();
+        let dy = -(y1 - y0).abs();
+        let sx = if x0 < x1 { 1 } else { -1 };
+        let sy = if y0 < y1 { 1 } else { -1 };
+        let mut err = dx + dy;
+
+        loop {
+            let e2 = 2 * err;
+            if e2 >= dy {
+                err += dy;
+                x0 += sx;
+            }
+            if e2 <= dx {
+                err += dx;
+                y0 += sy;
+            }
+            if x0 == x1 && y0 == y1 {
+                return true;
+            }
+            let coord = Coordinate::new(x0, y0);
+            if matches!(self.terrain_at(coord), Some(t) if t.terrain_type == TerrainType::Wall) {
+                return false;
+            }
+        }
+    }
+
+    /// Footprint-aware LOS: clear if *any* tile of A's footprint can see
+    /// *any* tile of B's footprint. Catches the common case where the
+    /// origin-to-origin line is blocked but the creatures can still see
+    /// around their own bulk (e.g. two Medium creatures around a corner).
+    pub fn actor_has_line_of_sight(&self, a_id: usize, b_id: usize) -> bool {
+        let Some(a) = self.actors.get(&a_id) else {
+            return false;
+        };
+        let Some(b) = self.actors.get(&b_id) else {
+            return false;
+        };
+        let a_size = get_tiles_from_size(a.size()) as isize;
+        let b_size = get_tiles_from_size(b.size()) as isize;
+        let a_loc = a.location();
+        let b_loc = b.location();
+        for ay in 0..a_size {
+            for ax in 0..a_size {
+                let from = Coordinate::new(a_loc.x + ax, a_loc.y + ay);
+                for by in 0..b_size {
+                    for bx in 0..b_size {
+                        let to = Coordinate::new(b_loc.x + bx, b_loc.y + by);
+                        if self.has_line_of_sight(from, to) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Footprint-Chebyshev distance between two living actors, or `None` if
+    /// either id is unknown. 0 means they're touching/adjacent.
+    pub fn footprint_distance(&self, a_id: usize, b_id: usize) -> Option<isize> {
+        let a = self.actors.get(&a_id)?;
+        let b = self.actors.get(&b_id)?;
+        Some(footprint_chebyshev(
+            a.location(),
+            get_tiles_from_size(a.size()),
+            b.location(),
+            get_tiles_from_size(b.size()),
+        ))
+    }
+
+    /// First step the actor should take to reach a footprint-adjacent square
+    /// next to `target_id`. Uses 8-connected BFS over walkable tiles for the
+    /// actor's footprint; finds the *shortest-step-count* path, ignoring
+    /// movement budget (the AI may need several turns to close in). Returns
+    /// `None` if already adjacent or no path exists.
+    pub fn step_toward_actor(&self, actor_id: usize, target_id: usize) -> Option<Coordinate> {
+        use std::collections::{HashMap, VecDeque};
+
+        let actor = self.actors.get(&actor_id)?;
+        let target = self.actors.get(&target_id)?;
+        let start = actor.location();
+        let my_size = get_tiles_from_size(actor.size());
+        let t_loc = target.location();
+        let t_size = get_tiles_from_size(target.size());
+
+        let in_melee =
+            |c: Coordinate| -> bool { footprint_chebyshev(c, my_size, t_loc, t_size) <= 1 };
+
+        if in_melee(start) {
+            return None;
+        }
+
+        let mut parent: HashMap<Coordinate, Coordinate> = HashMap::new();
+        let mut queue: VecDeque<Coordinate> = VecDeque::new();
+        queue.push_back(start);
+        parent.insert(start, start);
+
+        while let Some(coord) = queue.pop_front() {
+            if coord != start && in_melee(coord) {
+                let mut cur = coord;
+                while parent[&cur] != start {
+                    cur = parent[&cur];
+                }
+                return Some(cur);
+            }
+            for dy in -1..=1isize {
+                for dx in -1..=1isize {
+                    if dx == 0 && dy == 0 {
+                        continue;
+                    }
+                    let next = Coordinate::new(coord.x + dx, coord.y + dy);
+                    if parent.contains_key(&next) {
+                        continue;
+                    }
+                    if !self.can_move_to(actor_id, next) {
+                        continue;
+                    }
+                    parent.insert(next, coord);
+                    queue.push_back(next);
+                }
+            }
+        }
+        None
+    }
+
     /// Min movement cost to walk from the actor's current location to `dest`,
     /// bounded by their remaining movement. Returns `None` if `dest` is
     /// unreachable on floor tiles within budget. 8-connected; cardinal steps
@@ -388,6 +562,15 @@ impl EncounterInstance {
     }
 
     pub fn render_map(&self, frame: &mut Frame, area: Rect) {
+        self.render_map_with(frame, area, None);
+    }
+
+    pub fn render_map_with(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        highlighted_target: Option<usize>,
+    ) {
         let mut text: Vec<Line> = Vec::new();
 
         let active_actor_id: Option<usize> = self.encounter_stack.last().and_then(|se| {
@@ -412,6 +595,14 @@ impl EncounterInstance {
                     let mut style = Style::default().fg(c).bg(bg);
                     if Some(actor_id) == active_actor_id && !blink_on() {
                         style = style.add_modifier(Modifier::REVERSED);
+                    }
+                    if Some(actor_id) == highlighted_target {
+                        // Bright magenta bg + bold makes the picker target
+                        // pop above the team-color background.
+                        style = Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Magenta)
+                            .add_modifier(Modifier::BOLD);
                     }
                     row.push(Span::styled(s, style));
                 } else {
@@ -642,7 +833,8 @@ impl EncounterInstance {
         };
 
         // TODO: move pool to fn
-        let template_pool: Vec<&'static CreatureTemplate> = vec![&ZOMBIE_TEMPLATE];
+        let template_pool: Vec<&'static CreatureTemplate> =
+            vec![&ZOMBIE_TEMPLATE, &SKELETON_TEMPLATE];
 
         generate_actors(&mut ei, actor_params, &template_pool)?;
         ei.initialize()?;
@@ -715,6 +907,32 @@ impl EncounterInstance {
         self.set_actor_map(actor_id, location)?;
 
         Ok(actor_id)
+    }
+
+    /// Distinct team ids with at least one living actor.
+    pub fn living_teams(&self) -> std::collections::HashSet<usize> {
+        self.actors
+            .values()
+            .filter(|a| a.hitpoints() > 0)
+            .map(|a| a.team())
+            .collect()
+    }
+
+    /// True once at most one team has living actors. Encounters with zero
+    /// living actors also count as complete (mutual destruction).
+    pub fn is_complete(&self) -> bool {
+        self.living_teams().len() <= 1
+    }
+
+    /// `Some(team_id)` if exactly one team is left standing; `None` if the
+    /// fight is still on or everyone is dead.
+    pub fn winning_team(&self) -> Option<usize> {
+        let teams = self.living_teams();
+        if teams.len() == 1 {
+            teams.into_iter().next()
+        } else {
+            None
+        }
     }
 
     /// Removes any actor with 0 HP from the initiative queue, the actor map,
@@ -844,6 +1062,7 @@ impl EncounterInstance {
                     return;
                 }
                 StackElementEntry::Action(a) => {
+                    self.log_action_use(&a);
                     let mut side_effects = a.execute(self);
                     for sen in side_effects.drain(..) {
                         self.enqueue_event(StackElementEntry::SideEffect(sen), None);
@@ -872,5 +1091,81 @@ impl EncounterInstance {
             )),
             None,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::actor_gen::ActorGenParams;
+    use crate::engine::terrain::TerrainInfo;
+    use crate::engine::terrain_gen::TerrainGenParams;
+
+    /// Builds a tiny encounter with no actors and a hand-crafted terrain
+    /// grid so LOS can be tested deterministically (terrain_gen randomness
+    /// would otherwise make assertions seed-dependent).
+    fn ei_with_terrain(width: usize, height: usize, walls: &[(isize, isize)]) -> EncounterInstance {
+        // Use generator to bootstrap, then overwrite the terrain map.
+        let tp = TerrainGenParams {
+            width,
+            height,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(0)).unwrap();
+        e.terrain = vec![
+            TerrainInfo {
+                terrain_type: TerrainType::Floor,
+            };
+            width * height
+        ];
+        for &(x, y) in walls {
+            let idx = e.idx(Coordinate::new(x, y)).unwrap();
+            e.terrain[idx].terrain_type = TerrainType::Wall;
+        }
+        e
+    }
+
+    #[test]
+    fn los_clear_horizontal() {
+        let e = ei_with_terrain(10, 10, &[]);
+        assert!(e.has_line_of_sight(Coordinate::new(0, 5), Coordinate::new(9, 5)));
+    }
+
+    #[test]
+    fn los_blocked_by_wall_between() {
+        let e = ei_with_terrain(10, 10, &[(5, 5)]);
+        assert!(!e.has_line_of_sight(Coordinate::new(0, 5), Coordinate::new(9, 5)));
+    }
+
+    #[test]
+    fn los_endpoints_not_checked() {
+        // Wall on the destination tile should not block LOS *to* that tile —
+        // attacks target the tile, they don't pass through it.
+        let e = ei_with_terrain(10, 10, &[(9, 5)]);
+        assert!(e.has_line_of_sight(Coordinate::new(0, 5), Coordinate::new(9, 5)));
+    }
+
+    #[test]
+    fn los_diagonal_clear() {
+        let e = ei_with_terrain(10, 10, &[]);
+        assert!(e.has_line_of_sight(Coordinate::new(0, 0), Coordinate::new(7, 7)));
+    }
+
+    #[test]
+    fn los_diagonal_blocked() {
+        // Wall right on the diagonal path should block.
+        let e = ei_with_terrain(10, 10, &[(3, 3)]);
+        assert!(!e.has_line_of_sight(Coordinate::new(0, 0), Coordinate::new(7, 7)));
+    }
+
+    #[test]
+    fn los_same_tile_is_visible() {
+        let e = ei_with_terrain(10, 10, &[]);
+        assert!(e.has_line_of_sight(Coordinate::new(2, 2), Coordinate::new(2, 2)));
     }
 }

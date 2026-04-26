@@ -42,6 +42,28 @@ pub fn tile_center_dist(c1: Coordinate, c2: Coordinate) -> f32 {
     2.5 * ((diff.x.pow(2) + diff.y.pow(2)) as f32).sqrt()
 }
 
+/// Min Chebyshev gap (in tiles) between two square footprints. 0 means
+/// touching/overlapping; 1 means one tile of clear space between them, etc.
+/// Used everywhere "is X next to Y" matters — origin-to-origin distance gives
+/// the wrong answer for non-Tiny creatures since Medium occupies a 2×2 block
+/// in this 2.5ft-tile grid.
+pub fn footprint_chebyshev(
+    a_loc: Coordinate,
+    a_size: usize,
+    b_loc: Coordinate,
+    b_size: usize,
+) -> isize {
+    let a_size = a_size as isize;
+    let b_size = b_size as isize;
+    let a_right = a_loc.x + a_size - 1;
+    let a_top = a_loc.y + a_size - 1;
+    let b_right = b_loc.x + b_size - 1;
+    let b_top = b_loc.y + b_size - 1;
+    let gap_x = (a_loc.x.max(b_loc.x) - a_right.min(b_right) - 1).max(0);
+    let gap_y = (a_loc.y.max(b_loc.y) - a_top.min(b_top) - 1).max(0);
+    gap_x.max(gap_y)
+}
+
 static RE_ABS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d+),(\d+)$").unwrap());
 static RE_REL: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(r|l)(\d+),?(u|d)(\d+)$").unwrap());

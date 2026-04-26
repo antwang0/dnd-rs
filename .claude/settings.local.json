@@ -5,7 +5,10 @@
       "Bash(cargo test *)",
       "Bash(cargo clippy *)",
       "Bash(git checkout *)",
-      "Bash(cargo generate-lockfile *)"
+      "Bash(cargo generate-lockfile *)",
+      "Bash(cargo tree *)",
+      "Bash(cargo report *)",
+      "Bash(cargo check *)"
     ]
   }
 }
