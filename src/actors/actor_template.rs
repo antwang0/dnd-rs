@@ -1,4 +1,18 @@
 use crate::engine::dice::{Dice, DiceExpr, Roller};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeathSaveOutcome {
+    /// Actor wasn't dying — caller did something wrong.
+    NotDying,
+    /// Save processed; actor still in the dying state.
+    Continuing,
+    /// 3 successes accumulated; actor is now stable at 0 HP (no more saves).
+    Stabilized,
+    /// 3 failures accumulated; actor is dead and will be removed.
+    Dead,
+    /// Natural 20: actor wakes at 1 HP and rejoins the fight.
+    Revived,
+}
 use crate::engine::side_effects::Resource;
 use crate::engine::types::Coordinate;
 use crate::items::item_template::Item;
@@ -170,6 +184,13 @@ pub struct ActorInstance {
     size: Size,
     pub spell_slot_manager: SpellSlotManager,
     pub actions: Vec<&'static (dyn Action + Send + Sync)>,
+    /// Death-save bookkeeping. An actor enters the dying state when their
+    /// HP hits 0 (and they aren't already stable/dead); they leave it via
+    /// 3 successes (stable), 3 failures (dead), or healing (back in fight).
+    dying: bool,
+    stable: bool,
+    death_save_successes: u32,
+    death_save_failures: u32,
 }
 
 impl ActorInstance {
@@ -222,6 +243,10 @@ impl ActorInstance {
                 warlock_spell_slot_lvl: 0,
             },
             actions: ct.actions.clone(),
+            dying: false,
+            stable: false,
+            death_save_successes: 0,
+            death_save_failures: 0,
         })
     }
 
@@ -380,7 +405,77 @@ impl ActorInstance {
     }
 
     pub fn take_damage(&mut self, amount: u32) {
+        if self.dying || self.stable {
+            // Damage to a downed actor counts as a failed death save —
+            // 5e rules. Stable actors lose stability and are dying again.
+            self.death_save_failures += 1;
+            self.stable = false;
+            self.dying = true;
+            return;
+        }
         self.hitpoints = self.hitpoints.saturating_sub(amount);
+        if self.hitpoints == 0 {
+            self.dying = true;
+        }
+    }
+
+    pub fn is_dying(&self) -> bool {
+        self.dying && !self.stable
+    }
+
+    pub fn is_stable(&self) -> bool {
+        self.stable
+    }
+
+    /// True when this actor can still take meaningful turns — has HP and
+    /// isn't downed. Used by the engine for end-of-combat detection.
+    pub fn is_combat_active(&self) -> bool {
+        self.hitpoints > 0 && !self.dying && !self.stable
+    }
+
+    pub fn death_save_record(&self) -> (u32, u32) {
+        (self.death_save_successes, self.death_save_failures)
+    }
+
+    /// Apply a single d20 death-save result. Mutates the actor's state and
+    /// returns the new outcome category so the caller can log appropriately.
+    pub fn apply_death_save(&mut self, raw_d20: u32) -> DeathSaveOutcome {
+        if !self.dying || self.stable {
+            return DeathSaveOutcome::NotDying;
+        }
+        match raw_d20 {
+            20 => {
+                // Natural 20: pop back up at 1 HP.
+                self.dying = false;
+                self.death_save_successes = 0;
+                self.death_save_failures = 0;
+                self.hitpoints = 1;
+                DeathSaveOutcome::Revived
+            }
+            1 => {
+                self.death_save_failures = self.death_save_failures.saturating_add(2);
+                self.classify_after_save()
+            }
+            n if n >= 10 => {
+                self.death_save_successes = self.death_save_successes.saturating_add(1);
+                self.classify_after_save()
+            }
+            _ => {
+                self.death_save_failures = self.death_save_failures.saturating_add(1);
+                self.classify_after_save()
+            }
+        }
+    }
+
+    fn classify_after_save(&mut self) -> DeathSaveOutcome {
+        if self.death_save_failures >= 3 {
+            DeathSaveOutcome::Dead
+        } else if self.death_save_successes >= 3 {
+            self.stable = true;
+            DeathSaveOutcome::Stabilized
+        } else {
+            DeathSaveOutcome::Continuing
+        }
     }
 
     pub fn attack_bonus(&self) -> i32 {

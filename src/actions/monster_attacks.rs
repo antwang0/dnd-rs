@@ -155,6 +155,87 @@ impl Action for Slam {
     }
 }
 
+/// Wraps another action and runs it `count` times for one Action-slot
+/// expenditure. Reach / LOS / targeting schema are inherited from the
+/// sub-attack so creatures can declare e.g. `Multiattack { sub: &SLAM, count: 2 }`
+/// without restating constraints. Each sub-attack rolls and logs separately,
+/// so a zombie's two slams produce two `slam: 1d20...` lines in the log.
+pub struct Multiattack {
+    pub display_name: &'static str,
+    pub sub_attack: &'static (dyn Action + Send + Sync),
+    pub count: u32,
+}
+
+impl Action for Multiattack {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["multi", "ma"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        self.sub_attack.targeting_schema()
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        self.sub_attack.reach_tiles()
+    }
+
+    fn requires_los(&self) -> bool {
+        self.sub_attack.requires_los()
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Option<Resource> {
+        Some(Resource::Action)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        let mut all = Vec::new();
+        for _ in 0..self.count {
+            // Bail on this swing if the target is already gone (e.g. died on
+            // an earlier swing within this same multiattack).
+            if let Some(targets) = target_ids
+                && let Some(&tid) = targets.first()
+                && !encounter.actors.contains_key(&tid)
+            {
+                break;
+            }
+            all.extend(self.sub_attack.side_effects(
+                encounter,
+                caster_id,
+                target_ids,
+                target_locations,
+                overrides,
+            ));
+        }
+        all
+    }
+}
+
+/// Zombie multiattack: 2 slams per Action. Hits twice as hard as a vanilla
+/// zombie at the cost of nothing (this game's zombies are scarier than MM).
+pub static ZOMBIE_MULTISLAM: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "multislam",
+    sub_attack: &*SLAM,
+    count: 2,
+});
+
 /// Roll a d20 attack against `target_ac`, log the breakdown, and on a hit
 /// roll `damage_dice + damage_bonus` of `damage_type` against `target_id`.
 /// Returns the side-effect vec (empty on miss). Centralizes the pattern so

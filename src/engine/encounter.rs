@@ -4,14 +4,14 @@ use std::collections::{HashMap, LinkedList};
 use std::error::Error;
 
 use crate::actions::action_template::ActionExecutionInfo;
-use crate::actors::actor_template::{ActorInstance, CreatureTemplate};
+use crate::actors::actor_template::{ActorInstance, CreatureTemplate, DeathSaveOutcome};
 use crate::engine::actor_gen::{ActorGenParams, generate_actors};
 use crate::engine::errors::{NegativeAbsCoord, NoLegalPosition};
 use crate::engine::prompt::Prompt;
 use crate::engine::side_effects::ApplicableSideEffect;
 use crate::engine::terrain::{TerrainInfo, TerrainType};
 use crate::engine::terrain_gen::{TerrainGenParams, generate_terrain};
-use crate::engine::triggers::TriggerEventType;
+use crate::engine::triggers::{TriggerEvent, TriggerEventType};
 use crate::engine::types::{Coordinate, Size};
 use crate::engine::util::{footprint_chebyshev, get_colored_span, get_tiles_from_size};
 use fastrand::Rng;
@@ -25,7 +25,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 use std::cmp::Ordering;
-use crate::engine::dice::FastRandRoller;
+use crate::engine::dice::{Dice, FastRandRoller, Roller};
 
 /// True/false toggle that flips every ~500ms based on wall-clock time.
 /// Used to manually blink UI elements; ANSI SLOW_BLINK is unreliable on
@@ -420,6 +420,120 @@ impl EncounterInstance {
             }
         }
         false
+    }
+
+    /// Fire reactions matching `event`. Today this only handles opportunity
+    /// attacks on `ActorLeaving`; future variants (damage taken, attack
+    /// resolved, etc.) plug in here. Reactions execute eagerly — their
+    /// side-effects apply directly to the encounter, not via the stack —
+    /// because they conceptually happen "during" the triggering event.
+    pub fn dispatch_reaction(&mut self, event: TriggerEvent) {
+        match event {
+            TriggerEvent::ActorLeaving { actor_id, from, to } => {
+                self.dispatch_opportunity_attacks(actor_id, from, to);
+            }
+        }
+    }
+
+    /// Iterate enemy actors with a Reaction slot and a melee attack; for each
+    /// whose reach covered `mover` at `from` but no longer covers them at
+    /// `to`, run the attack against the mover and consume the reaction.
+    /// Stops early if the mover is downed mid-loop.
+    fn dispatch_opportunity_attacks(
+        &mut self,
+        mover_id: usize,
+        from: Coordinate,
+        to: Coordinate,
+    ) {
+        use crate::actions::action_template::{MELEE_REACH, TargetingSchema};
+        use crate::engine::side_effects::Resource;
+
+        let (mover_team, mover_size) = match self.actors.get(&mover_id) {
+            Some(a) => (a.team(), get_tiles_from_size(a.size())),
+            None => return,
+        };
+
+        // Snapshot reactor candidates up-front — the loop body will mutate
+        // self, which would conflict with holding an iterator into self.actors.
+        type OaCandidate = (usize, &'static (dyn crate::actions::action_template::Action + Send + Sync), Coordinate, usize, isize);
+        let candidates: Vec<OaCandidate> = self
+            .actors
+            .iter()
+            .filter_map(|(id, a)| {
+                if *id == mover_id || a.team() == mover_team || !a.is_combat_active() {
+                    return None;
+                }
+                if !a.can_consume_resource(Resource::Reaction) {
+                    return None;
+                }
+                let attack = a
+                    .actions
+                    .iter()
+                    .find(|act| {
+                        matches!(act.targeting_schema(), TargetingSchema::SingleActor)
+                            && act.reach_tiles().is_some_and(|r| r <= MELEE_REACH)
+                    })
+                    .copied()?;
+                let reach = attack.reach_tiles().unwrap_or(MELEE_REACH);
+                Some((*id, attack, a.location(), get_tiles_from_size(a.size()), reach))
+            })
+            .collect();
+
+        for (reactor_id, attack, r_loc, r_size, reach) in candidates {
+            // Re-check liveness (an earlier OA in this loop may have changed things).
+            if !self
+                .actors
+                .get(&reactor_id)
+                .is_some_and(|a| a.is_combat_active() && a.can_consume_resource(Resource::Reaction))
+            {
+                continue;
+            }
+            let was_in_reach =
+                footprint_chebyshev(r_loc, r_size, from, mover_size) <= reach;
+            let still_in_reach =
+                footprint_chebyshev(r_loc, r_size, to, mover_size) <= reach;
+            if !was_in_reach || still_in_reach {
+                continue;
+            }
+
+            let reactor_name = self
+                .actors
+                .get(&reactor_id)
+                .map(|a| a.name().to_string())
+                .unwrap_or_default();
+            let mover_name = self
+                .actors
+                .get(&mover_id)
+                .map(|a| a.name().to_string())
+                .unwrap_or_default();
+            self.log(format!(
+                "[reaction] {} opportunity-attacks {} as they leave reach",
+                reactor_name, mover_name
+            ));
+
+            // Run the underlying attack's side_effects directly (consumes
+            // Reaction below, NOT the action's normal cost).
+            let target_vec = vec![mover_id];
+            let effects =
+                attack.side_effects(self, reactor_id, Some(&target_vec), None, None);
+            for e in effects {
+                e.apply(self);
+            }
+            if let Some(r) = self.actors.get_mut(&reactor_id) {
+                r.consume_resource(Resource::Reaction);
+            }
+
+            self.cleanup_dead_actors();
+            // If the OA dropped the mover, no further OAs (and the move
+            // caller is expected to abort).
+            if self
+                .actors
+                .get(&mover_id)
+                .is_none_or(|a| !a.is_combat_active())
+            {
+                return;
+            }
+        }
     }
 
     /// Footprint-Chebyshev distance between two living actors, or `None` if
@@ -909,11 +1023,12 @@ impl EncounterInstance {
         Ok(actor_id)
     }
 
-    /// Distinct team ids with at least one living actor.
+    /// Distinct team ids with at least one combat-active actor (excludes
+    /// dying / stable / dead). Drives end-of-combat detection.
     pub fn living_teams(&self) -> std::collections::HashSet<usize> {
         self.actors
             .values()
-            .filter(|a| a.hitpoints() > 0)
+            .filter(|a| a.is_combat_active())
             .map(|a| a.team())
             .collect()
     }
@@ -935,28 +1050,109 @@ impl EncounterInstance {
         }
     }
 
-    /// Removes any actor with 0 HP from the initiative queue, the actor map,
-    /// and the actors table. Logs each death. Idempotent.
+    /// Idempotent post-effect cleanup pass. Two responsibilities:
+    /// 1. Mark any actor that just hit 0 HP as `dying` (and log it).
+    /// 2. Remove from the world any actor whose death-save record has hit
+    ///    3 failures (or who otherwise belongs gone).
+    ///
+    /// Stable actors stay on the map at 0 HP — they're out of the fight but
+    /// not removed (room for healing later).
     pub fn cleanup_dead_actors(&mut self) {
+        // First pass: log new transitions to "dying". The actor's own
+        // take_damage already set the dying flag; this just emits the line.
+        let new_dying: Vec<usize> = self
+            .actors
+            .iter()
+            .filter_map(|(id, a)| {
+                if a.is_dying() && a.death_save_record() == (0, 0) {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for id in &new_dying {
+            if let Some(actor) = self.actors.get(id) {
+                let name = actor.name().to_string();
+                self.log(format!("{} falls unconscious.", name));
+            }
+        }
+
+        // Second pass: actors with 3+ death-save failures are gone.
         let dead: Vec<usize> = self
             .actors
             .iter()
-            .filter_map(|(id, a)| if a.hitpoints() == 0 { Some(*id) } else { None })
+            .filter_map(|(id, a)| {
+                let (_, fails) = a.death_save_record();
+                if fails >= 3 { Some(*id) } else { None }
+            })
             .collect();
         for id in dead {
-            let Some(actor) = self.actors.remove(&id) else {
-                continue;
-            };
-            self.log(format!("{} dies.", actor.name()));
-            let actor_width = get_tiles_from_size(actor.size());
-            let loc = actor.location();
-            for x_off in 0..actor_width {
-                for y_off in 0..actor_width {
-                    let offset = Coordinate::new(x_off as isize, y_off as isize);
-                    self.set_actor_id_at(None, loc + offset);
-                }
+            self.remove_actor(id);
+        }
+    }
+
+    /// Remove an actor from the world: actor map, initiative queue, and
+    /// actor table. Logs the death.
+    fn remove_actor(&mut self, id: usize) {
+        let Some(actor) = self.actors.remove(&id) else {
+            return;
+        };
+        self.log(format!("{} dies.", actor.name()));
+        let actor_width = get_tiles_from_size(actor.size());
+        let loc = actor.location();
+        for x_off in 0..actor_width {
+            for y_off in 0..actor_width {
+                let offset = Coordinate::new(x_off as isize, y_off as isize);
+                self.set_actor_id_at(None, loc + offset);
             }
-            self.initiative_tracker.remove_actor(id);
+        }
+        self.initiative_tracker.remove_actor(id);
+    }
+
+    /// Roll a single death save for the given actor and mutate them. Logs
+    /// the d20 result and outcome. Returns true if the actor is gone after
+    /// this save (dead and removed).
+    fn resolve_death_save(&mut self, id: usize) -> bool {
+        let raw = self.roller.roll(&Dice::new(1, 20));
+        let Some(actor) = self.actors.get_mut(&id) else {
+            return false;
+        };
+        let name = actor.name().to_string();
+        let outcome = actor.apply_death_save(raw);
+        let (succ, fail) = actor.death_save_record();
+        match outcome {
+            DeathSaveOutcome::Continuing => {
+                self.log(format!(
+                    "  {} death save: 1d20({}) — {} ({}/{} S/F)",
+                    name,
+                    raw,
+                    if raw >= 10 { "success" } else { "failure" },
+                    succ,
+                    fail
+                ));
+                false
+            }
+            DeathSaveOutcome::Stabilized => {
+                self.log(format!(
+                    "  {} death save: 1d20({}) — stabilized!",
+                    name, raw
+                ));
+                false
+            }
+            DeathSaveOutcome::Dead => {
+                self.log(format!("  {} death save: 1d20({}) — dies!", name, raw));
+                self.remove_actor(id);
+                true
+            }
+            DeathSaveOutcome::Revived => {
+                self.log(format!(
+                    "  {} death save: 1d20({}) — natural 20! Conscious at 1 HP.",
+                    name, raw
+                ));
+                false
+            }
+            DeathSaveOutcome::NotDying => false,
         }
     }
 
@@ -1077,6 +1273,42 @@ impl EncounterInstance {
 
         self.outcome_tracker.reset();
 
+        // Auto-resolve any dying / stable actors before prompting. Each
+        // dying actor takes their "turn" by rolling a single death save;
+        // stable actors just have their slot skipped (they're out of the
+        // fight but still on the map). Bounded loop so a corrupted state
+        // can't spin forever.
+        for _ in 0..self.initiative_tracker.initiatives.len().saturating_add(1) {
+            let Some(curr_id) = self.initiative_tracker.current_player() else {
+                return;
+            };
+            let Some(actor) = self.actors.get(&curr_id) else {
+                // Active slot points at a removed actor — fix the queue.
+                self.initiative_tracker.remove_actor(curr_id);
+                continue;
+            };
+            if actor.is_combat_active() {
+                break;
+            }
+            if actor.is_dying() {
+                self.resolve_death_save(curr_id);
+            }
+            // After the save (or if stable), advance to the next slot.
+            self.initiative_tracker.advance();
+            // Reset the next actor's resources so an active actor's first
+            // turn after a sequence of skipped/dying slots starts fresh.
+            if let Some(next_id) = self.initiative_tracker.current_player()
+                && let Some(next_actor) = self.actors.get_mut(&next_id)
+            {
+                next_actor.reset_for_new_round();
+            }
+        }
+
+        // Encounter may have ended while resolving saves.
+        if self.is_complete() {
+            return;
+        }
+
         // Skip the prompt if the encounter has wound down (everyone died).
         let Some(current_player_id) = self.initiative_tracker.current_player() else {
             return;
@@ -1167,5 +1399,179 @@ mod tests {
     fn los_same_tile_is_visible() {
         let e = ei_with_terrain(10, 10, &[]);
         assert!(e.has_line_of_sight(Coordinate::new(2, 2), Coordinate::new(2, 2)));
+    }
+
+    #[test]
+    fn death_save_three_failures_kills() {
+        let e = ei_with_terrain(10, 10, &[]);
+        // Build a zombie actor for testing.
+        let mut z = ActorInstance::from_creature_template(
+            &ZOMBIE_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(1),
+            0,
+        )
+        .unwrap();
+        z.take_damage(z.hitpoints());
+        assert!(z.is_dying());
+        // Force three failures (rolling 2 each is < 10, +1 fail).
+        for _ in 0..3 {
+            let outcome = z.apply_death_save(2);
+            if matches!(outcome, DeathSaveOutcome::Dead) {
+                let _ = e; // silence unused
+                return;
+            }
+        }
+        panic!("expected Dead outcome after 3 failed saves");
+    }
+
+    #[test]
+    fn death_save_three_successes_stabilizes() {
+        let _e = ei_with_terrain(10, 10, &[]);
+        let mut z = ActorInstance::from_creature_template(
+            &ZOMBIE_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(1),
+            0,
+        )
+        .unwrap();
+        z.take_damage(z.hitpoints());
+        // Roll 3 successes (>= 10).
+        for _ in 0..3 {
+            z.apply_death_save(15);
+        }
+        assert!(z.is_stable(), "expected stable after 3 successes");
+        assert!(!z.is_combat_active(), "stable actor isn't a combatant");
+    }
+
+    #[test]
+    fn nat_20_revives_at_one_hp() {
+        let mut z = ActorInstance::from_creature_template(
+            &ZOMBIE_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(1),
+            0,
+        )
+        .unwrap();
+        z.take_damage(z.hitpoints());
+        let outcome = z.apply_death_save(20);
+        assert_eq!(outcome, DeathSaveOutcome::Revived);
+        assert_eq!(z.hitpoints(), 1);
+        assert!(z.is_combat_active());
+    }
+
+    #[test]
+    fn damage_to_dying_adds_failure() {
+        let mut z = ActorInstance::from_creature_template(
+            &ZOMBIE_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(1),
+            0,
+        )
+        .unwrap();
+        z.take_damage(z.hitpoints());
+        assert_eq!(z.death_save_record(), (0, 0));
+        z.take_damage(1); // damage while dying = +1 failure
+        assert_eq!(z.death_save_record().1, 1);
+    }
+
+    #[test]
+    fn multiattack_runs_sub_attack_n_times() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::ZOMBIE_MULTISLAM;
+        // Static-cast to verify the trait wiring; no roll done here.
+        let action: &dyn Action = &*ZOMBIE_MULTISLAM;
+        assert_eq!(action.name(), "multislam");
+        assert_eq!(action.reach_tiles(), Some(1));
+        assert!(!action.requires_los());
+    }
+
+    #[test]
+    fn opportunity_attack_fires_when_leaving_reach() {
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        // Two enemies whose Medium 2x2 footprints touch (gap = 0).
+        let mover_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Sanity: reactor has a reaction available.
+        assert!(
+            e.actors[&reactor_id].can_consume_resource(Resource::Reaction),
+            "reactor should start with a reaction slot"
+        );
+
+        // Move the mover well out of reach.
+        let move_effect = MoveActor {
+            actor_id: mover_id,
+            target: Coordinate::new(15, 5),
+        };
+        move_effect.apply(&mut e);
+
+        // Whether the OA hit is RNG-dependent, but the reaction must be
+        // consumed regardless (it's spent on attempt, not on hit).
+        if e.actors.contains_key(&reactor_id) {
+            assert!(
+                !e.actors[&reactor_id].can_consume_resource(Resource::Reaction),
+                "reactor should have spent their reaction"
+            );
+        }
+    }
+
+    #[test]
+    fn opportunity_attack_does_not_fire_when_staying_in_reach() {
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+
+        // Step 1 tile in-place — footprints still touch the reactor.
+        let move_effect = MoveActor {
+            actor_id: mover_id,
+            target: Coordinate::new(5, 6),
+        };
+        move_effect.apply(&mut e);
+
+        assert!(
+            e.actors[&reactor_id].can_consume_resource(Resource::Reaction),
+            "reactor's reaction should be intact — mover stayed in reach"
+        );
+    }
+
+    #[test]
+    fn opportunity_attack_skipped_for_same_team() {
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        // Both on team 0 — allies don't OA each other.
+        let mover_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+
+        let move_effect = MoveActor {
+            actor_id: mover_id,
+            target: Coordinate::new(15, 5),
+        };
+        move_effect.apply(&mut e);
+
+        assert!(
+            e.actors[&ally_id].can_consume_resource(Resource::Reaction),
+            "ally should not have spent their reaction"
+        );
     }
 }

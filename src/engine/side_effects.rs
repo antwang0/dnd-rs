@@ -1,4 +1,5 @@
 use crate::engine::encounter::EncounterInstance;
+use crate::engine::triggers::TriggerEvent;
 use crate::engine::types::{Coordinate, DamageType};
 
 pub trait ApplicableSideEffect {
@@ -77,6 +78,28 @@ pub struct MoveActor {
 
 impl ApplicableSideEffect for MoveActor {
     fn apply(&self, ei: &mut EncounterInstance) {
+        let from = match ei.actors.get(&self.actor_id) {
+            Some(a) => a.location(),
+            None => return,
+        };
+        // Fire opportunity attacks before the position changes so reactors
+        // can target the mover at their pre-move tile. If the mover is
+        // downed by an OA the move is abandoned (they fall in their from-tile).
+        if from != self.target {
+            ei.dispatch_reaction(TriggerEvent::ActorLeaving {
+                actor_id: self.actor_id,
+                from,
+                to: self.target,
+            });
+            if !ei
+                .actors
+                .get(&self.actor_id)
+                .is_some_and(|a| a.is_combat_active())
+            {
+                return;
+            }
+        }
+
         if let Err(e) = ei.set_actor_map(self.actor_id, self.target) {
             ei.log(format!("MoveActor failed: {}", e));
             return;
