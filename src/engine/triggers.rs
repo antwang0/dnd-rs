@@ -1,8 +1,3 @@
-pub enum TriggerEventType {
-    Enqueue,
-    Execute,
-}
-
 use crate::engine::types::Coordinate;
 
 /// Concrete in-world events that reactions can fire on. Add a variant per

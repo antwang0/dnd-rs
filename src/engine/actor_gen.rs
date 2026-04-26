@@ -29,7 +29,7 @@ pub fn generate_actors(
                 return Err(Box::new(RngTryError));
             }
             tries += 1;
-            let idx = ei.rng.usize(0..template_pool.len());
+            let idx = ei.rng().usize(0..template_pool.len());
             let creature_template = &template_pool[idx];
             let location_result = ei.get_random_spawn(creature_template.size);
             let instance_n = id_by_template[idx];

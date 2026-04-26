@@ -22,7 +22,7 @@ impl Controller for SimpleAi {
             .actors
             .iter()
             .filter(|(other_id, a)| {
-                **other_id != actor_id && a.team() != my_team && a.hitpoints() > 0
+                **other_id != actor_id && a.team() != my_team && a.is_combat_active()
             })
             .map(|(id, a)| (*id, a))
             .min_by_key(|(_, a)| {

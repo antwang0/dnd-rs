@@ -5,7 +5,7 @@ use crate::{
     actions::action_template::{Action, MELEE_REACH, TargetingSchema},
     engine::{
         action_overrides::ActionOverride,
-        dice::{Dice, Roller},
+        dice::Dice,
         encounter::EncounterInstance,
         side_effects::{DealDamage, Resource},
         types::{Coordinate, DamageType},
@@ -206,16 +206,13 @@ impl Action for Multiattack {
         target_locations: Option<&Vec<Coordinate>>,
         overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        // 5e: every swing of a multiattack lands even if an earlier one
+        // killed the target (extra swings tick failed death saves on a
+        // dying creature). cleanup_dead_actors only runs *after* all
+        // side-effects in this batch are queued, so the target is always
+        // present here regardless.
         let mut all = Vec::new();
         for _ in 0..self.count {
-            // Bail on this swing if the target is already gone (e.g. died on
-            // an earlier swing within this same multiattack).
-            if let Some(targets) = target_ids
-                && let Some(&tid) = targets.first()
-                && !encounter.actors.contains_key(&tid)
-            {
-                break;
-            }
             all.extend(self.sub_attack.side_effects(
                 encounter,
                 caster_id,
@@ -251,7 +248,7 @@ fn weapon_attack(
     damage_bonus: i32,
     damage_type: DamageType,
 ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-    let raw_attack = encounter.roller.roll(&Dice::new(1, 20)) as i32;
+    let raw_attack = encounter.roll(&Dice::new(1, 20)) as i32;
     let attack_total = raw_attack + attack_bonus;
     let hit = attack_total >= target_ac;
     encounter.log(format!(
@@ -266,7 +263,7 @@ fn weapon_attack(
     if !hit {
         return Vec::new();
     }
-    let raw_damage = encounter.roller.roll(&damage_dice) as i32;
+    let raw_damage = encounter.roll(&damage_dice) as i32;
     let damage = (raw_damage + damage_bonus).max(0) as u32;
     encounter.log(format!(
         "  {}: {}({}){:+} = {} {:?} damage",

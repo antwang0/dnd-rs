@@ -62,7 +62,7 @@ impl Action for Move {
 
     fn side_effects(
         &self,
-        _encounter: &mut EncounterInstance,
+        encounter: &mut EncounterInstance,
         caster_id: usize,
         _target_ids: Option<&Vec<usize>>,
         target_locations: Option<&Vec<Coordinate>>,
@@ -71,9 +71,16 @@ impl Action for Move {
         let Some(target_location) = target_locations.and_then(|v| v.first().copied()) else {
             return Vec::new();
         };
+        // Use the same Dijkstra path that `cost` charged for, so OAs fire on
+        // every threatened-square exit along the way. Falls back to a
+        // single-tile teleport if pathing fails (validate should already
+        // have caught this, but defense in depth).
+        let path = encounter
+            .path_to(caster_id, target_location)
+            .unwrap_or_else(|| vec![target_location]);
         vec![Box::new(MoveActor {
             actor_id: caster_id,
-            target: target_location,
+            path,
         })]
     }
 }

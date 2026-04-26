@@ -1,5 +1,18 @@
 use crate::engine::dice::{Dice, DiceExpr, Roller};
 
+/// Lifecycle state of an actor's hit points. Replaces the previous
+/// `dying: bool` + `stable: bool` pair so the four meaningful states are
+/// type-checked, and the death-save counters are scoped to the only
+/// variant that uses them. `Dead` exists transiently between failure-3
+/// and removal from `EncounterInstance.actors`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HpState {
+    Active,
+    Dying { successes: u32, failures: u32 },
+    Stable,
+    Dead,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeathSaveOutcome {
     /// Actor wasn't dying — caller did something wrong.
@@ -12,6 +25,20 @@ pub enum DeathSaveOutcome {
     Dead,
     /// Natural 20: actor wakes at 1 HP and rejoins the fight.
     Revived,
+}
+
+/// What `take_damage` did to the actor's state. `DealDamage::apply` reads
+/// this to emit the appropriate log line; tests use it to verify state
+/// transitions without inspecting private fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DamageOutcome {
+    /// Actor took normal HP damage and is still combat-active.
+    Reduced,
+    /// HP just hit 0; actor transitioned from combat-active to dying.
+    Downed,
+    /// Actor was already dying (or stable, which gets re-downed); damage
+    /// counts as a failed death save instead of an HP delta.
+    DyingFailure,
 }
 use crate::engine::side_effects::Resource;
 use crate::engine::types::Coordinate;
@@ -184,13 +211,11 @@ pub struct ActorInstance {
     size: Size,
     pub spell_slot_manager: SpellSlotManager,
     pub actions: Vec<&'static (dyn Action + Send + Sync)>,
-    /// Death-save bookkeeping. An actor enters the dying state when their
-    /// HP hits 0 (and they aren't already stable/dead); they leave it via
-    /// 3 successes (stable), 3 failures (dead), or healing (back in fight).
-    dying: bool,
-    stable: bool,
-    death_save_successes: u32,
-    death_save_failures: u32,
+    /// Lifecycle state. Driven by `take_damage` (damage transitions
+    /// `Active -> Dying`, hits on `Dying`/`Stable` add failures) and
+    /// `apply_death_save` (rolls move within `Dying` and into `Stable`,
+    /// `Dead`, or `Active` on a nat 20). See `HpState`.
+    hp_state: HpState,
 }
 
 impl ActorInstance {
@@ -243,10 +268,7 @@ impl ActorInstance {
                 warlock_spell_slot_lvl: 0,
             },
             actions: ct.actions.clone(),
-            dying: false,
-            stable: false,
-            death_save_successes: 0,
-            death_save_failures: 0,
+            hp_state: HpState::Active,
         })
     }
 
@@ -404,76 +426,113 @@ impl ActorInstance {
         self.bonus_action_slots
     }
 
-    pub fn take_damage(&mut self, amount: u32) {
-        if self.dying || self.stable {
-            // Damage to a downed actor counts as a failed death save —
-            // 5e rules. Stable actors lose stability and are dying again.
-            self.death_save_failures += 1;
-            self.stable = false;
-            self.dying = true;
-            return;
+    pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {
+        match self.hp_state {
+            HpState::Stable => {
+                // Stable creature takes damage: dying state restarts fresh
+                // (5e: death-save tracking is cleared by stabilization),
+                // then this damage immediately counts as one failed save.
+                self.hp_state = HpState::Dying {
+                    successes: 0,
+                    failures: 1,
+                };
+                DamageOutcome::DyingFailure
+            }
+            HpState::Dying {
+                successes,
+                failures,
+            } => {
+                self.hp_state = HpState::Dying {
+                    successes,
+                    failures: failures + 1,
+                };
+                DamageOutcome::DyingFailure
+            }
+            HpState::Dead => DamageOutcome::DyingFailure, // already gone; no-op
+            HpState::Active => {
+                self.hitpoints = self.hitpoints.saturating_sub(amount);
+                if self.hitpoints == 0 {
+                    self.hp_state = HpState::Dying {
+                        successes: 0,
+                        failures: 0,
+                    };
+                    DamageOutcome::Downed
+                } else {
+                    DamageOutcome::Reduced
+                }
+            }
         }
-        self.hitpoints = self.hitpoints.saturating_sub(amount);
-        if self.hitpoints == 0 {
-            self.dying = true;
-        }
+    }
+
+    pub fn hp_state(&self) -> HpState {
+        self.hp_state
     }
 
     pub fn is_dying(&self) -> bool {
-        self.dying && !self.stable
+        matches!(self.hp_state, HpState::Dying { .. })
     }
 
     pub fn is_stable(&self) -> bool {
-        self.stable
+        matches!(self.hp_state, HpState::Stable)
     }
 
     /// True when this actor can still take meaningful turns — has HP and
     /// isn't downed. Used by the engine for end-of-combat detection.
     pub fn is_combat_active(&self) -> bool {
-        self.hitpoints > 0 && !self.dying && !self.stable
+        matches!(self.hp_state, HpState::Active) && self.hitpoints > 0
     }
 
     pub fn death_save_record(&self) -> (u32, u32) {
-        (self.death_save_successes, self.death_save_failures)
+        match self.hp_state {
+            HpState::Dying {
+                successes,
+                failures,
+            } => (successes, failures),
+            _ => (0, 0),
+        }
     }
 
     /// Apply a single d20 death-save result. Mutates the actor's state and
     /// returns the new outcome category so the caller can log appropriately.
     pub fn apply_death_save(&mut self, raw_d20: u32) -> DeathSaveOutcome {
-        if !self.dying || self.stable {
+        debug_assert!(
+            (1..=20).contains(&raw_d20),
+            "death-save d20 out of range: {}",
+            raw_d20
+        );
+        let HpState::Dying {
+            successes,
+            failures,
+        } = self.hp_state
+        else {
             return DeathSaveOutcome::NotDying;
+        };
+        if raw_d20 == 20 {
+            // Natural 20: pop back up at 1 HP.
+            self.hp_state = HpState::Active;
+            self.hitpoints = 1;
+            return DeathSaveOutcome::Revived;
         }
-        match raw_d20 {
-            20 => {
-                // Natural 20: pop back up at 1 HP.
-                self.dying = false;
-                self.death_save_successes = 0;
-                self.death_save_failures = 0;
-                self.hitpoints = 1;
-                DeathSaveOutcome::Revived
-            }
-            1 => {
-                self.death_save_failures = self.death_save_failures.saturating_add(2);
-                self.classify_after_save()
-            }
-            n if n >= 10 => {
-                self.death_save_successes = self.death_save_successes.saturating_add(1);
-                self.classify_after_save()
-            }
-            _ => {
-                self.death_save_failures = self.death_save_failures.saturating_add(1);
-                self.classify_after_save()
-            }
-        }
-    }
-
-    fn classify_after_save(&mut self) -> DeathSaveOutcome {
-        if self.death_save_failures >= 3 {
+        let (succ, fail) = if raw_d20 == 1 {
+            (successes, failures.saturating_add(2))
+        } else if raw_d20 >= 10 {
+            (successes.saturating_add(1), failures)
+        } else {
+            (successes, failures.saturating_add(1))
+        };
+        if fail >= 3 {
+            self.hp_state = HpState::Dead;
             DeathSaveOutcome::Dead
-        } else if self.death_save_successes >= 3 {
-            self.stable = true;
+        } else if succ >= 3 {
+            // 5e: stabilization clears tracking so a future re-down starts
+            // at zero, not on top of accumulated saves.
+            self.hp_state = HpState::Stable;
             DeathSaveOutcome::Stabilized
         } else {
+            self.hp_state = HpState::Dying {
+                successes: succ,
+                failures: fail,
+            };
             DeathSaveOutcome::Continuing
         }
     }

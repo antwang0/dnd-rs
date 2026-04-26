@@ -1,6 +1,6 @@
 use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
 use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
-use std::collections::{HashMap, LinkedList};
+use std::collections::HashMap;
 use std::error::Error;
 
 use crate::actions::action_template::ActionExecutionInfo;
@@ -11,33 +11,12 @@ use crate::engine::prompt::Prompt;
 use crate::engine::side_effects::ApplicableSideEffect;
 use crate::engine::terrain::{TerrainInfo, TerrainType};
 use crate::engine::terrain_gen::{TerrainGenParams, generate_terrain};
-use crate::engine::triggers::{TriggerEvent, TriggerEventType};
+use crate::engine::triggers::TriggerEvent;
 use crate::engine::types::{Coordinate, Size};
-use crate::engine::util::{footprint_chebyshev, get_colored_span, get_tiles_from_size};
+use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 use fastrand::Rng;
-use ratatui::Frame;
-use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Line;
-use ratatui::{
-    layout::{Constraint, Direction, Layout},
-    text::Span,
-    widgets::{Block, Borders, Paragraph},
-};
 use std::cmp::Ordering;
 use crate::engine::dice::{Dice, FastRandRoller, Roller};
-
-/// True/false toggle that flips every ~500ms based on wall-clock time.
-/// Used to manually blink UI elements; ANSI SLOW_BLINK is unreliable on
-/// many terminals (notably Windows Terminal).
-fn blink_on() -> bool {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    (millis / 500).is_multiple_of(2)
-}
 
 pub enum StackElementEntry {
     SideEffect(Box<dyn ApplicableSideEffect>),
@@ -45,10 +24,21 @@ pub enum StackElementEntry {
     Prompt(Prompt),
 }
 
+/// Snapshot of the engine's top-of-stack for UI consumers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StackState {
+    /// No prompts and no pending side-effects — initiative is between turns.
+    Idle,
+    /// A prompt is open for the given actor; the player or AI must act.
+    AwaitingPrompt(usize),
+    /// Side effects are mid-resolution (the player will see this between
+    /// processing of an AI turn and the next prompt).
+    Processing,
+}
+
 pub struct StackElement {
     pub entry: StackElementEntry,
     pub id: usize,
-    pub success_dependencies: Option<Vec<usize>>,
 }
 
 #[derive(Eq, PartialEq)]
@@ -59,7 +49,13 @@ struct InitiativeElement {
 
 impl Ord for InitiativeElement {
     fn cmp(&self, other: &Self) -> Ordering {
-        other.initiative.cmp(&self.initiative)
+        // Higher initiative first; actor_id ascending breaks ties so the
+        // turn order is deterministic when seeded (HashMap iteration order
+        // would otherwise leak through `initialize_actors`).
+        other
+            .initiative
+            .cmp(&self.initiative)
+            .then(self.actor_id.cmp(&other.actor_id))
     }
 }
 
@@ -147,17 +143,16 @@ impl InitiativeTracker {
     }
 }
 
+/// Hands out monotonically-increasing ids for stack elements so future
+/// dependent-effect logic (e.g. "this side-effect only fires if action #N
+/// hit") has something to key on. Resets between encounter rounds.
 struct OutcomeTracker {
     next_id: usize,
-    successes: HashMap<usize, bool>,
 }
 
 impl OutcomeTracker {
     pub fn new() -> OutcomeTracker {
-        OutcomeTracker {
-            next_id: 0,
-            successes: HashMap::new(),
-        }
+        OutcomeTracker { next_id: 0 }
     }
 
     pub fn next_id(&mut self) -> usize {
@@ -168,24 +163,28 @@ impl OutcomeTracker {
 
     pub fn reset(&mut self) {
         self.next_id = 0;
-        self.successes.clear();
     }
 }
 
-// TODO: having all pub is not very good
+/// Authoritative state for one combat encounter. Most fields are kept
+/// private; access goes through methods so engine invariants (actor map
+/// stays in sync with actor locations, initiative queue stays in sync with
+/// the actor table, etc.) can't be broken from the outside. `actors` is
+/// still public read/write because every consumer (AI, picker UI, action
+/// validation) needs deep access to actor state — narrowing it would
+/// require a much larger accessor surface.
 pub struct EncounterInstance {
     initialized: bool,
     pub width: usize,
     pub height: usize,
-    pub terrain: Vec<TerrainInfo>,
-    pub actor_id_next: usize,
-    pub actor_map: Vec<Option<usize>>,
+    terrain: Vec<TerrainInfo>,
+    actor_id_next: usize,
+    actor_map: Vec<Option<usize>>,
     pub actors: HashMap<usize, ActorInstance>,
     initiative_tracker: InitiativeTracker,
-    pub encounter_stack: Vec<StackElement>,
-    pub temp_encounter_queue: LinkedList<StackElement>, // for handling multiple reactions
-    pub roller: FastRandRoller,
-    pub rng: Rng,
+    encounter_stack: Vec<StackElement>,
+    roller: FastRandRoller,
+    rng: Rng,
     messages: Vec<String>,
     tmp_message: String,
     outcome_tracker: OutcomeTracker,
@@ -243,6 +242,19 @@ impl EncounterInstance {
         let next_actor_id = self.actor_id_next;
         self.actor_id_next += 1;
         next_actor_id
+    }
+
+    /// Roll dice through the encounter's seedable roller. Use this from
+    /// action side-effects so reproducibility-by-seed is preserved.
+    pub fn roll(&mut self, dice: &Dice) -> u32 {
+        self.roller.roll(dice)
+    }
+
+    /// Direct mutable handle to the encounter's general-purpose RNG. Used
+    /// by content generation (terrain, actors) where dice abstraction
+    /// doesn't fit. Do not call this from action side-effects — use `roll`.
+    pub fn rng(&mut self) -> &mut Rng {
+        &mut self.rng
     }
 
     pub fn get_actor(&mut self, actor_id: usize) -> Option<&mut ActorInstance> {
@@ -609,13 +621,31 @@ impl EncounterInstance {
     /// unreachable on floor tiles within budget. 8-connected; cardinal steps
     /// cost 5ft, diagonal steps cost ~7.07ft (Euclidean).
     pub fn path_cost_to(&self, actor_id: usize, dest: Coordinate) -> Option<f32> {
+        self.dijkstra_path(actor_id, dest).map(|(c, _)| c)
+    }
+
+    /// Cheapest path (excluding `start`, including `dest`) from the actor's
+    /// current location to `dest`, alongside the path cost. Returns `None`
+    /// when `dest` is unreachable within the actor's remaining-movement
+    /// budget. The path is what the engine iterates per-tile so that
+    /// opportunity attacks fire on every threatened-square exit, not just
+    /// on the from→to endpoints.
+    pub fn path_to(&self, actor_id: usize, dest: Coordinate) -> Option<Vec<Coordinate>> {
+        self.dijkstra_path(actor_id, dest).map(|(_, p)| p)
+    }
+
+    fn dijkstra_path(
+        &self,
+        actor_id: usize,
+        dest: Coordinate,
+    ) -> Option<(f32, Vec<Coordinate>)> {
         use std::cmp::Reverse;
         use std::collections::BinaryHeap;
 
         let actor = self.actors.get(&actor_id)?;
         let start = actor.location();
         if start == dest {
-            return Some(0.0);
+            return Some((0.0, Vec::new()));
         }
         if !self.can_move_to(actor_id, dest) {
             return None;
@@ -629,7 +659,9 @@ impl EncounterInstance {
 
         let start_idx = self.idx(start).ok()?;
         let dest_idx = self.idx(dest).ok()?;
-        let mut dist: Vec<u32> = vec![u32::MAX; self.width * self.height];
+        let n = self.width * self.height;
+        let mut dist: Vec<u32> = vec![u32::MAX; n];
+        let mut parent: Vec<Option<usize>> = vec![None; n];
         dist[start_idx] = 0;
 
         let mut heap: BinaryHeap<Reverse<(u32, usize)>> = BinaryHeap::new();
@@ -637,7 +669,18 @@ impl EncounterInstance {
 
         while let Some(Reverse((cost, idx))) = heap.pop() {
             if idx == dest_idx {
-                return Some(cost as f32 / 1000.0);
+                // Reconstruct path from start (exclusive) to dest (inclusive).
+                let mut rev: Vec<Coordinate> = Vec::new();
+                let mut cur = dest_idx;
+                while cur != start_idx {
+                    rev.push(Coordinate::new(
+                        (cur % self.width) as isize,
+                        (cur / self.width) as isize,
+                    ));
+                    cur = parent[cur]?;
+                }
+                rev.reverse();
+                return Some((cost as f32 / 1000.0, rev));
             }
             if cost > dist[idx] {
                 continue;
@@ -667,255 +710,13 @@ impl EncounterInstance {
                     };
                     if next_cost < dist[next_idx] {
                         dist[next_idx] = next_cost;
+                        parent[next_idx] = Some(idx);
                         heap.push(Reverse((next_cost, next_idx)));
                     }
                 }
             }
         }
         None
-    }
-
-    pub fn render_map(&self, frame: &mut Frame, area: Rect) {
-        self.render_map_with(frame, area, None);
-    }
-
-    pub fn render_map_with(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        highlighted_target: Option<usize>,
-    ) {
-        let mut text: Vec<Line> = Vec::new();
-
-        let active_actor_id: Option<usize> = self.encounter_stack.last().and_then(|se| {
-            if let StackElementEntry::Prompt(p) = &se.entry {
-                Some(p.actor_id())
-            } else {
-                None
-            }
-        });
-
-        for y in (0..self.height).rev() {
-            let mut row: Vec<Span> = Vec::new();
-            for x in 0..self.width {
-                let coord = Coordinate::new(x as isize, y as isize);
-                if let Some(actor_id) = self.actor_id_at(coord)
-                    && let Some(actor) = self.actors.get(&actor_id)
-                {
-                    // Stale id (cleanup race between damage tick and frame draw)
-                    // would otherwise crash the renderer; skip to the terrain branch.
-                    let (s, c, bg): (String, Color, Color) =
-                        get_colored_span(actor_id, actor.team());
-                    let mut style = Style::default().fg(c).bg(bg);
-                    if Some(actor_id) == active_actor_id && !blink_on() {
-                        style = style.add_modifier(Modifier::REVERSED);
-                    }
-                    if Some(actor_id) == highlighted_target {
-                        // Bright magenta bg + bold makes the picker target
-                        // pop above the team-color background.
-                        style = Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::Magenta)
-                            .add_modifier(Modifier::BOLD);
-                    }
-                    row.push(Span::styled(s, style));
-                } else {
-                    let s = Span::from(
-                        match self.terrain_at(coord).map(|t| &t.terrain_type) {
-                            Some(TerrainType::Floor) => '░',
-                            Some(TerrainType::Wall) => '█',
-                            _ => ' ',
-                        }
-                        .to_string(),
-                    );
-                    row.push(s);
-                }
-            }
-            text.push(Line::from(row));
-        }
-        frame.render_widget(
-            Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("Map")),
-            area,
-        );
-    }
-
-    pub fn render_sideinfo(&mut self, frame: &mut Frame, area: Rect, selected_action_idx: usize) {
-        fn hp_bar_spans(current: u32, max: u32, width: usize) -> Vec<Span<'static>> {
-            if max == 0 {
-                return vec![];
-            }
-            let ratio = current as f64 / max as f64;
-            let filled = ((ratio * width as f64).round() as usize).min(width);
-            let empty = width - filled;
-            let color = if ratio > 0.5 {
-                Color::Green
-            } else if ratio > 0.25 {
-                Color::Yellow
-            } else {
-                Color::Red
-            };
-            let mut spans: Vec<Span<'static>> = Vec::new();
-            if filled > 0 {
-                spans.push(Span::styled(
-                    "█".repeat(filled),
-                    Style::default().fg(color),
-                ));
-            }
-            if empty > 0 {
-                spans.push(Span::styled(
-                    "░".repeat(empty),
-                    Style::default().fg(Color::DarkGray),
-                ));
-            }
-            spans
-        }
-
-        let area_split = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Min(1), Constraint::Min(1)])
-            .split(area);
-
-        // Extract prompt data early to avoid holding a borrow across field accesses.
-        let prompt_info: Option<(usize, Vec<String>)> =
-            self.encounter_stack.last().and_then(|se| {
-                if let StackElementEntry::Prompt(p) = &se.entry {
-                    Some((
-                        p.actor_id(),
-                        p.actions().iter().map(|a| a.name().to_string()).collect(),
-                    ))
-                } else {
-                    None
-                }
-            });
-        let stack_status = match self.encounter_stack.last() {
-            None => "no_prompt",
-            Some(se) if matches!(se.entry, StackElementEntry::Prompt(_)) => "prompt",
-            Some(_) => "processing",
-        };
-
-        // Initiative queue: show all actors in turn order, starting from the
-        // current actor; highlight + blink-glyph the active one.
-        let init_len = self.initiative_tracker.initiatives.len();
-        let curr_idx = self.initiative_tracker.curr_index;
-        let mut initiative_lines: Vec<Line<'static>> = Vec::new();
-        for i in 0..init_len {
-            let slot = (curr_idx + i) % init_len;
-            let actor_id = self.initiative_tracker.initiatives[slot].actor_id;
-            let is_current = prompt_info.as_ref().is_some_and(|(id, _)| *id == actor_id);
-            if let Some(actor) = self.actors.get(&actor_id) {
-                let (s, c, bg) = get_colored_span(actor_id, actor.team());
-                let prefix = if is_current { "> " } else { "  " };
-                let mut glyph_style = Style::default().fg(c).bg(bg);
-                let name_style = if is_current {
-                    if !blink_on() {
-                        glyph_style = glyph_style.add_modifier(Modifier::REVERSED);
-                    }
-                    Style::default().add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                };
-                let mut spans: Vec<Span<'static>> = vec![
-                    Span::raw(prefix),
-                    Span::styled(s, glyph_style),
-                    Span::raw(" "),
-                    Span::styled(actor.name().to_string(), name_style),
-                    Span::raw(" "),
-                ];
-                spans.extend(hp_bar_spans(actor.hitpoints(), actor.max_hitpoints(), 8));
-                initiative_lines.push(Line::from(spans));
-            }
-        }
-        frame.render_widget(
-            Paragraph::new(initiative_lines)
-                .block(Block::default().borders(Borders::ALL).title("Initiative")),
-            area_split[0],
-        );
-
-        // Resources / Actions panels need a valid prompt with a known actor.
-        let Some((curr_actor_id, action_names)) = prompt_info else {
-            let msg = match stack_status {
-                "processing" => "(processing...)",
-                _ => "(no prompt)",
-            };
-            frame.render_widget(
-                Paragraph::new(msg)
-                    .block(Block::default().borders(Borders::ALL).title("Resources")),
-                area_split[1],
-            );
-            frame.render_widget(
-                Paragraph::new("").block(Block::default().borders(Borders::ALL).title("Actions")),
-                area_split[2],
-            );
-            return;
-        };
-
-        let Some(curr_actor) = self.actors.get(&curr_actor_id) else {
-            frame.render_widget(
-                Paragraph::new("(missing actor)")
-                    .block(Block::default().borders(Borders::ALL).title("Resources")),
-                area_split[1],
-            );
-            frame.render_widget(
-                Paragraph::new("").block(Block::default().borders(Borders::ALL).title("Actions")),
-                area_split[2],
-            );
-            return;
-        };
-
-        let hp = curr_actor.hitpoints();
-        let max_hp = curr_actor.max_hitpoints();
-        let ac = curr_actor.armor_class();
-        let movement = curr_actor.remaining_movement();
-        let action_slots = curr_actor.action_slots();
-        let bonus_slots = curr_actor.bonus_action_slots();
-
-        let mut hp_spans: Vec<Span<'static>> = vec![Span::raw("HP: ")];
-        hp_spans.extend(hp_bar_spans(hp, max_hp, 10));
-        hp_spans.push(Span::raw(format!(" {}/{}", hp, max_hp)));
-
-        let stats_lines: Vec<Line<'static>> = vec![
-            Line::from(hp_spans),
-            Line::from(Span::raw(format!("AC: {}", ac))),
-            Line::from(Span::raw(format!("Movement: {:.0}", movement))),
-            Line::from(Span::raw(format!(
-                "Actions: {}  Bonus: {}",
-                action_slots, bonus_slots
-            ))),
-        ];
-        frame.render_widget(
-            Paragraph::new(stats_lines)
-                .block(Block::default().borders(Borders::ALL).title("Resources")),
-            area_split[1],
-        );
-
-        let n_actions = action_names.len();
-        let highlight_idx = if n_actions > 0 {
-            selected_action_idx % n_actions
-        } else {
-            0
-        };
-        let action_lines: Vec<Line<'static>> = action_names
-            .iter()
-            .enumerate()
-            .map(|(i, name)| {
-                let is_selected = i == highlight_idx && n_actions > 0;
-                let prefix = if is_selected { "> " } else { "  " };
-                let style = if is_selected {
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::White)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                };
-                Line::from(vec![Span::raw(prefix), Span::styled(name.clone(), style)])
-            })
-            .collect();
-        frame.render_widget(
-            Paragraph::new(action_lines)
-                .block(Block::default().borders(Borders::ALL).title("Actions")),
-            area_split[2],
-        );
     }
 
     pub fn from_params(
@@ -938,7 +739,6 @@ impl EncounterInstance {
             actors: HashMap::new(),
             initiative_tracker: InitiativeTracker::new(),
             encounter_stack: Vec::new(),
-            temp_encounter_queue: LinkedList::new(),
             roller,
             rng,
             messages: Vec::new(),
@@ -1023,6 +823,31 @@ impl EncounterInstance {
         Ok(actor_id)
     }
 
+    /// Actor ids in turn order, starting from the current actor. Empty
+    /// when no actors are queued. Used by the UI's initiative panel.
+    pub fn initiative_actor_ids(&self) -> Vec<usize> {
+        let len = self.initiative_tracker.initiatives.len();
+        if len == 0 {
+            return Vec::new();
+        }
+        let curr = self.initiative_tracker.curr_index;
+        (0..len)
+            .map(|i| self.initiative_tracker.initiatives[(curr + i) % len].actor_id)
+            .collect()
+    }
+
+    /// Top-of-stack snapshot for the UI: the actor whose prompt is open
+    /// (if any), and whether the engine is mid-processing or idle.
+    pub fn stack_state(&self) -> StackState {
+        match self.encounter_stack.last() {
+            None => StackState::Idle,
+            Some(se) => match &se.entry {
+                StackElementEntry::Prompt(p) => StackState::AwaitingPrompt(p.actor_id()),
+                _ => StackState::Processing,
+            },
+        }
+    }
+
     /// Distinct team ids with at least one combat-active actor (excludes
     /// dying / stable / dead). Drives end-of-combat detection.
     pub fn living_teams(&self) -> std::collections::HashSet<usize> {
@@ -1050,41 +875,23 @@ impl EncounterInstance {
         }
     }
 
-    /// Idempotent post-effect cleanup pass. Two responsibilities:
-    /// 1. Mark any actor that just hit 0 HP as `dying` (and log it).
-    /// 2. Remove from the world any actor whose death-save record has hit
-    ///    3 failures (or who otherwise belongs gone).
+    /// Idempotent post-effect cleanup pass: remove any actor whose
+    /// death-save record has hit 3 failures. The "falls unconscious" log
+    /// is emitted by `DealDamage::apply` directly so the message tracks the
+    /// actual transition (active → dying), not a fragile derived check on
+    /// `(successes, failures) == (0, 0)`.
     ///
     /// Stable actors stay on the map at 0 HP — they're out of the fight but
     /// not removed (room for healing later).
     pub fn cleanup_dead_actors(&mut self) {
-        // First pass: log new transitions to "dying". The actor's own
-        // take_damage already set the dying flag; this just emits the line.
-        let new_dying: Vec<usize> = self
-            .actors
-            .iter()
-            .filter_map(|(id, a)| {
-                if a.is_dying() && a.death_save_record() == (0, 0) {
-                    Some(*id)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        for id in &new_dying {
-            if let Some(actor) = self.actors.get(id) {
-                let name = actor.name().to_string();
-                self.log(format!("{} falls unconscious.", name));
-            }
-        }
-
-        // Second pass: actors with 3+ death-save failures are gone.
+        use crate::actors::actor_template::HpState;
         let dead: Vec<usize> = self
             .actors
             .iter()
-            .filter_map(|(id, a)| {
-                let (_, fails) = a.death_save_record();
-                if fails >= 3 { Some(*id) } else { None }
+            .filter_map(|(id, a)| match a.hp_state() {
+                HpState::Dead => Some(*id),
+                HpState::Dying { failures, .. } if failures >= 3 => Some(*id),
+                _ => None,
             })
             .collect();
         for id in dead {
@@ -1168,28 +975,10 @@ impl EncounterInstance {
         Ok(())
     }
 
-    pub fn check_triggers(&mut self, event: &StackElementEntry, _event_type: TriggerEventType) {
-        match event {
-            StackElementEntry::Prompt(_) => (),
-            StackElementEntry::Action(_a) => {
-                // TODO
-            }
-            StackElementEntry::SideEffect(_se) => {
-                // TODO
-            }
-        }
-    }
-
-    pub fn enqueue_event(
-        &mut self,
-        se: StackElementEntry,
-        success_dependencies: Option<Vec<usize>>,
-    ) {
-        self.check_triggers(&se, TriggerEventType::Enqueue);
+    pub fn enqueue_event(&mut self, se: StackElementEntry) {
         self.encounter_stack.push(StackElement {
             entry: se,
             id: self.outcome_tracker.next_id(),
-            success_dependencies,
         });
     }
 
@@ -1214,7 +1003,6 @@ impl EncounterInstance {
                     self.encounter_stack.push(StackElement {
                         entry: other,
                         id: se.id,
-                        success_dependencies: se.success_dependencies,
                     });
                     None
                 }
@@ -1223,11 +1011,7 @@ impl EncounterInstance {
     }
 
     pub fn push_action(&mut self, action_execution_info: ActionExecutionInfo) {
-        // TODO: temp stack for reactions
-        self.enqueue_event(
-            StackElementEntry::Action(Box::new(action_execution_info)),
-            None,
-        );
+        self.enqueue_event(StackElementEntry::Action(Box::new(action_execution_info)));
     }
 
     pub fn process_stack(&mut self) {
@@ -1240,20 +1024,13 @@ impl EncounterInstance {
             return;
         }
 
-        // Transfer the reaction queue onto the main stack before draining.
-        while let Some(se) = self.temp_encounter_queue.pop_front() {
-            self.encounter_stack.push(se);
-        }
-
         while let Some(se) = self.encounter_stack.pop() {
-            self.check_triggers(&se.entry, TriggerEventType::Execute);
             match se.entry {
                 StackElementEntry::Prompt(p) => {
                     // A prompt was already on the stack; put it back and bail.
                     self.encounter_stack.push(StackElement {
                         entry: StackElementEntry::Prompt(p),
                         id: se.id,
-                        success_dependencies: se.success_dependencies,
                     });
                     return;
                 }
@@ -1261,7 +1038,7 @@ impl EncounterInstance {
                     self.log_action_use(&a);
                     let mut side_effects = a.execute(self);
                     for sen in side_effects.drain(..) {
-                        self.enqueue_event(StackElementEntry::SideEffect(sen), None);
+                        self.enqueue_event(StackElementEntry::SideEffect(sen));
                     }
                 }
                 StackElementEntry::SideEffect(s) => {
@@ -1274,11 +1051,14 @@ impl EncounterInstance {
         self.outcome_tracker.reset();
 
         // Auto-resolve any dying / stable actors before prompting. Each
-        // dying actor takes their "turn" by rolling a single death save;
-        // stable actors just have their slot skipped (they're out of the
-        // fight but still on the map). Bounded loop so a corrupted state
-        // can't spin forever.
-        for _ in 0..self.initiative_tracker.initiatives.len().saturating_add(1) {
+        // dying actor takes their "turn" by rolling exactly one death save;
+        // stable actors just have their slot skipped. The visited set
+        // bounds the loop to one save per actor per process_stack call:
+        // without it, in-loop removals shrink the initiative queue and
+        // `advance()`'s wraparound revisits actors, double-counting saves.
+        let mut visited: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
+        loop {
             let Some(curr_id) = self.initiative_tracker.current_player() else {
                 return;
             };
@@ -1288,6 +1068,11 @@ impl EncounterInstance {
                 continue;
             };
             if actor.is_combat_active() {
+                break;
+            }
+            if !visited.insert(curr_id) {
+                // We've already given this actor a save this call; bail
+                // (everyone left in the queue is downed).
                 break;
             }
             if actor.is_dying() {
@@ -1316,13 +1101,10 @@ impl EncounterInstance {
         let Some(current_player) = self.actors.get(&current_player_id) else {
             return;
         };
-        self.enqueue_event(
-            StackElementEntry::Prompt(Prompt::new(
-                current_player_id,
-                current_player.actions.clone(), // TODO: filter for legal actions (action, bonus action; no reaction)
-            )),
-            None,
-        );
+        self.enqueue_event(StackElementEntry::Prompt(Prompt::new(
+            current_player_id,
+            current_player.actions.clone(), // TODO: filter for legal actions (action, bonus action; no reaction)
+        )));
     }
 }
 
@@ -1511,7 +1293,7 @@ mod tests {
         // Move the mover well out of reach.
         let move_effect = MoveActor {
             actor_id: mover_id,
-            target: Coordinate::new(15, 5),
+            path: vec![Coordinate::new(15, 5)],
         };
         move_effect.apply(&mut e);
 
@@ -1540,7 +1322,7 @@ mod tests {
         // Step 1 tile in-place — footprints still touch the reactor.
         let move_effect = MoveActor {
             actor_id: mover_id,
-            target: Coordinate::new(5, 6),
+            path: vec![Coordinate::new(5, 6)],
         };
         move_effect.apply(&mut e);
 
@@ -1548,6 +1330,38 @@ mod tests {
             e.actors[&reactor_id].can_consume_resource(Resource::Reaction),
             "reactor's reaction should be intact — mover stayed in reach"
         );
+    }
+
+    #[test]
+    fn opportunity_attack_fires_per_step_on_multitile_path() {
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        // Reactor is far from BOTH the mover's start and end tiles. The
+        // path between passes through reach. With the old endpoint-only
+        // OA, this would silently bypass the reactor's threatened square.
+        let mover_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(0, 5), 0, 0)
+            .unwrap();
+        let reactor_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+            .unwrap();
+        assert!(e.actors[&reactor_id].can_consume_resource(Resource::Reaction));
+
+        // Walk the mover step-by-step right past the reactor.
+        let path: Vec<Coordinate> = (1..=15).map(|x| Coordinate::new(x, 5)).collect();
+        let move_effect = MoveActor {
+            actor_id: mover_id,
+            path,
+        };
+        move_effect.apply(&mut e);
+
+        if e.actors.contains_key(&reactor_id) {
+            assert!(
+                !e.actors[&reactor_id].can_consume_resource(Resource::Reaction),
+                "reactor should have OA'd as the mover stepped past their reach"
+            );
+        }
     }
 
     #[test]
@@ -1565,7 +1379,7 @@ mod tests {
 
         let move_effect = MoveActor {
             actor_id: mover_id,
-            target: Coordinate::new(15, 5),
+            path: vec![Coordinate::new(15, 5)],
         };
         move_effect.apply(&mut e);
 

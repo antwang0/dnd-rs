@@ -37,11 +37,6 @@ pub fn modifier_from_score(score: u32) -> i32 {
     (score as i32 / 2) - 5
 }
 
-pub fn tile_center_dist(c1: Coordinate, c2: Coordinate) -> f32 {
-    let diff = c1 - c2;
-    2.5 * ((diff.x.pow(2) + diff.y.pow(2)) as f32).sqrt()
-}
-
 /// Min Chebyshev gap (in tiles) between two square footprints. 0 means
 /// touching/overlapping; 1 means one tile of clear space between them, etc.
 /// Used everywhere "is X next to Y" matters — origin-to-origin distance gives

@@ -1,3 +1,4 @@
+use crate::actors::actor_template::DamageOutcome;
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::triggers::TriggerEvent;
 use crate::engine::types::{Coordinate, DamageType};
@@ -70,26 +71,32 @@ impl ApplicableSideEffect for GiveResource {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+/// Walks an actor through a sequence of tiles, one step at a time, firing
+/// opportunity attacks on every step that exits a threatened square. `path`
+/// excludes the actor's starting tile and includes the final destination.
+/// A single-tile teleport is just `path: vec![dest]`.
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
 pub struct MoveActor {
     pub actor_id: usize,
-    pub target: Coordinate,
+    pub path: Vec<Coordinate>,
 }
 
 impl ApplicableSideEffect for MoveActor {
     fn apply(&self, ei: &mut EncounterInstance) {
-        let from = match ei.actors.get(&self.actor_id) {
-            Some(a) => a.location(),
-            None => return,
-        };
-        // Fire opportunity attacks before the position changes so reactors
-        // can target the mover at their pre-move tile. If the mover is
-        // downed by an OA the move is abandoned (they fall in their from-tile).
-        if from != self.target {
+        for &dest in &self.path {
+            let from = match ei.actors.get(&self.actor_id) {
+                Some(a) => a.location(),
+                None => return,
+            };
+            if from == dest {
+                continue;
+            }
+            // Fire OAs against the mover's pre-step tile. If the OA drops
+            // them, abandon the rest of the path (they fall mid-move).
             ei.dispatch_reaction(TriggerEvent::ActorLeaving {
                 actor_id: self.actor_id,
                 from,
-                to: self.target,
+                to: dest,
             });
             if !ei
                 .actors
@@ -98,14 +105,13 @@ impl ApplicableSideEffect for MoveActor {
             {
                 return;
             }
-        }
-
-        if let Err(e) = ei.set_actor_map(self.actor_id, self.target) {
-            ei.log(format!("MoveActor failed: {}", e));
-            return;
-        }
-        if let Some(actor) = ei.get_actor(self.actor_id) {
-            actor.set_location(self.target);
+            if let Err(e) = ei.set_actor_map(self.actor_id, dest) {
+                ei.log(format!("MoveActor failed: {}", e));
+                return;
+            }
+            if let Some(actor) = ei.get_actor(self.actor_id) {
+                actor.set_location(dest);
+            }
         }
     }
 }
@@ -119,13 +125,17 @@ pub struct DealDamage {
 
 impl ApplicableSideEffect for DealDamage {
     fn apply(&self, ei: &mut EncounterInstance) {
-        if let Some(actor) = ei.get_actor(self.actor_id) {
-            actor.take_damage(self.amount);
-        } else {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
             ei.log(format!(
                 "DealDamage: actor {} missing, ignoring",
                 self.actor_id
             ));
+            return;
+        };
+        let name = actor.name().to_string();
+        let outcome = actor.take_damage(self.amount);
+        if matches!(outcome, DamageOutcome::Downed) {
+            ei.log(format!("{} falls unconscious.", name));
         }
     }
 }

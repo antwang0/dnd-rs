@@ -5,6 +5,7 @@ pub mod app;
 pub mod conditions;
 pub mod engine;
 pub mod items;
+pub mod ui;
 
 use crate::ai::SimpleAi;
 use crate::app::{App, Tick};

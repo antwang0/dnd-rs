@@ -195,9 +195,13 @@ impl App {
             .split(chunks[0]);
 
         let highlighted = self.highlighted_target();
-        self.encounter.render_map_with(f, info_area[0], highlighted);
-        self.encounter
-            .render_sideinfo(f, info_area[1], self.selected_action_idx);
+        crate::ui::render_map(&self.encounter, f, info_area[0], highlighted);
+        crate::ui::render_sideinfo(
+            &self.encounter,
+            f,
+            info_area[1],
+            self.selected_action_idx,
+        );
 
         let input_widget =
             Paragraph::new(self.input_str.as_str())
@@ -261,10 +265,31 @@ impl App {
                 self.handle_arrow(key.code);
             }
             KeyCode::Enter => return self.handle_enter(),
+            KeyCode::End => self.end_turn(),
             KeyCode::Esc => return Tick::Quit,
             _ => {}
         }
         Tick::Continue
+    }
+
+    /// Shortcut: invoke the active actor's Skip action. Lets the player end
+    /// their turn without navigating to "skip" in the action list. No-op if
+    /// there's no prompt or the actor lacks a Skip action.
+    fn end_turn(&mut self) {
+        let Some(prompt) = self.encounter.peek_prompt() else {
+            return;
+        };
+        let actor_id = prompt.actor_id();
+        let Some(skip) = prompt.actions().iter().find(|a| a.name() == "skip").copied() else {
+            return;
+        };
+        let aei = ActionExecutionInfo::new(skip, actor_id, None, None, None);
+        if aei.validate(&self.encounter) {
+            self.encounter.pop_prompt();
+            self.encounter.push_action(aei);
+            self.input_str.clear();
+            self.tmp_message.clear();
+        }
     }
 
     fn completion_banner(&self) -> Option<String> {
