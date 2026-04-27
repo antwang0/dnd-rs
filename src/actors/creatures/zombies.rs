@@ -12,6 +12,7 @@ pub static ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*ZOMBIE_MULTISLAM);
     CreatureTemplate {
         name: "Zombie",
+        glyph: 'Z',
         n_instances: 0,
         ac: 8,
         hitpoints: "2d8+6".parse().unwrap(),

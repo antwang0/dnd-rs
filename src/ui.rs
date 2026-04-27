@@ -5,10 +5,60 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::actions::action_template::Action;
 use crate::engine::encounter::{EncounterInstance, StackState};
+use crate::engine::side_effects::Resource;
 use crate::engine::terrain::TerrainType;
 use crate::engine::types::Coordinate;
 use crate::engine::util::get_colored_span;
+
+/// Heuristic classifier that styles a log line based on its contents.
+/// Cheap pattern-matching against the message strings the engine emits
+/// today; centralized here so the engine can keep emitting plain strings.
+pub fn style_log_line(msg: &str) -> Line<'static> {
+    let style = if msg.starts_with("[reaction]") {
+        Style::default().fg(Color::Cyan)
+    } else if msg.contains("Conscious at 1 HP") {
+        Style::default().fg(Color::LightGreen)
+    } else if msg.contains("falls unconscious")
+        || msg.contains(" dies.")
+        || msg.contains("stabilized")
+    {
+        Style::default().fg(Color::Yellow)
+    } else if msg.contains(" damage") || msg.ends_with("— hit") {
+        Style::default().fg(Color::LightRed)
+    } else if msg.contains("death save") {
+        if msg.contains("success") {
+            Style::default().fg(Color::LightGreen)
+        } else if msg.contains("failure") || msg.contains("dies!") {
+            Style::default().fg(Color::LightRed)
+        } else {
+            Style::default()
+        }
+    } else if msg.contains("— miss") {
+        Style::default().fg(Color::DarkGray)
+    } else {
+        Style::default()
+    };
+    Line::from(Span::styled(msg.to_string(), style))
+}
+
+/// Compact tag for an action's resource cost — fits in the action panel
+/// before the name. `None` cost falls back to "[-]" except for Move which
+/// is special-cased (its cost is path-dependent and resolves at confirm
+/// time, but the actor still spends Movement).
+fn cost_label(cost: Option<Resource>, action_name: &str) -> &'static str {
+    match cost {
+        Some(Resource::Action) => "[A] ",
+        Some(Resource::BonusAction) => "[BA]",
+        Some(Resource::Reaction) => "[R] ",
+        Some(Resource::LegendaryAction) => "[Lg]",
+        Some(Resource::Movement(_)) => "[M] ",
+        Some(Resource::SpellSlot(_)) => "[S] ",
+        None if action_name == "move" => "[M] ",
+        None => "[-] ",
+    }
+}
 
 /// True/false toggle that flips every ~500ms based on wall-clock time.
 /// Used to manually blink UI elements; ANSI SLOW_BLINK is unreliable on
@@ -44,7 +94,7 @@ pub fn render_map(
                 // Stale id (cleanup race between damage tick and frame draw)
                 // would otherwise crash the renderer; skip to terrain.
                 let (mut s, c, bg): (String, Color, Color) =
-                    get_colored_span(actor_id, actor.team());
+                    get_colored_span(actor.glyph(), actor.team());
                 let mut style = Style::default().fg(c).bg(bg);
                 if Some(actor_id) == active_actor_id && !blink_on() {
                     style = style.add_modifier(Modifier::REVERSED);
@@ -133,21 +183,18 @@ pub fn render_sideinfo(
         .split(area);
 
     let stack_state = encounter.stack_state();
-    let prompt_info: Option<(usize, Vec<String>)> = if let StackState::AwaitingPrompt(actor_id) =
-        stack_state
-    {
-        // Pull the prompt's action list. peek_prompt only returns Some on
-        // AwaitingPrompt, so this is fine even though stack_state already
-        // told us the actor.
-        encounter.peek_prompt().map(|p| {
-            (
-                actor_id,
-                p.actions().iter().map(|a| a.name().to_string()).collect(),
-            )
-        })
-    } else {
-        None
-    };
+    type ActionRef = &'static (dyn Action + Send + Sync);
+    let prompt_info: Option<(usize, Vec<ActionRef>)> =
+        if let StackState::AwaitingPrompt(actor_id) = stack_state {
+            // Pull the prompt's action list. peek_prompt only returns Some
+            // on AwaitingPrompt, so this is fine even though stack_state
+            // already told us the actor.
+            encounter
+                .peek_prompt()
+                .map(|p| (actor_id, p.actions().clone()))
+        } else {
+            None
+        };
 
     // Initiative queue: show all actors in turn order, starting from the
     // current actor; highlight + blink-glyph the active one.
@@ -155,7 +202,7 @@ pub fn render_sideinfo(
     for actor_id in encounter.initiative_actor_ids() {
         let is_current = prompt_info.as_ref().is_some_and(|(id, _)| *id == actor_id);
         if let Some(actor) = encounter.actors.get(&actor_id) {
-            let (s, c, bg) = get_colored_span(actor_id, actor.team());
+            let (s, c, bg) = get_colored_span(actor.glyph(), actor.team());
             let prefix = if is_current { "> " } else { "  " };
             let mut glyph_style = Style::default().fg(c).bg(bg);
             let name_style = if is_current {
@@ -184,7 +231,7 @@ pub fn render_sideinfo(
     );
 
     // Resources / Actions panels need a valid prompt with a known actor.
-    let Some((curr_actor_id, action_names)) = prompt_info else {
+    let Some((curr_actor_id, actions)) = prompt_info else {
         let msg = match stack_state {
             StackState::Processing => "(processing...)",
             _ => "(no prompt)",
@@ -240,27 +287,41 @@ pub fn render_sideinfo(
         area_split[1],
     );
 
-    let n_actions = action_names.len();
+    let n_actions = actions.len();
     let highlight_idx = if n_actions > 0 {
         selected_action_idx % n_actions
     } else {
         0
     };
-    let action_lines: Vec<Line<'static>> = action_names
+    let action_lines: Vec<Line<'static>> = actions
         .iter()
         .enumerate()
-        .map(|(i, name)| {
-            let is_selected = i == highlight_idx && n_actions > 0;
+        .map(|(i, action)| {
+            let is_selected = i == highlight_idx;
             let prefix = if is_selected { "> " } else { "  " };
-            let style = if is_selected {
+            // Look up cost with placeholder args. Static-cost actions
+            // (Slam, Skip, Dash, Longbow, Multiattack) return their real
+            // resource here; context-sensitive ones (Move) return None.
+            let cost = action.cost(encounter, curr_actor_id, None, None, None);
+            let unaffordable = cost.is_some_and(|c| !curr_actor.can_consume_resource(c));
+            let tag = cost_label(cost, action.name());
+
+            let base_style = if is_selected {
                 Style::default()
                     .fg(Color::Black)
                     .bg(Color::White)
                     .add_modifier(Modifier::BOLD)
+            } else if unaffordable {
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM)
             } else {
                 Style::default()
             };
-            Line::from(vec![Span::raw(prefix), Span::styled(name.clone(), style)])
+            Line::from(vec![
+                Span::raw(prefix),
+                Span::styled(tag, base_style),
+                Span::raw(" "),
+                Span::styled(action.name().to_string(), base_style),
+            ])
         })
         .collect();
     frame.render_widget(

@@ -14,14 +14,11 @@ pub fn get_tiles_from_size(size: Size) -> usize {
     }
 }
 
-const ACTOR_CHARS: [char; 28] = [
-    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
-    't', 'u', 'v', 'w', 'x', 'y', 'z', '*', '!',
-];
-
-pub fn get_colored_span(n: usize, team: usize) -> (String, Color, Color) {
-    let s = ACTOR_CHARS[n % ACTOR_CHARS.len()].to_string();
-
+/// Map glyph + team-keyed (fg, bg) for an actor. The glyph comes from the
+/// creature template (capital letter per species); the team color uses the
+/// 16-color ANSI palette. Team 0 gets a lighter bg so it stands out as
+/// "the player's side" by convention.
+pub fn get_colored_span(glyph: char, team: usize) -> (String, Color, Color) {
     let team_u8: u8 = (team % 16) as u8;
     let color = Color::Indexed(team_u8);
     let bg = if team_u8 < 1 {
@@ -29,8 +26,7 @@ pub fn get_colored_span(n: usize, team: usize) -> (String, Color, Color) {
     } else {
         Color::Black
     };
-
-    (s, color, bg)
+    (glyph.to_string(), color, bg)
 }
 
 pub fn modifier_from_score(score: u32) -> i32 {

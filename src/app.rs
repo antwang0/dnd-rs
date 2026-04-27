@@ -1,7 +1,6 @@
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
-use ratatui::text::{Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -186,6 +185,7 @@ impl App {
                 Constraint::Length(3),                   // Input area
                 Constraint::Length(3),                   // Temp message
                 Constraint::Min(1),                      // Message log
+                Constraint::Length(1),                   // Help bar
             ])
             .split(f.area());
 
@@ -218,17 +218,45 @@ impl App {
             .block(Block::default().borders(Borders::ALL).title("Message"));
         f.render_widget(tmp_message_widget, chunks[2]);
 
-        let messages_text: Text = self
+        let messages_lines: Vec<ratatui::text::Line<'static>> = self
             .encounter
             .messages()
             .iter()
             .rev()
             .take(5)
-            .map(|m| Span::raw(m.clone()))
+            .map(|m| crate::ui::style_log_line(m))
             .collect();
-        let messages_widget = Paragraph::new(messages_text)
+        let messages_widget = Paragraph::new(messages_lines)
             .block(Block::default().borders(Borders::ALL).title("Log"));
         f.render_widget(messages_widget, chunks[3]);
+
+        let help = self.help_hint();
+        let help_widget = Paragraph::new(help)
+            .style(ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray));
+        f.render_widget(help_widget, chunks[4]);
+    }
+
+    /// Context-sensitive footer string. Schema of the currently selected
+    /// action drives which keys are mentioned, so the player only sees
+    /// hints relevant to what they can do *right now*.
+    fn help_hint(&self) -> String {
+        if self.encounter.is_complete() {
+            return " Esc: quit".to_string();
+        }
+        let Some(action) = self.selected_action() else {
+            return " (waiting for prompt) | Esc: quit".to_string();
+        };
+        match action.targeting_schema() {
+            TargetingSchema::SinglePoint => {
+                " \u{2191}\u{2193}\u{2190}\u{2192}: step  Tab: cycle action  End: end turn  Esc: quit".to_string()
+            }
+            TargetingSchema::SingleActor => {
+                " \u{2190}\u{2192}: target  \u{2191}\u{2193}: cycle action  Tab: cycle  Enter: confirm  End: end turn  Esc: quit".to_string()
+            }
+            TargetingSchema::NoArgs | TargetingSchema::Custom => {
+                " \u{2191}\u{2193}: cycle action  Tab: cycle  Enter: confirm  End: end turn  Esc: quit".to_string()
+            }
+        }
     }
 
     /// Polls a single key event (with timeout) and applies it to app state.

@@ -56,6 +56,11 @@ use std::error::Error;
 
 pub struct CreatureTemplate {
     pub name: &'static str,
+    /// Single-character glyph for the map. Convention: capital letter
+    /// matching the species (Z for zombie, S for skeleton, etc.). Multiple
+    /// instances on the same team look identical on the map; the side
+    /// panel and log disambiguate via the instance-numbered name.
+    pub glyph: char,
     pub n_instances: usize,
     pub ac: u32,
     pub hitpoints: DiceExpr,
@@ -211,6 +216,8 @@ pub struct ActorInstance {
     size: Size,
     pub spell_slot_manager: SpellSlotManager,
     pub actions: Vec<&'static (dyn Action + Send + Sync)>,
+    /// Map glyph copied from the template. Static across an actor's life.
+    glyph: char,
     /// Lifecycle state. Driven by `take_damage` (damage transitions
     /// `Active -> Dying`, hits on `Dying`/`Stable` add failures) and
     /// `apply_death_save` (rolls move within `Dying` and into `Stable`,
@@ -268,8 +275,13 @@ impl ActorInstance {
                 warlock_spell_slot_lvl: 0,
             },
             actions: ct.actions.clone(),
+            glyph: ct.glyph,
             hp_state: HpState::Active,
         })
+    }
+
+    pub fn glyph(&self) -> char {
+        self.glyph
     }
 
     pub fn name(&self) -> &str {
