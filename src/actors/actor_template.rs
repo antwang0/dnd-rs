@@ -130,6 +130,11 @@ pub struct CreatureTemplate {
     /// Damage types this creature takes double damage from (e.g. Skeleton
     /// → Bludgeoning). Applied last; stacks multiply (resist+vuln = normal).
     pub vulnerabilities: HashSet<DamageType>,
+    /// HP healed at the start of every round (before the actor acts). Zero
+    /// for most creatures. Trolls regenerate 10 HP per round in 5e; we
+    /// model it here so `round_end` can apply it without special-casing.
+    /// A future "suppress on acid/fire damage" flag goes here too.
+    pub regeneration: u32,
 }
 
 #[derive(Clone, PartialEq)]
@@ -300,6 +305,7 @@ pub struct ActorInstance {
     immunities: HashSet<DamageType>,
     resistances: HashSet<DamageType>,
     vulnerabilities: HashSet<DamageType>,
+    pub regeneration: u32,
 }
 
 impl ActorInstance {
@@ -369,6 +375,7 @@ impl ActorInstance {
             immunities: ct.immunities.clone(),
             resistances: ct.resistances.clone(),
             vulnerabilities: ct.vulnerabilities.clone(),
+            regeneration: ct.regeneration,
         })
     }
 
@@ -751,21 +758,22 @@ impl ActorInstance {
 
     /// Restore HP. A Dying or Stable actor with `amount > 0` snaps back to
     /// Active at exactly `amount` HP (5e: regaining HP from 0 sets you to
-    /// the new value, not adds to it). Active actors heal up to their
-    /// max. Dead actors are unrecoverable here.
+    /// the new value, not adds to it). Active actors heal up to their max
+    /// (including item bonuses). Dead actors are unrecoverable here.
     pub fn heal(&mut self, amount: u32) -> HealOutcome {
         if amount == 0 {
             return HealOutcome::AlreadyFull;
         }
+        let max = self.max_hitpoints();
         match self.hp_state {
             HpState::Dead => HealOutcome::NoOp,
             HpState::Dying { .. } | HpState::Stable => {
                 self.hp_state = HpState::Active;
-                self.hitpoints = amount.min(self.base_hitpoints);
+                self.hitpoints = amount.min(max);
                 HealOutcome::Revived
             }
             HpState::Active => {
-                let new_hp = (self.hitpoints + amount).min(self.base_hitpoints);
+                let new_hp = (self.hitpoints + amount).min(max);
                 if new_hp == self.hitpoints {
                     HealOutcome::AlreadyFull
                 } else {

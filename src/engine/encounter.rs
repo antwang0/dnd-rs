@@ -1128,10 +1128,13 @@ impl EncounterInstance {
         }
     }
 
-    /// Tick condition timers on every actor. `Rounds(n)` becomes
-    /// `Rounds(n-1)`; `Rounds(0|1)` removes the condition. Logs each
-    /// expiration. Iterates by sorted id for deterministic ordering.
+    /// Tick condition timers and apply regeneration on every actor.
+    /// `Rounds(n)` timers become `Rounds(n-1)`; `Rounds(0|1)` removes the
+    /// condition. Regenerating actors heal by their `regeneration` value
+    /// unless they are at max HP or dead. Iterates by sorted id for
+    /// deterministic ordering.
     fn round_end(&mut self) {
+        use crate::actors::actor_template::HealOutcome;
         let mut ids: Vec<usize> = self.actors.keys().copied().collect();
         ids.sort_unstable();
         for id in ids {
@@ -1140,8 +1143,23 @@ impl EncounterInstance {
             };
             let name = actor.name().to_string();
             let expired = actor.tick_condition_timers();
+            // Regeneration: heal at round end if combat-active and below max.
+            let regen = actor.regeneration;
+            let regen_log = if regen > 0
+                && actor.is_combat_active()
+                && actor.hitpoints() < actor.max_hitpoints()
+            {
+                let outcome = actor.heal(regen);
+                matches!(outcome, HealOutcome::Healed | HealOutcome::Revived)
+            } else {
+                false
+            };
+            // actor borrow ends here — safe to call self.log now.
             for c in expired {
                 self.log(format!("{} is no longer {}.", name, c.name()));
+            }
+            if regen_log {
+                self.log(format!("{} regenerates {} HP.", name, regen));
             }
         }
     }

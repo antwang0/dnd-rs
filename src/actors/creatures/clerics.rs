@@ -46,5 +46,6 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         immunities: HashSet::new(),
         resistances: HashSet::new(),
         vulnerabilities: HashSet::new(),
+        regeneration: 0,
     }
 });
