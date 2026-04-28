@@ -161,6 +161,78 @@ impl Action for Slam {
     }
 }
 
+/// Generic STR-based bite attack — 1d6+STR piercing, no rider. Use this
+/// for creatures whose bite is pure damage (Troll, most beasts). Creatures
+/// that also trip or grapple on a bite should use WolfBite or a dedicated
+/// variant instead.
+pub struct Bite {}
+
+impl Action for Bite {
+    fn name(&self) -> &str {
+        "bite"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bt"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let str_mod =
+            modifier_from_score(caster.ability_score(crate::engine::types::AbilityScoreType::Strength));
+        let attack_bonus = caster.attack_bonus();
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+        weapon_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            attack_bonus,
+            target_ac,
+            Dice::new(1, 6),
+            str_mod,
+            DamageType::Piercing,
+            true,
+        )
+    }
+}
+
+pub static BITE: LazyLock<Bite> = LazyLock::new(|| Bite {});
+
 /// Melee attack that, on a hit, forces a STR save (DC = 8 + prof + STR mod) or knocks the
 /// target prone. Demonstrates the save-then-condition pattern: damage
 /// applies regardless, the prone condition only on save failure.
@@ -601,17 +673,17 @@ impl Action for Greatclub {
 }
 pub static GREATCLUB: LazyLock<Greatclub> = LazyLock::new(|| Greatclub {});
 
-/// Wolf bite — built-in trip rider on every successful hit. STR-based
-/// 1d4 piercing; on hit forces a STR save (DC = 8 + prof + STR mod), fail = Prone. Fuses
-/// the TripAttack rider pattern into a single creature-canonical action.
+/// Wolf-specific bite: 1d4 STR-based piercing with a built-in trip rider.
+/// On every hit forces a STR save (DC = 8 + prof + STR mod); fail = Prone.
+/// For a plain bite without the trip use BITE instead.
 pub struct WolfBite {}
 
 impl Action for WolfBite {
     fn name(&self) -> &str {
-        "bite"
+        "wolf bite"
     }
     fn aliases(&self) -> Vec<&str> {
-        vec!["bt"]
+        vec!["wb"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::SingleActor
@@ -761,8 +833,8 @@ pub static ZOMBIE_MULTISLAM: LazyLock<Multiattack> = LazyLock::new(|| Multiattac
 });
 
 /// Ranged spell attack wrapper. `attack_bonus` should be the caster's
-/// spell-attack modifier (ability mod, no proficiency yet). Treats as
-/// ranged for advantage/disadvantage purposes.
+/// spell_attack_bonus (ability mod + proficiency). Treats as ranged for
+/// advantage/disadvantage purposes.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn weapon_attack_ranged_spell(
     encounter: &mut EncounterInstance,
@@ -789,8 +861,8 @@ pub(crate) fn weapon_attack_ranged_spell(
     )
 }
 
-/// Melee spell attack wrapper. Same as `weapon_attack_ranged_spell` but
-/// `is_melee = true` so Prone-target gives advantage.
+/// Melee spell attack wrapper. Same as weapon_attack_ranged_spell but
+/// is_melee = true so Prone-target gives advantage.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn weapon_attack_melee_spell(
     encounter: &mut EncounterInstance,

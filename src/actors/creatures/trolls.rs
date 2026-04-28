@@ -1,5 +1,5 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{SLAM, WOLF_BITE};
+use crate::actions::monster_attacks::{BITE, SLAM};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{Language, Size, SpecialSense};
 use std::collections::HashSet;
@@ -22,7 +22,7 @@ pub static TROLL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     // Claws (slam) + Bite — two attacks per action, matching 5e multiattack.
     actions.push(&*SLAM);
-    actions.push(&*WOLF_BITE);
+    actions.push(&*BITE);
     CreatureTemplate {
         name: "Troll",
         glyph: 'T',
