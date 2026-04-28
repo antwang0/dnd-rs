@@ -253,6 +253,9 @@ impl App {
             TargetingSchema::SingleActor => {
                 " \u{2190}\u{2192}: target  \u{2191}\u{2193}: cycle action  Tab: cycle  Enter: confirm  End: end turn  Esc: quit".to_string()
             }
+            TargetingSchema::Burst { .. } => {
+                " type 'X,Y' point + Enter  \u{2191}\u{2193}: cycle action  Tab: cycle  End: end turn  Esc: quit".to_string()
+            }
             TargetingSchema::NoArgs | TargetingSchema::Custom => {
                 " \u{2191}\u{2193}: cycle action  Tab: cycle  Enter: confirm  End: end turn  Esc: quit".to_string()
             }
@@ -333,6 +336,13 @@ impl App {
     fn target_line(&self) -> Option<String> {
         let prompt = self.encounter.peek_prompt()?;
         let action = self.selected_action()?;
+        if let TargetingSchema::Burst { radius } = action.targeting_schema() {
+            return Some(format!(
+                "{}: AoE radius {}. Type 'X,Y' to target a tile, Enter to cast.",
+                action.name(),
+                radius
+            ));
+        }
         if !matches!(action.targeting_schema(), TargetingSchema::SingleActor) {
             return None;
         }
@@ -440,9 +450,11 @@ impl App {
                     _ => {}
                 }
             }
-            TargetingSchema::NoArgs | TargetingSchema::Custom => {
+            TargetingSchema::NoArgs | TargetingSchema::Custom | TargetingSchema::Burst { .. } => {
                 // Up/Down cycle the action; Left/Right ignored (avoid
                 // accidental selection-changes during command typing).
+                // Burst falls in here because point-targeting goes through
+                // the text input today (e.g. "sacred burst 12,8").
                 match code {
                     KeyCode::Up => {
                         self.selected_action_idx =
@@ -508,6 +520,15 @@ impl App {
                 let _ = write!(
                     self.tmp_message,
                     "'{}' needs a destination — use arrow keys",
+                    action.name()
+                );
+                return Tick::Continue;
+            }
+            TargetingSchema::Burst { .. } => {
+                self.tmp_message.clear();
+                let _ = write!(
+                    self.tmp_message,
+                    "'{}' needs a target tile — type 'X,Y' first",
                     action.name()
                 );
                 return Tick::Continue;

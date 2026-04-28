@@ -16,6 +16,14 @@ pub enum TargetingSchema {
     NoArgs,
     SinglePoint,
     SingleActor,
+    /// Target a single tile; the action's effect applies to every actor
+    /// whose footprint lies within `radius` tile-gap of the point. Used
+    /// by AoE spells (Fireball, Burning Hands, Sacred Burst). The radius
+    /// is in tile-gap units consistent with `footprint_chebyshev` — 0 is
+    /// the point itself, 1 includes the 8 surrounding tiles, etc.
+    Burst {
+        radius: isize,
+    },
     Custom,
 }
 
@@ -39,6 +47,13 @@ pub trait Action {
     /// (you have to be touching). Walls block, actors don't.
     fn requires_los(&self) -> bool {
         false
+    }
+
+    /// True for damaging / hostile actions (default). Buffing or healing
+    /// actions override to false so the AI's focus-fire pipeline doesn't
+    /// accidentally pick them as enemy attacks.
+    fn is_harmful(&self) -> bool {
+        true
     }
 
     fn side_effects(
@@ -102,13 +117,21 @@ pub trait Action {
                 }
                 target_ids.is_some_and(|ids| !ids.is_empty())
             }
+            TargetingSchema::Burst { radius: _ } => {
+                if target_ids.is_some() {
+                    return false;
+                }
+                target_locations.is_some_and(|tl| tl.len() == 1)
+            }
             TargetingSchema::Custom => true,
         };
         if !schema_validation {
             return false;
         }
-        // Reach + LOS for actor-targeted actions. Skipped if reach_tiles is
-        // None or if there are no target ids (covered by schema check above).
+        // Reach + LOS check. SingleActor measures from caster to target
+        // actor; Burst / SinglePoint measure from caster to the target
+        // tile. Either way we check both reach (if declared) and LOS
+        // (if required).
         if let Some(targets) = target_ids
             && let Some(&target_id) = targets.first()
         {
@@ -121,6 +144,22 @@ pub trait Action {
                 }
             }
             if self.requires_los() && !encounter.actor_has_line_of_sight(caster_id, target_id) {
+                return false;
+            }
+        } else if let Some(locs) = target_locations
+            && let Some(&point) = locs.first()
+        {
+            if let Some(reach) = self.reach_tiles() {
+                let Some(dist) = encounter.footprint_distance_to_point(caster_id, point) else {
+                    return false;
+                };
+                if dist > reach {
+                    return false;
+                }
+            }
+            if self.requires_los()
+                && !encounter.actor_has_line_of_sight_to_point(caster_id, point)
+            {
                 return false;
             }
         }

@@ -155,6 +155,231 @@ impl Action for Slam {
     }
 }
 
+/// Melee attack that, on a hit, forces a STR save (DC 13) or knocks the
+/// target prone. Demonstrates the save-then-condition pattern: damage
+/// applies regardless, the prone condition only on save failure.
+pub struct TripAttack {}
+
+impl Action for TripAttack {
+    fn name(&self) -> &str {
+        "trip"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["tp"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Option<Resource> {
+        Some(Resource::Action)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::ApplyCondition;
+        use crate::engine::types::AbilityScoreType;
+
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let str_mod = modifier_from_score(
+            caster.ability_score(AbilityScoreType::Strength),
+        );
+        let attack_bonus = caster.attack_bonus();
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+
+        let mut effects = weapon_attack(
+            encounter,
+            target_id,
+            self.name(),
+            attack_bonus,
+            target_ac,
+            Dice::new(1, 6),
+            str_mod,
+            DamageType::Bludgeoning,
+        );
+        // weapon_attack returns empty Vec on miss — only roll the save if
+        // damage was queued (the attack landed).
+        if effects.is_empty() {
+            return effects;
+        }
+        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, 13);
+        if !save.passed() {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Prone,
+                // Prone from a trip persists until stand-up clears it.
+                timer: crate::conditions::ConditionTimer::Permanent,
+            }));
+        }
+        effects
+    }
+}
+
+pub static TRIP: LazyLock<TripAttack> = LazyLock::new(|| TripAttack {});
+
+/// Ranged spit attack with splash. Primary uses an attack roll vs AC; on
+/// hit deals 1d6 acid to the primary target AND auto-damages every
+/// combat-active actor whose footprint is adjacent (gap ≤ 1) to the
+/// primary for 1d4 acid. Splash hits *anyone* in range — friendly or foe
+/// — except the caster themselves. The splash damage is rolled once and
+/// shared among splash victims (5e-style shared area roll).
+pub struct AcidSpit {}
+
+impl Action for AcidSpit {
+    fn name(&self) -> &str {
+        "acid spit"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["spit", "as"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(8)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Option<Resource> {
+        Some(Resource::Action)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::engine::types::AbilityScoreType;
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dex_mod = modifier_from_score(
+            caster.ability_score(AbilityScoreType::Dexterity),
+        );
+        let attack_bonus = dex_mod;
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+
+        // Primary attack — reuse weapon_attack so logging matches other
+        // attacks. weapon_attack returns Vec containing the primary
+        // DealDamage on hit, empty on miss.
+        let mut effects = weapon_attack(
+            encounter,
+            target_id,
+            self.name(),
+            attack_bonus,
+            target_ac,
+            Dice::new(1, 6),
+            0, // no DEX-to-damage rider; keep splash potential as the perk
+            DamageType::Acid,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+
+        // Splash: snapshot target's location & size, then sweep nearby
+        // actors. Sorted by id for deterministic order.
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return effects;
+        };
+        let target_loc = target.location();
+        let target_size = get_tiles_from_size(target.size());
+        let splash_dice = Dice::new(1, 4);
+        let splash_amount = encounter.roll(&splash_dice);
+        let mut hit_anyone = false;
+        let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
+        ids.sort_unstable();
+        for sid in ids {
+            if sid == caster_id || sid == target_id {
+                continue;
+            }
+            let Some(other) = encounter.actors.get(&sid) else {
+                continue;
+            };
+            if !other.is_combat_active() {
+                continue;
+            }
+            let dist = footprint_chebyshev(
+                other.location(),
+                get_tiles_from_size(other.size()),
+                target_loc,
+                target_size,
+            );
+            // gap ≤ 1 = footprint-adjacent (touching or one tile of clear
+            // space). Anyone outside that radius escapes the splash.
+            if dist > 1 {
+                continue;
+            }
+            if !hit_anyone {
+                hit_anyone = true;
+                encounter.log(format!(
+                    "  acid spit splash: 1d4({}) = {} acid",
+                    splash_amount, splash_amount
+                ));
+            }
+            effects.push(Box::new(DealDamage {
+                actor_id: sid,
+                amount: splash_amount,
+                damage_type: DamageType::Acid,
+            }));
+        }
+        effects
+    }
+}
+
+pub static ACID_SPIT: LazyLock<AcidSpit> = LazyLock::new(|| AcidSpit {});
+
 /// Wraps another action and runs it `count` times for one Action-slot
 /// expenditure. Reach / LOS / targeting schema are inherited from the
 /// sub-attack so creatures can declare e.g. `Multiattack { sub: &SLAM, count: 2 }`

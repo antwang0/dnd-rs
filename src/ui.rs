@@ -99,6 +99,11 @@ pub fn render_map(
                 if Some(actor_id) == active_actor_id && !blink_on() {
                     style = style.add_modifier(Modifier::REVERSED);
                 }
+                // Prone actors render with a lowercase glyph (Z → z) — a
+                // quick at-a-glance signal of "knocked down."
+                if actor.has_condition(crate::conditions::Condition::Prone) {
+                    s = s.to_lowercase();
+                }
                 // Downed actors render dimmed (stable as `+`, dying as `x`)
                 // so the player can read the battlefield at a glance instead
                 // of relying on the side-panel HP bar.
@@ -272,7 +277,7 @@ pub fn render_sideinfo(
     hp_spans.extend(hp_bar_spans(hp, max_hp, 10));
     hp_spans.push(Span::raw(format!(" {}/{}", hp, max_hp)));
 
-    let stats_lines: Vec<Line<'static>> = vec![
+    let mut stats_lines: Vec<Line<'static>> = vec![
         Line::from(hp_spans),
         Line::from(Span::raw(format!("AC: {}", ac))),
         Line::from(Span::raw(format!("Movement: {:.0}", movement))),
@@ -281,6 +286,27 @@ pub fn render_sideinfo(
             action_slots, bonus_slots
         ))),
     ];
+    if !curr_actor.conditions().is_empty() {
+        // Format each condition with its remaining duration when timed.
+        // Sort alphabetically so HashMap iteration order doesn't leak.
+        let mut entries: Vec<(String, &'static str)> = curr_actor
+            .conditions()
+            .iter()
+            .map(|(c, timer)| {
+                let label = match timer {
+                    crate::conditions::ConditionTimer::Permanent => c.name().to_string(),
+                    crate::conditions::ConditionTimer::Rounds(n) => format!("{}({})", c.name(), n),
+                };
+                (label, c.name())
+            })
+            .collect();
+        entries.sort_unstable_by(|a, b| a.1.cmp(b.1));
+        let labels: Vec<String> = entries.into_iter().map(|(l, _)| l).collect();
+        stats_lines.push(Line::from(Span::styled(
+            format!("Conditions: {}", labels.join(", ")),
+            Style::default().fg(Color::Yellow),
+        )));
+    }
     frame.render_widget(
         Paragraph::new(stats_lines)
             .block(Block::default().borders(Borders::ALL).title("Resources")),

@@ -1,5 +1,5 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::ZOMBIE_MULTISLAM;
+use crate::actions::monster_attacks::{TRIP, ZOMBIE_MULTISLAM};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{Language, Size, SpecialSense};
 use std::collections::HashSet;
@@ -7,9 +7,11 @@ use std::sync::LazyLock;
 
 pub static ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    // Multislam is the zombie's only attack — two swings per Action. Single
-    // slam still exists for other creatures that want it.
+    // Multislam is the zombie's main attack (2 swings per Action). Trip is
+    // an alternative single attack that on hit forces a STR save or prone —
+    // less raw damage but disables movement.
     actions.push(&*ZOMBIE_MULTISLAM);
+    actions.push(&*TRIP);
     CreatureTemplate {
         name: "Zombie",
         glyph: 'Z',

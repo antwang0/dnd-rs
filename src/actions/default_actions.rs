@@ -174,5 +174,65 @@ impl Action for Dash {
 
 pub static DASH: LazyLock<Dash> = LazyLock::new(|| Dash {});
 
+/// Stand up from being prone. 5e: standing up costs half your speed in
+/// movement. Only valid while the caster has the Prone condition.
+pub struct StandUp {}
+
+impl Action for StandUp {
+    fn name(&self) -> &str {
+        "stand"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["standup", "su"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn cost(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Option<Resource> {
+        let actor = encounter.actors.get(&caster_id)?;
+        Some(Resource::Movement(actor.speed() / 2.0))
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_condition(crate::conditions::Condition::Prone))
+    }
+
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        vec![Box::new(crate::engine::side_effects::RemoveCondition {
+            actor_id: caster_id,
+            condition: crate::conditions::Condition::Prone,
+        })]
+    }
+}
+
+pub static STAND_UP: LazyLock<StandUp> = LazyLock::new(|| StandUp {});
+
 pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> =
-    LazyLock::new(|| vec![&*MOVE, &*DASH, &*SKIP]);
+    LazyLock::new(|| vec![&*MOVE, &*DASH, &*SKIP, &*STAND_UP]);

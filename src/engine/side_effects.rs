@@ -1,4 +1,5 @@
-use crate::actors::actor_template::DamageOutcome;
+use crate::actors::actor_template::{ConcentrationData, DamageOutcome, HealOutcome};
+use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::triggers::TriggerEvent;
 use crate::engine::types::{Coordinate, DamageType};
@@ -134,8 +135,121 @@ impl ApplicableSideEffect for DealDamage {
         };
         let name = actor.name().to_string();
         let outcome = actor.take_damage(self.amount);
+        let was_concentrating = actor.is_concentrating();
+        // actor borrow ends here.
+
         if matches!(outcome, DamageOutcome::Downed) {
             ei.log(format!("{} falls unconscious.", name));
+            // 5e: going to 0 HP auto-drops concentration.
+            ei.drop_concentration(self.actor_id);
+        } else if matches!(outcome, DamageOutcome::Reduced) && was_concentrating {
+            // 5e: take damage while concentrating → CON save vs DC max(10, dmg/2).
+            let dc = ((self.amount / 2) as i32).max(10);
+            let save = ei.roll_save(
+                self.actor_id,
+                crate::engine::types::AbilityScoreType::Constitution,
+                dc,
+            );
+            if !save.passed() {
+                ei.drop_concentration(self.actor_id);
+            }
+        }
+    }
+}
+
+/// Restore HP to an actor. Logs a "comes back to consciousness" line when
+/// the heal pulls them out of Dying / Stable.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct Heal {
+    pub actor_id: usize,
+    pub amount: u32,
+}
+
+impl ApplicableSideEffect for Heal {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        let outcome = actor.heal(self.amount);
+        match outcome {
+            HealOutcome::Revived => ei.log(format!(
+                "{} regains consciousness ({} HP).",
+                name, self.amount
+            )),
+            HealOutcome::Healed => ei.log(format!("{} heals {} HP.", name, self.amount)),
+            HealOutcome::AlreadyFull | HealOutcome::NoOp => {}
+        }
+    }
+}
+
+/// Install concentration on an actor. If they were already concentrating
+/// on something else, the prior concentration is dropped first (its
+/// applied conditions cleared). Use this from concentration spells'
+/// `side_effects` AFTER queueing the conditions the spell applies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartConcentration {
+    pub caster_id: usize,
+    pub data: ConcentrationData,
+}
+
+impl ApplicableSideEffect for StartConcentration {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        // Drop any prior concentration first — cleanup its effects.
+        ei.drop_concentration(self.caster_id);
+        if let Some(actor) = ei.get_actor(self.caster_id) {
+            actor.start_concentration(self.data.clone());
+            let name = actor.name().to_string();
+            ei.log(format!(
+                "{} begins concentrating on {}.",
+                name, self.data.spell_name
+            ));
+        }
+    }
+}
+
+/// Add a status condition to an actor with a given timer. No-op if the
+/// actor is missing; if the condition was already present its timer is
+/// replaced (no stacking semantics yet — revisit when needed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ApplyCondition {
+    pub actor_id: usize,
+    pub condition: Condition,
+    pub timer: ConditionTimer,
+}
+
+impl ApplicableSideEffect for ApplyCondition {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        if actor.add_condition(self.condition, self.timer) {
+            let suffix = match self.timer {
+                ConditionTimer::Permanent => String::new(),
+                ConditionTimer::Rounds(n) => format!(" ({} round{})", n, if n == 1 { "" } else { "s" }),
+            };
+            ei.log(format!("{} is now {}{}.", name, self.condition.name(), suffix));
+        }
+    }
+}
+
+/// Remove a status condition from an actor. No-op if the actor is missing
+/// or doesn't have the condition.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct RemoveCondition {
+    pub actor_id: usize,
+    pub condition: Condition,
+}
+
+impl ApplicableSideEffect for RemoveCondition {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        if actor.remove_condition(self.condition) {
+            ei.log(format!("{} is no longer {}.", name, self.condition.name()));
         }
     }
 }

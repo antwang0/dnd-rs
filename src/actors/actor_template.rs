@@ -1,3 +1,4 @@
+use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::{Dice, DiceExpr, Roller};
 
 /// Lifecycle state of an actor's hit points. Replaces the previous
@@ -40,6 +41,31 @@ pub enum DamageOutcome {
     /// counts as a failed death save instead of an HP delta.
     DyingFailure,
 }
+
+/// State of an actor that's concentrating on a spell. Tracks what they
+/// applied so dropping concentration can clean up automatically.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConcentrationData {
+    /// Display name of the spell, used in logs ("X's concentration on
+    /// Hold Person ends.").
+    pub spell_name: String,
+    /// Conditions this concentration applied. On drop, each is removed
+    /// from its target. `(target_id, condition)`.
+    pub conditions: Vec<(usize, Condition)>,
+}
+
+/// What `heal` did. Mirrors `DamageOutcome` for the inverse direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HealOutcome {
+    /// Active actor gained HP.
+    Healed,
+    /// Was Dying / Stable; healing brought them back to Active.
+    Revived,
+    /// Active actor was already at max HP — heal was a no-op.
+    AlreadyFull,
+    /// Dead actors can't be healed by ordinary means.
+    NoOp,
+}
 use crate::engine::side_effects::Resource;
 use crate::engine::types::Coordinate;
 use crate::items::item_template::Item;
@@ -50,7 +76,7 @@ use crate::{
         util::modifier_from_score,
     },
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use std::error::Error;
 
@@ -223,6 +249,15 @@ pub struct ActorInstance {
     /// `apply_death_save` (rolls move within `Dying` and into `Stable`,
     /// `Dead`, or `Active` on a nat 20). See `HpState`.
     hp_state: HpState,
+    /// Active status conditions, mapped to their per-application timer.
+    /// `Permanent` entries persist until explicitly removed; `Rounds(n)`
+    /// entries tick down on every initiative wrap and clear at 0.
+    conditions: HashMap<Condition, ConditionTimer>,
+    /// Currently-concentrated-on spell, if any. Each actor concentrates
+    /// on at most one spell at a time (5e). Casting a new concentration
+    /// spell or taking damage that fails a CON save drops it; the engine
+    /// then removes any conditions the spell installed.
+    concentration: Option<ConcentrationData>,
 }
 
 impl ActorInstance {
@@ -277,7 +312,78 @@ impl ActorInstance {
             actions: ct.actions.clone(),
             glyph: ct.glyph,
             hp_state: HpState::Active,
+            conditions: HashMap::new(),
+            concentration: None,
         })
+    }
+
+    pub fn is_concentrating(&self) -> bool {
+        self.concentration.is_some()
+    }
+
+    pub fn concentration(&self) -> Option<&ConcentrationData> {
+        self.concentration.as_ref()
+    }
+
+    /// Install a new concentration. Returns the previous concentration if
+    /// any (caller is expected to clean up its effects via the engine).
+    pub fn start_concentration(
+        &mut self,
+        data: ConcentrationData,
+    ) -> Option<ConcentrationData> {
+        self.concentration.replace(data)
+    }
+
+    /// End concentration and return its data. Returns `None` if the actor
+    /// wasn't concentrating.
+    pub fn end_concentration(&mut self) -> Option<ConcentrationData> {
+        self.concentration.take()
+    }
+
+    pub fn has_condition(&self, c: Condition) -> bool {
+        self.conditions.contains_key(&c)
+    }
+
+    /// Add a condition with the given timer. If the condition was already
+    /// present, the timer is replaced (longer-lasting application overrides
+    /// shorter — but for now we just take the new value either way; revisit
+    /// when stacking semantics matter). Returns true if newly added.
+    pub fn add_condition(&mut self, c: Condition, timer: ConditionTimer) -> bool {
+        self.conditions.insert(c, timer).is_none()
+    }
+
+    /// Remove a condition. Returns true if the condition was present.
+    pub fn remove_condition(&mut self, c: Condition) -> bool {
+        self.conditions.remove(&c).is_some()
+    }
+
+    pub fn conditions(&self) -> &HashMap<Condition, ConditionTimer> {
+        &self.conditions
+    }
+
+    /// Decrement every `Rounds(n)` timer by 1 and report which conditions
+    /// expired (were removed because their timer hit 0). Permanent timers
+    /// are untouched. The engine calls this on every round-end.
+    pub fn tick_condition_timers(&mut self) -> Vec<Condition> {
+        let mut expired = Vec::new();
+        let snapshot: Vec<(Condition, ConditionTimer)> = self
+            .conditions
+            .iter()
+            .map(|(c, t)| (*c, *t))
+            .collect();
+        for (c, timer) in snapshot {
+            match timer {
+                ConditionTimer::Permanent => {}
+                ConditionTimer::Rounds(0) | ConditionTimer::Rounds(1) => {
+                    self.conditions.remove(&c);
+                    expired.push(c);
+                }
+                ConditionTimer::Rounds(n) => {
+                    self.conditions.insert(c, ConditionTimer::Rounds(n - 1));
+                }
+            }
+        }
+        expired
     }
 
     pub fn glyph(&self) -> char {
@@ -305,15 +411,29 @@ impl ActorInstance {
     }
 
     pub fn can_consume_resource(&self, resource: Resource) -> bool {
+        // Stunned actors lose their entire action economy. Prone is NOT
+        // checked here for Movement: stand-up itself pays in Movement, so
+        // blocking the resource here would create a catch-22. Move-the-
+        // action is still blocked because `remaining_movement()` returns 0
+        // when Prone, which makes `path_cost_to` find no path.
+        let stunned = self.has_condition(Condition::Stunned);
         match resource {
-            Resource::Movement(movement_amt) => movement_amt <= self.movement,
+            Resource::Movement(amt) => {
+                if stunned {
+                    return false;
+                }
+                amt <= self.movement
+            }
             Resource::SpellSlot(spell_lvl) => {
+                if stunned {
+                    return false;
+                }
                 self.spell_slot_manager.spell_slots(spell_lvl).spell_slots >= 1
             }
-            Resource::Action => self.action_slots >= 1,
-            Resource::BonusAction => self.bonus_action_slots >= 1,
-            Resource::Reaction => self.reaction_slots >= 1,
-            Resource::LegendaryAction => self.legendary_action_slots >= 1,
+            Resource::Action => !stunned && self.action_slots >= 1,
+            Resource::BonusAction => !stunned && self.bonus_action_slots >= 1,
+            Resource::Reaction => !stunned && self.reaction_slots >= 1,
+            Resource::LegendaryAction => !stunned && self.legendary_action_slots >= 1,
         }
     }
 
@@ -391,6 +511,9 @@ impl ActorInstance {
     }
 
     pub fn remaining_movement(&self) -> f32 {
+        if self.has_condition(Condition::Prone) || self.has_condition(Condition::Stunned) {
+            return 0.0;
+        }
         self.movement
     }
 
@@ -436,6 +559,40 @@ impl ActorInstance {
 
     pub fn bonus_action_slots(&self) -> u32 {
         self.bonus_action_slots
+    }
+
+    /// Restore HP. A Dying or Stable actor with `amount > 0` snaps back to
+    /// Active at exactly `amount` HP (5e: regaining HP from 0 sets you to
+    /// the new value, not adds to it). Active actors heal up to their
+    /// max. Dead actors are unrecoverable here.
+    pub fn heal(&mut self, amount: u32) -> HealOutcome {
+        if amount == 0 {
+            return HealOutcome::AlreadyFull;
+        }
+        match self.hp_state {
+            HpState::Dead => HealOutcome::NoOp,
+            HpState::Dying { .. } | HpState::Stable => {
+                self.hp_state = HpState::Active;
+                self.hitpoints = amount.min(self.base_hitpoints);
+                HealOutcome::Revived
+            }
+            HpState::Active => {
+                let new_hp = (self.hitpoints + amount).min(self.base_hitpoints);
+                if new_hp == self.hitpoints {
+                    HealOutcome::AlreadyFull
+                } else {
+                    self.hitpoints = new_hp;
+                    HealOutcome::Healed
+                }
+            }
+        }
+    }
+
+    /// 5e spell save DC: 8 + spellcasting ability modifier (we don't track
+    /// proficiency yet; once we do, add it here). Actions that force saves
+    /// call this on the caster to set their DC.
+    pub fn spell_save_dc(&self, ability: AbilityScoreType) -> i32 {
+        8 + modifier_from_score(self.ability_score(ability))
     }
 
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {

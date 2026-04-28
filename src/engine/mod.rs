@@ -3,6 +3,7 @@ pub mod actor_gen;
 pub mod dice;
 pub mod encounter;
 pub mod errors;
+pub mod saves;
 pub mod prompt;
 pub mod roll_event;
 pub mod side_effects;
