@@ -84,6 +84,17 @@ impl App {
         self.encounter_number
     }
 
+    /// CR budget for the *next* encounter: linear ramp on `encounter_number`.
+    /// The first fight uses `actor_params.cr_target` as-is; each subsequent
+    /// encounter adds half of that base on top, so encounter 2 is 1.5×,
+    /// encounter 3 is 2×, etc. Linear keeps the curve readable; aggressive
+    /// enough that fights get noticeably tougher within a session, gentle
+    /// enough that the player isn't insta-overrun by encounter 4.
+    fn scaled_cr_target(&self) -> f32 {
+        let next_n = self.encounter_number + 1;
+        self.actor_params.cr_target * (1.0 + 0.5 * (next_n - 1) as f32)
+    }
+
     /// Advance to the next encounter: take surviving team-0 actors out of
     /// the current fight, long-rest them, and spawn them into a freshly
     /// generated map alongside new enemies. Resets per-encounter UI state.
@@ -104,7 +115,11 @@ impl App {
         for pc in &mut rested {
             pc.long_rest();
         }
-        match EncounterInstance::with_pcs(&self.terrain_params, &self.actor_params, None, rested) {
+        // Bump the CR budget for this fight only; keep `actor_params` as the
+        // base so future scaling stays anchored to the original difficulty.
+        let mut scaled_params = self.actor_params.clone();
+        scaled_params.cr_target = self.scaled_cr_target();
+        match EncounterInstance::with_pcs(&self.terrain_params, &scaled_params, None, rested) {
             Ok(next) => {
                 self.encounter = next;
                 self.encounter_number += 1;
@@ -298,7 +313,11 @@ impl App {
     /// action drives which keys are mentioned, so the player only sees
     /// hints relevant to what they can do *right now*.
     fn help_hint(&self) -> String {
-        let prefix = format!(" [Encounter {}]", self.encounter_number);
+        let current_cr = self.actor_params.cr_target * (1.0 + 0.5 * (self.encounter_number - 1) as f32);
+        let prefix = format!(
+            " [Encounter {} | CR {:.1}]",
+            self.encounter_number, current_cr
+        );
         if self.encounter.is_complete() {
             if self.encounter.winning_team() == Some(self.actor_params.start_team) {
                 return format!("{}  R: long rest & continue  Esc: quit", prefix);

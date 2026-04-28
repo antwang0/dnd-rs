@@ -2584,6 +2584,51 @@ mod tests {
     }
 
     #[test]
+    fn with_pcs_higher_cr_target_yields_more_enemy_cr() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let tp = TerrainGenParams {
+            width: 30,
+            height: 20,
+            branch_depth: 4,
+            branch_prob: 0.5,
+        };
+        let mut ap = ActorGenParams {
+            cr_target: 1.0,
+            n_teams: 2,
+            pc_template: Some(&FIGHTER_TEMPLATE),
+            start_team: 0,
+        };
+        let first = EncounterInstance::from_params(&tp, &ap, Some(11)).unwrap();
+        let pcs: Vec<ActorInstance> = first
+            .actors
+            .values()
+            .filter(|a| a.team() == 0)
+            .cloned()
+            .collect();
+
+        let low = EncounterInstance::with_pcs(&tp, &ap, Some(42), pcs.clone()).unwrap();
+        ap.cr_target = 4.0;
+        let high = EncounterInstance::with_pcs(&tp, &ap, Some(42), pcs).unwrap();
+
+        // Use total enemy max-HP as a proxy for "how much enemy" got
+        // generated — exposing CR per actor isn't worth the surface area.
+        let enemy_hp = |e: &EncounterInstance| -> u32 {
+            e.actors
+                .values()
+                .filter(|a| a.team() != 0)
+                .map(|a| a.max_hitpoints())
+                .sum()
+        };
+        assert!(
+            enemy_hp(&high) > enemy_hp(&low),
+            "scaled cr_target should produce more enemy HP: low={} high={}",
+            enemy_hp(&low),
+            enemy_hp(&high)
+        );
+    }
+
+    #[test]
     fn with_pcs_preserves_team0_and_adds_enemies() {
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
 
