@@ -18,7 +18,7 @@ use crate::engine::types::{Coordinate, Size};
 use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 use fastrand::Rng;
 use std::cmp::Ordering;
-use crate::engine::dice::{Dice, FastRandRoller, Roller};
+use crate::engine::dice::{Dice, FastRandRoller, RollMode, Roller};
 
 pub enum StackElementEntry {
     SideEffect(Box<dyn ApplicableSideEffect>),
@@ -258,10 +258,88 @@ impl EncounterInstance {
         self.roller.roll(dice)
     }
 
+    /// Roll a single d20 with advantage / disadvantage applied. `Advantage`
+    /// rolls two d20s and takes the higher; `Disadvantage` takes the lower;
+    /// `Normal` rolls once. All rolls advance the same seedable roller, so
+    /// reproducibility is preserved.
+    pub fn roll_d20_with_mode(&mut self, mode: RollMode) -> u32 {
+        let d20 = Dice::new(1, 20);
+        match mode {
+            RollMode::Normal => self.roll(&d20),
+            RollMode::Advantage => {
+                let a = self.roll(&d20);
+                let b = self.roll(&d20);
+                a.max(b)
+            }
+            RollMode::Disadvantage => {
+                let a = self.roll(&d20);
+                let b = self.roll(&d20);
+                a.min(b)
+            }
+        }
+    }
+
+    /// Compute the attack-roll mode given attacker / target conditions.
+    /// 5e clauses we model today:
+    /// - Attacker Prone → disadvantage on all attacks.
+    /// - Attacker Poisoned → disadvantage.
+    /// - Target Prone → melee attacks have advantage, ranged have disadvantage.
+    /// - Target Stunned → advantage on attacks vs them.
+    ///
+    /// Multiple sources of the same direction don't stack; opposing
+    /// sources cancel via `RollMode::combine`.
+    pub fn compute_attack_mode(
+        &self,
+        attacker_id: usize,
+        target_id: usize,
+        is_melee: bool,
+    ) -> RollMode {
+        use crate::conditions::Condition;
+        let mut mode = RollMode::Normal;
+        if let Some(attacker) = self.actors.get(&attacker_id) {
+            if attacker.has_condition(Condition::Prone) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+            if attacker.has_condition(Condition::Poisoned) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+        }
+        if let Some(target) = self.actors.get(&target_id) {
+            if target.has_condition(Condition::Prone) {
+                mode = mode.combine(if is_melee {
+                    RollMode::Advantage
+                } else {
+                    RollMode::Disadvantage
+                });
+            }
+            if target.has_condition(Condition::Stunned) {
+                mode = mode.combine(RollMode::Advantage);
+            }
+        }
+        mode
+    }
+
+    /// Compute the save-roll mode for an actor's ability save. Today
+    /// `Poisoned` imposes disadvantage on all saves derived from ability
+    /// checks (we conflate save-vs-check until we model that distinction).
+    pub fn compute_save_mode(
+        &self,
+        actor_id: usize,
+        _ability: crate::engine::types::AbilityScoreType,
+    ) -> RollMode {
+        use crate::conditions::Condition;
+        let mut mode = RollMode::Normal;
+        if let Some(actor) = self.actors.get(&actor_id)
+            && actor.has_condition(Condition::Poisoned)
+        {
+            mode = mode.combine(RollMode::Disadvantage);
+        }
+        mode
+    }
+
     /// Roll a saving throw for `actor_id` against `dc` using `ability`.
-    /// Logs the breakdown (raw d20, modifier, total, DC, outcome) to the
-    /// combat log. A missing actor auto-fails (defensive — callers should
-    /// already have validated the actor exists).
+    /// Auto-applies advantage / disadvantage based on the actor's
+    /// conditions (see `compute_save_mode`). Missing actor auto-fails.
     pub fn roll_save(
         &mut self,
         actor_id: usize,
@@ -271,7 +349,8 @@ impl EncounterInstance {
         use crate::engine::saves::SaveOutcome;
         use crate::engine::util::modifier_from_score;
 
-        let raw = self.roll(&Dice::new(1, 20));
+        let mode = self.compute_save_mode(actor_id, ability);
+        let raw = self.roll_d20_with_mode(mode);
         let Some(actor) = self.actors.get(&actor_id) else {
             return SaveOutcome::Fail;
         };
@@ -284,13 +363,14 @@ impl EncounterInstance {
         };
         let name = actor.name().to_string();
         self.log(format!(
-            "  {} {:?} save: 1d20({}){:+} = {} vs DC {} \u{2014} {}",
+            "  {} {:?} save: 1d20({}){:+} = {} vs DC {}{} \u{2014} {}",
             name,
             ability,
             raw,
             modifier,
             total,
             dc,
+            mode.log_suffix(),
             if outcome.passed() { "pass" } else { "fail" }
         ));
         outcome
@@ -1701,6 +1781,125 @@ mod tests {
         assert!(
             e.actors[&ally].hitpoints() < ally_max,
             "ally should have taken splash damage"
+        );
+    }
+
+    #[test]
+    fn attack_mode_prone_target_melee_advantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Prone, ConditionTimer::Permanent);
+        // Melee attack vs prone target → advantage.
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage
+        );
+        // Ranged attack vs prone target → disadvantage.
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, false),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn attack_mode_attacker_prone_disadvantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Prone, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn attack_mode_stunned_target_advantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Stunned, ConditionTimer::Rounds(5));
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage
+        );
+    }
+
+    #[test]
+    fn attack_mode_advantage_disadvantage_cancel() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        // Attacker prone (disadv) + target stunned (adv) → cancel to Normal.
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Prone, ConditionTimer::Permanent);
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Stunned, ConditionTimer::Rounds(5));
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Normal
+        );
+    }
+
+    #[test]
+    fn save_mode_poisoned_disadvantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Poisoned, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_save_mode(id, AbilityScoreType::Dexterity),
+            RollMode::Disadvantage
         );
     }
 

@@ -13,6 +13,7 @@ use crate::{
     },
 };
 
+
 pub static SLAM: LazyLock<Slam> = LazyLock::new(|| Slam {});
 
 /// Standard 5e longbow: ranged, requires line-of-sight, +DEX to hit and damage.
@@ -76,6 +77,7 @@ impl Action for Longbow {
 
         weapon_attack(
             encounter,
+            caster_id,
             target_id,
             self.name(),
             attack_bonus,
@@ -83,6 +85,7 @@ impl Action for Longbow {
             Dice::new(1, 8),
             modifier_from_score(dex),
             DamageType::Piercing,
+            false, // ranged
         )
     }
 }
@@ -144,6 +147,7 @@ impl Action for Slam {
 
         weapon_attack(
             encounter,
+            caster_id,
             target_id,
             self.name(),
             attack_bonus,
@@ -151,6 +155,7 @@ impl Action for Slam {
             Dice::new(2, 6),
             str_mod,
             DamageType::Bludgeoning,
+            true, // melee
         )
     }
 }
@@ -217,6 +222,7 @@ impl Action for TripAttack {
 
         let mut effects = weapon_attack(
             encounter,
+            caster_id,
             target_id,
             self.name(),
             attack_bonus,
@@ -224,6 +230,7 @@ impl Action for TripAttack {
             Dice::new(1, 6),
             str_mod,
             DamageType::Bludgeoning,
+            true, // melee
         );
         // weapon_attack returns empty Vec on miss — only roll the save if
         // damage was queued (the attack landed).
@@ -316,6 +323,7 @@ impl Action for AcidSpit {
         // DealDamage on hit, empty on miss.
         let mut effects = weapon_attack(
             encounter,
+            caster_id,
             target_id,
             self.name(),
             attack_bonus,
@@ -323,6 +331,7 @@ impl Action for AcidSpit {
             Dice::new(1, 6),
             0, // no DEX-to-damage rider; keep splash potential as the perk
             DamageType::Acid,
+            false, // ranged
         );
         if effects.is_empty() {
             return effects;
@@ -465,6 +474,7 @@ pub static ZOMBIE_MULTISLAM: LazyLock<Multiattack> = LazyLock::new(|| Multiattac
 #[allow(clippy::too_many_arguments)]
 fn weapon_attack(
     encounter: &mut EncounterInstance,
+    caster_id: usize,
     target_id: usize,
     action_name: &str,
     attack_bonus: i32,
@@ -472,17 +482,20 @@ fn weapon_attack(
     damage_dice: Dice,
     damage_bonus: i32,
     damage_type: DamageType,
+    is_melee: bool,
 ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-    let raw_attack = encounter.roll(&Dice::new(1, 20)) as i32;
+    let mode = encounter.compute_attack_mode(caster_id, target_id, is_melee);
+    let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
     let attack_total = raw_attack + attack_bonus;
     let hit = attack_total >= target_ac;
     encounter.log(format!(
-        "  {}: 1d20({}){:+} = {} vs AC {} \u{2014} {}",
+        "  {}: 1d20({}){:+} = {} vs AC {}{} \u{2014} {}",
         action_name,
         raw_attack,
         attack_bonus,
         attack_total,
         target_ac,
+        mode.log_suffix(),
         if hit { "hit" } else { "miss" },
     ));
     if !hit {

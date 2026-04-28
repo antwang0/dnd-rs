@@ -22,6 +22,39 @@ impl fmt::Display for Dice {
     }
 }
 
+/// 5e advantage / disadvantage. Applied to attack rolls and saving throws
+/// (not damage). `combine` cancels opposite sources and idempotently
+/// folds same-direction sources — matching 5e's "you don't stack
+/// advantage; one of each cancels."
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RollMode {
+    Normal,
+    Advantage,
+    Disadvantage,
+}
+
+impl RollMode {
+    pub fn combine(self, other: RollMode) -> RollMode {
+        use RollMode::*;
+        match (self, other) {
+            (Normal, x) | (x, Normal) => x,
+            (Advantage, Advantage) => Advantage,
+            (Disadvantage, Disadvantage) => Disadvantage,
+            (Advantage, Disadvantage) | (Disadvantage, Advantage) => Normal,
+        }
+    }
+
+    /// Short suffix for log messages — empty when Normal so we don't
+    /// pollute every roll line.
+    pub fn log_suffix(self) -> &'static str {
+        match self {
+            RollMode::Normal => "",
+            RollMode::Advantage => " (adv)",
+            RollMode::Disadvantage => " (dis)",
+        }
+    }
+}
+
 /// Anything that can produce a sum-of-dice roll. The trait stays minimal so
 /// tests can swap in a deterministic stub (see tests below).
 pub trait Roller {
@@ -249,6 +282,18 @@ mod tests {
         let e: DiceExpr = "2d8+1".parse().unwrap();
         // 3 + 5 + 1 = 9
         assert_eq!(e.eval(&mut r), 9);
+    }
+
+    #[test]
+    fn roll_mode_combine_logic() {
+        use RollMode::*;
+        assert_eq!(Normal.combine(Advantage), Advantage);
+        assert_eq!(Normal.combine(Disadvantage), Disadvantage);
+        assert_eq!(Advantage.combine(Advantage), Advantage);
+        assert_eq!(Disadvantage.combine(Disadvantage), Disadvantage);
+        assert_eq!(Advantage.combine(Disadvantage), Normal);
+        assert_eq!(Disadvantage.combine(Advantage), Normal);
+        assert_eq!(Normal.combine(Normal), Normal);
     }
 
     #[test]
