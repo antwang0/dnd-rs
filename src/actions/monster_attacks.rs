@@ -216,6 +216,7 @@ impl Action for TripAttack {
             caster.ability_score(AbilityScoreType::Strength),
         );
         let attack_bonus = caster.attack_bonus();
+        let dc = caster.ability_save_dc(AbilityScoreType::Strength);
         let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
         else {
             return Vec::new();
@@ -238,7 +239,7 @@ impl Action for TripAttack {
         if effects.is_empty() {
             return effects;
         }
-        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, 13);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, dc);
         if !save.passed() {
             effects.push(Box::new(ApplyCondition {
                 actor_id: target_id,
@@ -652,6 +653,10 @@ impl Action for WolfBite {
         else {
             return Vec::new();
         };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.ability_save_dc(AbilityScoreType::Strength);
         let mut effects = weapon_attack(
             encounter,
             caster_id,
@@ -667,7 +672,7 @@ impl Action for WolfBite {
         if effects.is_empty() {
             return effects;
         }
-        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, 11);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, dc);
         if !save.passed() {
             effects.push(Box::new(ApplyCondition {
                 actor_id: target_id,

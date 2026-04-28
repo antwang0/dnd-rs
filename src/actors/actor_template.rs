@@ -790,6 +790,14 @@ impl ActorInstance {
         8 + self.proficiency_bonus() + modifier_from_score(self.ability_score(ability))
     }
 
+    /// Generic save DC for a creature's innate ability (grapple, shove,
+    /// special attack riders). Same formula as spell_save_dc but named
+    /// separately to distinguish spell DCs from physical-ability DCs at
+    /// call sites.
+    pub fn ability_save_dc(&self, ability: AbilityScoreType) -> i32 {
+        8 + self.proficiency_bonus() + modifier_from_score(self.ability_score(ability))
+    }
+
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {
         match self.hp_state {
             HpState::Stable => {
