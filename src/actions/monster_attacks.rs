@@ -426,16 +426,20 @@ impl Action for Scimitar {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::engine::types::AbilityScoreType;
+
         let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let str_mod = modifier_from_score(
-            caster.ability_score(crate::engine::types::AbilityScoreType::Strength),
-        );
-        let attack_bonus = caster.attack_bonus();
+        // Scimitar is finesse: use whichever of STR or DEX gives a higher
+        // attack modifier, per 5e RAW. Damage uses the same chosen mod.
+        let str_score = caster.ability_score(AbilityScoreType::Strength);
+        let dex_score = caster.ability_score(AbilityScoreType::Dexterity);
+        let ability_mod = modifier_from_score(str_score).max(modifier_from_score(dex_score));
+        let attack_bonus = ability_mod + caster.proficiency_bonus();
         let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
         else {
             return Vec::new();
@@ -448,7 +452,7 @@ impl Action for Scimitar {
             attack_bonus,
             target_ac,
             Dice::new(1, 6),
-            str_mod,
+            ability_mod,
             DamageType::Slashing,
             true,
         )

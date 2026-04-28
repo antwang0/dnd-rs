@@ -369,11 +369,18 @@ fn try_attack_aoe(
         return None;
     }
 
-    // Iterate enemies in id order for deterministic tie-break.
+    // Candidate burst origins: every enemy's tile (for spells like Sacred
+    // Burst that project outward) PLUS the caster's own tile (for
+    // self-centred spells like Thunderwave whose reach=0 only accepts it).
+    let caster_loc = encounter.actors.get(&actor_id).map(|a| a.location());
+    let mut candidate_points: Vec<(crate::engine::types::Coordinate, usize)> = Vec::new();
+    if let Some(loc) = caster_loc {
+        // Use usize::MAX as a sentinel anchor_id for self-origin candidates
+        // so deterministic tiebreaking keeps them sorted last.
+        candidate_points.push((loc, usize::MAX));
+    }
     let mut anchor_ids: Vec<usize> = encounter.actors.keys().copied().collect();
     anchor_ids.sort_unstable();
-
-    let mut best: Option<(usize, usize, ActionExecutionInfo)> = None; // (enemy_hits, anchor_id, aei)
     for anchor_id in &anchor_ids {
         let Some(anchor) = encounter.actors.get(anchor_id) else {
             continue;
@@ -381,7 +388,13 @@ fn try_attack_aoe(
         if anchor.team() == my_team || !anchor.is_combat_active() {
             continue;
         }
-        let point = anchor.location();
+        candidate_points.push((anchor.location(), *anchor_id));
+    }
+
+    let mut best: Option<(usize, usize, ActionExecutionInfo)> = None; // (enemy_hits, anchor_id, aei)
+    for (point, anchor_id) in &candidate_points {
+        let point = *point;
+        let anchor_id = *anchor_id;
 
         for (action, radius) in &burst_actions {
             // Validate caster→point reach + LOS + cost via the action's
@@ -423,11 +436,11 @@ fn try_attack_aoe(
                 None => true,
                 Some((best_hits, best_anchor, _)) => {
                     enemy_hits > *best_hits
-                        || (enemy_hits == *best_hits && *anchor_id < *best_anchor)
+                        || (enemy_hits == *best_hits && anchor_id < *best_anchor)
                 }
             };
             if pick {
-                best = Some((enemy_hits, *anchor_id, aei));
+                best = Some((enemy_hits, anchor_id, aei));
             }
         }
     }
