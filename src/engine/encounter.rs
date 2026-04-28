@@ -2757,6 +2757,27 @@ mod tests {
     }
 
     #[test]
+    fn stunned_auto_fails_str_dex_saves() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::saves::SaveOutcome;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Stunned, ConditionTimer::Permanent);
+        // STR and DEX saves should auto-fail regardless of DC.
+        assert_eq!(e.roll_save(id, AbilityScoreType::Strength, 1), SaveOutcome::Fail);
+        assert_eq!(e.roll_save(id, AbilityScoreType::Dexterity, 1), SaveOutcome::Fail);
+        // CON/WIS/INT/CHA saves are still rolled normally (should pass vs DC 1).
+        assert_eq!(e.roll_save(id, AbilityScoreType::Constitution, 1), SaveOutcome::Pass);
+    }
+
+    #[test]
     fn long_rest_restores_hp_slots_and_clears_conditions() {
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::conditions::{Condition, ConditionTimer};
