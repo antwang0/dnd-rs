@@ -39,5 +39,8 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: true,
+        immunities: HashSet::new(),
+        resistances: HashSet::new(),
+        vulnerabilities: HashSet::new(),
     }
 });

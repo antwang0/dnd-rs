@@ -1,5 +1,6 @@
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::{Dice, DiceExpr, Roller};
+use crate::engine::types::DamageType;
 
 /// Lifecycle state of an actor's hit points. Replaces the previous
 /// `dying: bool` + `stable: bool` pair so the four meaningful states are
@@ -120,6 +121,15 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Damage types this creature takes zero damage from (e.g. Zombie →
+    /// Poison). Checked in `DealDamage::apply` before the HP delta.
+    pub immunities: HashSet<DamageType>,
+    /// Damage types this creature takes half damage from. Checked after
+    /// `immunities`; a type in both lists is treated as immune.
+    pub resistances: HashSet<DamageType>,
+    /// Damage types this creature takes double damage from (e.g. Skeleton
+    /// → Bludgeoning). Applied last; stacks multiply (resist+vuln = normal).
+    pub vulnerabilities: HashSet<DamageType>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -287,6 +297,9 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    immunities: HashSet<DamageType>,
+    resistances: HashSet<DamageType>,
+    vulnerabilities: HashSet<DamageType>,
 }
 
 impl ActorInstance {
@@ -353,6 +366,9 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            immunities: ct.immunities.clone(),
+            resistances: ct.resistances.clone(),
+            vulnerabilities: ct.vulnerabilities.clone(),
         })
     }
 
@@ -877,6 +893,34 @@ impl ActorInstance {
                 failures: fail,
             };
             DeathSaveOutcome::Continuing
+        }
+    }
+
+    pub fn is_immune_to(&self, dt: DamageType) -> bool {
+        self.immunities.contains(&dt)
+    }
+
+    pub fn is_resistant_to(&self, dt: DamageType) -> bool {
+        self.resistances.contains(&dt)
+    }
+
+    pub fn is_vulnerable_to(&self, dt: DamageType) -> bool {
+        self.vulnerabilities.contains(&dt)
+    }
+
+    /// Compute the effective damage after applying immunities, resistances,
+    /// and vulnerabilities. Immune → 0; immune beats resist/vuln combos.
+    /// Resist and vuln together cancel out (5e RAW).
+    pub fn effective_damage(&self, amount: u32, dt: DamageType) -> u32 {
+        if self.is_immune_to(dt) {
+            return 0;
+        }
+        let resistant = self.is_resistant_to(dt);
+        let vulnerable = self.is_vulnerable_to(dt);
+        match (resistant, vulnerable) {
+            (true, true) | (false, false) => amount,
+            (true, false) => amount / 2,
+            (false, true) => amount * 2,
         }
     }
 
