@@ -73,7 +73,7 @@ pub enum HealOutcome {
 }
 use crate::engine::side_effects::Resource;
 use crate::engine::types::Coordinate;
-use crate::items::item_template::Item;
+use crate::items::item_template::{Item, ItemBonuses};
 use crate::{
     actions::action_template::Action,
     engine::{
@@ -103,7 +103,7 @@ pub struct CreatureTemplate {
     pub constitution: u32,
     pub charisma: u32,
     pub skills: HashSet<Skill>,
-    pub items: Vec<Item>,
+    pub items: Vec<&'static Item>,
     pub senses: HashSet<SpecialSense>,
     pub languages: HashSet<Language>,
     pub cr: f32,
@@ -245,7 +245,7 @@ pub struct ActorInstance {
     constitution: u32,
     charisma: u32,
     skills: HashSet<Skill>,
-    items: Vec<Item>,
+    items: Vec<&'static Item>,
     senses: HashSet<SpecialSense>,
     languages: HashSet<Language>,
     cr: f32,
@@ -278,6 +278,15 @@ pub struct ActorInstance {
     /// 0-HP transition: true = enter Dying and roll saves; false = enter
     /// Dead immediately.
     rolls_death_saves: bool,
+    /// Character level. Starts at 1; the multi-encounter loop's long-rest
+    /// hook bumps this on hitting an XP threshold. Today only PCs (team
+    /// 0) accumulate XP and level up — monsters keep level 1 and skip
+    /// the threshold check.
+    level: u32,
+    /// Total XP earned since spawn. Reset is intentional on PC death so
+    /// future "respawn at last campsite" mechanics can rebuild it; we
+    /// don't decrement on level up so total-earned stays inspectable.
+    xp: u32,
 }
 
 impl ActorInstance {
@@ -342,6 +351,8 @@ impl ActorInstance {
             conditions: HashMap::new(),
             concentration: None,
             rolls_death_saves: ct.rolls_death_saves,
+            level: 1,
+            xp: 0,
         })
     }
 
@@ -349,15 +360,124 @@ impl ActorInstance {
         self.rolls_death_saves
     }
 
+    /// Sum every carried item's `ItemBonuses` into one struct. Stat
+    /// accessors (`armor_class`, `speed`, `max_hitpoints`, etc.) fold
+    /// this in so callers don't need to think about items at all.
+    pub fn total_item_bonuses(&self) -> ItemBonuses {
+        self.items
+            .iter()
+            .fold(ItemBonuses::default(), |acc, it| acc + it.bonuses)
+    }
+
+    pub fn items(&self) -> &[&'static Item] {
+        &self.items
+    }
+
+    /// Add an item to this actor's inventory. Used by the auto-pickup
+    /// hook in `MoveActor::apply` and by tests / character setup.
+    pub fn pickup_item(&mut self, item: &'static Item) {
+        self.items.push(item);
+    }
+
+    pub fn has_item_named(&self, name: &str) -> bool {
+        self.items.iter().any(|i| i.name == name)
+    }
+
+    /// Remove the first item matching `name`. Returns true on success.
+    /// Used by consumable on_use actions to remove the item after use.
+    pub fn remove_item_by_name(&mut self, name: &str) -> bool {
+        if let Some(pos) = self.items.iter().position(|i| i.name == name) {
+            self.items.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Base actions plus one entry per unique consumable item the actor
+    /// is carrying (deduped by item name). The prompt builder uses this
+    /// so picking up a Healing Potion immediately surfaces "drink
+    /// healing potion" in the action list without touching the action
+    /// vec on the template.
+    pub fn available_actions(
+        &self,
+    ) -> Vec<&'static (dyn Action + Send + Sync)> {
+        let mut out = self.actions.clone();
+        let mut seen: HashSet<&'static str> = HashSet::new();
+        for item in &self.items {
+            if let Some(action) = item.on_use
+                && seen.insert(item.name)
+            {
+                out.push(action);
+            }
+        }
+        out
+    }
+
     /// Restore full HP, all spell slots, clear non-permanent conditions
     /// and concentration. 5e long rest semantics — at the multi-encounter
     /// game-loop boundary, this is what "rest between fights" means.
     pub fn long_rest(&mut self) {
         self.hp_state = HpState::Active;
-        self.hitpoints = self.base_hitpoints;
+        self.hitpoints = self.max_hitpoints();
         self.spell_slot_manager.restore_spell_slots();
         self.conditions.clear();
         self.concentration = None;
+    }
+
+    pub fn cr(&self) -> f32 {
+        self.cr
+    }
+
+    /// XP a slain instance of this actor awards. Linear in CR
+    /// (CR 1 → 200 XP, CR 2 → 400 XP). The 5e table is non-linear at
+    /// the ends, but linear is good enough for the dungeon loop and
+    /// keeps the ramp legible.
+    pub fn xp_value(&self) -> u32 {
+        (self.cr * 200.0).round().max(0.0) as u32
+    }
+
+    pub fn level(&self) -> u32 {
+        self.level
+    }
+
+    pub fn xp(&self) -> u32 {
+        self.xp
+    }
+
+    /// XP needed to reach the *next* level from current level. Linear
+    /// curve `level * 300` — keeps the math readable in the UI and
+    /// scales roughly with the difficulty ramp (cr_target × 0.5/encounter).
+    /// Returns the cumulative XP threshold, not the delta from current.
+    pub fn xp_threshold_for_next_level(&self) -> u32 {
+        self.level * 300
+    }
+
+    /// Add XP earned (kill rewards, quest completion). Doesn't auto-level —
+    /// `try_level_up` is called explicitly during long rest so leveling
+    /// is a tidy between-encounter beat instead of a mid-fight power spike.
+    pub fn award_xp(&mut self, amount: u32) {
+        self.xp = self.xp.saturating_add(amount);
+    }
+
+    /// Promote a PC to the next level if they've crossed the threshold.
+    /// Returns the new level on success. Today level-up just bumps base
+    /// HP by 1d10+CON-mod (fighter-style) so the PC's max HP grows with
+    /// the difficulty curve; ability scores and slot counts stay fixed
+    /// until ASI/feat/casting progression are modeled.
+    pub fn try_level_up(&mut self, roller: &mut impl Roller) -> Option<u32> {
+        if self.xp < self.xp_threshold_for_next_level() {
+            return None;
+        }
+        self.level += 1;
+        let con_mod = modifier_from_score(self.constitution);
+        let roll = roller.roll(&Dice::new(1, 10)) as i32;
+        let gain = (roll + con_mod).max(1) as u32;
+        self.base_hitpoints = self.base_hitpoints.saturating_add(gain);
+        // Heal up by the same amount so a level on long rest feels like
+        // a tangible HP gain rather than a stat-sheet curiosity.
+        self.hitpoints = self.hitpoints.saturating_add(gain).min(self.max_hitpoints());
+        Some(self.level)
     }
 
     pub fn is_concentrating(&self) -> bool {
@@ -533,24 +653,30 @@ impl ActorInstance {
     }
 
     pub fn armor_class(&self) -> u32 {
-        // TODO: apply modifiers to ability scores (such as temporary buffs)
-        self.base_ac
+        let bonus = self.total_item_bonuses().ac;
+        (self.base_ac as i32 + bonus).max(0) as u32
     }
 
     pub fn hitpoints(&self) -> u32 {
-        // TODO: apply modifiers to ability scores (such as temporary buffs)
         self.hitpoints
     }
 
     pub fn max_hitpoints(&self) -> u32 {
-        // TODO: apply modifiers to ability scores (such as temporary buffs)
-        self.base_hitpoints
+        let bonus = self.total_item_bonuses().max_hp;
+        (self.base_hitpoints as i32 + bonus).max(1) as u32
     }
     // TODO: bonus hitpoints?
 
     pub fn speed(&self) -> f32 {
-        // TODO: apply modifiers to ability scores (such as temporary buffs)
-        self.base_speed
+        let bonus = self.total_item_bonuses().speed as f32;
+        (self.base_speed + bonus).max(0.0)
+    }
+
+    /// Flat save bonus contributed by carried items. The engine adds this
+    /// to the rolled save modifier; abstracting it lets `roll_save` ignore
+    /// inventory details.
+    pub fn item_save_bonus(&self) -> i32 {
+        self.total_item_bonuses().save
     }
 
     pub fn remaining_movement(&self) -> f32 {

@@ -136,6 +136,16 @@ pub fn render_map(
                         .add_modifier(Modifier::BOLD);
                 }
                 row.push(Span::styled(s, style));
+            } else if let Some(item) = encounter.items_at(coord).last() {
+                // Ground loot draws on top of terrain. Render the most
+                // recently dropped item's glyph in bright yellow so the
+                // player notices pickups at a glance.
+                row.push(Span::styled(
+                    item.glyph.to_string(),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ));
             } else {
                 let s = Span::from(
                     match encounter.terrain_at(coord).map(|t| &t.terrain_type) {
@@ -296,6 +306,30 @@ pub fn render_sideinfo(
             action_slots, bonus_slots
         ))),
     ];
+    // Level/XP only shown for PCs (team 0) — monsters have stub values
+    // (level=1, xp=0) that would clutter the panel without conveying info.
+    if curr_actor.team() == 0 {
+        stats_lines.push(Line::from(Span::raw(format!(
+            "Level: {}  XP: {}/{}",
+            curr_actor.level(),
+            curr_actor.xp(),
+            curr_actor.xp_threshold_for_next_level()
+        ))));
+    }
+    if !curr_actor.items().is_empty() {
+        // Show carried items as a compact comma-joined list. Bonuses are
+        // already folded into HP/AC/Movement above, so this is a "what's
+        // attributable to gear" callout rather than per-item detail.
+        let names: Vec<String> = curr_actor
+            .items()
+            .iter()
+            .map(|i| i.name.to_string())
+            .collect();
+        stats_lines.push(Line::from(Span::styled(
+            format!("Items: {}", names.join(", ")),
+            Style::default().fg(Color::Yellow),
+        )));
+    }
     if !curr_actor.conditions().is_empty() {
         // Format each condition with its remaining duration when timed.
         // Sort alphabetically so HashMap iteration order doesn't leak.

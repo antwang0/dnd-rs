@@ -192,6 +192,12 @@ pub struct EncounterInstance {
     actor_id_next: usize,
     actor_map: Vec<Option<usize>>,
     pub actors: HashMap<usize, ActorInstance>,
+    /// Loot piles indexed by tile. Items dropped by slain enemies sit
+    /// here until a PC walks onto the tile and auto-picks them up
+    /// (`MoveActor::apply` calls `pickup_items_at`). HashMap (not a
+    /// flat grid) because most tiles are empty and we want O(1) lookup
+    /// only when a pickup actually happens.
+    items_on_ground: HashMap<Coordinate, Vec<&'static crate::items::item_template::Item>>,
     initiative_tracker: InitiativeTracker,
     encounter_stack: Vec<StackElement>,
     roller: FastRandRoller,
@@ -361,7 +367,8 @@ impl EncounterInstance {
         let Some(actor) = self.actors.get(&actor_id) else {
             return SaveOutcome::Fail;
         };
-        let modifier = modifier_from_score(actor.ability_score(ability));
+        let item_bonus = actor.item_save_bonus();
+        let modifier = modifier_from_score(actor.ability_score(ability)) + item_bonus;
         let total = raw as i32 + modifier;
         let outcome = if total >= dc {
             SaveOutcome::Pass
@@ -948,6 +955,7 @@ impl EncounterInstance {
             actor_id_next: 0,
             actor_map: vec![None; terrain_params.width * terrain_params.height],
             actors: HashMap::new(),
+            items_on_ground: HashMap::new(),
             initiative_tracker: InitiativeTracker::new(),
             encounter_stack: Vec::new(),
             roller,
@@ -972,12 +980,78 @@ impl EncounterInstance {
         ]
     }
 
+    /// Drop an item onto a tile. Multiple items can stack on the same
+    /// tile (a hallway with two corpses); pickup grabs them all at once.
+    pub fn drop_item(&mut self, coord: Coordinate, item: &'static crate::items::item_template::Item) {
+        self.items_on_ground.entry(coord).or_default().push(item);
+    }
+
+    /// Read-only access to the loot pile on a tile (empty slice if none).
+    /// The renderer uses this to draw the ground-glyph; tests use it to
+    /// verify drop/pickup transitions.
+    pub fn items_at(
+        &self,
+        coord: Coordinate,
+    ) -> &[&'static crate::items::item_template::Item] {
+        self.items_on_ground
+            .get(&coord)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    /// Hand every item on `coord` to the actor, log the pickups, clear the
+    /// pile. Called by `MoveActor::apply` after each successful step so
+    /// walking over loot just absorbs it. No-op if the tile is empty or
+    /// the actor has been removed mid-move.
+    pub fn pickup_items_at(&mut self, actor_id: usize, coord: Coordinate) {
+        let Some(items) = self.items_on_ground.remove(&coord) else {
+            return;
+        };
+        if items.is_empty() {
+            return;
+        }
+        let actor_name = self
+            .actors
+            .get(&actor_id)
+            .map(|a| a.name().to_string())
+            .unwrap_or_else(|| format!("actor#{}", actor_id));
+        for item in items {
+            if let Some(actor) = self.actors.get_mut(&actor_id) {
+                actor.pickup_item(item);
+            }
+            self.log(format!("{} picks up {}.", actor_name, item.name));
+        }
+    }
+
     /// Long rest every actor still in the encounter — full HP, all spell
-    /// slots restored, conditions and concentration cleared. Used between
-    /// encounters in the multi-fight loop.
+    /// slots restored, conditions and concentration cleared. PCs (team 0)
+    /// also try to cash in accumulated XP for one or more level-ups in a
+    /// loop until they're below the next threshold; we then re-restore
+    /// HP so the bonus from the level applies cleanly.
     pub fn long_rest(&mut self) {
-        for actor in self.actors.values_mut() {
-            actor.long_rest();
+        // Iterate ids in sorted order so multiple level-up rolls are
+        // deterministic with the seeded RNG (HashMap order would otherwise
+        // shuffle who rolls first across runs).
+        let mut ids: Vec<usize> = self.actors.keys().copied().collect();
+        ids.sort_unstable();
+        for id in ids {
+            let mut announcements: Vec<String> = Vec::new();
+            if let Some(actor) = self.actors.get_mut(&id) {
+                actor.long_rest();
+                if actor.team() == 0 {
+                    while let Some(new_level) = actor.try_level_up(&mut self.roller) {
+                        announcements.push(format!(
+                            "{} reaches level {}! (HP up to {})",
+                            actor.name(),
+                            new_level,
+                            actor.max_hitpoints()
+                        ));
+                    }
+                }
+            }
+            for line in announcements {
+                self.log(line);
+            }
         }
     }
 
@@ -1182,7 +1256,9 @@ impl EncounterInstance {
     }
 
     /// Remove an actor from the world: actor map, initiative queue, and
-    /// actor table. Logs the death.
+    /// actor table. Logs the death and, for non-player-team actors, rolls
+    /// a chance to drop a random item from `LOOT_POOL` on their tile and
+    /// awards XP (split across surviving team-0 PCs) for the kill.
     fn remove_actor(&mut self, id: usize) {
         let Some(actor) = self.actors.remove(&id) else {
             return;
@@ -1190,6 +1266,14 @@ impl EncounterInstance {
         self.log(format!("{} dies.", actor.name()));
         let actor_width = get_tiles_from_size(actor.size());
         let loc = actor.location();
+        let team = actor.team();
+        let xp_award = actor.xp_value();
+        // Carried items always drop where the actor fell so the player
+        // can recover gear. Generic loot rolls a chance on top of that
+        // for non-player teams.
+        let carried: Vec<&'static crate::items::item_template::Item> =
+            actor.items().to_vec();
+        drop(actor);
         for x_off in 0..actor_width {
             for y_off in 0..actor_width {
                 let offset = Coordinate::new(x_off as isize, y_off as isize);
@@ -1197,6 +1281,45 @@ impl EncounterInstance {
             }
         }
         self.initiative_tracker.remove_actor(id);
+        for item in carried {
+            self.drop_item(loc, item);
+            self.log(format!("  drops {}.", item.name));
+        }
+        if team != 0 {
+            use crate::items::item_template::LOOT_POOL;
+            // 33% drop rate keeps loot meaningful per kill without
+            // flooding the floor in long fights.
+            if !LOOT_POOL.is_empty() && self.rng.f32() < 0.33 {
+                let idx = self.rng.usize(0..LOOT_POOL.len());
+                let item = LOOT_POOL[idx];
+                self.drop_item(loc, item);
+                self.log(format!("  drops {}.", item.name));
+            }
+            // XP award: split the kill across every team-0 PC still
+            // combat-active. Splitting keeps the curve tame as party
+            // size grows; leveling happens on long rest so we don't
+            // need to throttle awards in-fight.
+            let recipients: Vec<usize> = self
+                .actors
+                .iter()
+                .filter(|(_, a)| a.team() == 0 && a.is_combat_active())
+                .map(|(id, _)| *id)
+                .collect();
+            if !recipients.is_empty() && xp_award > 0 {
+                let per = xp_award / recipients.len() as u32;
+                for rid in &recipients {
+                    if let Some(a) = self.actors.get_mut(rid) {
+                        a.award_xp(per);
+                    }
+                }
+                self.log(format!(
+                    "  ({} XP awarded to {} PC{})",
+                    per,
+                    recipients.len(),
+                    if recipients.len() == 1 { "" } else { "s" }
+                ));
+            }
+        }
     }
 
     /// Roll a single death save for the given actor and mutate them. Logs
@@ -1394,7 +1517,7 @@ impl EncounterInstance {
         };
         self.enqueue_event(StackElementEntry::Prompt(Prompt::new(
             current_player_id,
-            current_player.actions.clone(), // TODO: filter for legal actions (action, bonus action; no reaction)
+            current_player.available_actions(), // base actions + carried-consumable actions
         )));
     }
 }
@@ -2581,6 +2704,224 @@ mod tests {
             actor.spell_slot_manager.spell_slots(1).max_spell_slots
         );
         assert!(!actor.has_condition(Condition::Poisoned));
+    }
+
+    #[test]
+    fn item_bonuses_apply_to_ac_speed_max_hp() {
+        use crate::items::item_template::{
+            AMULET_OF_HEALTH, BOOTS_OF_STRIDING, RING_OF_PROTECTION,
+        };
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get(&id).unwrap();
+        let base_ac = actor.armor_class();
+        let base_speed = actor.speed();
+        let base_hp = actor.max_hitpoints();
+
+        let actor = e.actors.get_mut(&id).unwrap();
+        actor.pickup_item(&RING_OF_PROTECTION);
+        actor.pickup_item(&BOOTS_OF_STRIDING);
+        actor.pickup_item(&AMULET_OF_HEALTH);
+
+        let actor = e.actors.get(&id).unwrap();
+        assert_eq!(actor.armor_class(), base_ac + 1);
+        assert!((actor.speed() - (base_speed + 10.0)).abs() < f32::EPSILON);
+        assert_eq!(actor.max_hitpoints(), base_hp + 10);
+    }
+
+    #[test]
+    fn pickup_items_at_transfers_loot_and_clears_tile() {
+        use crate::items::item_template::RING_OF_PROTECTION;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let drop_at = Coordinate::new(4, 4);
+        e.drop_item(drop_at, &RING_OF_PROTECTION);
+        assert_eq!(e.items_at(drop_at).len(), 1);
+
+        e.pickup_items_at(id, drop_at);
+
+        assert_eq!(e.items_at(drop_at).len(), 0);
+        assert_eq!(e.actors[&id].items().len(), 1);
+        assert_eq!(e.actors[&id].items()[0].name, "Ring of Protection");
+    }
+
+    #[test]
+    fn move_actor_auto_picks_up_loot_on_path() {
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor};
+        use crate::items::item_template::BOOTS_OF_STRIDING;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = Coordinate::new(5, 2);
+        e.drop_item(target, &BOOTS_OF_STRIDING);
+
+        MoveActor {
+            actor_id: id,
+            path: vec![target],
+        }
+        .apply(&mut e);
+
+        assert_eq!(e.items_at(target).len(), 0);
+        assert_eq!(e.actors[&id].items().len(), 1);
+    }
+
+    #[test]
+    fn drink_healing_potion_heals_and_consumes() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::DRINK_HEALING_POTION;
+        use crate::items::item_template::POTION_OF_HEALING;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(2, 2),
+                0,
+                0,
+            )
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        let max = actor.max_hitpoints();
+        actor.take_damage(max - 1); // down to 1 HP
+        actor.pickup_item(&POTION_OF_HEALING);
+        assert_eq!(e.actors[&id].hitpoints(), 1);
+        assert_eq!(e.actors[&id].items().len(), 1);
+
+        let aei = ActionExecutionInfo::new(&DRINK_HEALING_POTION, id, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+
+        let actor = &e.actors[&id];
+        assert!(actor.hitpoints() > 1, "should have healed");
+        assert!(actor.items().is_empty(), "potion should have been consumed");
+    }
+
+    #[test]
+    fn drink_healing_potion_invalid_without_potion() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::DRINK_HEALING_POTION;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let aei = ActionExecutionInfo::new(&DRINK_HEALING_POTION, id, None, None, None);
+        assert!(!aei.validate(&e), "no potion in inventory should reject");
+    }
+
+    #[test]
+    fn picking_up_potion_adds_drink_action() {
+        use crate::items::item_template::POTION_OF_HEALING;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(2, 2),
+                0,
+                0,
+            )
+            .unwrap();
+        let before = e.actors[&id].available_actions().len();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .pickup_item(&POTION_OF_HEALING);
+        let after = e.actors[&id].available_actions().len();
+        assert_eq!(after, before + 1);
+        assert!(
+            e.actors[&id]
+                .available_actions()
+                .iter()
+                .any(|a| a.name() == "drink healing potion"),
+            "drink action should be in available actions"
+        );
+    }
+
+    #[test]
+    fn enemy_death_awards_xp_to_team_0_pcs() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let pc_id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ogre_id = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        let xp_value = e.actors[&ogre_id].xp_value();
+        assert!(xp_value > 0, "ogre should award XP");
+        assert_eq!(e.actors[&pc_id].xp(), 0);
+
+        // Force-kill the ogre.
+        let max = e.actors[&ogre_id].max_hitpoints();
+        e.actors.get_mut(&ogre_id).unwrap().take_damage(max + 100);
+        e.cleanup_dead_actors();
+
+        assert_eq!(e.actors[&pc_id].xp(), xp_value);
+    }
+
+    #[test]
+    fn long_rest_levels_up_when_xp_threshold_passed() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        let pre_max = actor.max_hitpoints();
+        let pre_level = actor.level();
+        // Drop way past the threshold so multi-level catches up.
+        actor.award_xp(10_000);
+
+        e.long_rest();
+
+        let after = &e.actors[&id];
+        assert!(after.level() > pre_level, "should have leveled up");
+        assert!(after.max_hitpoints() > pre_max, "max HP should have grown");
+        assert_eq!(after.hitpoints(), after.max_hitpoints(), "long rest tops up HP");
+    }
+
+    #[test]
+    fn enemy_death_drops_carried_items() {
+        use crate::items::item_template::CLOAK_OF_RESISTANCE;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        // team != 0 so the loot-pool roll *might* also trigger; we only
+        // care that the carried item is on the ground after death.
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 3), 1, 0)
+            .unwrap();
+        let loc = e.actors[&id].location();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .pickup_item(&CLOAK_OF_RESISTANCE);
+
+        // Force-kill: take damage past max HP. Monster doesn't roll death
+        // saves so this transitions straight to Dead.
+        let max = e.actors[&id].max_hitpoints();
+        e.actors.get_mut(&id).unwrap().take_damage(max + 100);
+        e.cleanup_dead_actors();
+
+        assert!(!e.actors.contains_key(&id));
+        let names: Vec<&str> = e.items_at(loc).iter().map(|i| i.name).collect();
+        assert!(
+            names.contains(&"Cloak of Resistance"),
+            "carried cloak should be on the floor: {:?}",
+            names
+        );
     }
 
     #[test]

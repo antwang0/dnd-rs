@@ -113,6 +113,9 @@ impl ApplicableSideEffect for MoveActor {
             if let Some(actor) = ei.get_actor(self.actor_id) {
                 actor.set_location(dest);
             }
+            // Walk-over auto-pickup: any items at the destination tile
+            // get added to the actor's inventory. Logged inside.
+            ei.pickup_items_at(self.actor_id, dest);
         }
     }
 }
