@@ -356,3 +356,283 @@ impl Action for HoldPerson {
 }
 
 pub static HOLD_PERSON: LazyLock<HoldPerson> = LazyLock::new(|| HoldPerson {});
+
+/// Guiding Bolt — 1st-level cleric damage spell. Ranged spell attack (no
+/// save); on hit deals 4d6 radiant AND the target is Blinded until the
+/// start of your next turn (Blinded grants advantage to the next attacker,
+/// modelling the "next attack against the target has advantage" clause).
+/// Costs an Action + 1 spell slot.
+pub struct GuidingBolt {}
+
+impl Action for GuidingBolt {
+    fn name(&self) -> &str {
+        "guiding bolt"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["gb", "guide"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24) // 60ft
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actions::monster_attacks::weapon_attack_ranged_spell;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::ApplyCondition;
+
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let spell_atk = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
+
+        let mut effects = weapon_attack_ranged_spell(
+            encounter,
+            caster_id,
+            target_id,
+            "guiding bolt",
+            spell_atk,
+            target_ac,
+            crate::engine::dice::Dice::new(4, 6),
+            0,
+            DamageType::Radiant,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        // On hit: Blinded for 1 round — next attacker gains advantage.
+        effects.push(Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Blinded,
+            timer: ConditionTimer::Rounds(1),
+        }));
+        effects
+    }
+}
+
+pub static GUIDING_BOLT: LazyLock<GuidingBolt> = LazyLock::new(|| GuidingBolt {});
+
+/// Inflict Wounds — 1st-level cleric melee spell attack. Costs Action +
+/// spell slot. On hit: 3d10 necrotic. No save — raw necrotic burst at
+/// touch range. Effective against high-DEX targets that dodge cantrips.
+pub struct InflictWounds {}
+
+impl Action for InflictWounds {
+    fn name(&self) -> &str {
+        "inflict wounds"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["iw", "inflict"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+
+    fn requires_los(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actions::monster_attacks::weapon_attack_melee_spell;
+
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let spell_atk = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
+
+        weapon_attack_melee_spell(
+            encounter,
+            caster_id,
+            target_id,
+            "inflict wounds",
+            spell_atk,
+            target_ac,
+            crate::engine::dice::Dice::new(3, 10),
+            0,
+            DamageType::Necrotic,
+        )
+    }
+}
+
+pub static INFLICT_WOUNDS: LazyLock<InflictWounds> = LazyLock::new(|| InflictWounds {});
+
+/// Thunderwave — 1st-level cleric/wizard AoE. Burst radius 3 centred on
+/// the caster's tile. CON save vs WIS-based DC: fail = 2d8 thunder +
+/// Restrained for 1 round (pushed — modelled as immobilised), half on
+/// save. Caster is exempt. Costs Action + spell slot.
+pub struct Thunderwave {}
+
+impl Action for Thunderwave {
+    fn name(&self) -> &str {
+        "thunderwave"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["tw", "thunder"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 3 }
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(0) // origin is the caster's own tile
+    }
+
+    fn requires_los(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::ApplyCondition;
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let radius: isize = match self.targeting_schema() {
+            TargetingSchema::Burst { radius } => radius,
+            _ => return Vec::new(),
+        };
+
+        let raw = encounter.roll(&crate::engine::dice::Dice::new(2, 8));
+        encounter.log(format!(
+            "  thunderwave: 2d8({}) = {} thunder area",
+            raw, raw
+        ));
+
+        let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
+        ids.sort_unstable();
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for target_id in ids {
+            if target_id == caster_id {
+                continue;
+            }
+            let Some(target) = encounter.actors.get(&target_id) else {
+                continue;
+            };
+            if !target.is_combat_active() {
+                continue;
+            }
+            let dist = footprint_chebyshev(
+                target.location(),
+                get_tiles_from_size(target.size()),
+                point,
+                1,
+            );
+            if dist > radius {
+                continue;
+            }
+
+            let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
+            let dmg = if save.passed() { raw / 2 } else { raw };
+            if dmg > 0 {
+                effects.push(Box::new(DealDamage {
+                    actor_id: target_id,
+                    amount: dmg,
+                    damage_type: DamageType::Thunder,
+                }));
+            }
+            // On failed save: Restrained for 1 round (thunder-knockback).
+            if !save.passed() {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: target_id,
+                    condition: Condition::Restrained,
+                    timer: ConditionTimer::Rounds(1),
+                }));
+            }
+        }
+        effects
+    }
+}
+
+pub static THUNDERWAVE: LazyLock<Thunderwave> = LazyLock::new(|| Thunderwave {});

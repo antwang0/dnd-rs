@@ -752,6 +752,63 @@ pub static ZOMBIE_MULTISLAM: LazyLock<Multiattack> = LazyLock::new(|| Multiattac
     count: 2,
 });
 
+/// Ranged spell attack wrapper. `attack_bonus` should be the caster's
+/// spell-attack modifier (ability mod, no proficiency yet). Treats as
+/// ranged for advantage/disadvantage purposes.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn weapon_attack_ranged_spell(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    target_id: usize,
+    action_name: &str,
+    attack_bonus: i32,
+    target_ac: i32,
+    damage_dice: Dice,
+    damage_bonus: i32,
+    damage_type: DamageType,
+) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+    weapon_attack(
+        encounter,
+        caster_id,
+        target_id,
+        action_name,
+        attack_bonus,
+        target_ac,
+        damage_dice,
+        damage_bonus,
+        damage_type,
+        false, // ranged
+    )
+}
+
+/// Melee spell attack wrapper. Same as `weapon_attack_ranged_spell` but
+/// `is_melee = true` so Prone-target gives advantage.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn weapon_attack_melee_spell(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    target_id: usize,
+    action_name: &str,
+    attack_bonus: i32,
+    target_ac: i32,
+    damage_dice: Dice,
+    damage_bonus: i32,
+    damage_type: DamageType,
+) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+    weapon_attack(
+        encounter,
+        caster_id,
+        target_id,
+        action_name,
+        attack_bonus,
+        target_ac,
+        damage_dice,
+        damage_bonus,
+        damage_type,
+        true, // melee
+    )
+}
+
 /// Roll a d20 attack against `target_ac`, log the breakdown, and on a hit
 /// roll `damage_dice + damage_bonus` of `damage_type` against `target_id`.
 /// `is_melee` drives Prone-target advantage / ranged disadvantage clauses.
