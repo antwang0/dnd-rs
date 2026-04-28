@@ -138,21 +138,31 @@ impl ApplicableSideEffect for DealDamage {
         let was_concentrating = actor.is_concentrating();
         // actor borrow ends here.
 
-        if matches!(outcome, DamageOutcome::Downed) {
-            ei.log(format!("{} falls unconscious.", name));
-            // 5e: going to 0 HP auto-drops concentration.
-            ei.drop_concentration(self.actor_id);
-        } else if matches!(outcome, DamageOutcome::Reduced) && was_concentrating {
-            // 5e: take damage while concentrating → CON save vs DC max(10, dmg/2).
-            let dc = ((self.amount / 2) as i32).max(10);
-            let save = ei.roll_save(
-                self.actor_id,
-                crate::engine::types::AbilityScoreType::Constitution,
-                dc,
-            );
-            if !save.passed() {
+        match outcome {
+            DamageOutcome::Downed => {
+                ei.log(format!("{} falls unconscious.", name));
+                // 5e: going to 0 HP auto-drops concentration.
                 ei.drop_concentration(self.actor_id);
             }
+            DamageOutcome::Killed => {
+                // No log here — cleanup_dead_actors logs "X dies." when
+                // it removes the actor on the next pass. We just need to
+                // drop concentration before the actor is gone.
+                ei.drop_concentration(self.actor_id);
+            }
+            DamageOutcome::Reduced if was_concentrating => {
+                // 5e: take damage while concentrating → CON save vs DC max(10, dmg/2).
+                let dc = ((self.amount / 2) as i32).max(10);
+                let save = ei.roll_save(
+                    self.actor_id,
+                    crate::engine::types::AbilityScoreType::Constitution,
+                    dc,
+                );
+                if !save.passed() {
+                    ei.drop_concentration(self.actor_id);
+                }
+            }
+            DamageOutcome::Reduced | DamageOutcome::DyingFailure => {}
         }
     }
 }

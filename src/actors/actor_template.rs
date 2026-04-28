@@ -35,8 +35,13 @@ pub enum DeathSaveOutcome {
 pub enum DamageOutcome {
     /// Actor took normal HP damage and is still combat-active.
     Reduced,
-    /// HP just hit 0; actor transitioned from combat-active to dying.
+    /// HP just hit 0; actor transitioned from combat-active to dying
+    /// (rolls death saves). PCs only.
     Downed,
+    /// HP just hit 0 and the actor doesn't roll death saves — they're
+    /// dead outright. Monsters take this path; cleanup_dead_actors will
+    /// remove them on the next pass.
+    Killed,
     /// Actor was already dying (or stable, which gets re-downed); damage
     /// counts as a failed death save instead of an HP delta.
     DyingFailure,
@@ -110,6 +115,11 @@ pub struct CreatureTemplate {
     /// during an encounter; restoration requires a long rest (not
     /// modeled today — slots stay drained between encounters).
     pub spell_slots_by_level: Vec<u32>,
+    /// Whether this creature uses the dying / death-save state on
+    /// reaching 0 HP. 5e: PCs roll death saves; monsters drop outright.
+    /// Default for new templates: `false`. Player characters override
+    /// to `true` so they get the standard 3-success / 3-failure cycle.
+    pub rolls_death_saves: bool,
 }
 
 #[derive(Clone, PartialEq)]
@@ -264,6 +274,10 @@ pub struct ActorInstance {
     /// spell or taking damage that fails a CON save drops it; the engine
     /// then removes any conditions the spell installed.
     concentration: Option<ConcentrationData>,
+    /// Mirrored from `CreatureTemplate.rolls_death_saves`. Drives the
+    /// 0-HP transition: true = enter Dying and roll saves; false = enter
+    /// Dead immediately.
+    rolls_death_saves: bool,
 }
 
 impl ActorInstance {
@@ -327,7 +341,12 @@ impl ActorInstance {
             hp_state: HpState::Active,
             conditions: HashMap::new(),
             concentration: None,
+            rolls_death_saves: ct.rolls_death_saves,
         })
+    }
+
+    pub fn rolls_death_saves(&self) -> bool {
+        self.rolls_death_saves
     }
 
     pub fn is_concentrating(&self) -> bool {
@@ -634,11 +653,16 @@ impl ActorInstance {
             HpState::Active => {
                 self.hitpoints = self.hitpoints.saturating_sub(amount);
                 if self.hitpoints == 0 {
-                    self.hp_state = HpState::Dying {
-                        successes: 0,
-                        failures: 0,
-                    };
-                    DamageOutcome::Downed
+                    if self.rolls_death_saves {
+                        self.hp_state = HpState::Dying {
+                            successes: 0,
+                            failures: 0,
+                        };
+                        DamageOutcome::Downed
+                    } else {
+                        self.hp_state = HpState::Dead;
+                        DamageOutcome::Killed
+                    }
                 } else {
                     DamageOutcome::Reduced
                 }

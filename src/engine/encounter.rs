@@ -1374,6 +1374,7 @@ mod tests {
         let ap = ActorGenParams {
             cr_target: 0.0,
             n_teams: 0,
+            pc_template: None,
         };
         let mut e = EncounterInstance::from_params(&tp, &ap, Some(0)).unwrap();
         e.terrain = vec![
@@ -1432,8 +1433,9 @@ mod tests {
     fn death_save_three_failures_kills() {
         let e = ei_with_terrain(10, 10, &[]);
         // Build a zombie actor for testing.
+        // Use Fighter — only PCs roll death saves; monsters die outright.
         let mut z = ActorInstance::from_creature_template(
-            &ZOMBIE_TEMPLATE,
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
             Coordinate::new(0, 0),
             0,
             &mut FastRandRoller::with_seed(1),
@@ -1456,8 +1458,9 @@ mod tests {
     #[test]
     fn death_save_three_successes_stabilizes() {
         let _e = ei_with_terrain(10, 10, &[]);
+        // Use Fighter — only PCs roll death saves; monsters die outright.
         let mut z = ActorInstance::from_creature_template(
-            &ZOMBIE_TEMPLATE,
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
             Coordinate::new(0, 0),
             0,
             &mut FastRandRoller::with_seed(1),
@@ -1475,8 +1478,9 @@ mod tests {
 
     #[test]
     fn nat_20_revives_at_one_hp() {
+        // Use Fighter — only PCs roll death saves; monsters die outright.
         let mut z = ActorInstance::from_creature_template(
-            &ZOMBIE_TEMPLATE,
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
             Coordinate::new(0, 0),
             0,
             &mut FastRandRoller::with_seed(1),
@@ -1492,8 +1496,9 @@ mod tests {
 
     #[test]
     fn damage_to_dying_adds_failure() {
+        // Use Fighter — only PCs roll death saves; monsters die outright.
         let mut z = ActorInstance::from_creature_template(
-            &ZOMBIE_TEMPLATE,
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
             Coordinate::new(0, 0),
             0,
             &mut FastRandRoller::with_seed(1),
@@ -1791,6 +1796,41 @@ mod tests {
         assert!(
             e.actors[&ally].hitpoints() < ally_max,
             "ally should have taken splash damage"
+        );
+    }
+
+    #[test]
+    fn fighter_pc_enters_dying_at_zero_hp() {
+        use crate::actors::actor_template::DamageOutcome;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        let outcome = e.actors.get_mut(&id).unwrap().take_damage(max);
+        assert_eq!(outcome, DamageOutcome::Downed);
+        assert!(e.actors[&id].is_dying());
+        assert!(e.actors.contains_key(&id), "PC stays in actors while dying");
+    }
+
+    #[test]
+    fn monster_killed_outright_at_zero_hp() {
+        use crate::actors::actor_template::DamageOutcome;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        let outcome = e.actors.get_mut(&id).unwrap().take_damage(max);
+        assert_eq!(outcome, DamageOutcome::Killed);
+        // After cleanup, the actor is removed entirely.
+        e.cleanup_dead_actors();
+        assert!(
+            !e.actors.contains_key(&id),
+            "monster should be removed on Killed transition"
         );
     }
 
@@ -2364,9 +2404,15 @@ mod tests {
 
     #[test]
     fn heal_revives_dying_actor() {
+        // Fighter — only PCs go to dying; zombies die outright.
         let mut e = ei_with_terrain(10, 10, &[]);
         let id = e
-            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(2, 2),
+                0,
+                0,
+            )
             .unwrap();
         let actor = e.actors.get_mut(&id).unwrap();
         let max = actor.max_hitpoints();

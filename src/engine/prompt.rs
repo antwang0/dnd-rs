@@ -109,6 +109,7 @@ mod tests {
         let ap = ActorGenParams {
             cr_target: 0.25,
             n_teams: 2,
+            pc_template: None,
         };
         let mut e = EncounterInstance::from_params(&tp, &ap, Some(99)).unwrap();
         e.process_stack();

@@ -9,6 +9,11 @@ const MAX_TRIES: usize = 512;
 pub struct ActorGenParams {
     pub cr_target: f32,
     pub n_teams: usize,
+    /// If set, team 0 spawns this template once instead of being
+    /// randomly populated to `cr_target`. Used to seed a single
+    /// player-character actor on the player's side; remaining teams
+    /// are still randomized per `cr_target`.
+    pub pc_template: Option<&'static CreatureTemplate>,
 }
 
 pub fn generate_actors(
@@ -16,13 +21,21 @@ pub fn generate_actors(
     params: &ActorGenParams,
     template_pool: &[&'static CreatureTemplate],
 ) -> Result<(), Box<dyn Error>> {
-    if template_pool.is_empty() {
-        return Ok(());
-    }
     let mut id_by_template: Vec<usize> = vec![0; template_pool.len()];
     for team_id in 0..params.n_teams {
+        // Team 0 uses the fixed PC template if provided; else fall
+        // through to the random CR-target generator.
+        if team_id == 0
+            && let Some(pc) = params.pc_template
+        {
+            let location = ei.get_random_spawn(pc.size)?;
+            ei.instantiate_creature(pc, location, team_id, 0)?;
+            continue;
+        }
+        if template_pool.is_empty() {
+            continue;
+        }
         let mut cr_total: f32 = 0.0;
-
         let mut tries: usize = 0;
         while cr_total < params.cr_target {
             if tries >= MAX_TRIES {

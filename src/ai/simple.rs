@@ -607,6 +607,7 @@ mod tests {
         let ap = ActorGenParams {
             cr_target: 0.5,
             n_teams: 2,
+            pc_template: None,
         };
         let mut e = EncounterInstance::from_params(&tp, &ap, Some(seed)).unwrap();
         let ai = SimpleAi;
@@ -663,6 +664,7 @@ mod tests {
         let ap = ActorGenParams {
             cr_target: 0.0,
             n_teams: 0,
+            pc_template: None,
         };
         EncounterInstance::from_params(&tp, &ap, Some(0)).unwrap()
     }
@@ -728,13 +730,16 @@ mod tests {
     #[test]
     fn ai_revives_dying_ally_first() {
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
 
         let mut e = empty_arena();
         let healer = e
             .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
             .unwrap();
+        // Use Fighter for the dying ally — only PCs enter the dying state;
+        // a downed Cleric would just die.
         let dying_ally = e
-            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(7, 5), 0, 1)
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
             .unwrap();
         let just_wounded = e
             .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 7), 0, 2)

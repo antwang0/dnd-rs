@@ -7,6 +7,7 @@ pub mod engine;
 pub mod items;
 pub mod ui;
 
+use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
 use crate::ai::SimpleAi;
 use crate::app::{App, Tick};
 use crate::engine::actor_gen::ActorGenParams;
@@ -41,6 +42,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> 
     let actor_params = ActorGenParams {
         cr_target: 1.0,
         n_teams: 2,
+        pc_template: Some(&FIGHTER_TEMPLATE),
     };
     let seed: Option<u64> = std::env::args()
         .nth(1)
