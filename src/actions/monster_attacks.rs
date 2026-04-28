@@ -161,7 +161,7 @@ impl Action for Slam {
     }
 }
 
-/// Melee attack that, on a hit, forces a STR save (DC 13) or knocks the
+/// Melee attack that, on a hit, forces a STR save (DC = 8 + prof + STR mod) or knocks the
 /// target prone. Demonstrates the save-then-condition pattern: damage
 /// applies regardless, the prone condition only on save failure.
 pub struct TripAttack {}
@@ -602,7 +602,7 @@ impl Action for Greatclub {
 pub static GREATCLUB: LazyLock<Greatclub> = LazyLock::new(|| Greatclub {});
 
 /// Wolf bite — built-in trip rider on every successful hit. STR-based
-/// 1d4 piercing; on hit forces a STR save vs DC 11, fail = Prone. Fuses
+/// 1d4 piercing; on hit forces a STR save (DC = 8 + prof + STR mod), fail = Prone. Fuses
 /// the TripAttack rider pattern into a single creature-canonical action.
 pub struct WolfBite {}
 
@@ -649,14 +649,11 @@ impl Action for WolfBite {
         };
         let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
         let attack_bonus = caster.attack_bonus();
+        let dc = caster.ability_save_dc(AbilityScoreType::Strength);
         let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
         else {
             return Vec::new();
         };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let dc = caster.ability_save_dc(AbilityScoreType::Strength);
         let mut effects = weapon_attack(
             encounter,
             caster_id,

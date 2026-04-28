@@ -351,8 +351,8 @@ impl EncounterInstance {
     }
 
     /// Compute the save-roll mode for an actor's ability save.
-    /// - `Poisoned`: disadvantage on all saves / ability checks.
-    /// - `Restrained`: disadvantage on Dexterity saves.
+    /// Per 5e: Poisoned gives disadvantage on attack rolls and ability
+    /// *checks* only — NOT saves; Restrained gives disadvantage on DEX saves.
     pub fn compute_save_mode(
         &self,
         actor_id: usize,
@@ -364,9 +364,6 @@ impl EncounterInstance {
         let Some(actor) = self.actors.get(&actor_id) else {
             return mode;
         };
-        if actor.has_condition(Condition::Poisoned) {
-            mode = mode.combine(RollMode::Disadvantage);
-        }
         if actor.has_condition(Condition::Restrained)
             && ability == AbilityScoreType::Dexterity
         {
@@ -378,14 +375,37 @@ impl EncounterInstance {
     /// Roll a saving throw for `actor_id` against `dc` using `ability`.
     /// Auto-applies advantage / disadvantage based on the actor's
     /// conditions (see `compute_save_mode`). Missing actor auto-fails.
+    /// Stunned: automatically fails STR and DEX saves (5e PHB).
     pub fn roll_save(
         &mut self,
         actor_id: usize,
         ability: crate::engine::types::AbilityScoreType,
         dc: i32,
     ) -> crate::engine::saves::SaveOutcome {
+        use crate::conditions::Condition;
         use crate::engine::saves::SaveOutcome;
+        use crate::engine::types::AbilityScoreType;
         use crate::engine::util::modifier_from_score;
+
+        // Stunned: auto-fail STR and DEX saves.
+        if matches!(ability, AbilityScoreType::Strength | AbilityScoreType::Dexterity) {
+            if self
+                .actors
+                .get(&actor_id)
+                .is_some_and(|a| a.has_condition(Condition::Stunned))
+            {
+                let name = self
+                    .actors
+                    .get(&actor_id)
+                    .map(|a| a.name().to_string())
+                    .unwrap_or_default();
+                self.log(format!(
+                    "  {} {:?} save: auto-fail (stunned) — fail",
+                    name, ability
+                ));
+                return SaveOutcome::Fail;
+            }
+        }
 
         let mode = self.compute_save_mode(actor_id, ability);
         let raw = self.roll_d20_with_mode(mode);
@@ -2369,7 +2389,9 @@ mod tests {
     }
 
     #[test]
-    fn save_mode_poisoned_disadvantage() {
+    fn save_mode_poisoned_no_save_disadvantage() {
+        // 5e: Poisoned gives disadvantage on attack rolls and ability checks,
+        // but NOT saving throws. Restrained gives disadvantage on DEX saves.
         use crate::conditions::{Condition, ConditionTimer};
         use crate::engine::dice::RollMode;
         use crate::engine::types::AbilityScoreType;
@@ -2382,9 +2404,27 @@ mod tests {
             .get_mut(&id)
             .unwrap()
             .add_condition(Condition::Poisoned, ConditionTimer::Permanent);
+        // Poisoned should NOT affect saves.
+        assert_eq!(
+            e.compute_save_mode(id, AbilityScoreType::Dexterity),
+            RollMode::Normal
+        );
+        assert_eq!(
+            e.compute_save_mode(id, AbilityScoreType::Constitution),
+            RollMode::Normal
+        );
+        // Restrained DOES give disadvantage on DEX saves only.
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Restrained, ConditionTimer::Permanent);
         assert_eq!(
             e.compute_save_mode(id, AbilityScoreType::Dexterity),
             RollMode::Disadvantage
+        );
+        assert_eq!(
+            e.compute_save_mode(id, AbilityScoreType::Constitution),
+            RollMode::Normal
         );
     }
 

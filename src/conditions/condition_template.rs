@@ -10,8 +10,10 @@ pub enum Condition {
     Prone,
     /// Cannot take Actions, Bonus Actions, or Reactions. Movement is also
     /// 0 (in 5e via Incapacitated, but we collapse for simplicity).
+    /// Automatically fails STR and DEX saving throws. Attacks against you
+    /// have advantage.
     Stunned,
-    /// Disadvantage on attack rolls and ability checks.
+    /// Disadvantage on attack rolls and ability checks (NOT saving throws).
     Poisoned,
     /// Cannot see. Disadvantage on attack rolls; attacks against you have
     /// advantage. Automatically fails any check that requires sight.
