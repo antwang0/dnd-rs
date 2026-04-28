@@ -1,6 +1,9 @@
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
 use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+use crate::actors::creatures::wolves::WOLF_TEMPLATE;
 use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
@@ -922,6 +925,9 @@ impl EncounterInstance {
             &SKELETON_TEMPLATE,
             &CLERIC_TEMPLATE,
             &SLIME_TEMPLATE,
+            &GOBLIN_TEMPLATE,
+            &OGRE_TEMPLATE,
+            &WOLF_TEMPLATE,
         ];
 
         generate_actors(&mut ei, actor_params, &template_pool)?;
@@ -1786,6 +1792,80 @@ mod tests {
             e.actors[&ally].hitpoints() < ally_max,
             "ally should have taken splash damage"
         );
+    }
+
+    #[test]
+    fn ogre_has_large_footprint_and_reach_2() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::GREATCLUB;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::engine::types::Size;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert_eq!(e.actors[&ogre].size(), Size::Large);
+
+        // Place a target 2-tile-gap away — within Greatclub reach but
+        // outside normal melee. With a 4×4 ogre at (2,2) and Medium 2×2
+        // target at (8,2), gap_x = max(2,8) - min(5,9) - 1 = 8 - 5 - 1 = 2.
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        assert_eq!(GREATCLUB.reach_tiles(), Some(2));
+        let aei =
+            ActionExecutionInfo::new(&*GREATCLUB, ogre, Some(vec![target]), None, None);
+        assert!(aei.validate(&e), "greatclub should reach 2-gap target");
+
+        // Place a target further out — outside reach.
+        let far = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 10), 1, 1)
+            .unwrap();
+        let aei_far =
+            ActionExecutionInfo::new(&*GREATCLUB, ogre, Some(vec![far]), None, None);
+        assert!(!aei_far.validate(&e), "greatclub should not reach gap-7 target");
+    }
+
+    #[test]
+    fn goblin_can_use_action_and_bonus_action_in_one_turn() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::{SCIMITAR, SHORTBOW};
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Both costs come back distinct.
+        let scim_costs = SCIMITAR.cost(&e, goblin, None, None, None);
+        let bow_costs = SHORTBOW.cost(&e, goblin, None, None, None);
+        assert!(scim_costs.iter().any(|c| matches!(c, Resource::Action)));
+        assert!(bow_costs.iter().any(|c| matches!(c, Resource::BonusAction)));
+        // Both initially affordable on a fresh round.
+        assert!(e.actors[&goblin].can_consume_resource(Resource::Action));
+        assert!(e.actors[&goblin].can_consume_resource(Resource::BonusAction));
+    }
+
+    #[test]
+    fn wolf_bite_validates_in_melee() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::WOLF_BITE;
+        use crate::actors::creatures::wolves::WOLF_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wolf = e
+            .instantiate_creature(&WOLF_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        let aei =
+            ActionExecutionInfo::new(&*WOLF_BITE, wolf, Some(vec![target]), None, None);
+        assert!(aei.validate(&e));
+        // Reach is plain melee (1-tile gap).
+        assert_eq!(WOLF_BITE.reach_tiles(), Some(1));
     }
 
     #[test]
