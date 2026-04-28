@@ -65,6 +65,13 @@ pub trait Action {
         overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>>;
 
+    /// All resources this action consumes when executed. Most actions
+    /// have one cost (just an Action slot, just a Bonus Action, etc.);
+    /// leveled spells return multiple (`[Action, SpellSlot(2)]` for a
+    /// level-2 spell, `[BonusAction, SpellSlot(1)]` for a quickened
+    /// healing word). Empty vec = free (e.g. Skip). All costs are
+    /// validated together; the action only fires if the actor can
+    /// afford every entry.
     fn cost(
         &self,
         encounter: &EncounterInstance,
@@ -72,7 +79,7 @@ pub trait Action {
         target_ids: Option<&Vec<usize>>,
         target_locations: Option<&Vec<Coordinate>>,
         overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Option<Resource>;
+    ) -> Vec<Resource>;
 
     fn validate_input(
         &self,
@@ -163,18 +170,23 @@ pub trait Action {
                 return false;
             }
         }
-        if let Some(cost) = self.cost(
+        // Check every declared cost; the action only fires if the actor
+        // can afford all of them.
+        let costs = self.cost(
             encounter,
             caster_id,
             target_ids,
             target_locations,
             overrides,
-        ) {
+        );
+        if !costs.is_empty() {
             let Some(actor) = encounter.actors.get(&caster_id) else {
                 return false;
             };
-            if !actor.can_consume_resource(cost) {
-                return false;
+            for c in &costs {
+                if !actor.can_consume_resource(*c) {
+                    return false;
+                }
             }
         }
         self.custom_validate_input(
@@ -223,7 +235,7 @@ pub trait Action {
             target_locations,
             overrides,
         );
-        if let Some(cost) = self.cost(
+        for cost in self.cost(
             encounter,
             caster_id,
             target_ids,
@@ -280,9 +292,10 @@ impl ActionExecutionInfo {
         self.target_locations.as_deref()
     }
 
-    /// Resolved cost of this specific invocation (uses the stored target/loc
-    /// args, not None placeholders) — useful for the engine log filter.
-    pub fn cost(&self, encounter: &EncounterInstance) -> Option<Resource> {
+    /// Resolved costs of this specific invocation (uses the stored
+    /// target/loc args, not None placeholders) — useful for the engine
+    /// log filter and the UI's cost-label / affordability display.
+    pub fn cost(&self, encounter: &EncounterInstance) -> Vec<Resource> {
         self.action.cost(
             encounter,
             self.caster_id,

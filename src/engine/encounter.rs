@@ -216,12 +216,16 @@ impl EncounterInstance {
     /// Movement and free actions are intentionally excluded — the AI takes
     /// many move-steps per turn and they'd drown out useful events.
     fn log_action_use(&mut self, aei: &ActionExecutionInfo) {
-        let cost = aei.cost(self);
-        let Some(slot) = (match cost {
-            Some(crate::engine::side_effects::Resource::Action) => Some("action"),
-            Some(crate::engine::side_effects::Resource::BonusAction) => Some("bonus action"),
-            Some(crate::engine::side_effects::Resource::Reaction) => Some("reaction"),
-            Some(crate::engine::side_effects::Resource::LegendaryAction) => Some("legendary"),
+        // Pick the most prominent action-economy cost for the log tag.
+        // SpellSlot/Movement are secondary; we tag by whichever main slot
+        // got consumed (Action / BonusAction / Reaction / Legendary).
+        use crate::engine::side_effects::Resource;
+        let costs = aei.cost(self);
+        let Some(slot) = costs.iter().find_map(|r| match r {
+            Resource::Action => Some("action"),
+            Resource::BonusAction => Some("bonus action"),
+            Resource::Reaction => Some("reaction"),
+            Resource::LegendaryAction => Some("legendary"),
             _ => None,
         }) else {
             return;
@@ -1782,6 +1786,108 @@ mod tests {
             e.actors[&ally].hitpoints() < ally_max,
             "ally should have taken splash damage"
         );
+    }
+
+    #[test]
+    fn cleric_starts_with_spell_slots() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // 3 level-1 slots and 2 level-2 slots per the template.
+        assert_eq!(
+            e.actors[&id]
+                .spell_slot_manager
+                .spell_slots(1)
+                .spell_slots,
+            3
+        );
+        assert_eq!(
+            e.actors[&id]
+                .spell_slot_manager
+                .spell_slots(2)
+                .spell_slots,
+            2
+        );
+        // Affordability via the resource API.
+        assert!(e.actors[&id].can_consume_resource(Resource::SpellSlot(1)));
+        assert!(e.actors[&id].can_consume_resource(Resource::SpellSlot(2)));
+        // Level-3 wasn't given.
+        assert!(!e.actors[&id].can_consume_resource(Resource::SpellSlot(3)));
+    }
+
+    #[test]
+    fn cantrip_does_not_consume_spell_slot() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::SACRED_FLAME;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+
+        let costs = SACRED_FLAME.cost(&e, cleric, None, None, None);
+        // Cantrip = Action only.
+        assert_eq!(costs.len(), 1);
+        use crate::engine::side_effects::Resource;
+        assert!(matches!(costs[0], Resource::Action));
+    }
+
+    #[test]
+    fn leveled_spell_consumes_slot() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::HOLD_PERSON;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Cost includes Action + SpellSlot(2).
+        let costs = HOLD_PERSON.cost(&e, cleric, None, None, None);
+        assert!(costs.iter().any(|c| matches!(c, Resource::Action)));
+        assert!(costs
+            .iter()
+            .any(|c| matches!(c, Resource::SpellSlot(2))));
+    }
+
+    #[test]
+    fn ai_cant_cast_when_slot_exhausted() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+            .unwrap();
+        // Burn through both level-2 slots so Hold Person can't be cast.
+        let mgr = &mut e.actors.get_mut(&cleric).unwrap().spell_slot_manager;
+        assert!(mgr.consume_spell_slot(2));
+        assert!(mgr.consume_spell_slot(2));
+        assert!(!e.actors[&cleric].can_consume_resource(Resource::SpellSlot(2)));
+
+        // AI should now skip Hold Person and fall through to a damage
+        // tactic (Sacred Flame / Sacred Burst).
+        let ai = crate::ai::SimpleAi;
+        use crate::ai::Controller as _;
+        use crate::ai::ControllerDecision;
+        let decision = ai.decide(&e, cleric);
+        let ControllerDecision::Act(aei) = decision else {
+            panic!("expected an action");
+        };
+        assert_ne!(aei.action().name(), "hold person");
+        let _ = zombie;
     }
 
     #[test]

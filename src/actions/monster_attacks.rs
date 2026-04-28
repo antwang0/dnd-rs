@@ -49,8 +49,8 @@ impl Action for Longbow {
         _target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Option<Resource> {
-        Some(Resource::Action)
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
     }
 
     fn side_effects(
@@ -118,8 +118,8 @@ impl Action for Slam {
         _target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Option<Resource> {
-        Some(Resource::Action)
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
     }
 
     fn side_effects(
@@ -189,8 +189,8 @@ impl Action for TripAttack {
         _target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Option<Resource> {
-        Some(Resource::Action)
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
     }
 
     fn side_effects(
@@ -288,8 +288,8 @@ impl Action for AcidSpit {
         _target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Option<Resource> {
-        Some(Resource::Action)
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
     }
 
     fn side_effects(
@@ -428,8 +428,8 @@ impl Action for Multiattack {
         _target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Option<Resource> {
-        Some(Resource::Action)
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
     }
 
     fn side_effects(

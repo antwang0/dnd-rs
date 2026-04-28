@@ -351,15 +351,15 @@ impl App {
             // both produce an empty target list but the player needs a
             // different next move (switch action vs. close distance / wait).
             let caster_id = prompt.actor_id();
-            let cost = action.cost(&self.encounter, caster_id, None, None, None);
-            let unaffordable = cost.is_some_and(|c| {
+            let costs = action.cost(&self.encounter, caster_id, None, None, None);
+            let unaffordable_cost = costs.iter().find(|c| {
                 self.encounter
                     .actors
                     .get(&caster_id)
-                    .is_none_or(|a| !a.can_consume_resource(c))
+                    .is_none_or(|a| !a.can_consume_resource(**c))
             });
-            let reason = if unaffordable {
-                cost.unwrap().lack_description()
+            let reason = if let Some(c) = unaffordable_cost {
+                c.lack_description()
             } else {
                 "no targets in reach".to_string()
             };

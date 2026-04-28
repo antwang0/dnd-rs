@@ -46,8 +46,9 @@ impl Action for SacredFlame {
         _target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Option<Resource> {
-        Some(Resource::Action)
+    ) -> Vec<Resource> {
+        // Cantrip — costs an Action only, no spell slot consumed.
+        vec![Resource::Action]
     }
 
     fn side_effects(
@@ -122,8 +123,9 @@ impl Action for HealingWord {
         _target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Option<Resource> {
-        Some(Resource::BonusAction)
+    ) -> Vec<Resource> {
+        // Healing Word — bonus-action level-1 spell.
+        vec![Resource::BonusAction, Resource::SpellSlot(1)]
     }
 
     fn side_effects(
@@ -191,8 +193,9 @@ impl Action for SacredBurst {
         _target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Option<Resource> {
-        Some(Resource::Action)
+    ) -> Vec<Resource> {
+        // Cantrip — Action only, no spell slot.
+        vec![Resource::Action]
     }
 
     fn side_effects(
@@ -303,8 +306,9 @@ impl Action for HoldPerson {
         _target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Option<Resource> {
-        Some(Resource::Action)
+    ) -> Vec<Resource> {
+        // Level-2 leveled spell — Action + a level-2 spell slot.
+        vec![Resource::Action, Resource::SpellSlot(2)]
     }
 
     fn side_effects(

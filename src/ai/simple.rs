@@ -1,5 +1,7 @@
 use crate::actions::action_template::{Action, ActionExecutionInfo, MELEE_REACH, TargetingSchema};
 use crate::ai::{Controller, ControllerDecision};
+use crate::conditions::Condition;
+use crate::engine::dice::RollMode;
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
@@ -25,7 +27,14 @@ impl Controller for SimpleAi {
             return skip_or_await(encounter, actor_id);
         }
 
-        // 1. Kite if we're a ranged attacker under melee threat.
+        // 1. Stand up if prone — disadvantage on attacks and 0 movement
+        //    otherwise. Costs half-speed; the rest of the turn still has
+        //    resources to act.
+        if let Some(aei) = try_stand_up(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 2. Kite if we're a ranged attacker under melee threat.
         if has_ranged_attack(encounter, actor_id)
             && under_melee_threat(encounter, actor_id)
             && let Some(aei) = try_step_away_from_threats(encounter, actor_id)
@@ -33,34 +42,108 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 2. Heal a dying / wounded ally if we have a helpful action that
-        //    can reach them. Sits before attack so a cleric with Healing
-        //    Word as a bonus action will heal first; on the next decide
-        //    call (BA spent) it falls through to focus-fire on the action.
+        // 3. Heal a dying / wounded ally.
         if let Some(aei) = try_support_heal(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
-        // 3. AoE if we have a Burst action and a worthwhile target tile —
-        //    one that catches at least 2 enemies and no allies. Sits above
-        //    single-target focus-fire because hitting multiple is usually
-        //    higher damage in total.
+        // 4. Hold Person — lock down toughest enemy if we have it and
+        //    aren't already concentrating on something.
+        if let Some(aei) = try_hold_person(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 5. AoE — point that catches 2+ enemies, no friendly fire.
         if let Some(aei) = try_attack_aoe(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
-        // 4. Focus-fire: hit the lowest-HP target we can reach right now.
+        // 6. Focus-fire: pick targets with advantage > normal > disadv;
+        //    tie-break by lower HP (finish wounded).
         if let Some(aei) = try_attack_focus_fire(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
-        // 4. No one in reach — close on the lowest-HP enemy.
+        // 7. No one in reach — close on the lowest-HP enemy.
         if let Some(aei) = try_step_toward_lowest_hp(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
-        // 5. Nothing useful. End the turn.
+        // 8. Nothing useful. End the turn.
         skip_or_await(encounter, actor_id)
+    }
+}
+
+/// If the actor is Prone, return the StandUp action invocation. The action
+/// itself custom-validates `has_condition(Prone)` and pays half-speed in
+/// movement.
+fn try_stand_up(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if !actor.has_condition(Condition::Prone) {
+        return None;
+    }
+    let stand = actor.actions.iter().find(|a| a.name() == "stand").copied()?;
+    let aei = ActionExecutionInfo::new(stand, actor_id, None, None, None);
+    if aei.validate(encounter) {
+        Some(aei)
+    } else {
+        None
+    }
+}
+
+/// Cast Hold Person on the toughest in-range enemy if we have it and
+/// aren't already concentrating. "Toughest" = highest current HP among
+/// not-already-stunned enemies (no point double-locking).
+fn try_hold_person(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() {
+        return None;
+    }
+    let hold = actor
+        .actions
+        .iter()
+        .find(|a| a.name() == "hold person")
+        .copied()?;
+    let my_team = actor.team();
+
+    let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
+    ids.sort_unstable();
+
+    let mut best: Option<(u32, ActionExecutionInfo)> = None;
+    for target_id in ids {
+        let Some(target) = encounter.actors.get(&target_id) else {
+            continue;
+        };
+        if target_id == actor_id || target.team() == my_team || !target.is_combat_active() {
+            continue;
+        }
+        if target.has_condition(Condition::Stunned) {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(hold, actor_id, Some(vec![target_id]), None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        let hp = target.hitpoints();
+        if best.as_ref().is_none_or(|(best_hp, _)| hp > *best_hp) {
+            best = Some((hp, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
+}
+
+/// Sort key for advantage-aware target selection — lower wins.
+fn mode_priority(mode: RollMode) -> u8 {
+    match mode {
+        RollMode::Advantage => 0,
+        RollMode::Normal => 1,
+        RollMode::Disadvantage => 2,
     }
 }
 
@@ -368,7 +451,14 @@ fn try_attack_focus_fire(
     let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
     ids.sort_unstable();
 
-    let mut best: Option<(u32, isize, ActionExecutionInfo)> = None; // (target_hp, reach, aei)
+    // Sort key: (mode_pri, target_hp, -reach). Lower wins:
+    //   - mode_pri (advantage=0, normal=1, disadvantage=2): fish for
+    //     advantage opportunities first.
+    //   - HP ascending: focus-fire wounded.
+    //   - Reach descending: prefer the longest-reach action when tied
+    //     (so a longbow gets used over a one-tile melee on a far target,
+    //     etc.).
+    let mut best: Option<(u8, u32, isize, ActionExecutionInfo)> = None;
     for target_id in ids {
         let Some(target) = encounter.actors.get(&target_id) else {
             continue;
@@ -383,18 +473,22 @@ fn try_attack_focus_fire(
         if !aei.validate(encounter) {
             continue;
         }
+        let is_melee = reach <= MELEE_REACH;
+        let mode = encounter.compute_attack_mode(actor_id, target_id, is_melee);
+        let mode_pri = mode_priority(mode);
         let hp = target.hitpoints();
         let pick = match &best {
             None => true,
-            Some((best_hp, best_reach, _)) => {
-                hp < *best_hp || (hp == *best_hp && reach > *best_reach)
+            Some((bm, bh, br, _)) => {
+                (mode_pri, hp, std::cmp::Reverse(reach))
+                    < (*bm, *bh, std::cmp::Reverse(*br))
             }
         };
         if pick {
-            best = Some((hp, reach, aei));
+            best = Some((mode_pri, hp, reach, aei));
         }
     }
-    best.map(|(_, _, aei)| aei)
+    best.map(|(_, _, _, aei)| aei)
 }
 
 /// Among the actor's SingleActor actions, the longest-reach one whose
@@ -695,12 +789,14 @@ mod tests {
 
     #[test]
     fn ai_picks_aoe_when_two_enemies_clustered() {
+        use crate::actors::actor_template::ConcentrationData;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
 
         let mut e = empty_arena();
         // Cleric on team 0; two enemies tightly clustered on team 1, no
-        // allies near them. Cleric should drop Sacred Burst on the cluster
-        // rather than single-target Sacred Flame.
+        // allies near them. Pre-set the cleric's concentration so Hold
+        // Person (higher priority than AoE) is gated out — this test is
+        // specifically about the AoE-vs-single-target choice.
         let cleric = e
             .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
             .unwrap();
@@ -710,6 +806,13 @@ mod tests {
         let _e2 = e
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 10), 1, 1)
             .unwrap();
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .start_concentration(ConcentrationData {
+                spell_name: "Placeholder".to_string(),
+                conditions: vec![],
+            });
 
         let ai = SimpleAi;
         let decision = ai.decide(&e, cleric);
@@ -725,11 +828,13 @@ mod tests {
 
     #[test]
     fn ai_avoids_aoe_with_friendly_fire() {
+        use crate::actors::actor_template::ConcentrationData;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
 
         let mut e = empty_arena();
         // Cleric + ally clustered with two enemies — any radius-3 burst
         // catches the ally too. AI should fall back to single-target.
+        // Pre-set concentration to gate out Hold Person.
         let cleric = e
             .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
             .unwrap();
@@ -742,6 +847,13 @@ mod tests {
         let _e2 = e
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 10), 1, 1)
             .unwrap();
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .start_concentration(ConcentrationData {
+                spell_name: "Placeholder".to_string(),
+                conditions: vec![],
+            });
 
         let ai = SimpleAi;
         let decision = ai.decide(&e, cleric);
@@ -753,6 +865,133 @@ mod tests {
             "sacred burst",
             "any burst would clip the ally — AI should pick single-target"
         );
+    }
+
+    #[test]
+    fn ai_stands_up_when_prone() {
+        use crate::conditions::ConditionTimer;
+
+        let mut e = empty_arena();
+        let actor = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&actor)
+            .unwrap()
+            .add_condition(Condition::Prone, ConditionTimer::Permanent);
+
+        let ai = SimpleAi;
+        let decision = ai.decide(&e, actor);
+        let ControllerDecision::Act(aei) = decision else {
+            panic!("expected an action");
+        };
+        assert_eq!(aei.action().name(), "stand");
+    }
+
+    #[test]
+    fn ai_casts_hold_person_when_available() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+        let mut e = empty_arena();
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Two enemies: a low-HP zombie (would be focus-fire pick) and a
+        // high-HP zombie (Hold Person target). Hold should beat single-
+        // target attack in priority since it's a bigger lockdown.
+        let _e1 = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+            .unwrap();
+        let _e2 = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(11, 5), 1, 1)
+            .unwrap();
+
+        let ai = SimpleAi;
+        let decision = ai.decide(&e, cleric);
+        let ControllerDecision::Act(aei) = decision else {
+            panic!("expected an action");
+        };
+        assert_eq!(
+            aei.action().name(),
+            "hold person",
+            "cleric with Hold Person should cast it on a tough target"
+        );
+    }
+
+    #[test]
+    fn ai_does_not_recast_concentration() {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+        let mut e = empty_arena();
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let _e1 = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+            .unwrap();
+        let _e2 = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(11, 5), 1, 1)
+            .unwrap();
+        // Pretend the cleric is already concentrating — Hold should be
+        // skipped and the AI should fall through to attack tactics.
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .start_concentration(ConcentrationData {
+                spell_name: "Bless".to_string(),
+                conditions: vec![],
+            });
+
+        let ai = SimpleAi;
+        let decision = ai.decide(&e, cleric);
+        let ControllerDecision::Act(aei) = decision else {
+            panic!("expected an action");
+        };
+        assert_ne!(
+            aei.action().name(),
+            "hold person",
+            "AI should not replace existing concentration"
+        );
+    }
+
+    #[test]
+    fn ai_focus_fire_prefers_advantage_target() {
+        use crate::conditions::ConditionTimer;
+
+        let mut e = empty_arena();
+        // Attacker on team 0; two enemies in melee reach. One is healthy,
+        // one is healthy AND prone. The prone one gives melee advantage.
+        // Focus-fire should pick the prone target despite equal HP.
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let upright = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        let prone = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 7), 1, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&prone)
+            .unwrap()
+            .add_condition(Condition::Prone, ConditionTimer::Permanent);
+
+        let ai = SimpleAi;
+        let decision = ai.decide(&e, attacker);
+        let ControllerDecision::Act(aei) = decision else {
+            panic!("expected an attack");
+        };
+        let target = aei.target_ids().and_then(|ids| ids.first().copied());
+        assert_eq!(
+            target,
+            Some(prone),
+            "AI should fish for advantage when HP ties"
+        );
+        let _ = upright;
     }
 
     #[test]

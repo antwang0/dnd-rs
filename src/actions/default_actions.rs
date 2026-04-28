@@ -35,10 +35,14 @@ impl Action for Move {
         _target_ids: Option<&Vec<usize>>,
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Option<Resource> {
-        let dest = *target_locations?.first()?;
-        let dist = encounter.path_cost_to(caster_id, dest)?;
-        Some(Resource::Movement(dist))
+    ) -> Vec<Resource> {
+        let Some(dest) = target_locations.and_then(|t| t.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(dist) = encounter.path_cost_to(caster_id, dest) else {
+            return Vec::new();
+        };
+        vec![Resource::Movement(dist)]
     }
 
     fn custom_validate_input(
@@ -109,8 +113,8 @@ impl Action for Skip {
         _target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Option<Resource> {
-        None
+    ) -> Vec<Resource> {
+        Vec::new()
     }
 
     fn side_effects(
@@ -149,8 +153,8 @@ impl Action for Dash {
         _target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Option<Resource> {
-        Some(Resource::Action)
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
     }
 
     fn side_effects(
@@ -198,9 +202,11 @@ impl Action for StandUp {
         _target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Option<Resource> {
-        let actor = encounter.actors.get(&caster_id)?;
-        Some(Resource::Movement(actor.speed() / 2.0))
+    ) -> Vec<Resource> {
+        match encounter.actors.get(&caster_id) {
+            Some(a) => vec![Resource::Movement(a.speed() / 2.0)],
+            None => Vec::new(),
+        }
     }
 
     fn custom_validate_input(

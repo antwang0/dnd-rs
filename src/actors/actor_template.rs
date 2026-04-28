@@ -104,6 +104,12 @@ pub struct CreatureTemplate {
     pub cr: f32,
     pub size: Size,
     pub actions: Vec<&'static (dyn Action + Send + Sync)>,
+    /// Initial leveled spell slots by level. Index 0 = level-1 slots,
+    /// index 1 = level-2 slots, etc. Empty / shorter vec = no slots at
+    /// that level (cantrip-only or martial caster). Slots are spent
+    /// during an encounter; restoration requires a long rest (not
+    /// modeled today — slots stay drained between encounters).
+    pub spell_slots_by_level: Vec<u32>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -302,7 +308,14 @@ impl ActorInstance {
             legendary_action_slots: 0,
             size: ct.size, // TODO: should derive from function call
             spell_slot_manager: SpellSlotManager {
-                ssi_by_lvl: Vec::new(),
+                ssi_by_lvl: ct
+                    .spell_slots_by_level
+                    .iter()
+                    .map(|&n| SpellSlotInfo {
+                        max_spell_slots: n,
+                        spell_slots: n,
+                    })
+                    .collect(),
                 warlock_ssi: SpellSlotInfo {
                     max_spell_slots: 0,
                     spell_slots: 0,

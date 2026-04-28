@@ -32,5 +32,6 @@ pub static ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         cr: 0.25,
         size: Size::Medium,
         actions,
+        spell_slots_by_level: Vec::new(),
     }
 });

@@ -44,20 +44,30 @@ pub fn style_log_line(msg: &str) -> Line<'static> {
 }
 
 /// Compact tag for an action's resource cost — fits in the action panel
-/// before the name. `None` cost falls back to "[-]" except for Move which
-/// is special-cased (its cost is path-dependent and resolves at confirm
-/// time, but the actor still spends Movement).
-fn cost_label(cost: Option<Resource>, action_name: &str) -> &'static str {
-    match cost {
-        Some(Resource::Action) => "[A] ",
-        Some(Resource::BonusAction) => "[BA]",
-        Some(Resource::Reaction) => "[R] ",
-        Some(Resource::LegendaryAction) => "[Lg]",
-        Some(Resource::Movement(_)) => "[M] ",
-        Some(Resource::SpellSlot(_)) => "[S] ",
-        None if action_name == "move" => "[M] ",
-        None => "[-] ",
+/// before the name. Multi-resource costs (e.g. leveled spells with both
+/// Action and SpellSlot) join with `+`. Empty cost falls back to "[-]"
+/// except for Move which special-cases to "[M]" — its actual cost is
+/// path-dependent and only resolves at confirm time.
+fn cost_label(costs: &[Resource], action_name: &str) -> String {
+    if costs.is_empty() {
+        return if action_name == "move" {
+            "[M]".to_string()
+        } else {
+            "[-]".to_string()
+        };
     }
+    let parts: Vec<String> = costs
+        .iter()
+        .map(|r| match r {
+            Resource::Action => "A".to_string(),
+            Resource::BonusAction => "BA".to_string(),
+            Resource::Reaction => "R".to_string(),
+            Resource::LegendaryAction => "Lg".to_string(),
+            Resource::Movement(_) => "M".to_string(),
+            Resource::SpellSlot(n) => format!("S{}", n),
+        })
+        .collect();
+    format!("[{}]", parts.join("+"))
 }
 
 /// True/false toggle that flips every ~500ms based on wall-clock time.
@@ -325,12 +335,12 @@ pub fn render_sideinfo(
         .map(|(i, action)| {
             let is_selected = i == highlight_idx;
             let prefix = if is_selected { "> " } else { "  " };
-            // Look up cost with placeholder args. Static-cost actions
-            // (Slam, Skip, Dash, Longbow, Multiattack) return their real
-            // resource here; context-sensitive ones (Move) return None.
-            let cost = action.cost(encounter, curr_actor_id, None, None, None);
-            let unaffordable = cost.is_some_and(|c| !curr_actor.can_consume_resource(c));
-            let tag = cost_label(cost, action.name());
+            // Look up costs with placeholder args. Static-cost actions
+            // return their full cost list here; context-sensitive ones
+            // (Move) return an empty list at this stage.
+            let costs = action.cost(encounter, curr_actor_id, None, None, None);
+            let unaffordable = costs.iter().any(|c| !curr_actor.can_consume_resource(*c));
+            let tag = cost_label(&costs, action.name());
 
             let base_style = if is_selected {
                 Style::default()
