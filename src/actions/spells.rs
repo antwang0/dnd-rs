@@ -418,7 +418,7 @@ impl Action for GuidingBolt {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let spell_atk = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
+        let spell_atk = caster.spell_attack_bonus(AbilityScoreType::Wisdom);
 
         let mut effects = weapon_attack_ranged_spell(
             encounter,
@@ -503,7 +503,7 @@ impl Action for InflictWounds {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let spell_atk = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
+        let spell_atk = caster.spell_attack_bonus(AbilityScoreType::Wisdom);
 
         weapon_attack_melee_spell(
             encounter,

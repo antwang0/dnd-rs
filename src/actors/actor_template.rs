@@ -776,11 +776,10 @@ impl ActorInstance {
         }
     }
 
-    /// 5e spell save DC: 8 + spellcasting ability modifier (we don't track
-    /// proficiency yet; once we do, add it here). Actions that force saves
-    /// call this on the caster to set their DC.
+    /// 5e spell save DC: 8 + proficiency bonus + spellcasting ability
+    /// modifier. Actions that force saves call this on the caster.
     pub fn spell_save_dc(&self, ability: AbilityScoreType) -> i32 {
-        8 + modifier_from_score(self.ability_score(ability))
+        8 + self.proficiency_bonus() + modifier_from_score(self.ability_score(ability))
     }
 
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {
@@ -927,9 +926,37 @@ impl ActorInstance {
         }
     }
 
+    /// 5e proficiency bonus derived from character level (PCs) or CR
+    /// (monsters via the same table). The table is piecewise:
+    /// level/CR 1–4 → +2, 5–8 → +3, 9–12 → +4, 13–16 → +5, 17+ → +6.
+    pub fn proficiency_bonus(&self) -> i32 {
+        let effective = if self.level > 1 {
+            self.level as f32
+        } else {
+            self.cr.max(1.0)
+        };
+        match effective as u32 {
+            1..=4 => 2,
+            5..=8 => 3,
+            9..=12 => 4,
+            13..=16 => 5,
+            _ => 6,
+        }
+    }
+
+    /// Melee/ranged weapon attack bonus: STR modifier + proficiency bonus.
+    /// Actions that use DEX (bows, finesse) pass their own modifier; this
+    /// covers the common STR-primary-weapon path.
     pub fn attack_bonus(&self) -> i32 {
-        // TODO: add proficiency bonus once it's tracked
-        modifier_from_score(self.strength)
+        modifier_from_score(self.strength) + self.proficiency_bonus()
+    }
+
+    /// Spell attack bonus: primary spellcasting ability modifier +
+    /// proficiency bonus. Callers that compute this themselves (Guiding
+    /// Bolt, Inflict Wounds) should call this instead of rolling raw
+    /// ability mods so proficiency applies consistently.
+    pub fn spell_attack_bonus(&self, ability: AbilityScoreType) -> i32 {
+        modifier_from_score(self.ability_score(ability)) + self.proficiency_bonus()
     }
 
     pub fn damage_bonus(&self) -> i32 {

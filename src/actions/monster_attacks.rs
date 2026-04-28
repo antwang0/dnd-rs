@@ -68,8 +68,9 @@ impl Action for Longbow {
             return Vec::new();
         };
         let dex = caster.ability_score(crate::engine::types::AbilityScoreType::Dexterity);
-        // Bows use DEX for both attack and damage in 5e (finesse / ranged).
-        let attack_bonus = modifier_from_score(dex);
+        let dex_mod = modifier_from_score(dex);
+        // Bows: DEX modifier + proficiency bonus for attack rolls.
+        let attack_bonus = dex_mod + caster.proficiency_bonus();
         let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
         else {
             return Vec::new();
@@ -83,7 +84,7 @@ impl Action for Longbow {
             attack_bonus,
             target_ac,
             Dice::new(1, 8),
-            modifier_from_score(dex),
+            dex_mod,
             DamageType::Piercing,
             false, // ranged
         )
@@ -312,7 +313,7 @@ impl Action for AcidSpit {
         let dex_mod = modifier_from_score(
             caster.ability_score(AbilityScoreType::Dexterity),
         );
-        let attack_bonus = dex_mod;
+        let attack_bonus = dex_mod + caster.proficiency_bonus();
         let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
         else {
             return Vec::new();
@@ -505,6 +506,7 @@ impl Action for Shortbow {
         let dex_mod = modifier_from_score(
             caster.ability_score(crate::engine::types::AbilityScoreType::Dexterity),
         );
+        let attack_bonus = dex_mod + caster.proficiency_bonus();
         let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
         else {
             return Vec::new();
@@ -514,7 +516,7 @@ impl Action for Shortbow {
             caster_id,
             target_id,
             self.name(),
-            dex_mod,
+            attack_bonus,
             target_ac,
             Dice::new(1, 4),
             dex_mod,
