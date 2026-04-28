@@ -14,6 +14,7 @@ struct BSPNode {
     children: Option<(Box<BSPNode>, Box<BSPNode>)>,
 }
 
+#[derive(Clone)]
 pub struct TerrainGenParams {
     pub width: usize,
     pub height: usize,

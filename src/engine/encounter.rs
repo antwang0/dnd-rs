@@ -897,12 +897,50 @@ impl EncounterInstance {
         actor_params: &ActorGenParams,
         seed: Option<u64>,
     ) -> Result<EncounterInstance, Box<dyn Error>> {
+        let mut ei = Self::empty(terrain_params, seed);
+        generate_actors(&mut ei, actor_params, &Self::template_pool())?;
+        ei.initialize()?;
+        Ok(ei)
+    }
+
+    /// Build the next encounter in a multi-encounter game loop. Carries
+    /// over `pcs` (already long-rested by the caller) onto a freshly
+    /// generated terrain at random spawn locations, then fills teams
+    /// 1..n_teams with random enemies via `generate_actors` (with
+    /// `start_team = 1` so team 0 isn't randomized over the placed PCs).
+    pub fn with_pcs(
+        terrain_params: &TerrainGenParams,
+        actor_params: &ActorGenParams,
+        seed: Option<u64>,
+        pcs: Vec<ActorInstance>,
+    ) -> Result<EncounterInstance, Box<dyn Error>> {
+        let mut ei = Self::empty(terrain_params, seed);
+
+        // Place each PC at a random spawn location on the new map. Their
+        // internal location field is updated to match.
+        for mut pc in pcs {
+            let location = ei.get_random_spawn(pc.size())?;
+            let actor_id = ei.next_actor_id();
+            pc.set_location(location);
+            ei.actors.insert(actor_id, pc);
+            ei.set_actor_map(actor_id, location)?;
+        }
+
+        // Force `start_team = 1` so generate_actors never re-rolls team 0.
+        let mut enemy_params = actor_params.clone();
+        enemy_params.start_team = 1;
+        enemy_params.pc_template = None;
+        generate_actors(&mut ei, &enemy_params, &Self::template_pool())?;
+        ei.initialize()?;
+        Ok(ei)
+    }
+
+    fn empty(terrain_params: &TerrainGenParams, seed: Option<u64>) -> EncounterInstance {
         let (roller, mut rng) = match seed {
             Some(s) => (FastRandRoller::with_seed(s), Rng::with_seed(s)),
             None => (FastRandRoller::default(), Rng::new()),
         };
-
-        let mut ei = EncounterInstance {
+        EncounterInstance {
             initialized: false,
             width: terrain_params.width,
             height: terrain_params.height,
@@ -917,10 +955,13 @@ impl EncounterInstance {
             messages: Vec::new(),
             tmp_message: String::new(),
             outcome_tracker: OutcomeTracker::new(),
-        };
+        }
+    }
 
-        // TODO: move pool to fn
-        let template_pool: Vec<&'static CreatureTemplate> = vec![
+    fn template_pool() -> Vec<&'static CreatureTemplate> {
+        // TODO: encounter-difficulty-driven pool selection; for now all
+        // creatures are uniformly drawable.
+        vec![
             &ZOMBIE_TEMPLATE,
             &SKELETON_TEMPLATE,
             &CLERIC_TEMPLATE,
@@ -928,11 +969,16 @@ impl EncounterInstance {
             &GOBLIN_TEMPLATE,
             &OGRE_TEMPLATE,
             &WOLF_TEMPLATE,
-        ];
+        ]
+    }
 
-        generate_actors(&mut ei, actor_params, &template_pool)?;
-        ei.initialize()?;
-        Ok(ei)
+    /// Long rest every actor still in the encounter — full HP, all spell
+    /// slots restored, conditions and concentration cleared. Used between
+    /// encounters in the multi-fight loop.
+    pub fn long_rest(&mut self) {
+        for actor in self.actors.values_mut() {
+            actor.long_rest();
+        }
     }
 
     pub fn skip_turn(&mut self) {
@@ -1375,6 +1421,7 @@ mod tests {
             cr_target: 0.0,
             n_teams: 0,
             pc_template: None,
+            start_team: 0,
         };
         let mut e = EncounterInstance::from_params(&tp, &ap, Some(0)).unwrap();
         e.terrain = vec![
@@ -1797,6 +1844,52 @@ mod tests {
             e.actors[&ally].hitpoints() < ally_max,
             "ally should have taken splash damage"
         );
+    }
+
+    #[test]
+    fn crit_fires_at_least_once_in_many_attacks() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::SLAM;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Use a Fighter target so a crit-kill enters Dying (not Dead) and
+        // we can heal them back for further attacks.
+        let target = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(4, 2),
+                1,
+                0,
+            )
+            .unwrap();
+
+        // 500 swings at 5% crit rate → ~25 crits expected; functionally
+        // certain to see at least one. Verify via the log line — the only
+        // path that emits "CRIT!" is the nat-20 branch in weapon_attack.
+        let mut crit_seen = false;
+        for _ in 0..500 {
+            // Heal the target back so they don't stay downed.
+            let max_hp = e.actors[&target].max_hitpoints();
+            e.actors.get_mut(&target).unwrap().heal(max_hp);
+            let log_before = e.messages().len();
+            let target_vec = vec![target];
+            let effects =
+                SLAM.side_effects(&mut e, attacker, Some(&target_vec), None, None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            if e.messages()[log_before..]
+                .iter()
+                .any(|line| line.contains("CRIT!"))
+            {
+                crit_seen = true;
+                break;
+            }
+        }
+        assert!(crit_seen, "expected at least one CRIT! in 500 slam attempts");
     }
 
     #[test]
@@ -2455,5 +2548,81 @@ mod tests {
         assert!(!e.actors[&id].can_consume_resource(Resource::Action));
         assert!(!e.actors[&id].can_consume_resource(Resource::BonusAction));
         assert!(!e.actors[&id].can_consume_resource(Resource::Reaction));
+    }
+
+    #[test]
+    fn long_rest_restores_hp_slots_and_clears_conditions() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        {
+            let actor = e.actors.get_mut(&id).unwrap();
+            let hp = actor.hitpoints();
+            actor.take_damage(hp - 1);
+            assert!(actor.spell_slot_manager.consume_spell_slot(1));
+            actor.add_condition(Condition::Poisoned, ConditionTimer::Permanent);
+        }
+        assert!(e.actors[&id].hitpoints() < e.actors[&id].max_hitpoints());
+        assert!(
+            e.actors[&id].spell_slot_manager.spell_slots(1).spell_slots
+                < e.actors[&id].spell_slot_manager.spell_slots(1).max_spell_slots
+        );
+
+        e.long_rest();
+
+        let actor = &e.actors[&id];
+        assert_eq!(actor.hitpoints(), actor.max_hitpoints());
+        assert_eq!(
+            actor.spell_slot_manager.spell_slots(1).spell_slots,
+            actor.spell_slot_manager.spell_slots(1).max_spell_slots
+        );
+        assert!(!actor.has_condition(Condition::Poisoned));
+    }
+
+    #[test]
+    fn with_pcs_preserves_team0_and_adds_enemies() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let tp = TerrainGenParams {
+            width: 30,
+            height: 20,
+            branch_depth: 4,
+            branch_prob: 0.5,
+        };
+        let ap = ActorGenParams {
+            cr_target: 1.0,
+            n_teams: 2,
+            pc_template: Some(&FIGHTER_TEMPLATE),
+            start_team: 0,
+        };
+        let first = EncounterInstance::from_params(&tp, &ap, Some(7)).unwrap();
+        let pcs: Vec<ActorInstance> = first
+            .actors
+            .values()
+            .filter(|a| a.team() == 0)
+            .cloned()
+            .collect();
+        let pc_names: Vec<String> = pcs.iter().map(|a| a.name().to_string()).collect();
+        assert!(!pcs.is_empty(), "expected at least one team-0 PC");
+
+        let next = EncounterInstance::with_pcs(&tp, &ap, Some(99), pcs).unwrap();
+
+        let preserved: Vec<String> = next
+            .actors
+            .values()
+            .filter(|a| a.team() == 0)
+            .map(|a| a.name().to_string())
+            .collect();
+        assert_eq!(preserved.len(), pc_names.len());
+        for n in &pc_names {
+            assert!(preserved.contains(n), "pc {} not carried over", n);
+        }
+
+        let enemy_count = next.actors.values().filter(|a| a.team() != 0).count();
+        assert!(enemy_count > 0, "expected enemies on teams 1+");
     }
 }

@@ -349,6 +349,17 @@ impl ActorInstance {
         self.rolls_death_saves
     }
 
+    /// Restore full HP, all spell slots, clear non-permanent conditions
+    /// and concentration. 5e long rest semantics — at the multi-encounter
+    /// game-loop boundary, this is what "rest between fights" means.
+    pub fn long_rest(&mut self) {
+        self.hp_state = HpState::Active;
+        self.hitpoints = self.base_hitpoints;
+        self.spell_slot_manager.restore_spell_slots();
+        self.conditions.clear();
+        self.concentration = None;
+    }
+
     pub fn is_concentrating(&self) -> bool {
         self.concentration.is_some()
     }

@@ -8,8 +8,11 @@ use std::io;
 use std::time::Duration;
 
 use crate::actions::action_template::{ActionExecutionInfo, TargetingSchema};
+use crate::actors::actor_template::{ActorInstance, HpState};
 use crate::ai::{Controller, ControllerDecision, PlayerController};
+use crate::engine::actor_gen::ActorGenParams;
 use crate::engine::encounter::EncounterInstance;
+use crate::engine::terrain_gen::TerrainGenParams;
 use crate::engine::types::Coordinate;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
@@ -30,6 +33,11 @@ pub struct App {
     /// controller (i.e. the App pumps the keyboard for them).
     controllers: HashMap<usize, Box<dyn Controller>>,
     default_controller: Box<dyn Controller>,
+    /// Saved generator params so we can spin up the next encounter when the
+    /// player long-rests after a victory.
+    terrain_params: TerrainGenParams,
+    actor_params: ActorGenParams,
+    encounter_number: u32,
     map_width: u16,
     map_height: u16,
     input_str: String,
@@ -46,11 +54,20 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(encounter: EncounterInstance, map_width: usize, map_height: usize) -> Self {
+    pub fn new(
+        encounter: EncounterInstance,
+        terrain_params: TerrainGenParams,
+        actor_params: ActorGenParams,
+    ) -> Self {
+        let map_width = terrain_params.width;
+        let map_height = terrain_params.height;
         Self {
             encounter,
             controllers: HashMap::new(),
             default_controller: Box::new(PlayerController),
+            terrain_params,
+            actor_params,
+            encounter_number: 1,
             map_width: u16::try_from(map_width).unwrap_or(u16::MAX),
             map_height: u16::try_from(map_height).unwrap_or(u16::MAX),
             input_str: String::new(),
@@ -60,6 +77,47 @@ impl App {
             valid_targets: Vec::new(),
             last_actor_id: None,
             last_action_idx: None,
+        }
+    }
+
+    pub fn encounter_number(&self) -> u32 {
+        self.encounter_number
+    }
+
+    /// Advance to the next encounter: take surviving team-0 actors out of
+    /// the current fight, long-rest them, and spawn them into a freshly
+    /// generated map alongside new enemies. Resets per-encounter UI state.
+    /// Returns false if no team-0 survivors exist (game over) or generation
+    /// fails — in either case the existing encounter is left untouched.
+    pub fn start_next_encounter(&mut self) -> bool {
+        let pcs: Vec<ActorInstance> = self
+            .encounter
+            .actors
+            .values()
+            .filter(|a| a.team() == self.actor_params.start_team && a.hp_state() != HpState::Dead)
+            .cloned()
+            .collect();
+        if pcs.is_empty() {
+            return false;
+        }
+        let mut rested: Vec<ActorInstance> = pcs;
+        for pc in &mut rested {
+            pc.long_rest();
+        }
+        match EncounterInstance::with_pcs(&self.terrain_params, &self.actor_params, None, rested) {
+            Ok(next) => {
+                self.encounter = next;
+                self.encounter_number += 1;
+                self.input_str.clear();
+                self.tmp_message.clear();
+                self.selected_action_idx = 0;
+                self.selected_target_idx = 0;
+                self.valid_targets.clear();
+                self.last_actor_id = None;
+                self.last_action_idx = None;
+                true
+            }
+            Err(_) => false,
         }
     }
 
@@ -240,26 +298,31 @@ impl App {
     /// action drives which keys are mentioned, so the player only sees
     /// hints relevant to what they can do *right now*.
     fn help_hint(&self) -> String {
+        let prefix = format!(" [Encounter {}]", self.encounter_number);
         if self.encounter.is_complete() {
-            return " Esc: quit".to_string();
+            if self.encounter.winning_team() == Some(self.actor_params.start_team) {
+                return format!("{}  R: long rest & continue  Esc: quit", prefix);
+            }
+            return format!("{}  Esc: quit", prefix);
         }
         let Some(action) = self.selected_action() else {
-            return " (waiting for prompt) | Esc: quit".to_string();
+            return format!("{}  (waiting for prompt) | Esc: quit", prefix);
         };
-        match action.targeting_schema() {
+        let body = match action.targeting_schema() {
             TargetingSchema::SinglePoint => {
-                " \u{2191}\u{2193}\u{2190}\u{2192}: step  Tab: cycle action  End: end turn  Esc: quit".to_string()
+                "\u{2191}\u{2193}\u{2190}\u{2192}: step  Tab: cycle action  End: end turn  Esc: quit"
             }
             TargetingSchema::SingleActor => {
-                " \u{2190}\u{2192}: target  \u{2191}\u{2193}: cycle action  Tab: cycle  Enter: confirm  End: end turn  Esc: quit".to_string()
+                "\u{2190}\u{2192}: target  \u{2191}\u{2193}: cycle action  Tab: cycle  Enter: confirm  End: end turn  Esc: quit"
             }
             TargetingSchema::Burst { .. } => {
-                " type 'X,Y' point + Enter  \u{2191}\u{2193}: cycle action  Tab: cycle  End: end turn  Esc: quit".to_string()
+                "type 'X,Y' point + Enter  \u{2191}\u{2193}: cycle action  Tab: cycle  End: end turn  Esc: quit"
             }
             TargetingSchema::NoArgs | TargetingSchema::Custom => {
-                " \u{2191}\u{2193}: cycle action  Tab: cycle  Enter: confirm  End: end turn  Esc: quit".to_string()
+                "\u{2191}\u{2193}: cycle action  Tab: cycle  Enter: confirm  End: end turn  Esc: quit"
             }
-        }
+        };
+        format!("{}  {}", prefix, body)
     }
 
     /// Polls a single key event (with timeout) and applies it to app state.
@@ -277,12 +340,19 @@ impl App {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Tick {
-        // Once the encounter is decided, the only key that matters is quit;
-        // ignore everything else so stray input doesn't get logged into the
-        // input box behind the banner.
+        // Once the encounter is decided, the only keys that matter are
+        // quit and (on player victory) "R" to long-rest into the next
+        // encounter. Everything else is ignored so stray input doesn't
+        // get buffered into the input box behind the banner.
         if self.encounter.is_complete() {
             return match key.code {
                 KeyCode::Esc => Tick::Quit,
+                KeyCode::Char('r') | KeyCode::Char('R')
+                    if self.encounter.winning_team() == Some(self.actor_params.start_team) =>
+                {
+                    self.start_next_encounter();
+                    Tick::Continue
+                }
                 _ => Tick::Continue,
             };
         }
@@ -327,9 +397,20 @@ impl App {
         if !self.encounter.is_complete() {
             return None;
         }
+        let player_team = self.actor_params.start_team;
         match self.encounter.winning_team() {
-            Some(team) => Some(format!("Team {} wins! (Esc to quit)", team)),
-            None => Some("No survivors. (Esc to quit)".to_string()),
+            Some(team) if team == player_team => Some(format!(
+                "Encounter {} cleared! (R: long rest & continue, Esc: quit)",
+                self.encounter_number
+            )),
+            Some(team) => Some(format!(
+                "Team {} wins. You fall in encounter {}. (Esc to quit)",
+                team, self.encounter_number
+            )),
+            None => Some(format!(
+                "No survivors of encounter {}. (Esc to quit)",
+                self.encounter_number
+            )),
         }
     }
 

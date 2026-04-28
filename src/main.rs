@@ -43,6 +43,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> 
         cr_target: 1.0,
         n_teams: 2,
         pc_template: Some(&FIGHTER_TEMPLATE),
+        start_team: 0,
     };
     let seed: Option<u64> = std::env::args()
         .nth(1)
@@ -51,11 +52,12 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> 
     let encounter = EncounterInstance::from_params(&terrain_params, &actor_params, seed)
         .expect("failed to create encounter");
 
-    let mut app = App::new(encounter, terrain_params.width, terrain_params.height);
+    let n_teams = actor_params.n_teams;
+    let mut app = App::new(encounter, terrain_params, actor_params);
     // Team 0 is the player by default; everyone else gets the baseline AI.
     // Swap in custom controllers via App::set_controller when you want
     // smarter or bespoke behavior.
-    for team_id in 1..actor_params.n_teams {
+    for team_id in 1..n_teams {
         app.set_controller(team_id, Box::new(SimpleAi));
     }
 

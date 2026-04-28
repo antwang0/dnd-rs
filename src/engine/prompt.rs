@@ -110,6 +110,7 @@ mod tests {
             cr_target: 0.25,
             n_teams: 2,
             pc_template: None,
+            start_team: 0,
         };
         let mut e = EncounterInstance::from_params(&tp, &ap, Some(99)).unwrap();
         e.process_stack();

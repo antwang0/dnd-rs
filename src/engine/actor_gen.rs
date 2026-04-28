@@ -6,6 +6,7 @@ use crate::engine::errors::RngTryError;
 
 const MAX_TRIES: usize = 512;
 
+#[derive(Clone)]
 pub struct ActorGenParams {
     pub cr_target: f32,
     pub n_teams: usize,
@@ -14,6 +15,10 @@ pub struct ActorGenParams {
     /// player-character actor on the player's side; remaining teams
     /// are still randomized per `cr_target`.
     pub pc_template: Option<&'static CreatureTemplate>,
+    /// First team id to generate. Default 0. The multi-encounter loop
+    /// places PCs externally and then re-uses the generator for enemies
+    /// only by setting `start_team = 1`.
+    pub start_team: usize,
 }
 
 pub fn generate_actors(
@@ -22,7 +27,7 @@ pub fn generate_actors(
     template_pool: &[&'static CreatureTemplate],
 ) -> Result<(), Box<dyn Error>> {
     let mut id_by_template: Vec<usize> = vec![0; template_pool.len()];
-    for team_id in 0..params.n_teams {
+    for team_id in params.start_team..params.n_teams {
         // Team 0 uses the fixed PC template if provided; else fall
         // through to the random CR-target generator.
         if team_id == 0
