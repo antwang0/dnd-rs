@@ -293,11 +293,15 @@ impl EncounterInstance {
     }
 
     /// Compute the attack-roll mode given attacker / target conditions.
-    /// 5e clauses we model today:
+    /// 5e clauses modelled:
     /// - Attacker Prone → disadvantage on all attacks.
-    /// - Attacker Poisoned → disadvantage.
-    /// - Target Prone → melee attacks have advantage, ranged have disadvantage.
+    /// - Attacker Poisoned → disadvantage on attacks and ability checks.
+    /// - Attacker Blinded → disadvantage on attacks.
+    /// - Attacker Restrained → disadvantage on attacks.
+    /// - Target Prone → melee: advantage; ranged: disadvantage.
     /// - Target Stunned → advantage on attacks vs them.
+    /// - Target Blinded → advantage on attacks vs them.
+    /// - Target Restrained → advantage on attacks vs them.
     ///
     /// Multiple sources of the same direction don't stack; opposing
     /// sources cancel via `RollMode::combine`.
@@ -316,6 +320,12 @@ impl EncounterInstance {
             if attacker.has_condition(Condition::Poisoned) {
                 mode = mode.combine(RollMode::Disadvantage);
             }
+            if attacker.has_condition(Condition::Blinded) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+            if attacker.has_condition(Condition::Restrained) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
         }
         if let Some(target) = self.actors.get(&target_id) {
             if target.has_condition(Condition::Prone) {
@@ -328,22 +338,35 @@ impl EncounterInstance {
             if target.has_condition(Condition::Stunned) {
                 mode = mode.combine(RollMode::Advantage);
             }
+            if target.has_condition(Condition::Blinded) {
+                mode = mode.combine(RollMode::Advantage);
+            }
+            if target.has_condition(Condition::Restrained) {
+                mode = mode.combine(RollMode::Advantage);
+            }
         }
         mode
     }
 
-    /// Compute the save-roll mode for an actor's ability save. Today
-    /// `Poisoned` imposes disadvantage on all saves derived from ability
-    /// checks (we conflate save-vs-check until we model that distinction).
+    /// Compute the save-roll mode for an actor's ability save.
+    /// - `Poisoned`: disadvantage on all saves / ability checks.
+    /// - `Restrained`: disadvantage on Dexterity saves.
     pub fn compute_save_mode(
         &self,
         actor_id: usize,
-        _ability: crate::engine::types::AbilityScoreType,
+        ability: crate::engine::types::AbilityScoreType,
     ) -> RollMode {
         use crate::conditions::Condition;
+        use crate::engine::types::AbilityScoreType;
         let mut mode = RollMode::Normal;
-        if let Some(actor) = self.actors.get(&actor_id)
-            && actor.has_condition(Condition::Poisoned)
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return mode;
+        };
+        if actor.has_condition(Condition::Poisoned) {
+            mode = mode.combine(RollMode::Disadvantage);
+        }
+        if actor.has_condition(Condition::Restrained)
+            && ability == AbilityScoreType::Dexterity
         {
             mode = mode.combine(RollMode::Disadvantage);
         }
