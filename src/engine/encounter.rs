@@ -1,8 +1,10 @@
+use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
 use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
 use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+use crate::actors::creatures::trolls::TROLL_TEMPLATE;
 use crate::actors::creatures::wolves::WOLF_TEMPLATE;
 use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
 use std::collections::HashMap;
@@ -990,16 +992,16 @@ impl EncounterInstance {
     }
 
     fn template_pool() -> Vec<&'static CreatureTemplate> {
-        // TODO: encounter-difficulty-driven pool selection; for now all
-        // creatures are uniformly drawable.
         vec![
-            &ZOMBIE_TEMPLATE,
-            &SKELETON_TEMPLATE,
+            &BANDIT_TEMPLATE,
             &CLERIC_TEMPLATE,
-            &SLIME_TEMPLATE,
             &GOBLIN_TEMPLATE,
             &OGRE_TEMPLATE,
+            &SKELETON_TEMPLATE,
+            &SLIME_TEMPLATE,
+            &TROLL_TEMPLATE,
             &WOLF_TEMPLATE,
+            &ZOMBIE_TEMPLATE,
         ]
     }
 
