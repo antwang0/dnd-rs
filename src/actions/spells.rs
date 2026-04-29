@@ -356,3 +356,264 @@ impl Action for HoldPerson {
 }
 
 pub static HOLD_PERSON: LazyLock<HoldPerson> = LazyLock::new(|| HoldPerson {});
+
+/// Cure Wounds — touch-range single-target heal. Action + level-1 slot.
+/// Heals 1d8 + caster's spellcasting modifier (WIS).
+pub struct CureWounds {}
+
+impl Action for CureWounds {
+    fn name(&self) -> &str {
+        "cure wounds"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cw", "cure"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch — 5ft = 1-tile gap.
+        Some(1)
+    }
+
+    fn requires_los(&self) -> bool {
+        false
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let wis_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
+        let raw = encounter.roll(&Dice::new(1, 8)) as i32;
+        let amount = (raw + wis_mod).max(1) as u32;
+        encounter.log(format!(
+            "  cure wounds: 1d8({}){:+} = {} HP",
+            raw, wis_mod, amount
+        ));
+        vec![Box::new(Heal {
+            actor_id: target_id,
+            amount,
+        })]
+    }
+}
+
+pub static CURE_WOUNDS: LazyLock<CureWounds> = LazyLock::new(|| CureWounds {});
+
+/// Guiding Bolt — ranged spell attack vs AC. 4d6 radiant on hit; whether
+/// hit or miss, the *next* attack against the target gets advantage
+/// (we model this as the GuidingBoltLit condition lasting 2 rounds).
+pub struct GuidingBolt {}
+
+impl Action for GuidingBolt {
+    fn name(&self) -> &str {
+        "guiding bolt"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["gb", "bolt"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(48) // 120ft
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        use crate::engine::side_effects::ApplyCondition;
+
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let wis_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
+        let attack_bonus = wis_mod;
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+
+        // Spell attack roll vs AC. Use the standard roll-mode pipeline so
+        // attacker / target conditions still apply.
+        let mode = encounter.compute_attack_mode(caster_id, target_id, false);
+        let raw = encounter.roll_d20_with_mode(mode) as i32;
+        let is_crit = raw == 20;
+        let total = raw + attack_bonus;
+        let hit = is_crit || total >= target_ac;
+        encounter.log(format!(
+            "  guiding bolt: 1d20({}){:+} = {} vs AC {}{} \u{2014} {}",
+            raw,
+            attack_bonus,
+            total,
+            target_ac,
+            mode.log_suffix(),
+            if is_crit {
+                "CRIT!"
+            } else if hit {
+                "hit"
+            } else {
+                "miss"
+            },
+        ));
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        if hit {
+            let dice_count = if is_crit { 8 } else { 4 };
+            let raw_dmg = encounter.roll(&Dice::new(dice_count, 6));
+            encounter.log(format!(
+                "  guiding bolt: {}d6({}) = {} radiant",
+                dice_count, raw_dmg, raw_dmg
+            ));
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: raw_dmg,
+                damage_type: DamageType::Radiant,
+            }));
+        }
+        // Lit applies on a hit (RAW: only on hit; we follow that).
+        if hit {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::GuidingBoltLit,
+                timer: ConditionTimer::Rounds(2),
+            }));
+        }
+        // Suppress unused-variable warning when mode is Normal.
+        let _ = RollMode::Normal;
+        effects
+    }
+}
+
+pub static GUIDING_BOLT: LazyLock<GuidingBolt> = LazyLock::new(|| GuidingBolt {});
+
+/// Shield of Faith — concentration buff that grants the target +2 AC
+/// for up to 10 rounds. Bonus action, level-1 slot. Applies the
+/// `Shielded` condition; the AC bonus is summed in `armor_class`.
+pub struct ShieldOfFaith {}
+
+impl Action for ShieldOfFaith {
+    fn name(&self) -> &str {
+        "shield of faith"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sof", "shield"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24) // 60ft
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction, Resource::SpellSlot(1)]
+    }
+
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::{ApplyCondition, StartConcentration};
+
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Shielded,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData {
+                    spell_name: "Shield of Faith".to_string(),
+                    conditions: vec![(target_id, Condition::Shielded)],
+                },
+            }),
+        ]
+    }
+}
+
+pub static SHIELD_OF_FAITH: LazyLock<ShieldOfFaith> = LazyLock::new(|| ShieldOfFaith {});

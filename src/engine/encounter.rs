@@ -341,6 +341,7 @@ impl EncounterInstance {
                 Condition::Restrained,
                 Condition::Blinded,
                 Condition::Incapacitated,
+                Condition::GuidingBoltLit,
             ] {
                 if target.has_condition(c) {
                     mode = mode.combine(RollMode::Advantage);
@@ -3305,6 +3306,91 @@ mod tests {
             .unwrap();
         let aei = ActionExecutionInfo::new(&*HIDE, attacker, None, None, None);
         assert!(!aei.validate(&e), "hide should fail with adjacent enemies");
+    }
+
+    #[test]
+    fn cure_wounds_heals_target() {
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Place ally adjacent so touch (1-tile reach) works.
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        let max = e.actors[&ally].max_hitpoints();
+        e.actors.get_mut(&ally).unwrap().take_damage(max - 1);
+        assert_eq!(e.actors[&ally].hitpoints(), 1);
+
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*CURE_WOUNDS, cleric, Some(vec![ally]), None, None);
+        assert!(aei.validate(&e), "cure wounds in touch range should validate");
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&ally].hitpoints() > 1, "ally should be healed");
+    }
+
+    #[test]
+    fn shield_of_faith_grants_ac_bonus_and_concentration() {
+        use crate::actions::spells::SHIELD_OF_FAITH;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        let base_ac = e.actors[&ally].armor_class();
+
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*SHIELD_OF_FAITH,
+            cleric,
+            Some(vec![ally]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(e.actors[&ally].has_condition(Condition::Shielded));
+        assert_eq!(e.actors[&ally].armor_class(), base_ac + 2);
+        assert!(e.actors[&cleric].is_concentrating());
+
+        // Drop concentration manually — shield should drop too.
+        e.drop_concentration(cleric);
+        assert!(!e.actors[&ally].has_condition(Condition::Shielded));
+        assert_eq!(e.actors[&ally].armor_class(), base_ac);
+    }
+
+    #[test]
+    fn guiding_bolt_lights_target_and_attacker_gets_advantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        // Apply Lit directly so we test the consumer side without RNG.
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::GuidingBoltLit, ConditionTimer::Rounds(2));
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage
+        );
     }
 
     #[test]

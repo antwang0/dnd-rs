@@ -710,8 +710,9 @@ impl ActorInstance {
     }
 
     pub fn armor_class(&self) -> u32 {
-        let bonus = self.total_item_bonuses().ac;
-        (self.base_ac as i32 + bonus).max(0) as u32
+        let item_bonus = self.total_item_bonuses().ac;
+        let condition_bonus: i32 = self.conditions.keys().map(|c| c.ac_bonus()).sum();
+        (self.base_ac as i32 + item_bonus + condition_bonus).max(0) as u32
     }
 
     pub fn hitpoints(&self) -> u32 {

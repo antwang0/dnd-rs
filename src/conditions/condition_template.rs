@@ -49,6 +49,13 @@ pub enum Condition {
     /// attacks against you have disadvantage. Cleared the next time
     /// you attack or are detected (today: cleared on next attack only).
     Hidden,
+    /// Shield of Faith: +2 AC. Concentration; clears on caster losing
+    /// concentration.
+    Shielded,
+    /// "Lit up" by Guiding Bolt — next attack against this target has
+    /// advantage. Cleared when an attack actually lands or expires
+    /// at end of next turn.
+    GuidingBoltLit,
 }
 
 impl Condition {
@@ -66,6 +73,17 @@ impl Condition {
             Condition::Dodging => "dodging",
             Condition::Disengaging => "disengaging",
             Condition::Hidden => "hidden",
+            Condition::Shielded => "shielded",
+            Condition::GuidingBoltLit => "lit",
+        }
+    }
+
+    /// Flat AC bonus the condition contributes to its bearer. Most
+    /// conditions return 0; Shielded adds +2.
+    pub fn ac_bonus(&self) -> i32 {
+        match self {
+            Condition::Shielded => 2,
+            _ => 0,
         }
     }
 
