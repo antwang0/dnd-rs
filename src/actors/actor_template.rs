@@ -72,7 +72,7 @@ pub enum HealOutcome {
     NoOp,
 }
 use crate::engine::side_effects::Resource;
-use crate::engine::types::Coordinate;
+use crate::engine::types::{Coordinate, DamageType};
 use crate::items::item_template::{Item, ItemBonuses};
 use crate::{
     actions::action_template::Action,
@@ -120,6 +120,14 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Damage types this creature takes half damage from (5e resistance).
+    /// Empty by default. Stacks multiplicatively with vulnerability /
+    /// immunity per 5e: immunity > resistance > vulnerability.
+    pub damage_resistances: HashSet<DamageType>,
+    /// Damage types this creature takes double damage from.
+    pub damage_vulnerabilities: HashSet<DamageType>,
+    /// Damage types this creature ignores entirely.
+    pub damage_immunities: HashSet<DamageType>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -291,6 +299,9 @@ pub struct ActorInstance {
     /// stack — `gain_temp_hp` keeps the higher value (5e RAW). Cleared
     /// on long rest and on going to 0 HP.
     temp_hp: u32,
+    damage_resistances: HashSet<DamageType>,
+    damage_vulnerabilities: HashSet<DamageType>,
+    damage_immunities: HashSet<DamageType>,
 }
 
 impl ActorInstance {
@@ -358,6 +369,9 @@ impl ActorInstance {
             level: 1,
             xp: 0,
             temp_hp: 0,
+            damage_resistances: ct.damage_resistances.clone(),
+            damage_vulnerabilities: ct.damage_vulnerabilities.clone(),
+            damage_immunities: ct.damage_immunities.clone(),
         })
     }
 
@@ -810,6 +824,36 @@ impl ActorInstance {
     /// call this on the caster to set their DC.
     pub fn spell_save_dc(&self, ability: AbilityScoreType) -> i32 {
         8 + modifier_from_score(self.ability_score(ability))
+    }
+
+    /// Apply 5e resistance / vulnerability / immunity to a raw damage
+    /// amount. Immunity wins (returns 0); vulnerability doubles;
+    /// resistance halves; nothing matches → unchanged. Halving rounds
+    /// down per RAW.
+    pub fn apply_damage_modifiers(&self, amount: u32, ty: DamageType) -> u32 {
+        if self.damage_immunities.contains(&ty) {
+            return 0;
+        }
+        let resisted = self.damage_resistances.contains(&ty);
+        let vulnerable = self.damage_vulnerabilities.contains(&ty);
+        match (resisted, vulnerable) {
+            (true, false) => amount / 2,
+            (false, true) => amount.saturating_mul(2),
+            // 5e: resist + vulnerable on the same type → unchanged.
+            (true, true) | (false, false) => amount,
+        }
+    }
+
+    pub fn is_resistant_to(&self, ty: DamageType) -> bool {
+        self.damage_resistances.contains(&ty)
+    }
+
+    pub fn is_vulnerable_to(&self, ty: DamageType) -> bool {
+        self.damage_vulnerabilities.contains(&ty)
+    }
+
+    pub fn is_immune_to(&self, ty: DamageType) -> bool {
+        self.damage_immunities.contains(&ty)
     }
 
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {

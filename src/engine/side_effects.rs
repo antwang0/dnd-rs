@@ -137,7 +137,34 @@ impl ApplicableSideEffect for DealDamage {
             return;
         };
         let name = actor.name().to_string();
-        let outcome = actor.take_damage(self.amount);
+        // Apply 5e resistance / vulnerability / immunity. Logged with a
+        // tag so the player can see why the damage doubled / halved /
+        // disappeared.
+        let raw = self.amount;
+        let adjusted = actor.apply_damage_modifiers(raw, self.damage_type);
+        let modifier_tag = if actor.is_immune_to(self.damage_type) {
+            Some("immune")
+        } else if actor.is_resistant_to(self.damage_type)
+            && !actor.is_vulnerable_to(self.damage_type)
+        {
+            Some("resisted")
+        } else if actor.is_vulnerable_to(self.damage_type)
+            && !actor.is_resistant_to(self.damage_type)
+        {
+            Some("vulnerable")
+        } else {
+            None
+        };
+        if let Some(tag) = modifier_tag {
+            ei.log(format!(
+                "  {} is {} to {:?}: {} → {}",
+                name, tag, self.damage_type, raw, adjusted
+            ));
+        }
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let outcome = actor.take_damage(adjusted);
         let was_concentrating = actor.is_concentrating();
         // actor borrow ends here.
 
@@ -153,9 +180,9 @@ impl ApplicableSideEffect for DealDamage {
                 // drop concentration before the actor is gone.
                 ei.drop_concentration(self.actor_id);
             }
-            DamageOutcome::Reduced if was_concentrating => {
+            DamageOutcome::Reduced if was_concentrating && adjusted > 0 => {
                 // 5e: take damage while concentrating → CON save vs DC max(10, dmg/2).
-                let dc = ((self.amount / 2) as i32).max(10);
+                let dc = ((adjusted / 2) as i32).max(10);
                 let save = ei.roll_save(
                     self.actor_id,
                     crate::engine::types::AbilityScoreType::Constitution,

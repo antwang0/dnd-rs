@@ -3071,4 +3071,160 @@ mod tests {
         let enemy_count = next.actors.values().filter(|a| a.team() != 0).count();
         assert!(enemy_count > 0, "expected enemies on teams 1+");
     }
+
+    #[test]
+    fn zombie_takes_double_radiant_damage() {
+        // Zombie has Radiant vulnerability — damage doubles before HP delta.
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Heal up to a high baseline so doubling doesn't drop to 0 noisily.
+        let max = e.actors[&id].max_hitpoints();
+        e.actors.get_mut(&id).unwrap().heal(max);
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 3,
+            damage_type: DamageType::Radiant,
+        }
+        .apply(&mut e);
+        // Expect 6 damage taken (3 × 2) since vulnerable and not resistant.
+        assert_eq!(before - e.actors[&id].hitpoints(), 6);
+    }
+
+    #[test]
+    fn zombie_immune_to_poison() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 100,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), before, "immune actor should take 0");
+    }
+
+    #[test]
+    fn slime_resists_bludgeoning() {
+        use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SLIME_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        // Resisted: 4 → 2.
+        assert_eq!(before - e.actors[&id].hitpoints(), 2);
+    }
+
+    #[test]
+    fn temp_hp_absorbs_damage_first() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage, GainTempHp};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        GainTempHp { actor_id: id, amount: 5 }.apply(&mut e);
+        assert_eq!(e.actors[&id].temp_hp(), 5);
+
+        DealDamage {
+            actor_id: id,
+            amount: 3,
+            damage_type: DamageType::Force, // no resist/vuln on zombie for force
+        }
+        .apply(&mut e);
+        // 3 damage all absorbed by temp HP buffer.
+        assert_eq!(e.actors[&id].temp_hp(), 2);
+        assert_eq!(e.actors[&id].hitpoints(), before);
+
+        // Now hit harder — overflow drains temp first then HP.
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Force,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].temp_hp(), 0);
+        assert_eq!(e.actors[&id].hitpoints(), before - 2);
+    }
+
+    #[test]
+    fn temp_hp_does_not_stack_takes_higher() {
+        use crate::engine::side_effects::{ApplicableSideEffect, GainTempHp};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        GainTempHp { actor_id: id, amount: 5 }.apply(&mut e);
+        // Smaller follow-up — keep the bigger one.
+        GainTempHp { actor_id: id, amount: 3 }.apply(&mut e);
+        assert_eq!(e.actors[&id].temp_hp(), 5);
+        // Bigger follow-up — replace.
+        GainTempHp { actor_id: id, amount: 8 }.apply(&mut e);
+        assert_eq!(e.actors[&id].temp_hp(), 8);
+    }
+
+    #[test]
+    fn restrained_zeros_movement_and_grants_advantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Restrained, ConditionTimer::Permanent);
+        assert_eq!(e.actors[&target].remaining_movement(), 0.0);
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage
+        );
+    }
+
+    #[test]
+    fn dodge_grants_disadvantage_to_attackers_until_next_turn() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Dodging, ConditionTimer::UntilStartOfNextTurn);
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage
+        );
+        // The condition expires on the dodger's start_of_turn refresh.
+        e.actors.get_mut(&target).unwrap().reset_for_new_round();
+        assert!(!e.actors[&target].has_condition(Condition::Dodging));
+    }
 }
