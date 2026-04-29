@@ -327,6 +327,12 @@ impl EncounterInstance {
             if attacker.has_condition(Condition::Invisible) {
                 mode = mode.combine(RollMode::Advantage);
             }
+            // Help (5e): an ally aided the attacker → advantage on next
+            // attack roll. We don't model the consume-on-first-attack
+            // semantic; close enough for AI use.
+            if attacker.is_helped_by_ally() {
+                mode = mode.combine(RollMode::Advantage);
+            }
         }
         if let Some(target) = self.actors.get(&target_id) {
             if target.has_condition(Condition::Prone) {
@@ -639,10 +645,19 @@ impl EncounterInstance {
         use crate::actions::action_template::{MELEE_REACH, TargetingSchema};
         use crate::engine::side_effects::Resource;
 
-        let (mover_team, mover_size) = match self.actors.get(&mover_id) {
-            Some(a) => (a.team(), get_tiles_from_size(a.size())),
+        let (mover_team, mover_size, disengaged) = match self.actors.get(&mover_id) {
+            Some(a) => (
+                a.team(),
+                get_tiles_from_size(a.size()),
+                a.is_disengaged(),
+            ),
             None => return,
         };
+        // Disengage suppresses every opportunity attack the actor would
+        // provoke this turn — short-circuit before the per-reactor scan.
+        if disengaged {
+            return;
+        }
 
         // Snapshot reactor candidates up-front — the loop body will mutate
         // self, which would conflict with holding an iterator into self.actors.

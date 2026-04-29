@@ -310,6 +310,14 @@ pub struct ActorInstance {
     damage_vulnerabilities: HashSet<DamageType>,
     /// Abilities for which this actor adds the proficiency bonus to saves.
     save_proficiencies: HashSet<AbilityScoreType>,
+    /// Set when the actor has used Disengage this turn — opportunity
+    /// attacks against them are suppressed until their next turn starts
+    /// (cleared in `reset_for_new_round`).
+    disengaged: bool,
+    /// Set when an ally has used Help to grant this actor advantage on
+    /// their next attack. Consumed by `compute_attack_mode` and cleared
+    /// at the start of the helped actor's next turn.
+    helped_by_ally: bool,
 }
 
 impl ActorInstance {
@@ -380,7 +388,25 @@ impl ActorInstance {
             damage_immunities: ct.damage_immunities.clone(),
             damage_vulnerabilities: ct.damage_vulnerabilities.clone(),
             save_proficiencies: ct.save_proficiencies.clone(),
+            disengaged: false,
+            helped_by_ally: false,
         })
+    }
+
+    pub fn is_disengaged(&self) -> bool {
+        self.disengaged
+    }
+
+    pub fn set_disengaged(&mut self, v: bool) {
+        self.disengaged = v;
+    }
+
+    pub fn is_helped_by_ally(&self) -> bool {
+        self.helped_by_ally
+    }
+
+    pub fn set_helped_by_ally(&mut self, v: bool) {
+        self.helped_by_ally = v;
     }
 
     /// Convert raw damage of `dt` into the amount this actor actually
@@ -816,10 +842,12 @@ impl ActorInstance {
         self.reaction_slots = 1;
         // TODO: legendary actions
 
-        // Dodge only protects until the start of your next turn (5e RAW).
-        // Clearing it here means the buff lasts exactly one round of incoming
-        // attacks against the dodger, after which they're back to normal.
+        // Dodge / Disengage / Help-recipient are turn-scoped buffs. RAW
+        // they clear at the *start* of the actor's next turn — that's
+        // exactly here, since `reset_for_new_round` runs at turn start.
         self.conditions.remove(&Condition::Dodging);
+        self.disengaged = false;
+        self.helped_by_ally = false;
     }
 
     pub fn action_slots(&self) -> u32 {

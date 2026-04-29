@@ -56,6 +56,13 @@ pub trait Action {
         true
     }
 
+    /// True for actions whose primary purpose is restoring HP. Used by
+    /// the AI to disambiguate "heal a wounded ally" (heal) from "buff a
+    /// healthy ally" (buff). Default false; healing spells override.
+    fn is_healing(&self) -> bool {
+        false
+    }
+
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
