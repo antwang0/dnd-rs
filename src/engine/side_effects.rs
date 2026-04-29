@@ -196,6 +196,28 @@ impl ApplicableSideEffect for Heal {
     }
 }
 
+/// Grant temporary HP to an actor. 5e: temp HP doesn't stack — the new
+/// value replaces the old only if it's higher.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct GainTempHp {
+    pub actor_id: usize,
+    pub amount: u32,
+}
+
+impl ApplicableSideEffect for GainTempHp {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        let before = actor.temp_hp();
+        let after = actor.gain_temp_hp(self.amount);
+        if after > before {
+            ei.log(format!("{} gains {} temporary HP.", name, after));
+        }
+    }
+}
+
 /// Install concentration on an actor. If they were already concentrating
 /// on something else, the prior concentration is dropped first (its
 /// applied conditions cleared). Use this from concentration spells'
@@ -241,6 +263,7 @@ impl ApplicableSideEffect for ApplyCondition {
             let suffix = match self.timer {
                 ConditionTimer::Permanent => String::new(),
                 ConditionTimer::Rounds(n) => format!(" ({} round{})", n, if n == 1 { "" } else { "s" }),
+                ConditionTimer::UntilStartOfNextTurn => " (until next turn)".to_string(),
             };
             ei.log(format!("{} is now {}{}.", name, self.condition.name(), suffix));
         }

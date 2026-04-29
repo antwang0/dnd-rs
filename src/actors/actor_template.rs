@@ -287,6 +287,10 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    /// 5e temporary HP buffer. Damage drains this before HP. Doesn't
+    /// stack — `gain_temp_hp` keeps the higher value (5e RAW). Cleared
+    /// on long rest and on going to 0 HP.
+    temp_hp: u32,
 }
 
 impl ActorInstance {
@@ -353,6 +357,7 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            temp_hp: 0,
         })
     }
 
@@ -420,9 +425,22 @@ impl ActorInstance {
     pub fn long_rest(&mut self) {
         self.hp_state = HpState::Active;
         self.hitpoints = self.max_hitpoints();
+        self.temp_hp = 0;
         self.spell_slot_manager.restore_spell_slots();
         self.conditions.clear();
         self.concentration = None;
+    }
+
+    pub fn temp_hp(&self) -> u32 {
+        self.temp_hp
+    }
+
+    /// Set temporary HP. 5e: temp HP doesn't stack — a new application
+    /// keeps the higher value rather than summing. Returns the value the
+    /// buffer holds after the call.
+    pub fn gain_temp_hp(&mut self, amount: u32) -> u32 {
+        self.temp_hp = self.temp_hp.max(amount);
+        self.temp_hp
     }
 
     pub fn cr(&self) -> f32 {
@@ -525,8 +543,9 @@ impl ActorInstance {
     }
 
     /// Decrement every `Rounds(n)` timer by 1 and report which conditions
-    /// expired (were removed because their timer hit 0). Permanent timers
-    /// are untouched. The engine calls this on every round-end.
+    /// expired (were removed because their timer hit 0). `Permanent` and
+    /// `UntilStartOfNextTurn` timers are untouched here — the latter is
+    /// cleared by `clear_until_next_turn_conditions` at turn-start.
     pub fn tick_condition_timers(&mut self) -> Vec<Condition> {
         let mut expired = Vec::new();
         let snapshot: Vec<(Condition, ConditionTimer)> = self
@@ -536,7 +555,7 @@ impl ActorInstance {
             .collect();
         for (c, timer) in snapshot {
             match timer {
-                ConditionTimer::Permanent => {}
+                ConditionTimer::Permanent | ConditionTimer::UntilStartOfNextTurn => {}
                 ConditionTimer::Rounds(0) | ConditionTimer::Rounds(1) => {
                     self.conditions.remove(&c);
                     expired.push(c);
@@ -545,6 +564,26 @@ impl ActorInstance {
                     self.conditions.insert(c, ConditionTimer::Rounds(n - 1));
                 }
             }
+        }
+        expired
+    }
+
+    /// Clear every condition with the `UntilStartOfNextTurn` timer. The
+    /// engine calls this when it advances to this actor's turn — Dodge
+    /// and similar self-buffs end here.
+    pub fn clear_until_next_turn_conditions(&mut self) -> Vec<Condition> {
+        let mut expired = Vec::new();
+        let to_remove: Vec<Condition> = self
+            .conditions
+            .iter()
+            .filter_map(|(c, t)| match t {
+                ConditionTimer::UntilStartOfNextTurn => Some(*c),
+                _ => None,
+            })
+            .collect();
+        for c in to_remove {
+            self.conditions.remove(&c);
+            expired.push(c);
         }
         expired
     }
@@ -574,29 +613,33 @@ impl ActorInstance {
     }
 
     pub fn can_consume_resource(&self, resource: Resource) -> bool {
-        // Stunned actors lose their entire action economy. Prone is NOT
-        // checked here for Movement: stand-up itself pays in Movement, so
+        // Stunned / Incapacitated actors lose their entire action economy.
+        // Movement-zeroing conditions (Prone / Restrained / Grappled) are
+        // NOT checked here for Movement: pay-to-stand uses Movement, so
         // blocking the resource here would create a catch-22. Move-the-
         // action is still blocked because `remaining_movement()` returns 0
-        // when Prone, which makes `path_cost_to` find no path.
-        let stunned = self.has_condition(Condition::Stunned);
+        // when those conditions are present.
+        let economy_locked = self
+            .conditions
+            .keys()
+            .any(|c| c.blocks_action_economy());
         match resource {
             Resource::Movement(amt) => {
-                if stunned {
+                if self.has_condition(Condition::Stunned) {
                     return false;
                 }
                 amt <= self.movement
             }
             Resource::SpellSlot(spell_lvl) => {
-                if stunned {
+                if economy_locked {
                     return false;
                 }
                 self.spell_slot_manager.spell_slots(spell_lvl).spell_slots >= 1
             }
-            Resource::Action => !stunned && self.action_slots >= 1,
-            Resource::BonusAction => !stunned && self.bonus_action_slots >= 1,
-            Resource::Reaction => !stunned && self.reaction_slots >= 1,
-            Resource::LegendaryAction => !stunned && self.legendary_action_slots >= 1,
+            Resource::Action => !economy_locked && self.action_slots >= 1,
+            Resource::BonusAction => !economy_locked && self.bonus_action_slots >= 1,
+            Resource::Reaction => !economy_locked && self.reaction_slots >= 1,
+            Resource::LegendaryAction => !economy_locked && self.legendary_action_slots >= 1,
         }
     }
 
@@ -680,7 +723,7 @@ impl ActorInstance {
     }
 
     pub fn remaining_movement(&self) -> f32 {
-        if self.has_condition(Condition::Prone) || self.has_condition(Condition::Stunned) {
+        if self.conditions.keys().any(|c| c.zeros_movement()) {
             return 0.0;
         }
         self.movement
@@ -712,7 +755,10 @@ impl ActorInstance {
         self.initiative = Some(rolled + self.initiative_mod());
     }
 
-    pub fn reset_for_new_round(&mut self) {
+    /// Top-of-turn refresh: movement and action-economy slots regenerate,
+    /// and any condition with `UntilStartOfNextTurn` (e.g. Dodge) expires.
+    /// Returns the conditions that were cleared so the engine can log them.
+    pub fn reset_for_new_round(&mut self) -> Vec<Condition> {
         self.movement = self.speed();
 
         // TODO: pull from function
@@ -720,6 +766,8 @@ impl ActorInstance {
         self.bonus_action_slots = 1;
         self.reaction_slots = 1;
         // TODO: legendary actions
+
+        self.clear_until_next_turn_conditions()
     }
 
     pub fn action_slots(&self) -> u32 {
@@ -788,8 +836,21 @@ impl ActorInstance {
             }
             HpState::Dead => DamageOutcome::DyingFailure, // already gone; no-op
             HpState::Active => {
-                self.hitpoints = self.hitpoints.saturating_sub(amount);
+                // 5e: temp HP soaks damage first, fully consumed before HP
+                // takes any. Anything left over hits HP normally.
+                let mut remaining = amount;
+                if self.temp_hp > 0 {
+                    let absorbed = remaining.min(self.temp_hp);
+                    self.temp_hp -= absorbed;
+                    remaining -= absorbed;
+                }
+                if remaining == 0 {
+                    return DamageOutcome::Reduced;
+                }
+                self.hitpoints = self.hitpoints.saturating_sub(remaining);
                 if self.hitpoints == 0 {
+                    // 0 HP also clears any unspent temp buffer (5e RAW).
+                    self.temp_hp = 0;
                     if self.rolls_death_saves {
                         self.hp_state = HpState::Dying {
                             successes: 0,

@@ -293,12 +293,6 @@ impl EncounterInstance {
     }
 
     /// Compute the attack-roll mode given attacker / target conditions.
-    /// 5e clauses we model today:
-    /// - Attacker Prone → disadvantage on all attacks.
-    /// - Attacker Poisoned → disadvantage.
-    /// - Target Prone → melee attacks have advantage, ranged have disadvantage.
-    /// - Target Stunned → advantage on attacks vs them.
-    ///
     /// Multiple sources of the same direction don't stack; opposing
     /// sources cancel via `RollMode::combine`.
     pub fn compute_attack_mode(
@@ -310,11 +304,22 @@ impl EncounterInstance {
         use crate::conditions::Condition;
         let mut mode = RollMode::Normal;
         if let Some(attacker) = self.actors.get(&attacker_id) {
-            if attacker.has_condition(Condition::Prone) {
-                mode = mode.combine(RollMode::Disadvantage);
+            // Attacker disadvantage sources.
+            for c in [
+                Condition::Prone,
+                Condition::Poisoned,
+                Condition::Frightened,
+                Condition::Restrained,
+                Condition::Blinded,
+            ] {
+                if attacker.has_condition(c) {
+                    mode = mode.combine(RollMode::Disadvantage);
+                }
             }
-            if attacker.has_condition(Condition::Poisoned) {
-                mode = mode.combine(RollMode::Disadvantage);
+            // Invisibility grants the attacker advantage (against seers
+            // who can't see them; we don't model sight gating yet).
+            if attacker.has_condition(Condition::Invisible) {
+                mode = mode.combine(RollMode::Advantage);
             }
         }
         if let Some(target) = self.actors.get(&target_id) {
@@ -325,27 +330,71 @@ impl EncounterInstance {
                     RollMode::Disadvantage
                 });
             }
-            if target.has_condition(Condition::Stunned) {
-                mode = mode.combine(RollMode::Advantage);
+            // Targets that are easy to hit grant the attacker advantage.
+            for c in [
+                Condition::Stunned,
+                Condition::Restrained,
+                Condition::Blinded,
+                Condition::Incapacitated,
+            ] {
+                if target.has_condition(c) {
+                    mode = mode.combine(RollMode::Advantage);
+                }
+            }
+            // Invisible targets are harder to hit.
+            if target.has_condition(Condition::Invisible) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+            // Dodging target — disadvantage on all attacks against them.
+            if target.has_condition(Condition::Dodging) {
+                mode = mode.combine(RollMode::Disadvantage);
             }
         }
         mode
     }
 
-    /// Compute the save-roll mode for an actor's ability save. Today
-    /// `Poisoned` imposes disadvantage on all saves derived from ability
-    /// checks (we conflate save-vs-check until we model that distinction).
+    /// Compute the save-roll mode for an actor's ability save.
+    /// - `Poisoned` / `Frightened` impose disadvantage on saves derived
+    ///   from ability checks (we conflate save-vs-check until we model
+    ///   that distinction).
+    /// - `Restrained` imposes disadvantage on DEX saves.
+    /// - `Stunned` / `Paralyzed`-like conditions auto-fail STR/DEX saves
+    ///   (modeled as flat disadvantage today).
+    /// - `Dodging` grants advantage on DEX saves.
     pub fn compute_save_mode(
         &self,
         actor_id: usize,
-        _ability: crate::engine::types::AbilityScoreType,
+        ability: crate::engine::types::AbilityScoreType,
     ) -> RollMode {
         use crate::conditions::Condition;
+        use crate::engine::types::AbilityScoreType;
         let mut mode = RollMode::Normal;
-        if let Some(actor) = self.actors.get(&actor_id)
-            && actor.has_condition(Condition::Poisoned)
-        {
-            mode = mode.combine(RollMode::Disadvantage);
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return mode;
+        };
+        for c in [Condition::Poisoned, Condition::Frightened] {
+            if actor.has_condition(c) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+        }
+        match ability {
+            AbilityScoreType::Dexterity => {
+                if actor.has_condition(Condition::Restrained) {
+                    mode = mode.combine(RollMode::Disadvantage);
+                }
+                if actor.has_condition(Condition::Dodging) {
+                    mode = mode.combine(RollMode::Advantage);
+                }
+                if actor.has_condition(Condition::Stunned) {
+                    mode = mode.combine(RollMode::Disadvantage);
+                }
+            }
+            AbilityScoreType::Strength => {
+                if actor.has_condition(Condition::Stunned) {
+                    mode = mode.combine(RollMode::Disadvantage);
+                }
+            }
+            _ => {}
         }
         mode
     }
@@ -1060,8 +1109,21 @@ impl EncounterInstance {
         let Some(next_id) = self.initiative_tracker.current_player() else {
             return;
         };
-        if let Some(curr_actor) = self.actors.get_mut(&next_id) {
-            curr_actor.reset_for_new_round();
+        self.start_turn_for(next_id);
+    }
+
+    /// Per-actor turn-start hook: refresh resources, clear expiring
+    /// self-buffs (Dodge), and log anything that ended. Centralized so
+    /// every code path that advances the queue (skip_turn, dying-loop,
+    /// process_stack) does the same prep — drift between them silently
+    /// breaks Dodge / future turn-start mechanics.
+    fn start_turn_for(&mut self, actor_id: usize) {
+        let (name, expired) = match self.actors.get_mut(&actor_id) {
+            Some(a) => (a.name().to_string(), a.reset_for_new_round()),
+            None => return,
+        };
+        for c in expired {
+            self.log(format!("{} is no longer {}.", name, c.name()));
         }
     }
 
@@ -1496,10 +1558,8 @@ impl EncounterInstance {
             self.advance_initiative();
             // Reset the next actor's resources so an active actor's first
             // turn after a sequence of skipped/dying slots starts fresh.
-            if let Some(next_id) = self.initiative_tracker.current_player()
-                && let Some(next_actor) = self.actors.get_mut(&next_id)
-            {
-                next_actor.reset_for_new_round();
+            if let Some(next_id) = self.initiative_tracker.current_player() {
+                self.start_turn_for(next_id);
             }
         }
 
