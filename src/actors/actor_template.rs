@@ -379,6 +379,16 @@ impl ActorInstance {
         self.rolls_death_saves
     }
 
+    /// First action in the actor's list whose `name()` matches `name`.
+    /// Convenience used by AI / tests / engine helpers that look up
+    /// canonical actions like "move", "skip", "stand", "dodge".
+    pub fn find_action(
+        &self,
+        name: &str,
+    ) -> Option<&'static (dyn Action + Send + Sync)> {
+        self.actions.iter().find(|a| a.name() == name).copied()
+    }
+
     /// Sum every carried item's `ItemBonuses` into one struct. Stat
     /// accessors (`armor_class`, `speed`, `max_hitpoints`, etc.) fold
     /// this in so callers don't need to think about items at all.
@@ -796,20 +806,22 @@ impl ActorInstance {
     /// Restore HP. A Dying or Stable actor with `amount > 0` snaps back to
     /// Active at exactly `amount` HP (5e: regaining HP from 0 sets you to
     /// the new value, not adds to it). Active actors heal up to their
-    /// max. Dead actors are unrecoverable here.
+    /// max — the item-aware `max_hitpoints()`, so amulet bonuses count
+    /// toward the cap. Dead actors are unrecoverable here.
     pub fn heal(&mut self, amount: u32) -> HealOutcome {
         if amount == 0 {
             return HealOutcome::AlreadyFull;
         }
+        let max = self.max_hitpoints();
         match self.hp_state {
             HpState::Dead => HealOutcome::NoOp,
             HpState::Dying { .. } | HpState::Stable => {
                 self.hp_state = HpState::Active;
-                self.hitpoints = amount.min(self.base_hitpoints);
+                self.hitpoints = amount.min(max);
                 HealOutcome::Revived
             }
             HpState::Active => {
-                let new_hp = (self.hitpoints + amount).min(self.base_hitpoints);
+                let new_hp = self.hitpoints.saturating_add(amount).min(max);
                 if new_hp == self.hitpoints {
                     HealOutcome::AlreadyFull
                 } else {

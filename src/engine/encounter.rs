@@ -1485,19 +1485,20 @@ impl EncounterInstance {
     }
 
     pub fn pop_prompt(&mut self) -> Option<Prompt> {
-        let last = self.encounter_stack.pop();
-        match last {
-            None => None,
-            Some(se) => match se.entry {
-                StackElementEntry::Prompt(p) => Some(p),
-                other => {
-                    self.encounter_stack.push(StackElement {
-                        entry: other,
-                        id: se.id,
-                    });
-                    None
-                }
-            },
+        // Only pop if the top entry is actually a prompt — peek first so
+        // we don't have to recreate the StackElement on the non-Prompt
+        // branch. Borrow ends after the bool check.
+        if !matches!(
+            self.encounter_stack.last().map(|se| &se.entry),
+            Some(StackElementEntry::Prompt(_))
+        ) {
+            return None;
+        }
+        let se = self.encounter_stack.pop()?;
+        match se.entry {
+            StackElementEntry::Prompt(p) => Some(p),
+            // Unreachable: matches!() above guards this branch.
+            _ => None,
         }
     }
 

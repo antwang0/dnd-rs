@@ -88,7 +88,7 @@ fn try_dodge(
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
     let actor = encounter.actors.get(&actor_id)?;
-    let dodge = actor.actions.iter().find(|a| a.name() == "dodge").copied()?;
+    let dodge = actor.find_action("dodge")?;
     let aei = ActionExecutionInfo::new(dodge, actor_id, None, None, None);
     if aei.validate(encounter) {
         Some(aei)
@@ -108,7 +108,7 @@ fn try_stand_up(
     if !actor.has_condition(Condition::Prone) {
         return None;
     }
-    let stand = actor.actions.iter().find(|a| a.name() == "stand").copied()?;
+    let stand = actor.find_action("stand")?;
     let aei = ActionExecutionInfo::new(stand, actor_id, None, None, None);
     if aei.validate(encounter) {
         Some(aei)
@@ -128,11 +128,7 @@ fn try_hold_person(
     if actor.is_concentrating() {
         return None;
     }
-    let hold = actor
-        .actions
-        .iter()
-        .find(|a| a.name() == "hold person")
-        .copied()?;
+    let hold = actor.find_action("hold person")?;
     let my_team = actor.team();
 
     let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
@@ -218,11 +214,7 @@ fn try_step_away_from_threats(
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
     let actor = encounter.actors.get(&actor_id)?;
-    let move_action = actor
-        .actions
-        .iter()
-        .find(|a| a.name() == "move")
-        .copied()?;
+    let move_action = actor.find_action("move")?;
     let my_team = actor.team();
     let my_loc = actor.location();
     let my_size = get_tiles_from_size(actor.size());
@@ -562,11 +554,7 @@ fn try_step_toward_lowest_hp(
 ) -> Option<ActionExecutionInfo> {
     let actor = encounter.actors.get(&actor_id)?;
     let my_team = actor.team();
-    let move_action = actor
-        .actions
-        .iter()
-        .find(|a| a.name() == "move")
-        .copied()?;
+    let move_action = actor.find_action("move")?;
     // Sort by id to break HP ties deterministically (HashMap iteration is
     // non-deterministic across processes).
     let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
@@ -599,7 +587,7 @@ fn skip_or_await(encounter: &EncounterInstance, caster_id: usize) -> ControllerD
     let Some(actor) = encounter.actors.get(&caster_id) else {
         return ControllerDecision::AwaitInput;
     };
-    let Some(skip) = actor.actions.iter().find(|a| a.name() == "skip").copied() else {
+    let Some(skip) = actor.find_action("skip") else {
         return ControllerDecision::AwaitInput;
     };
     let aei = ActionExecutionInfo::new(skip, caster_id, None, None, None);
