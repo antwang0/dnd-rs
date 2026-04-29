@@ -384,7 +384,8 @@ impl EncounterInstance {
 
     /// Roll a saving throw for `actor_id` against `dc` using `ability`.
     /// Auto-applies advantage / disadvantage based on the actor's
-    /// conditions (see `compute_save_mode`). Missing actor auto-fails.
+    /// conditions (see `compute_save_mode`) and proficiency bonus if the
+    /// actor is proficient in that save. Missing actor auto-fails.
     pub fn roll_save(
         &mut self,
         actor_id: usize,
@@ -400,7 +401,12 @@ impl EncounterInstance {
             return SaveOutcome::Fail;
         };
         let item_bonus = actor.item_save_bonus();
-        let modifier = modifier_from_score(actor.ability_score(ability)) + item_bonus;
+        let prof_bonus = if actor.is_save_proficient(ability) {
+            actor.proficiency_bonus()
+        } else {
+            0
+        };
+        let modifier = modifier_from_score(actor.ability_score(ability)) + item_bonus + prof_bonus;
         let total = raw as i32 + modifier;
         let outcome = if total >= dc {
             SaveOutcome::Pass

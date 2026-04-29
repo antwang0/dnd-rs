@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{HEALING_WORD, HOLD_PERSON, SACRED_BURST, SACRED_FLAME};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{Language, Size, SpecialSense};
+use crate::engine::types::{AbilityScoreType, Language, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -37,5 +37,10 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 3 level-1 slots (Healing Word) + 2 level-2 slots (Hold Person).
         spell_slots_by_level: vec![3, 2],
         rolls_death_saves: false,
+        damage_resistances: HashSet::new(),
+        damage_immunities: HashSet::new(),
+        damage_vulnerabilities: HashSet::new(),
+        // Cleric save proficiencies: WIS / CHA (PHB).
+        save_proficiencies: HashSet::from([AbilityScoreType::Wisdom, AbilityScoreType::Charisma]),
     }
 });

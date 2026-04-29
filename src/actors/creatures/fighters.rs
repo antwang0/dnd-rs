@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::SCIMITAR;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{Language, Size};
+use crate::engine::types::{AbilityScoreType, Language, Size};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -39,5 +39,13 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: true,
+        damage_resistances: std::collections::HashSet::new(),
+        damage_immunities: std::collections::HashSet::new(),
+        damage_vulnerabilities: std::collections::HashSet::new(),
+        // Fighter save proficiencies: STR / CON (PHB).
+        save_proficiencies: std::collections::HashSet::from([
+            AbilityScoreType::Strength,
+            AbilityScoreType::Constitution,
+        ]),
     }
 });

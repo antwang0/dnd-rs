@@ -1,5 +1,6 @@
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::{Dice, DiceExpr, Roller};
+use crate::engine::types::DamageType;
 
 /// Lifecycle state of an actor's hit points. Replaces the previous
 /// `dying: bool` + `stable: bool` pair so the four meaningful states are
@@ -120,6 +121,20 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Damage types this creature takes only half damage from (e.g.
+    /// skeletons resist piercing). Stacks multiplicatively with
+    /// vulnerability (5e: resistance applies after vulnerability) but
+    /// the math here is just "halve once, double once".
+    pub damage_resistances: HashSet<DamageType>,
+    /// Damage types this creature takes zero damage from (e.g. zombies
+    /// immune to poison). Checked before resistance / vulnerability.
+    pub damage_immunities: HashSet<DamageType>,
+    /// Damage types this creature takes double damage from.
+    pub damage_vulnerabilities: HashSet<DamageType>,
+    /// Saving-throw ability proficiencies. Adds the proficiency bonus
+    /// to saves of the listed abilities (5e: martial classes get
+    /// CON/STR proficiency, casters get WIS/INT, etc.).
+    pub save_proficiencies: HashSet<AbilityScoreType>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -287,6 +302,14 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    /// Damage types this actor takes half / zero / double of, respectively.
+    /// Mirrored from `CreatureTemplate` and applied by `take_damage` so
+    /// callers don't have to think about damage typing.
+    damage_resistances: HashSet<DamageType>,
+    damage_immunities: HashSet<DamageType>,
+    damage_vulnerabilities: HashSet<DamageType>,
+    /// Abilities for which this actor adds the proficiency bonus to saves.
+    save_proficiencies: HashSet<AbilityScoreType>,
 }
 
 impl ActorInstance {
@@ -353,7 +376,68 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            damage_resistances: ct.damage_resistances.clone(),
+            damage_immunities: ct.damage_immunities.clone(),
+            damage_vulnerabilities: ct.damage_vulnerabilities.clone(),
+            save_proficiencies: ct.save_proficiencies.clone(),
         })
+    }
+
+    /// Convert raw damage of `dt` into the amount this actor actually
+    /// takes after immunities / resistances / vulnerabilities. Order
+    /// matches 5e: immunity first (no damage), then vulnerability
+    /// (double), then resistance (halve, rounded down). Net effect when
+    /// both vulnerability and resistance are present: damage is unchanged.
+    pub fn effective_damage(&self, raw: u32, dt: DamageType) -> u32 {
+        if self.damage_immunities.contains(&dt) {
+            return 0;
+        }
+        let mut amt = raw;
+        if self.damage_vulnerabilities.contains(&dt) {
+            amt = amt.saturating_mul(2);
+        }
+        if self.damage_resistances.contains(&dt) {
+            amt /= 2;
+        }
+        amt
+    }
+
+    pub fn damage_resistances(&self) -> &HashSet<DamageType> {
+        &self.damage_resistances
+    }
+
+    pub fn damage_immunities(&self) -> &HashSet<DamageType> {
+        &self.damage_immunities
+    }
+
+    pub fn damage_vulnerabilities(&self) -> &HashSet<DamageType> {
+        &self.damage_vulnerabilities
+    }
+
+    pub fn save_proficiencies(&self) -> &HashSet<AbilityScoreType> {
+        &self.save_proficiencies
+    }
+
+    /// 5e proficiency bonus, derived from level (PCs) or CR (monsters
+    /// with cr ≥ 1 get +ceil(CR/4)+1; weaker monsters always +2). Used
+    /// for save and attack rolls of proficient abilities.
+    pub fn proficiency_bonus(&self) -> i32 {
+        // PCs follow the standard 5e level table: +2 at 1-4, +3 at 5-8,
+        // etc. Monsters key off CR so a CR 1/4 skeleton still gets +2
+        // and a CR 5 ogre would get +3.
+        let key = if self.level > 1 {
+            self.level
+        } else if self.cr < 1.0 {
+            1
+        } else {
+            self.cr as u32
+        };
+        ((key.saturating_sub(1)) / 4) as i32 + 2
+    }
+
+    /// True if this actor adds proficiency to saves of the given ability.
+    pub fn is_save_proficient(&self, ability: AbilityScoreType) -> bool {
+        self.save_proficiencies.contains(&ability)
     }
 
     pub fn rolls_death_saves(&self) -> bool {
@@ -773,11 +857,11 @@ impl ActorInstance {
         }
     }
 
-    /// 5e spell save DC: 8 + spellcasting ability modifier (we don't track
-    /// proficiency yet; once we do, add it here). Actions that force saves
-    /// call this on the caster to set their DC.
+    /// 5e spell save DC: 8 + proficiency bonus + spellcasting ability
+    /// modifier. Actions that force saves call this on the caster to set
+    /// their DC.
     pub fn spell_save_dc(&self, ability: AbilityScoreType) -> i32 {
-        8 + modifier_from_score(self.ability_score(ability))
+        8 + self.proficiency_bonus() + modifier_from_score(self.ability_score(ability))
     }
 
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {
@@ -896,9 +980,12 @@ impl ActorInstance {
         }
     }
 
+    /// Attack-roll modifier for STR-based weapons: STR mod + proficiency.
+    /// We don't track per-weapon proficiency yet, so every melee weapon
+    /// gets it. Subtract proficiency in callers that need a non-proficient
+    /// (e.g. monster's natural-weapon-without-prof) attack.
     pub fn attack_bonus(&self) -> i32 {
-        // TODO: add proficiency bonus once it's tracked
-        modifier_from_score(self.strength)
+        modifier_from_score(self.strength) + self.proficiency_bonus()
     }
 
     pub fn damage_bonus(&self) -> i32 {

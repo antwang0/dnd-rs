@@ -69,7 +69,15 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 8. Nothing useful. End the turn.
+        // 8. Stalemate-breaker: ranged attacker, in range of an enemy
+        //    but no LOS (corner / wall blocking). Try one step that
+        //    opens a clear shot. Without this, two ranged-only actors
+        //    stuck around a corner skip forever.
+        if let Some(aei) = try_step_to_gain_los(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 9. Nothing useful. End the turn.
         skip_or_await(encounter, actor_id)
     }
 }
@@ -567,6 +575,122 @@ fn try_step_toward_lowest_hp(
     } else {
         None
     }
+}
+
+/// BFS-step toward the nearest tile that opens LOS to any combat-active
+/// enemy. Used when we're a ranged attacker but the line is blocked by a
+/// wall — without this, two ranged-only actors stuck around a corner skip
+/// forever. We only return the *first step* of the path, not the whole
+/// route, matching the rest of the AI's per-turn nudging style.
+fn try_step_to_gain_los(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    use std::collections::{HashMap, VecDeque};
+
+    let actor = encounter.actors.get(&actor_id)?;
+    if !has_ranged_attack(encounter, actor_id) {
+        return None;
+    }
+    let move_action = actor
+        .actions
+        .iter()
+        .find(|a| a.name() == "move")
+        .copied()?;
+    let my_team = actor.team();
+    let mut enemy_ids: Vec<usize> = encounter
+        .actors
+        .iter()
+        .filter(|(id, a)| {
+            **id != actor_id && a.team() != my_team && a.is_combat_active()
+        })
+        .map(|(id, _)| *id)
+        .collect();
+    enemy_ids.sort_unstable();
+    if enemy_ids.is_empty() {
+        return None;
+    }
+    // Nothing to do if we can already see an enemy.
+    if enemy_ids
+        .iter()
+        .any(|id| encounter.actor_has_line_of_sight(actor_id, *id))
+    {
+        return None;
+    }
+
+    let start = actor.location();
+    let my_size = get_tiles_from_size(actor.size()) as isize;
+
+    let opens_los = |c: Coordinate| -> bool {
+        for &target_id in &enemy_ids {
+            let Some(t) = encounter.actors.get(&target_id) else {
+                continue;
+            };
+            let t_loc = t.location();
+            let t_size = get_tiles_from_size(t.size()) as isize;
+            for ay in 0..my_size {
+                for ax in 0..my_size {
+                    let from = Coordinate::new(c.x + ax, c.y + ay);
+                    for by in 0..t_size {
+                        for bx in 0..t_size {
+                            let to = Coordinate::new(t_loc.x + bx, t_loc.y + by);
+                            if encounter.has_line_of_sight(from, to) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        false
+    };
+
+    let mut parent: HashMap<Coordinate, Coordinate> = HashMap::new();
+    let mut queue: VecDeque<Coordinate> = VecDeque::new();
+    queue.push_back(start);
+    parent.insert(start, start);
+
+    while let Some(coord) = queue.pop_front() {
+        if coord != start && opens_los(coord) {
+            // Walk back to the first step from the start.
+            let mut cur = coord;
+            while parent[&cur] != start {
+                cur = parent[&cur];
+            }
+            let aei = ActionExecutionInfo::new(
+                move_action,
+                actor_id,
+                None,
+                Some(vec![cur]),
+                None,
+            );
+            if aei.validate(encounter) {
+                return Some(aei);
+            }
+            // The validated-step might not be reachable in this turn's
+            // movement budget; fall through and keep searching for closer
+            // candidates. The BFS ordering means subsequent hits are
+            // farther away and even less reachable, so bail.
+            return None;
+        }
+        for dy in -1..=1isize {
+            for dx in -1..=1isize {
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+                let next = Coordinate::new(coord.x + dx, coord.y + dy);
+                if parent.contains_key(&next) {
+                    continue;
+                }
+                if !encounter.can_move_to(actor_id, next) {
+                    continue;
+                }
+                parent.insert(next, coord);
+                queue.push_back(next);
+            }
+        }
+    }
+    None
 }
 
 /// Last-resort: invoke the actor's Skip action so the turn advances. If
