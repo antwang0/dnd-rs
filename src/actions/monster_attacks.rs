@@ -674,6 +674,95 @@ impl Action for WolfBite {
 }
 pub static WOLF_BITE: LazyLock<WolfBite> = LazyLock::new(|| WolfBite {});
 
+/// Spider Bite — DEX-based 1d4 piercing melee. On hit, forces a CON save
+/// vs DC 11; on fail target takes 2d4 poison damage and is Poisoned for
+/// 3 rounds. Poison damage is *separate* from the bite damage so a
+/// poison-immune target still takes the piercing.
+pub struct SpiderBite {}
+
+impl Action for SpiderBite {
+    fn name(&self) -> &str {
+        "poison bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pbite", "pb"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::ApplyCondition;
+        use crate::engine::types::AbilityScoreType;
+
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dex_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Dexterity));
+        let attack_bonus = dex_mod;
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+        let mut effects = weapon_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            attack_bonus,
+            target_ac,
+            Dice::new(1, 4),
+            dex_mod,
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 11);
+        if save.passed() {
+            return effects;
+        }
+        let poison = encounter.roll(&Dice::new(2, 4));
+        encounter.log(format!("  poison bite: 2d4({}) = {} poison", poison, poison));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: poison,
+            damage_type: DamageType::Poison,
+        }));
+        effects.push(Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Poisoned,
+            timer: ConditionTimer::Rounds(3),
+        }));
+        effects
+    }
+}
+pub static SPIDER_BITE: LazyLock<SpiderBite> = LazyLock::new(|| SpiderBite {});
+
 /// Wraps another action and runs it `count` times for one Action-slot
 /// expenditure. Reach / LOS / targeting schema are inherited from the
 /// sub-attack so creatures can declare e.g. `Multiattack { sub: &SLAM, count: 2 }`

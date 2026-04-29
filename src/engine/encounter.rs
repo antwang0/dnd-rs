@@ -3,6 +3,7 @@ use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
 use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+use crate::actors::creatures::spiders::SPIDER_TEMPLATE;
 use crate::actors::creatures::wolves::WOLF_TEMPLATE;
 use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
 use std::collections::HashMap;
@@ -1041,6 +1042,7 @@ impl EncounterInstance {
             &GOBLIN_TEMPLATE,
             &OGRE_TEMPLATE,
             &WOLF_TEMPLATE,
+            &SPIDER_TEMPLATE,
         ]
     }
 
@@ -3306,6 +3308,61 @@ mod tests {
             .unwrap();
         let aei = ActionExecutionInfo::new(&*HIDE, attacker, None, None, None);
         assert!(!aei.validate(&e), "hide should fail with adjacent enemies");
+    }
+
+    #[test]
+    fn spider_bite_can_apply_poisoned() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::SPIDER_BITE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::spiders::SPIDER_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let spider = e
+            .instantiate_creature(&SPIDER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        // 200 swings: at +3 to hit vs AC 16, ~40% hit. Failed CON save
+        // (DC 11 vs +2) ~50%. Combined ~20% per swing → 200 attempts is
+        // overkill for at least one Poisoned application.
+        let mut poisoned = false;
+        for _ in 0..200 {
+            // Reset conditions/HP between swings so we don't accumulate.
+            let max = e.actors[&target].max_hitpoints();
+            e.actors.get_mut(&target).unwrap().heal(max);
+            e.actors.get_mut(&target).unwrap().remove_condition(Condition::Poisoned);
+            let target_vec = vec![target];
+            let effects = SPIDER_BITE.side_effects(&mut e, spider, Some(&target_vec), None, None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            if e.actors[&target].has_condition(Condition::Poisoned) {
+                poisoned = true;
+                break;
+            }
+        }
+        assert!(poisoned, "spider bite should eventually apply Poisoned");
+    }
+
+    #[test]
+    fn spider_immune_to_own_venom() {
+        use crate::actors::creatures::spiders::SPIDER_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&SPIDER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 50,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), before);
     }
 
     #[test]

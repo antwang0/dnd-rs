@@ -69,8 +69,31 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 8. Nothing useful. End the turn.
+        // 8. Last resort: if we still have an Action, Dodge to make
+        //    ourselves harder to hit on the upcoming round instead of
+        //    just skipping.
+        if let Some(aei) = try_dodge(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 9. Nothing useful. End the turn.
         skip_or_await(encounter, actor_id)
+    }
+}
+
+/// Use the Dodge action if we still have an Action slot. Caller decides
+/// when this is appropriate; this just packages the validate+wrap.
+fn try_dodge(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let dodge = actor.actions.iter().find(|a| a.name() == "dodge").copied()?;
+    let aei = ActionExecutionInfo::new(dodge, actor_id, None, None, None);
+    if aei.validate(encounter) {
+        Some(aei)
+    } else {
+        None
     }
 }
 
