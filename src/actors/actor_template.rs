@@ -574,29 +574,33 @@ impl ActorInstance {
     }
 
     pub fn can_consume_resource(&self, resource: Resource) -> bool {
-        // Stunned actors lose their entire action economy. Prone is NOT
-        // checked here for Movement: stand-up itself pays in Movement, so
-        // blocking the resource here would create a catch-22. Move-the-
-        // action is still blocked because `remaining_movement()` returns 0
-        // when Prone, which makes `path_cost_to` find no path.
-        let stunned = self.has_condition(Condition::Stunned);
+        // Incapacitating conditions (Stunned, Incapacitated) zero out the
+        // action economy. Prone is NOT checked here for Movement: stand-up
+        // itself pays in Movement, so blocking the resource here would
+        // create a catch-22. Move-the-action is still blocked because
+        // `remaining_movement()` returns 0 when Prone, which makes
+        // `path_cost_to` find no path.
+        let incap = self
+            .conditions
+            .keys()
+            .any(|c| c.is_incapacitating());
         match resource {
             Resource::Movement(amt) => {
-                if stunned {
+                if incap {
                     return false;
                 }
                 amt <= self.movement
             }
             Resource::SpellSlot(spell_lvl) => {
-                if stunned {
+                if incap {
                     return false;
                 }
                 self.spell_slot_manager.spell_slots(spell_lvl).spell_slots >= 1
             }
-            Resource::Action => !stunned && self.action_slots >= 1,
-            Resource::BonusAction => !stunned && self.bonus_action_slots >= 1,
-            Resource::Reaction => !stunned && self.reaction_slots >= 1,
-            Resource::LegendaryAction => !stunned && self.legendary_action_slots >= 1,
+            Resource::Action => !incap && self.action_slots >= 1,
+            Resource::BonusAction => !incap && self.bonus_action_slots >= 1,
+            Resource::Reaction => !incap && self.reaction_slots >= 1,
+            Resource::LegendaryAction => !incap && self.legendary_action_slots >= 1,
         }
     }
 
@@ -680,7 +684,14 @@ impl ActorInstance {
     }
 
     pub fn remaining_movement(&self) -> f32 {
-        if self.has_condition(Condition::Prone) || self.has_condition(Condition::Stunned) {
+        // Conditions that hard-zero movement: Prone (you must Stand first),
+        // Restrained / Grappled (held in place), or any incapacitating
+        // condition (Stunned / Incapacitated).
+        if self.has_condition(Condition::Prone)
+            || self.has_condition(Condition::Restrained)
+            || self.has_condition(Condition::Grappled)
+            || self.conditions.keys().any(|c| c.is_incapacitating())
+        {
             return 0.0;
         }
         self.movement
@@ -720,6 +731,11 @@ impl ActorInstance {
         self.bonus_action_slots = 1;
         self.reaction_slots = 1;
         // TODO: legendary actions
+
+        // Dodge only protects until the start of your next turn (5e RAW).
+        // Clearing it here means the buff lasts exactly one round of incoming
+        // attacks against the dodger, after which they're back to normal.
+        self.conditions.remove(&Condition::Dodging);
     }
 
     pub fn action_slots(&self) -> u32 {
