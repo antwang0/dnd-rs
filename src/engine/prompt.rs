@@ -1,4 +1,4 @@
-use std::collections::LinkedList;
+use std::collections::VecDeque;
 
 use crate::{
     actions::action_template::{Action, ActionExecutionInfo},
@@ -35,7 +35,7 @@ impl Prompt {
             .get(&self.actor_id)
             .ok_or_else(|| ParseError::new(format!("missing actor {}", self.actor_id)))?;
 
-        let mut tokens: LinkedList<&str> = input.split_whitespace().collect();
+        let mut tokens: VecDeque<&str> = input.split_whitespace().collect();
         let Some(action_name) = tokens.pop_front() else {
             return Err(ParseError::with_input("empty input", input));
         };
@@ -51,7 +51,8 @@ impl Prompt {
                 )
             })?;
 
-        let target_ids: Vec<usize> = Vec::new();
+        // Text prompts can only specify locations today; actor-id targeting
+        // is done by the UI's picker, which constructs the AEI directly.
         let mut target_locations: Vec<Coordinate> = Vec::new();
 
         while let Some(tok) = tokens.pop_front() {
@@ -70,11 +71,7 @@ impl Prompt {
         let aei = ActionExecutionInfo::new(
             action,
             self.actor_id,
-            if target_ids.is_empty() {
-                None
-            } else {
-                Some(target_ids)
-            },
+            None,
             if target_locations.is_empty() {
                 None
             } else {

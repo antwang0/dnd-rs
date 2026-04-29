@@ -250,8 +250,11 @@ pub fn render_sideinfo(
         }
     }
     frame.render_widget(
-        Paragraph::new(initiative_lines)
-            .block(Block::default().borders(Borders::ALL).title("Initiative")),
+        Paragraph::new(initiative_lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!("Initiative · Round {}", encounter.round())),
+        ),
         area_split[0],
     );
 
