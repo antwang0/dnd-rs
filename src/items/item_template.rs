@@ -119,9 +119,46 @@ pub static SCROLL_OF_FIREBALL: Item = Item {
     on_use: Some(&crate::actions::item_actions::READ_FIREBALL_SCROLL),
 };
 
+pub static SHIELD: Item = Item {
+    name: "Shield",
+    glyph: ']',
+    bonuses: ItemBonuses {
+        ac: 2,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: None,
+};
+
+pub static SCROLL_OF_MAGIC_MISSILE: Item = Item {
+    name: "Scroll of Magic Missile",
+    glyph: 's',
+    bonuses: ItemBonuses {
+        ac: 0,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: Some(&crate::actions::item_actions::READ_MAGIC_MISSILE_SCROLL),
+};
+
+pub static POTION_OF_GREATER_HEALING: Item = Item {
+    name: "Potion of Greater Healing",
+    glyph: 'P',
+    bonuses: ItemBonuses {
+        ac: 0,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: Some(&crate::actions::item_actions::DRINK_GREATER_HEALING_POTION),
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
-/// rotation without touching call sites.
+/// rotation without touching call sites. Some entries appear multiple
+/// times to weight the drop table toward more common items.
 pub static LOOT_POOL: &[&Item] = &[
     &RING_OF_PROTECTION,
     &BOOTS_OF_STRIDING,
@@ -129,5 +166,8 @@ pub static LOOT_POOL: &[&Item] = &[
     &AMULET_OF_HEALTH,
     &POTION_OF_HEALING,
     &POTION_OF_HEALING,
+    &POTION_OF_GREATER_HEALING,
     &SCROLL_OF_FIREBALL,
+    &SCROLL_OF_MAGIC_MISSILE,
+    &SHIELD,
 ];

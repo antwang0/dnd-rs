@@ -752,6 +752,136 @@ pub static ZOMBIE_MULTISLAM: LazyLock<Multiattack> = LazyLock::new(|| Multiattac
     count: 2,
 });
 
+/// Greataxe — STR-based 1d12 slashing, two-handed. Heavy hitter with
+/// no rider but the d12 makes for big damage spikes (and bigger crits).
+pub struct Greataxe {}
+
+impl Action for Greataxe {
+    fn name(&self) -> &str {
+        "greataxe"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["axe", "ga"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let str_mod = modifier_from_score(
+            caster.ability_score(crate::engine::types::AbilityScoreType::Strength),
+        );
+        let attack_bonus = caster.attack_bonus();
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+        weapon_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            attack_bonus,
+            target_ac,
+            Dice::new(1, 12),
+            str_mod,
+            DamageType::Slashing,
+            true,
+        )
+    }
+}
+pub static GREATAXE: LazyLock<Greataxe> = LazyLock::new(|| Greataxe {});
+
+/// Dagger — DEX or STR finesse weapon, 1d4 piercing. Used by light
+/// skirmishers like kobolds. We always use DEX for the finesse roll.
+pub struct Dagger {}
+
+impl Action for Dagger {
+    fn name(&self) -> &str {
+        "dagger"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dgr"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dex_mod = modifier_from_score(
+            caster.ability_score(crate::engine::types::AbilityScoreType::Dexterity),
+        );
+        let attack_bonus = dex_mod + caster.proficiency_bonus();
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+        weapon_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            attack_bonus,
+            target_ac,
+            Dice::new(1, 4),
+            dex_mod,
+            DamageType::Piercing,
+            true,
+        )
+    }
+}
+pub static DAGGER: LazyLock<Dagger> = LazyLock::new(|| Dagger {});
+
 /// Roll a d20 attack against `target_ac`, log the breakdown, and on a hit
 /// roll `damage_dice + damage_bonus` of `damage_type` against `target_id`.
 /// `is_melee` drives Prone-target advantage / ranged disadvantage clauses.

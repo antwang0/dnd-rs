@@ -13,6 +13,8 @@ use crate::{
 
 const POTION_OF_HEALING_NAME: &str = "Potion of Healing";
 const SCROLL_OF_FIREBALL_NAME: &str = "Scroll of Fireball";
+const POTION_OF_GREATER_HEALING_NAME: &str = "Potion of Greater Healing";
+const SCROLL_OF_MAGIC_MISSILE_NAME: &str = "Scroll of Magic Missile";
 
 /// Drink a Potion of Healing. Self-targeted, costs an Action, heals
 /// 2d4+2 and removes one potion from inventory. The validate hook
@@ -208,3 +210,173 @@ impl Action for ReadFireballScroll {
 }
 
 pub static READ_FIREBALL_SCROLL: ReadFireballScroll = ReadFireballScroll {};
+
+/// Drink a Potion of Greater Healing — heals 4d4+4. Same shape as the
+/// vanilla potion, just bigger dice.
+pub struct DrinkGreaterHealingPotion {}
+
+impl Action for DrinkGreaterHealingPotion {
+    fn name(&self) -> &str {
+        "drink greater healing potion"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["greater potion", "gpotion"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn is_healing(&self) -> bool {
+        true
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_item_named(POTION_OF_GREATER_HEALING_NAME))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let raw = encounter.roll(&Dice::new(4, 4)) as i32;
+        let amount = (raw + 4).max(1) as u32;
+        let removed = encounter
+            .actors
+            .get_mut(&caster_id)
+            .is_some_and(|a| a.remove_item_by_name(POTION_OF_GREATER_HEALING_NAME));
+        if !removed {
+            return Vec::new();
+        }
+        encounter.log(format!(
+            "  potion of greater healing: 4d4({}){:+} = {} HP",
+            raw, 4, amount
+        ));
+        vec![Box::new(Heal {
+            actor_id: caster_id,
+            amount,
+        })]
+    }
+}
+
+pub static DRINK_GREATER_HEALING_POTION: DrinkGreaterHealingPotion = DrinkGreaterHealingPotion {};
+
+/// Read a Scroll of Magic Missile — three darts of 1d4+1 force at a
+/// single target, auto-hit. No spell slot. Consumes the scroll.
+pub struct ReadMagicMissileScroll {}
+
+impl Action for ReadMagicMissileScroll {
+    fn name(&self) -> &str {
+        "read magic missile scroll"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mm scroll", "missilescroll"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(48)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_item_named(SCROLL_OF_MAGIC_MISSILE_NAME))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let removed = encounter
+            .actors
+            .get_mut(&caster_id)
+            .is_some_and(|a| a.remove_item_by_name(SCROLL_OF_MAGIC_MISSILE_NAME));
+        if !removed {
+            return Vec::new();
+        }
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut total: u32 = 0;
+        for _ in 0..3 {
+            let raw = encounter.roll(&Dice::new(1, 4));
+            let amount = raw + 1;
+            total += amount;
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount,
+                damage_type: DamageType::Force,
+            }));
+        }
+        encounter.log(format!(
+            "  scroll of magic missile: 3 darts × 1d4+1 = {} force",
+            total
+        ));
+        effects
+    }
+}
+
+pub static READ_MAGIC_MISSILE_SCROLL: ReadMagicMissileScroll = ReadMagicMissileScroll {};
