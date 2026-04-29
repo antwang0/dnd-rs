@@ -41,6 +41,14 @@ pub enum Condition {
     /// against you have disadvantage and you have advantage on DEX saves.
     /// Granted by the Dodge action.
     Dodging,
+    /// Movement during this turn doesn't provoke opportunity attacks.
+    /// Granted by the Disengage action; cleared at the start of the
+    /// next turn.
+    Disengaging,
+    /// Hidden from enemies — your attack rolls have advantage and
+    /// attacks against you have disadvantage. Cleared the next time
+    /// you attack or are detected (today: cleared on next attack only).
+    Hidden,
 }
 
 impl Condition {
@@ -56,6 +64,8 @@ impl Condition {
             Condition::Incapacitated => "incapacitated",
             Condition::Grappled => "grappled",
             Condition::Dodging => "dodging",
+            Condition::Disengaging => "disengaging",
+            Condition::Hidden => "hidden",
         }
     }
 

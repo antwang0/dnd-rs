@@ -321,6 +321,11 @@ impl EncounterInstance {
             if attacker.has_condition(Condition::Invisible) {
                 mode = mode.combine(RollMode::Advantage);
             }
+            // Hidden attacker: 5e Hide grants advantage on the first
+            // attack out of stealth.
+            if attacker.has_condition(Condition::Hidden) {
+                mode = mode.combine(RollMode::Advantage);
+            }
         }
         if let Some(target) = self.actors.get(&target_id) {
             if target.has_condition(Condition::Prone) {
@@ -341,8 +346,10 @@ impl EncounterInstance {
                     mode = mode.combine(RollMode::Advantage);
                 }
             }
-            // Invisible targets are harder to hit.
-            if target.has_condition(Condition::Invisible) {
+            // Invisible / Hidden targets are harder to hit.
+            if target.has_condition(Condition::Invisible)
+                || target.has_condition(Condition::Hidden)
+            {
                 mode = mode.combine(RollMode::Disadvantage);
             }
             // Dodging target — disadvantage on all attacks against them.
@@ -639,7 +646,8 @@ impl EncounterInstance {
     /// Iterate enemy actors with a Reaction slot and a melee attack; for each
     /// whose reach covered `mover` at `from` but no longer covers them at
     /// `to`, run the attack against the mover and consume the reaction.
-    /// Stops early if the mover is downed mid-loop.
+    /// Stops early if the mover is downed mid-loop. Disengaging movers
+    /// don't trigger OAs at all.
     fn dispatch_opportunity_attacks(
         &mut self,
         mover_id: usize,
@@ -647,10 +655,16 @@ impl EncounterInstance {
         to: Coordinate,
     ) {
         use crate::actions::action_template::{MELEE_REACH, TargetingSchema};
+        use crate::conditions::Condition;
         use crate::engine::side_effects::Resource;
 
         let (mover_team, mover_size) = match self.actors.get(&mover_id) {
-            Some(a) => (a.team(), get_tiles_from_size(a.size())),
+            Some(a) => {
+                if a.has_condition(Condition::Disengaging) {
+                    return;
+                }
+                (a.team(), get_tiles_from_size(a.size()))
+            }
             None => return,
         };
 
@@ -3202,6 +3216,95 @@ mod tests {
             e.compute_attack_mode(attacker, target, true),
             RollMode::Advantage
         );
+    }
+
+    #[test]
+    fn dodge_action_applies_dodging_condition() {
+        use crate::actions::default_actions::DODGE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*DODGE, id, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&id].has_condition(Condition::Dodging));
+    }
+
+    #[test]
+    fn disengage_suppresses_opportunity_attack() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+
+        // Tag mover as Disengaging directly (bypass the Action push so we
+        // isolate the OA-skip behavior from the action plumbing).
+        e.actors
+            .get_mut(&mover_id)
+            .unwrap()
+            .add_condition(Condition::Disengaging, ConditionTimer::UntilStartOfNextTurn);
+
+        let move_effect = MoveActor {
+            actor_id: mover_id,
+            path: vec![Coordinate::new(15, 5)],
+        };
+        move_effect.apply(&mut e);
+
+        // Reaction should still be intact — Disengage suppressed the OA.
+        assert!(
+            e.actors[&reactor_id].can_consume_resource(Resource::Reaction),
+            "reactor's reaction should be intact when mover is disengaging"
+        );
+    }
+
+    #[test]
+    fn hidden_attacker_has_advantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Hidden, ConditionTimer::Rounds(2));
+        // Attacker hidden + target normal → advantage. Hidden target also
+        // gives disadvantage; they can stack against the same actor only
+        // via the (Adv, Dis) → Normal rule, but we're testing the attacker
+        // case where the target is not hidden.
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage
+        );
+    }
+
+    #[test]
+    fn hide_invalid_in_melee() {
+        use crate::actions::default_actions::HIDE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Place enemy adjacent (footprint-touching).
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        let aei = ActionExecutionInfo::new(&*HIDE, attacker, None, None, None);
+        assert!(!aei.validate(&e), "hide should fail with adjacent enemies");
     }
 
     #[test]
