@@ -559,3 +559,119 @@ impl Action for Web {
 }
 
 pub static WEB: LazyLock<Web> = LazyLock::new(|| Web {});
+
+/// Faerie Fire — area outline spell. Pick a tile within 60ft; every
+/// actor whose footprint touches the burst makes a DEX save vs the
+/// caster's WIS-based DC. On fail, the actor is Outlined for 10 rounds:
+/// attacks against them have advantage. The target's own attacks are
+/// unaffected — distinct from Blinded. Concentration: damage-failed
+/// CON save or 0 HP drops the spell, clearing Outlined on every lit
+/// actor at once.
+pub struct FaerieFire {}
+
+impl Action for FaerieFire {
+    fn name(&self) -> &str {
+        "faerie fire"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ff", "faerie"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 2 }
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // Level-1 leveled spell.
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::{ApplyCondition, StartConcentration};
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let radius: isize = match self.targeting_schema() {
+            TargetingSchema::Burst { radius } => radius,
+            _ => return Vec::new(),
+        };
+
+        let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
+        ids.sort_unstable();
+
+        let mut conds_for_concentration: Vec<(usize, Condition)> = Vec::new();
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for target_id in ids {
+            let Some(target) = encounter.actors.get(&target_id) else {
+                continue;
+            };
+            if target_id == caster_id || !target.is_combat_active() {
+                continue;
+            }
+            let dist = footprint_chebyshev(
+                target.location(),
+                get_tiles_from_size(target.size()),
+                point,
+                1,
+            );
+            if dist > radius {
+                continue;
+            }
+
+            let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, dc);
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Outlined,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            conds_for_concentration.push((target_id, Condition::Outlined));
+        }
+        if conds_for_concentration.is_empty() {
+            return Vec::new();
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData {
+                spell_name: "Faerie Fire".to_string(),
+                conditions: conds_for_concentration,
+            },
+        }));
+        effects
+    }
+}
+
+pub static FAERIE_FIRE: LazyLock<FaerieFire> = LazyLock::new(|| FaerieFire {});

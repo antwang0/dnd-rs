@@ -345,6 +345,7 @@ impl EncounterInstance {
                 Condition::Blinded,
                 Condition::Restrained,
                 Condition::Incapacitated,
+                Condition::Outlined,
             ] {
                 if target.has_condition(c) {
                     mode = mode.combine(RollMode::Advantage);
@@ -3437,6 +3438,96 @@ mod tests {
         assert!(costs
             .iter()
             .any(|c| matches!(c, Resource::SpellSlot(2))));
+    }
+
+    #[test]
+    fn outlined_target_grants_attacker_advantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Outlined, ConditionTimer::Rounds(5));
+        // Outlined target → advantage on attacks against them.
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage
+        );
+    }
+
+    #[test]
+    fn outlined_target_does_not_affect_target_attacks() {
+        // Outlined doesn't burden the target's own attacks, distinct
+        // from Blinded.
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let outlined = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let foe = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&outlined)
+            .unwrap()
+            .add_condition(Condition::Outlined, ConditionTimer::Rounds(5));
+        // outlined's attack on foe: outlined isn't on the attacker side
+        // so there's no disadvantage clause; mode is Normal.
+        assert_eq!(
+            e.compute_attack_mode(outlined, foe, true),
+            RollMode::Normal
+        );
+    }
+
+    #[test]
+    fn faerie_fire_failed_save_outlines_target_and_starts_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::FAERIE_FIRE;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+            .unwrap();
+
+        let mut lit = false;
+        for _ in 0..50 {
+            e.drop_concentration(cleric);
+            e.actors
+                .get_mut(&target)
+                .unwrap()
+                .remove_condition(Condition::Outlined);
+            e.actors
+                .get_mut(&cleric)
+                .unwrap()
+                .spell_slot_manager
+                .restore_spell_slots();
+            let locs = vec![Coordinate::new(8, 5)];
+            let effects =
+                FAERIE_FIRE.side_effects(&mut e, cleric, None, Some(&locs), None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            if e.actors[&target].has_condition(Condition::Outlined) {
+                assert!(e.actors[&cleric].is_concentrating());
+                lit = true;
+                break;
+            }
+        }
+        assert!(lit, "expected at least one Faerie Fire to land");
     }
 
     #[test]

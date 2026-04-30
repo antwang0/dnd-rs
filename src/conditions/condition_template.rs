@@ -44,6 +44,11 @@ pub enum Condition {
     /// enforce the targeting clause; the variant exists so spells can
     /// apply it for future wiring.
     Charmed,
+    /// Visually highlighted (e.g. by Faerie Fire). Attacks against you
+    /// have advantage. The target's own attacks are unaffected — this
+    /// is the key distinction from Blinded, which also imposes
+    /// disadvantage on the target's attacks.
+    Outlined,
 }
 
 impl Condition {
@@ -59,6 +64,7 @@ impl Condition {
             Condition::Frightened => "frightened",
             Condition::Incapacitated => "incapacitated",
             Condition::Charmed => "charmed",
+            Condition::Outlined => "outlined",
         }
     }
 }
