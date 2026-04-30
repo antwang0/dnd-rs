@@ -2,32 +2,64 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use crate::{
-    actions::action_template::{first_target_id, Action, MELEE_REACH, TargetingSchema},
+    actions::action_template::{
+        first_target_id, Action, WeaponAbility, MELEE_REACH, TargetingSchema,
+    },
     engine::{
         action_overrides::ActionOverride,
         dice::Dice,
         encounter::EncounterInstance,
         side_effects::{DealDamage, Resource},
-        types::{Coordinate, DamageType},
+        types::{AbilityScoreType, Coordinate, DamageType},
         util::modifier_from_score,
     },
 };
 
+/// Datatype-driven simple-weapon definition. A `SimpleWeapon` plus an
+/// `Action` impl handles the entire "roll-to-hit, deal-damage" flow that
+/// SLAM, SCIMITAR, LONGBOW, etc. all repeat. New plain weapons land as a
+/// single static literal instead of ~40 lines of `impl Action` boilerplate.
+/// Weapons with on-hit riders (Trip, Wolf Bite, Spider Bite) keep their
+/// own structs because they need extra logic after the attack resolves.
+pub struct SimpleWeapon {
+    pub name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub damage_dice: Dice,
+    pub damage_type: DamageType,
+    pub ability: WeaponAbility,
+    pub reach: isize,
+    pub is_melee: bool,
+    pub requires_los: bool,
+    /// Action-economy slot consumed (typically `Resource::Action`,
+    /// occasionally `Resource::BonusAction` for off-hand-style attacks).
+    pub cost_slot: Resource,
+}
 
-pub static SLAM: LazyLock<Slam> = LazyLock::new(|| Slam {});
+impl SimpleWeapon {
+    fn ability_mod(&self, caster: &crate::actors::actor_template::ActorInstance) -> i32 {
+        match self.ability {
+            WeaponAbility::Strength => modifier_from_score(
+                caster.ability_score(AbilityScoreType::Strength),
+            ),
+            WeaponAbility::Dexterity => modifier_from_score(
+                caster.ability_score(AbilityScoreType::Dexterity),
+            ),
+            WeaponAbility::Finesse => {
+                let s = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+                let d = modifier_from_score(caster.ability_score(AbilityScoreType::Dexterity));
+                s.max(d)
+            }
+        }
+    }
+}
 
-/// Standard 5e longbow: ranged, requires line-of-sight, +DEX to hit and damage.
-/// Reach is in tiles (not feet); 20 tiles = 50ft on this 2.5ft grid, which is
-/// short of the 5e 80/320 normal/long range but plenty for our 40×20 maps.
-pub struct Longbow {}
-
-impl Action for Longbow {
+impl Action for SimpleWeapon {
     fn name(&self) -> &str {
-        "longbow"
+        self.name
     }
 
     fn aliases(&self) -> Vec<&str> {
-        vec!["bow", "shoot"]
+        self.aliases.to_vec()
     }
 
     fn targeting_schema(&self) -> TargetingSchema {
@@ -35,11 +67,11 @@ impl Action for Longbow {
     }
 
     fn reach_tiles(&self) -> Option<isize> {
-        Some(20)
+        Some(self.reach)
     }
 
     fn requires_los(&self) -> bool {
-        true
+        self.requires_los
     }
 
     fn cost(
@@ -50,7 +82,7 @@ impl Action for Longbow {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action]
+        vec![self.cost_slot]
     }
 
     fn side_effects(
@@ -67,99 +99,124 @@ impl Action for Longbow {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dex = caster.ability_score(crate::engine::types::AbilityScoreType::Dexterity);
-        // Bows use DEX for both attack and damage in 5e (finesse / ranged).
-        // Proficiency adds to to-hit, not to damage.
-        let attack_bonus = caster.proficiency_bonus() + modifier_from_score(dex);
+        let ability_mod = self.ability_mod(caster);
+        let attack_bonus = caster.proficiency_bonus() + ability_mod;
         let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
         else {
             return Vec::new();
         };
-
         weapon_attack(
             encounter,
             caster_id,
             target_id,
-            self.name(),
+            self.name,
             attack_bonus,
             target_ac,
-            Dice::new(1, 8),
-            modifier_from_score(dex),
-            DamageType::Piercing,
-            false, // ranged
+            self.damage_dice,
+            ability_mod,
+            self.damage_type,
+            self.is_melee,
         )
     }
 }
 
-pub static LONGBOW: LazyLock<Longbow> = LazyLock::new(|| Longbow {});
+pub static SLAM: SimpleWeapon = SimpleWeapon {
+    name: "slam",
+    aliases: &["slm"],
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Bludgeoning,
+    ability: WeaponAbility::Strength,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_slot: Resource::Action,
+};
 
-pub struct Slam {}
+pub static SCIMITAR: SimpleWeapon = SimpleWeapon {
+    name: "scimitar",
+    aliases: &["sc"],
+    damage_dice: Dice::new(1, 6),
+    damage_type: DamageType::Slashing,
+    ability: WeaponAbility::Strength,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_slot: Resource::Action,
+};
 
-impl Action for Slam {
-    fn name(&self) -> &str {
-        "slam"
-    }
+pub static LONGBOW: SimpleWeapon = SimpleWeapon {
+    name: "longbow",
+    aliases: &["bow", "shoot"],
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Piercing,
+    ability: WeaponAbility::Dexterity,
+    reach: 20,
+    is_melee: false,
+    requires_los: true,
+    cost_slot: Resource::Action,
+};
 
-    fn aliases(&self) -> Vec<&str> {
-        vec!["slm"]
-    }
+pub static SHORTBOW: SimpleWeapon = SimpleWeapon {
+    name: "shortbow",
+    aliases: &["sb-bow", "shoot2"],
+    damage_dice: Dice::new(1, 4),
+    damage_type: DamageType::Piercing,
+    ability: WeaponAbility::Dexterity,
+    reach: 12,
+    is_melee: false,
+    requires_los: true,
+    // Bonus-action attack — pairs with a main-action swing in the same turn.
+    cost_slot: Resource::BonusAction,
+};
 
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
+pub static GREATCLUB: SimpleWeapon = SimpleWeapon {
+    name: "greatclub",
+    aliases: &["gc"],
+    damage_dice: Dice::new(1, 10),
+    damage_type: DamageType::Bludgeoning,
+    ability: WeaponAbility::Strength,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_slot: Resource::Action,
+};
 
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
+pub static GREATAXE: SimpleWeapon = SimpleWeapon {
+    name: "greataxe",
+    aliases: &["axe", "ga"],
+    damage_dice: Dice::new(1, 12),
+    damage_type: DamageType::Slashing,
+    ability: WeaponAbility::Strength,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_slot: Resource::Action,
+};
 
-    fn cost(
-        &self,
-        _encounter: &EncounterInstance,
-        _caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
+pub static DAGGER: SimpleWeapon = SimpleWeapon {
+    name: "dagger",
+    aliases: &["dgr"],
+    damage_dice: Dice::new(1, 4),
+    damage_type: DamageType::Piercing,
+    ability: WeaponAbility::Finesse,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_slot: Resource::Action,
+};
 
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let str_mod = modifier_from_score(
-            caster.ability_score(crate::engine::types::AbilityScoreType::Strength),
-        );
-        let attack_bonus = caster.attack_bonus();
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
+pub static SLING: SimpleWeapon = SimpleWeapon {
+    name: "sling",
+    aliases: &["sl"],
+    damage_dice: Dice::new(1, 4),
+    damage_type: DamageType::Bludgeoning,
+    ability: WeaponAbility::Dexterity,
+    reach: 12,
+    is_melee: false,
+    requires_los: true,
+    cost_slot: Resource::Action,
+};
 
-        weapon_attack(
-            encounter,
-            caster_id,
-            target_id,
-            self.name(),
-            attack_bonus,
-            target_ac,
-            Dice::new(2, 6),
-            str_mod,
-            DamageType::Bludgeoning,
-            true, // melee
-        )
-    }
-}
 
 /// Melee attack that, on a hit, forces a STR save (DC 13) or knocks the
 /// target prone. Demonstrates the save-then-condition pattern: damage
@@ -390,272 +447,9 @@ impl Action for AcidSpit {
 
 pub static ACID_SPIT: LazyLock<AcidSpit> = LazyLock::new(|| AcidSpit {});
 
-/// Scimitar — generic STR-based 1d6 slashing melee attack. Used by
-/// goblins and other light melee creatures that don't have a flashy
-/// rider effect. Same shape as Slam but slashing instead of bludgeoning.
-pub struct Scimitar {}
 
-impl Action for Scimitar {
-    fn name(&self) -> &str {
-        "scimitar"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["sc"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let str_mod = modifier_from_score(
-            caster.ability_score(crate::engine::types::AbilityScoreType::Strength),
-        );
-        let attack_bonus = caster.attack_bonus();
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
-        weapon_attack(
-            encounter,
-            caster_id,
-            target_id,
-            self.name(),
-            attack_bonus,
-            target_ac,
-            Dice::new(1, 6),
-            str_mod,
-            DamageType::Slashing,
-            true,
-        )
-    }
-}
-pub static SCIMITAR: LazyLock<Scimitar> = LazyLock::new(|| Scimitar {});
 
-/// Greataxe — heavy two-handed melee. STR-based, 1d12 slashing. Bigger
-/// damage die than scimitar/slam at the cost of needing two hands and
-/// being slow to swing (single attack per Action). Used by Orcs.
-pub struct Greataxe {}
 
-impl Action for Greataxe {
-    fn name(&self) -> &str {
-        "greataxe"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["axe", "ga"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let str_mod = modifier_from_score(
-            caster.ability_score(crate::engine::types::AbilityScoreType::Strength),
-        );
-        let attack_bonus = caster.attack_bonus();
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
-        weapon_attack(
-            encounter,
-            caster_id,
-            target_id,
-            self.name(),
-            attack_bonus,
-            target_ac,
-            Dice::new(1, 12),
-            str_mod,
-            DamageType::Slashing,
-            true,
-        )
-    }
-}
-pub static GREATAXE: LazyLock<Greataxe> = LazyLock::new(|| Greataxe {});
-
-/// Dagger — light, finesse melee. DEX or STR (we pick whichever is higher),
-/// 1d4 piercing. Reach 1. Used by sneaky / DEX-build creatures (kobolds).
-pub struct Dagger {}
-
-impl Action for Dagger {
-    fn name(&self) -> &str {
-        "dagger"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["dgr"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        use crate::engine::types::AbilityScoreType;
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        // Finesse: pick the better of STR / DEX for the attack & damage.
-        let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
-        let dex_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Dexterity));
-        let ability_mod = str_mod.max(dex_mod);
-        let attack_bonus = caster.proficiency_bonus() + ability_mod;
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
-        weapon_attack(
-            encounter,
-            caster_id,
-            target_id,
-            self.name(),
-            attack_bonus,
-            target_ac,
-            Dice::new(1, 4),
-            ability_mod,
-            DamageType::Piercing,
-            true,
-        )
-    }
-}
-pub static DAGGER: LazyLock<Dagger> = LazyLock::new(|| Dagger {});
-
-/// Sling — DEX-based 1d4 bludgeoning ranged attack. Reach 12 tiles. Used
-/// by Kobolds for ranged poking. Distinguished from Shortbow by damage
-/// type (bludgeoning) and lower CR creature association.
-pub struct Sling {}
-
-impl Action for Sling {
-    fn name(&self) -> &str {
-        "sling"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["sl"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(12)
-    }
-    fn requires_los(&self) -> bool {
-        true
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let dex_mod = modifier_from_score(
-            caster.ability_score(crate::engine::types::AbilityScoreType::Dexterity),
-        );
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
-        weapon_attack(
-            encounter,
-            caster_id,
-            target_id,
-            self.name(),
-            caster.proficiency_bonus() + dex_mod,
-            target_ac,
-            Dice::new(1, 4),
-            dex_mod,
-            DamageType::Bludgeoning,
-            false,
-        )
-    }
-}
-pub static SLING: LazyLock<Sling> = LazyLock::new(|| Sling {});
 
 /// Spider Bite — melee bite + a poison rider. On hit: 1d4 piercing.
 /// Target must save CON DC 11 or take an extra 2d4 poison damage AND
@@ -748,144 +542,6 @@ impl Action for SpiderBite {
 }
 pub static SPIDER_BITE: LazyLock<SpiderBite> = LazyLock::new(|| SpiderBite {});
 
-/// Shortbow — DEX-based 1d4 piercing ranged attack. Distinguished from
-/// Longbow by *bonus-action* economy: meant to be a quick second swing
-/// that pairs with an Action attack. Reach 12 tiles (30ft, half of
-/// longbow). Demonstrates the BonusAction cost slot, which has been
-/// underused.
-pub struct Shortbow {}
-
-impl Action for Shortbow {
-    fn name(&self) -> &str {
-        "shortbow"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["sb-bow", "shoot2"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(12)
-    }
-    fn requires_los(&self) -> bool {
-        true
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::BonusAction]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let dex_mod = modifier_from_score(
-            caster.ability_score(crate::engine::types::AbilityScoreType::Dexterity),
-        );
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
-        weapon_attack(
-            encounter,
-            caster_id,
-            target_id,
-            self.name(),
-            caster.proficiency_bonus() + dex_mod,
-            target_ac,
-            Dice::new(1, 4),
-            dex_mod,
-            DamageType::Piercing,
-            false,
-        )
-    }
-}
-pub static SHORTBOW: LazyLock<Shortbow> = LazyLock::new(|| Shortbow {});
-
-/// Greatclub — Ogre's signature weapon. STR-based 1d10 bludgeoning, but
-/// the headline feature is **reach 2** (10ft), letting Large ogres swing
-/// past their footprint. First polearm-style attack in the codebase —
-/// exercises footprint_chebyshev > 1 reach validation.
-pub struct Greatclub {}
-
-impl Action for Greatclub {
-    fn name(&self) -> &str {
-        "greatclub"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["gc"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(2)
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let str_mod = modifier_from_score(
-            caster.ability_score(crate::engine::types::AbilityScoreType::Strength),
-        );
-        let attack_bonus = caster.attack_bonus();
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
-        // is_melee = true even at reach 2 — polearms are still melee
-        // attacks for the prone-target advantage clause.
-        weapon_attack(
-            encounter,
-            caster_id,
-            target_id,
-            self.name(),
-            attack_bonus,
-            target_ac,
-            Dice::new(1, 10),
-            str_mod,
-            DamageType::Bludgeoning,
-            true,
-        )
-    }
-}
-pub static GREATCLUB: LazyLock<Greatclub> = LazyLock::new(|| Greatclub {});
 
 /// Wolf bite — built-in trip rider on every successful hit. STR-based
 /// 1d4 piercing; on hit forces a STR save vs DC 11, fail = Prone. Fuses
@@ -1041,7 +697,7 @@ impl Action for Multiattack {
 /// zombie at the cost of nothing (this game's zombies are scarier than MM).
 pub static ZOMBIE_MULTISLAM: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
     display_name: "multislam",
-    sub_attack: &*SLAM,
+    sub_attack: &SLAM,
     count: 2,
 });
 

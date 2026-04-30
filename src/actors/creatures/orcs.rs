@@ -11,7 +11,7 @@ use std::sync::LazyLock;
 /// STR 16, DEX 12.
 pub static ORC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*GREATAXE);
+    actions.push(&GREATAXE);
     CreatureTemplate {
         name: "Orc",
         glyph: 'o',

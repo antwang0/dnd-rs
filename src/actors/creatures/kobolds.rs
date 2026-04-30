@@ -11,8 +11,8 @@ use std::sync::LazyLock;
 /// that pair well with allies because their 1d4 stings stack up.
 pub static KOBOLD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*DAGGER);
-    actions.push(&*SLING);
+    actions.push(&DAGGER);
+    actions.push(&SLING);
     CreatureTemplate {
         name: "Kobold",
         glyph: 'k',

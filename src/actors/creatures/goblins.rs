@@ -11,8 +11,8 @@ use std::sync::LazyLock;
 /// creatures don't have a bonus-action attack option.
 pub static GOBLIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*SCIMITAR);
-    actions.push(&*SHORTBOW);
+    actions.push(&SCIMITAR);
+    actions.push(&SHORTBOW);
     CreatureTemplate {
         name: "Goblin",
         glyph: 'G',

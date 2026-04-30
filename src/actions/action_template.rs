@@ -19,6 +19,15 @@ pub fn first_target_point(target_locations: Option<&Vec<Coordinate>>) -> Option<
     target_locations.and_then(|locs| locs.first().copied())
 }
 
+/// Which ability score drives a weapon's attack & damage rolls.
+/// `Finesse` picks the higher of STR / DEX (matches 5e finesse weapons).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WeaponAbility {
+    Strength,
+    Dexterity,
+    Finesse,
+}
+
 /// Reach for melee/touch actions, expressed as a footprint-Chebyshev gap cap.
 /// 5e melee weapons are 5ft = 1-tile gap in this 2.5ft grid. Polearms /
 /// reach weapons would be 2. Ranged actions return their max range here.
