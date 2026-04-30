@@ -360,3 +360,241 @@ impl Action for HoldPerson {
 }
 
 pub static HOLD_PERSON: LazyLock<HoldPerson> = LazyLock::new(|| HoldPerson {});
+
+/// Cure Wounds — touch-range, level-1 single-target heal. 1d8 + caster's
+/// WIS modifier. Heavier than Healing Word but Action-cost (vs. Bonus
+/// Action) and only at melee reach.
+pub struct CureWounds {}
+
+impl Action for CureWounds {
+    fn name(&self) -> &str {
+        "cure wounds"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cw", "cure"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn is_heal(&self) -> bool {
+        true
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let wis_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
+        let raw = encounter.roll(&Dice::new(1, 8)) as i32;
+        let amount = (raw + wis_mod).max(1) as u32;
+        encounter.log(format!(
+            "  cure wounds: 1d8({}){:+} = {} HP",
+            raw, wis_mod, amount
+        ));
+        vec![Box::new(Heal {
+            actor_id: target_id,
+            amount,
+        })]
+    }
+}
+
+pub static CURE_WOUNDS: LazyLock<CureWounds> = LazyLock::new(|| CureWounds {});
+
+/// Bless — concentration buff, level-1. Up to 3 allies (we always pick the
+/// caster + their two nearest allies, or fewer if the caster has fewer
+/// teammates available) gain the `Blessed` condition for 10 rounds. Adds
+/// +2 (avg d4) to attack rolls and saves while active. Concentration: the
+/// caster drops Blessed from all targets if their concentration ends.
+pub struct Bless {}
+
+impl Action for Bless {
+    fn name(&self) -> &str {
+        "bless"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bl"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        // Self-targeted from the action's perspective; the spell picks
+        // its own beneficiaries (caster + nearest allies) so picker UX
+        // stays simple.
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::{ApplyCondition, StartConcentration};
+        use crate::engine::util::footprint_chebyshev;
+
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let my_team = caster.team();
+        let my_loc = caster.location();
+        let my_size = crate::engine::util::get_tiles_from_size(caster.size());
+
+        // Caster is always the first beneficiary; pick up to 2 more allies
+        // by ascending footprint distance (deterministic id tiebreak) within
+        // 6 tile range (5e: bless targets within 30ft).
+        let mut candidates: Vec<(isize, usize)> = encounter
+            .actors
+            .iter()
+            .filter_map(|(id, a)| {
+                if *id == caster_id || a.team() != my_team || !a.is_combat_active() {
+                    return None;
+                }
+                let dist = footprint_chebyshev(
+                    my_loc,
+                    my_size,
+                    a.location(),
+                    crate::engine::util::get_tiles_from_size(a.size()),
+                );
+                if dist > 12 {
+                    return None;
+                }
+                Some((dist, *id))
+            })
+            .collect();
+        candidates.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+
+        let mut targets: Vec<usize> = vec![caster_id];
+        for (_, id) in candidates.into_iter().take(2) {
+            targets.push(id);
+        }
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in &targets {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: *tid,
+                condition: Condition::Blessed,
+                timer: ConditionTimer::Rounds(10),
+            }));
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData {
+                spell_name: "Bless".to_string(),
+                conditions: targets
+                    .into_iter()
+                    .map(|tid| (tid, Condition::Blessed))
+                    .collect(),
+            },
+        }));
+        effects
+    }
+}
+
+pub static BLESS: LazyLock<Bless> = LazyLock::new(|| Bless {});
+
+/// False Life — level-1 self-only temp HP buff. Grants 1d4 + 4 temp HP
+/// for the rest of the encounter. Burns a level-1 slot.
+pub struct FalseLife {}
+
+impl Action for FalseLife {
+    fn name(&self) -> &str {
+        "false life"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fl", "falselife"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::GrantTempHp;
+        let raw = encounter.roll(&Dice::new(1, 4));
+        let amount = raw + 4;
+        encounter.log(format!(
+            "  false life: 1d4({})+4 = {} temp HP",
+            raw, amount
+        ));
+        vec![Box::new(GrantTempHp {
+            actor_id: caster_id,
+            amount,
+        })]
+    }
+}
+
+pub static FALSE_LIFE: LazyLock<FalseLife> = LazyLock::new(|| FalseLife {});

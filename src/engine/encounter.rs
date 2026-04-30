@@ -2195,13 +2195,13 @@ mod tests {
         let id = e
             .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        // 3 level-1 slots and 2 level-2 slots per the template.
+        // 4 level-1 slots and 2 level-2 slots per the template.
         assert_eq!(
             e.actors[&id]
                 .spell_slot_manager
                 .spell_slots(1)
                 .spell_slots,
-            3
+            4
         );
         assert_eq!(
             e.actors[&id]
@@ -3404,6 +3404,96 @@ mod tests {
         let target_vec = vec![target];
         let _ = SLAM.side_effects(&mut e, attacker, Some(&target_vec), None, None);
         assert!(!e.actors[&attacker].has_condition(Condition::Helped));
+    }
+
+    #[test]
+    fn cure_wounds_heals_an_ally() {
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        let max = e.actors[&ally].max_hitpoints();
+        e.actors.get_mut(&ally).unwrap().take_damage(max - 1);
+        let before = e.actors[&ally].hitpoints();
+
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*CURE_WOUNDS,
+            cleric,
+            Some(vec![ally]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e), "cure wounds should validate at touch range");
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&ally].hitpoints() > before, "ally should have gained HP");
+    }
+
+    #[test]
+    fn bless_grants_blessed_to_caster_and_starts_concentration() {
+        use crate::actions::spells::BLESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(7, 5), 0, 1)
+            .unwrap();
+
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*BLESS, cleric, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&cleric].has_condition(Condition::Blessed));
+        assert!(e.actors[&ally].has_condition(Condition::Blessed));
+        assert!(e.actors[&cleric].is_concentrating());
+    }
+
+    #[test]
+    fn bless_drops_blessed_when_concentration_ends() {
+        use crate::actions::spells::BLESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(7, 5), 0, 1)
+            .unwrap();
+        e.pop_prompt();
+        e.push_action(ActionExecutionInfo::new(&*BLESS, cleric, None, None, None));
+        e.process_stack();
+        e.drop_concentration(cleric);
+        assert!(!e.actors[&cleric].has_condition(Condition::Blessed));
+        assert!(!e.actors[&ally].has_condition(Condition::Blessed));
+    }
+
+    #[test]
+    fn false_life_grants_temp_hp() {
+        use crate::actions::spells::FALSE_LIFE;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // Use the cleric for the slot pool — it has level-1 slots.
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let aei = ActionExecutionInfo::new(&*FALSE_LIFE, cleric, None, None, None);
+        assert!(aei.validate(&e));
+        e.pop_prompt();
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&cleric].temp_hp() >= 5, "should be at least 1d4+4");
     }
 
     #[test]
