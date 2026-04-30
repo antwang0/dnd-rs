@@ -1,8 +1,12 @@
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
 use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+use crate::actors::creatures::kobolds::KOBOLD_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+use crate::actors::creatures::orcs::ORC_TEMPLATE;
 use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
 use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+use crate::actors::creatures::spiders::GIANT_SPIDER_TEMPLATE;
+use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
 use crate::actors::creatures::wolves::WOLF_TEMPLATE;
 use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
 use std::collections::HashMap;
@@ -1028,6 +1032,10 @@ impl EncounterInstance {
             &GOBLIN_TEMPLATE,
             &OGRE_TEMPLATE,
             &WOLF_TEMPLATE,
+            &KOBOLD_TEMPLATE,
+            &ORC_TEMPLATE,
+            &WIZARD_TEMPLATE,
+            &GIANT_SPIDER_TEMPLATE,
         ]
     }
 
@@ -2942,6 +2950,54 @@ mod tests {
         assert!(after.level() > pre_level, "should have leveled up");
         assert!(after.max_hitpoints() > pre_max, "max HP should have grown");
         assert_eq!(after.hitpoints(), after.max_hitpoints(), "long rest tops up HP");
+    }
+
+    #[test]
+    fn magic_missile_auto_hits_no_save() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::MAGIC_MISSILE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+            .unwrap();
+        let max = e.actors[&target].max_hitpoints();
+        let target_vec = vec![target];
+        let effects = MAGIC_MISSILE.side_effects(&mut e, caster, Some(&target_vec), None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        // 3 darts × (1d4+1) = 6..15. Target must have lost some HP.
+        assert!(
+            e.actors[&target].hitpoints() < max,
+            "magic missile auto-hits — target should lose HP"
+        );
+    }
+
+    #[test]
+    fn fire_bolt_uses_int_for_attack_roll() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::FIRE_BOLT;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        // Fire bolt should validate at 24-tile range with LOS.
+        let aei = ActionExecutionInfo::new(
+            &*FIRE_BOLT,
+            caster,
+            Some(vec![target]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
     }
 
     #[test]

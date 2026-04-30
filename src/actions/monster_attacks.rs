@@ -456,6 +456,298 @@ impl Action for Scimitar {
 }
 pub static SCIMITAR: LazyLock<Scimitar> = LazyLock::new(|| Scimitar {});
 
+/// Greataxe — heavy two-handed melee. STR-based, 1d12 slashing. Bigger
+/// damage die than scimitar/slam at the cost of needing two hands and
+/// being slow to swing (single attack per Action). Used by Orcs.
+pub struct Greataxe {}
+
+impl Action for Greataxe {
+    fn name(&self) -> &str {
+        "greataxe"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["axe", "ga"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let str_mod = modifier_from_score(
+            caster.ability_score(crate::engine::types::AbilityScoreType::Strength),
+        );
+        let attack_bonus = caster.attack_bonus();
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+        weapon_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            attack_bonus,
+            target_ac,
+            Dice::new(1, 12),
+            str_mod,
+            DamageType::Slashing,
+            true,
+        )
+    }
+}
+pub static GREATAXE: LazyLock<Greataxe> = LazyLock::new(|| Greataxe {});
+
+/// Dagger — light, finesse melee. DEX or STR (we pick whichever is higher),
+/// 1d4 piercing. Reach 1. Used by sneaky / DEX-build creatures (kobolds).
+pub struct Dagger {}
+
+impl Action for Dagger {
+    fn name(&self) -> &str {
+        "dagger"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dgr"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::engine::types::AbilityScoreType;
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Finesse: pick the better of STR / DEX for the attack & damage.
+        let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let dex_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Dexterity));
+        let ability_mod = str_mod.max(dex_mod);
+        let attack_bonus = caster.proficiency_bonus() + ability_mod;
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+        weapon_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            attack_bonus,
+            target_ac,
+            Dice::new(1, 4),
+            ability_mod,
+            DamageType::Piercing,
+            true,
+        )
+    }
+}
+pub static DAGGER: LazyLock<Dagger> = LazyLock::new(|| Dagger {});
+
+/// Sling — DEX-based 1d4 bludgeoning ranged attack. Reach 12 tiles. Used
+/// by Kobolds for ranged poking. Distinguished from Shortbow by damage
+/// type (bludgeoning) and lower CR creature association.
+pub struct Sling {}
+
+impl Action for Sling {
+    fn name(&self) -> &str {
+        "sling"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sl"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dex_mod = modifier_from_score(
+            caster.ability_score(crate::engine::types::AbilityScoreType::Dexterity),
+        );
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+        weapon_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            caster.proficiency_bonus() + dex_mod,
+            target_ac,
+            Dice::new(1, 4),
+            dex_mod,
+            DamageType::Bludgeoning,
+            false,
+        )
+    }
+}
+pub static SLING: LazyLock<Sling> = LazyLock::new(|| Sling {});
+
+/// Spider Bite — melee bite + a poison rider. On hit: 1d4 piercing.
+/// Target must save CON DC 11 or take an extra 2d4 poison damage AND
+/// be Poisoned for 1 round (disadv on attacks/saves until next round).
+pub struct SpiderBite {}
+
+impl Action for SpiderBite {
+    fn name(&self) -> &str {
+        "spider bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sbite"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::ApplyCondition;
+        use crate::engine::types::AbilityScoreType;
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dex_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Dexterity));
+        let attack_bonus = caster.proficiency_bonus() + dex_mod;
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+        let mut effects = weapon_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            attack_bonus,
+            target_ac,
+            Dice::new(1, 4),
+            dex_mod,
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        // Poison rider — separate save. On fail: extra poison damage AND
+        // Poisoned for 2 rounds.
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 11);
+        if !save.passed() {
+            let poison = encounter.roll(&Dice::new(2, 4));
+            encounter.log(format!(
+                "  spider venom: 2d4({}) = {} poison",
+                poison, poison
+            ));
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: poison,
+                damage_type: DamageType::Poison,
+            }));
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Poisoned,
+                timer: ConditionTimer::Rounds(2),
+            }));
+        }
+        effects
+    }
+}
+pub static SPIDER_BITE: LazyLock<SpiderBite> = LazyLock::new(|| SpiderBite {});
+
 /// Shortbow — DEX-based 1d4 piercing ranged attack. Distinguished from
 /// Longbow by *bonus-action* economy: meant to be a quick second swing
 /// that pairs with an Action attack. Reach 12 tiles (30ft, half of
