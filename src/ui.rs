@@ -12,6 +12,27 @@ use crate::engine::terrain::TerrainType;
 use crate::engine::types::Coordinate;
 use crate::engine::util::get_colored_span;
 
+/// Push a `"<label>: type, type, ..."` line into `stats_lines` for a
+/// non-empty damage-type set. Sorted by debug name so the output is
+/// stable across runs (HashSet iteration order is non-deterministic).
+/// Empty set is a no-op so we don't pad the panel with "Resistant: -".
+fn push_damage_set_line(
+    stats_lines: &mut Vec<Line<'static>>,
+    label: &str,
+    set: &std::collections::HashSet<crate::engine::types::DamageType>,
+    color: Color,
+) {
+    if set.is_empty() {
+        return;
+    }
+    let mut names: Vec<String> = set.iter().map(|d| format!("{:?}", d)).collect();
+    names.sort();
+    stats_lines.push(Line::from(Span::styled(
+        format!("{}: {}", label, names.join(", ")),
+        Style::default().fg(color),
+    )));
+}
+
 /// Heuristic classifier that styles a log line based on its contents.
 /// Cheap pattern-matching against the message strings the engine emits
 /// today; centralized here so the engine can keep emitting plain strings.
@@ -351,6 +372,24 @@ pub fn render_sideinfo(
             Style::default().fg(Color::Yellow),
         )));
     }
+    push_damage_set_line(
+        &mut stats_lines,
+        "Resistant",
+        curr_actor.damage_resistances(),
+        Color::Cyan,
+    );
+    push_damage_set_line(
+        &mut stats_lines,
+        "Immune",
+        curr_actor.damage_immunities(),
+        Color::Green,
+    );
+    push_damage_set_line(
+        &mut stats_lines,
+        "Vulnerable",
+        curr_actor.damage_vulnerabilities(),
+        Color::Red,
+    );
     frame.render_widget(
         Paragraph::new(stats_lines)
             .block(Block::default().borders(Borders::ALL).title("Resources")),

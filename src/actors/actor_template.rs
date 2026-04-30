@@ -417,6 +417,22 @@ impl ActorInstance {
         }
     }
 
+    /// Read-only access to the damage-resistance set. Used by the UI's
+    /// side panel to show players what types are halved against this
+    /// actor without each call site reaching for `damage_modifier(t)`
+    /// thirteen times.
+    pub fn damage_resistances(&self) -> &HashSet<DamageType> {
+        &self.damage_resistances
+    }
+
+    pub fn damage_immunities(&self) -> &HashSet<DamageType> {
+        &self.damage_immunities
+    }
+
+    pub fn damage_vulnerabilities(&self) -> &HashSet<DamageType> {
+        &self.damage_vulnerabilities
+    }
+
     pub fn rolls_death_saves(&self) -> bool {
         self.rolls_death_saves
     }
