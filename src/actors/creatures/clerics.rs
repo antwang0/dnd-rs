@@ -37,5 +37,8 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 3 level-1 slots (Healing Word) + 2 level-2 slots (Hold Person).
         spell_slots_by_level: vec![3, 2],
         rolls_death_saves: false,
+        resistances: HashSet::new(),
+        immunities: HashSet::new(),
+        vulnerabilities: HashSet::new(),
     }
 });

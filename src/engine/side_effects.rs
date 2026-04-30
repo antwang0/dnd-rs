@@ -137,7 +137,28 @@ impl ApplicableSideEffect for DealDamage {
             return;
         };
         let name = actor.name().to_string();
-        let outcome = actor.take_damage(self.amount);
+        // Apply resistance / immunity / vulnerability before subtracting
+        // HP. Log the modifier when it changes the number so the player
+        // sees why a crab took 0 fire or a paper golem took double.
+        let raw = self.amount;
+        let adjusted = actor.adjust_damage(raw, self.damage_type);
+        if adjusted != raw {
+            let tag = if adjusted == 0 {
+                "immune"
+            } else if adjusted < raw {
+                "resists"
+            } else {
+                "vulnerable"
+            };
+            ei.log(format!(
+                "  {} {} {:?} ({} -> {})",
+                name, tag, self.damage_type, raw, adjusted
+            ));
+        }
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let outcome = actor.take_damage(adjusted);
         let was_concentrating = actor.is_concentrating();
         // actor borrow ends here.
 
@@ -155,7 +176,9 @@ impl ApplicableSideEffect for DealDamage {
             }
             DamageOutcome::Reduced if was_concentrating => {
                 // 5e: take damage while concentrating → CON save vs DC max(10, dmg/2).
-                let dc = ((self.amount / 2) as i32).max(10);
+                // Use the post-resistance number so an immune target
+                // doesn't risk dropping concentration over a no-op hit.
+                let dc = ((adjusted / 2) as i32).max(10);
                 let save = ei.roll_save(
                     self.actor_id,
                     crate::engine::types::AbilityScoreType::Constitution,

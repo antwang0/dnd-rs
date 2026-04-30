@@ -72,7 +72,7 @@ pub enum HealOutcome {
     NoOp,
 }
 use crate::engine::side_effects::Resource;
-use crate::engine::types::Coordinate;
+use crate::engine::types::{Coordinate, DamageType};
 use crate::items::item_template::{Item, ItemBonuses};
 use crate::{
     actions::action_template::Action,
@@ -120,6 +120,13 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Damage types this creature takes only half of (5e resistance).
+    /// Applied before `take_damage` runs.
+    pub resistances: HashSet<DamageType>,
+    /// Damage types this creature ignores entirely (immunity).
+    pub immunities: HashSet<DamageType>,
+    /// Damage types this creature takes double of (vulnerability).
+    pub vulnerabilities: HashSet<DamageType>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -287,6 +294,9 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    resistances: HashSet<DamageType>,
+    immunities: HashSet<DamageType>,
+    vulnerabilities: HashSet<DamageType>,
 }
 
 impl ActorInstance {
@@ -353,7 +363,40 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            resistances: ct.resistances.clone(),
+            immunities: ct.immunities.clone(),
+            vulnerabilities: ct.vulnerabilities.clone(),
         })
+    }
+
+    /// Apply 5e resistance / immunity / vulnerability to an incoming
+    /// damage value. Immunity wins over both, then vulnerability doubles,
+    /// then resistance halves (rounding down per 5e). Returns the final
+    /// HP delta to subtract.
+    pub fn adjust_damage(&self, amount: u32, dt: DamageType) -> u32 {
+        if self.immunities.contains(&dt) {
+            return 0;
+        }
+        let mut amt = amount;
+        if self.vulnerabilities.contains(&dt) {
+            amt = amt.saturating_mul(2);
+        }
+        if self.resistances.contains(&dt) {
+            amt /= 2;
+        }
+        amt
+    }
+
+    pub fn has_resistance(&self, dt: DamageType) -> bool {
+        self.resistances.contains(&dt)
+    }
+
+    pub fn has_immunity(&self, dt: DamageType) -> bool {
+        self.immunities.contains(&dt)
+    }
+
+    pub fn has_vulnerability(&self, dt: DamageType) -> bool {
+        self.vulnerabilities.contains(&dt)
     }
 
     pub fn rolls_death_saves(&self) -> bool {
