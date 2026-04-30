@@ -654,10 +654,18 @@ impl EncounterInstance {
         use crate::actions::action_template::{MELEE_REACH, TargetingSchema};
         use crate::engine::side_effects::Resource;
 
-        let (mover_team, mover_size) = match self.actors.get(&mover_id) {
-            Some(a) => (a.team(), get_tiles_from_size(a.size())),
+        let (mover_team, mover_size, disengaged) = match self.actors.get(&mover_id) {
+            Some(a) => (
+                a.team(),
+                get_tiles_from_size(a.size()),
+                a.has_condition(crate::conditions::Condition::Disengaged),
+            ),
             None => return,
         };
+        // Disengage: 5e-RAW skip the entire OA pass for this mover.
+        if disengaged {
+            return;
+        }
 
         // Snapshot reactor candidates up-front — the loop body will mutate
         // self, which would conflict with holding an iterator into self.actors.
@@ -3290,6 +3298,89 @@ mod tests {
         assert!(!e.actors[&id].can_consume_resource(Resource::BonusAction));
         // Movement still allowed (no zero-out).
         assert!(e.actors[&id].remaining_movement() > 0.0);
+    }
+
+    #[test]
+    fn dodge_action_applies_dodging_condition() {
+        use crate::actions::default_actions::DODGE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*DODGE, id, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&id].has_condition(Condition::Dodging));
+    }
+
+    #[test]
+    fn disengage_skips_opportunity_attack() {
+        use crate::actions::default_actions::DISENGAGE;
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+
+        // Apply Disengage via the action to ensure plumbing works.
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*DISENGAGE, mover_id, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&mover_id].has_condition(Condition::Disengaged));
+
+        // Move past the reactor — they should NOT spend their reaction.
+        let move_effect = MoveActor {
+            actor_id: mover_id,
+            path: vec![Coordinate::new(15, 5)],
+        };
+        move_effect.apply(&mut e);
+
+        if let Some(reactor) = e.actors.get(&reactor_id) {
+            assert!(
+                reactor.can_consume_resource(Resource::Reaction),
+                "disengage should suppress opportunity attacks"
+            );
+        }
+    }
+
+    #[test]
+    fn help_grants_helped_to_target_ally_only() {
+        use crate::actions::default_actions::HELP;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let helper = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 0, 1)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(9, 5), 1, 0)
+            .unwrap();
+        // Self-targeting fails.
+        let self_aei = ActionExecutionInfo::new(&*HELP, helper, Some(vec![helper]), None, None);
+        assert!(!self_aei.validate(&e));
+        // Targeting an enemy fails (different team).
+        let _ = enemy;
+        let enemy_aei = ActionExecutionInfo::new(&*HELP, helper, Some(vec![enemy]), None, None);
+        assert!(!enemy_aei.validate(&e));
+        // Targeting ally succeeds.
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*HELP, helper, Some(vec![ally]), None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&ally].has_condition(Condition::Helped));
     }
 
     #[test]

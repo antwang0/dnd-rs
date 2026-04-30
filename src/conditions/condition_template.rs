@@ -58,6 +58,9 @@ pub enum Condition {
     /// against them auto-crits (we don't yet model auto-crit; treat as
     /// advantage like Stunned for now).
     Paralyzed,
+    /// From the Disengage action: you don't provoke opportunity attacks
+    /// for the rest of the turn. Cleared at next round-end via Rounds(1).
+    Disengaged,
 }
 
 impl Condition {
@@ -76,6 +79,7 @@ impl Condition {
             Condition::Helped => "helped",
             Condition::Blessed => "blessed",
             Condition::Paralyzed => "paralyzed",
+            Condition::Disengaged => "disengaged",
         }
     }
 }

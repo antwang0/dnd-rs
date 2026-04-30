@@ -56,6 +56,14 @@ pub trait Action {
         true
     }
 
+    /// True if this action restores HP / revives. Distinct from
+    /// `is_harmful()` so the AI's heal pipeline can tell "heal" from
+    /// "buff" — both are non-harmful, but only the former should be
+    /// considered when triaging a wounded ally.
+    fn is_heal(&self) -> bool {
+        false
+    }
+
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
