@@ -3368,6 +3368,70 @@ mod tests {
     }
 
     #[test]
+    fn web_failed_save_restrains_targets_and_starts_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::WEB;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+
+        // Cleric drops a web on a tile next to a zombie. Loop until at
+        // least one zombie fails the DEX save and is webbed; verify the
+        // caster is concentrating and the target is Restrained.
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+            .unwrap();
+
+        let mut webbed = false;
+        for _ in 0..50 {
+            e.drop_concentration(cleric);
+            e.actors
+                .get_mut(&target)
+                .unwrap()
+                .remove_condition(Condition::Restrained);
+            // Restore the level-2 slot so we can keep casting in the loop.
+            e.actors
+                .get_mut(&cleric)
+                .unwrap()
+                .spell_slot_manager
+                .restore_spell_slots();
+            let locs = vec![Coordinate::new(8, 5)];
+            let effects =
+                WEB.side_effects(&mut e, cleric, None, Some(&locs), None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            if e.actors[&target].has_condition(Condition::Restrained) {
+                assert!(e.actors[&cleric].is_concentrating());
+                webbed = true;
+                break;
+            }
+        }
+        assert!(webbed, "expected at least one Web to land");
+    }
+
+    #[test]
+    fn web_costs_action_and_level2_slot() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::WEB;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let costs = WEB.cost(&e, cleric, None, None, None);
+        assert!(costs.iter().any(|c| matches!(c, Resource::Action)));
+        assert!(costs
+            .iter()
+            .any(|c| matches!(c, Resource::SpellSlot(2))));
+    }
+
+    #[test]
     fn damage_modifier_normal_unchanged() {
         use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
         use crate::engine::types::DamageType;
