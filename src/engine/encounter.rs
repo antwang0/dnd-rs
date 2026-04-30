@@ -3011,4 +3011,120 @@ mod tests {
         let enemy_count = next.actors.values().filter(|a| a.team() != 0).count();
         assert!(enemy_count > 0, "expected enemies on teams 1+");
     }
+
+    #[test]
+    fn skeleton_takes_double_bludgeoning_damage() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        // Cap the actor's HP at a known value so the doubled-damage
+        // computation is unambiguous regardless of HP roll.
+        let damage = 3u32;
+        DealDamage {
+            actor_id: id,
+            amount: damage,
+            damage_type: DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        // Vulnerability: 3 → 6 actual HP loss.
+        assert_eq!(e.actors[&id].hitpoints(), max - damage * 2);
+    }
+
+    #[test]
+    fn zombie_immune_to_poison() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 100,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max, "poison should not affect undead");
+    }
+
+    #[test]
+    fn slime_resists_acid_halves_damage() {
+        use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SLIME_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 6,
+            damage_type: DamageType::Acid,
+        }
+        .apply(&mut e);
+        // Slime is immune to acid → 0 damage absorbed.
+        assert_eq!(e.actors[&id].hitpoints(), max);
+        // Try cold (vulnerability instead): 4 → 8.
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Cold,
+        }
+        .apply(&mut e);
+        // Cold doubled to 8.
+        assert_eq!(e.actors[&id].hitpoints(), max.saturating_sub(8));
+    }
+
+    #[test]
+    fn temp_hp_absorbs_damage_first() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&id).unwrap().add_temp_hp(5);
+        let max = e.actors[&id].max_hitpoints();
+        // 4 damage: fully absorbed by temp HP, none of HP lost.
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Force,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max);
+        assert_eq!(e.actors[&id].temp_hp(), 1);
+        // 4 more damage: 1 absorbed, 3 to HP.
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Force,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max - 3);
+        assert_eq!(e.actors[&id].temp_hp(), 0);
+    }
+
+    #[test]
+    fn temp_hp_does_not_stack() {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        actor.add_temp_hp(7);
+        actor.add_temp_hp(3); // smaller — ignored
+        assert_eq!(actor.temp_hp(), 7);
+        actor.add_temp_hp(10); // larger — replaces
+        assert_eq!(actor.temp_hp(), 10);
+    }
 }

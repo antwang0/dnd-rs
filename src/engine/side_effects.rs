@@ -129,6 +129,7 @@ pub struct DealDamage {
 
 impl ApplicableSideEffect for DealDamage {
     fn apply(&self, ei: &mut EncounterInstance) {
+        use crate::engine::types::DamageResponse;
         let Some(actor) = ei.get_actor(self.actor_id) else {
             ei.log(format!(
                 "DealDamage: actor {} missing, ignoring",
@@ -137,9 +138,50 @@ impl ApplicableSideEffect for DealDamage {
             return;
         };
         let name = actor.name().to_string();
-        let outcome = actor.take_damage(self.amount);
+        let response = actor.damage_response_for(self.damage_type);
+        let temp_before = actor.temp_hp();
         let was_concentrating = actor.is_concentrating();
+        let (outcome, hp_loss) = actor.take_typed_damage(self.amount, self.damage_type);
+        let temp_after = actor.temp_hp();
+        let temp_absorbed = temp_before - temp_after;
         // actor borrow ends here.
+
+        // Single-line damage breakdown: "X takes 6 fire damage [resisted (12 → 6)] [absorbed 4 temp]"
+        if self.amount > 0 {
+            let mut parts: Vec<String> = Vec::new();
+            match response {
+                Some(DamageResponse::Immunity) => {
+                    parts.push(format!(
+                        "  {} is immune to {:?} ({} damage absorbed)",
+                        name, self.damage_type, self.amount
+                    ));
+                }
+                Some(DamageResponse::Resistance) => parts.push(format!(
+                    "  {} resists {:?}: {} \u{2192} {}",
+                    name,
+                    self.damage_type,
+                    self.amount,
+                    self.amount / 2
+                )),
+                Some(DamageResponse::Vulnerability) => parts.push(format!(
+                    "  {} is vulnerable to {:?}: {} \u{2192} {}",
+                    name,
+                    self.damage_type,
+                    self.amount,
+                    self.amount.saturating_mul(2)
+                )),
+                None => {}
+            }
+            if temp_absorbed > 0 {
+                parts.push(format!(
+                    "  {} absorbs {} damage (temp HP)",
+                    name, temp_absorbed
+                ));
+            }
+            for line in parts {
+                ei.log(line);
+            }
+        }
 
         match outcome {
             DamageOutcome::Downed => {
@@ -153,9 +195,11 @@ impl ApplicableSideEffect for DealDamage {
                 // drop concentration before the actor is gone.
                 ei.drop_concentration(self.actor_id);
             }
-            DamageOutcome::Reduced if was_concentrating => {
+            DamageOutcome::Reduced if was_concentrating && hp_loss > 0 => {
                 // 5e: take damage while concentrating → CON save vs DC max(10, dmg/2).
-                let dc = ((self.amount / 2) as i32).max(10);
+                // Only the HP that actually landed (post-resistance, post-temp-HP)
+                // counts toward the DC.
+                let dc = ((hp_loss / 2) as i32).max(10);
                 let save = ei.roll_save(
                     self.actor_id,
                     crate::engine::types::AbilityScoreType::Constitution,
@@ -192,6 +236,30 @@ impl ApplicableSideEffect for Heal {
             )),
             HealOutcome::Healed => ei.log(format!("{} heals {} HP.", name, self.amount)),
             HealOutcome::AlreadyFull | HealOutcome::NoOp => {}
+        }
+    }
+}
+
+/// Grant temporary hit points. 5e RAW: a new application replaces the old
+/// only if it's higher (no stacking). Logs the actual delta if the buffer
+/// changed.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct GrantTempHp {
+    pub actor_id: usize,
+    pub amount: u32,
+}
+
+impl ApplicableSideEffect for GrantTempHp {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let before = actor.temp_hp();
+        actor.add_temp_hp(self.amount);
+        let after = actor.temp_hp();
+        if after > before {
+            let name = actor.name().to_string();
+            ei.log(format!("{} gains {} temp HP.", name, after));
         }
     }
 }

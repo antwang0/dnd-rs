@@ -1,5 +1,6 @@
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::{Dice, DiceExpr, Roller};
+use crate::engine::types::DamageResponse;
 
 /// Lifecycle state of an actor's hit points. Replaces the previous
 /// `dying: bool` + `stable: bool` pair so the four meaningful states are
@@ -72,7 +73,7 @@ pub enum HealOutcome {
     NoOp,
 }
 use crate::engine::side_effects::Resource;
-use crate::engine::types::Coordinate;
+use crate::engine::types::{Coordinate, DamageType};
 use crate::items::item_template::{Item, ItemBonuses};
 use crate::{
     actions::action_template::Action,
@@ -120,6 +121,12 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Static damage-type responses (resistance / immunity / vulnerability).
+    /// Empty = standard fleshy creature; populate to model undead immunity
+    /// to poison, skeleton vulnerability to bludgeoning, slime resistance
+    /// to acid, etc. Lookups go through `damage_response_for` which folds
+    /// in any temporary effect-driven responses (none today).
+    pub damage_responses: HashMap<DamageType, DamageResponse>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -287,6 +294,15 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    /// Static damage-type responses (immunity / resistance / vulnerability).
+    /// Mirrored from the creature template; immutable for the actor's life.
+    /// Read by `apply_incoming_damage`.
+    damage_responses: HashMap<DamageType, DamageResponse>,
+    /// Temporary HP buffer. Damage is absorbed from this pool first, with
+    /// the remainder bleeding into real HP. 5e RAW: temp HP doesn't stack
+    /// (a new application overwrites if higher; lower is ignored), and is
+    /// cleared by long rest. Independent of `hitpoints`/`max_hitpoints`.
+    temp_hp: u32,
 }
 
 impl ActorInstance {
@@ -353,6 +369,8 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            damage_responses: ct.damage_responses.clone(),
+            temp_hp: 0,
         })
     }
 
@@ -420,9 +438,40 @@ impl ActorInstance {
     pub fn long_rest(&mut self) {
         self.hp_state = HpState::Active;
         self.hitpoints = self.max_hitpoints();
+        self.temp_hp = 0;
         self.spell_slot_manager.restore_spell_slots();
         self.conditions.clear();
         self.concentration = None;
+    }
+
+    /// Damage-type response for this actor: Resistance / Immunity /
+    /// Vulnerability, or `None` for normal damage. Lookups are static today
+    /// (template-driven), but the entry point exists so future temporary
+    /// resistances (Stoneskin, Resistance cantrip, etc.) can fold in here.
+    pub fn damage_response_for(&self, dt: DamageType) -> Option<DamageResponse> {
+        self.damage_responses.get(&dt).copied()
+    }
+
+    /// Compute the actual HP delta this actor would take from `raw` damage
+    /// of `dt`, after immunities / resistances / vulnerabilities. Doesn't
+    /// account for temp HP — that's handled at apply time.
+    pub fn effective_damage(&self, raw: u32, dt: DamageType) -> u32 {
+        match self.damage_response_for(dt) {
+            Some(r) => r.apply(raw),
+            None => raw,
+        }
+    }
+
+    pub fn temp_hp(&self) -> u32 {
+        self.temp_hp
+    }
+
+    /// Apply temp HP per 5e: a new application replaces the old only if
+    /// it's higher. (Multiple temp-HP sources don't stack.)
+    pub fn add_temp_hp(&mut self, amount: u32) {
+        if amount > self.temp_hp {
+            self.temp_hp = amount;
+        }
     }
 
     pub fn cr(&self) -> f32 {
@@ -762,6 +811,50 @@ impl ActorInstance {
     /// call this on the caster to set their DC.
     pub fn spell_save_dc(&self, ability: AbilityScoreType) -> i32 {
         8 + modifier_from_score(self.ability_score(ability))
+    }
+
+    /// Apply `raw` damage of type `dt`, factoring in immunity / resistance
+    /// / vulnerability and absorbing the result through any temp HP first.
+    /// Returns `(outcome, final_amount)` where `final_amount` is the actual
+    /// HP delta that landed (after all reductions and temp-HP absorption).
+    /// Logging is the caller's job — the engine's `DealDamage::apply` does it.
+    pub fn take_typed_damage(
+        &mut self,
+        raw: u32,
+        dt: DamageType,
+    ) -> (DamageOutcome, u32) {
+        let scaled = self.effective_damage(raw, dt);
+        if scaled == 0 {
+            // Immunity (or zero raw): never moves HP, never adds death-save
+            // failures, even on Dying / Stable targets.
+            return (
+                match self.hp_state {
+                    HpState::Dying { .. } | HpState::Stable | HpState::Dead => {
+                        DamageOutcome::DyingFailure
+                    }
+                    HpState::Active => DamageOutcome::Reduced,
+                },
+                0,
+            );
+        }
+        // Burn temp HP first; only the leftover hits real HP.
+        let absorbed = scaled.min(self.temp_hp);
+        self.temp_hp -= absorbed;
+        let to_hp = scaled - absorbed;
+        if to_hp == 0 {
+            // Damage was fully absorbed by temp HP. No HP transition.
+            return (
+                match self.hp_state {
+                    HpState::Dying { .. } | HpState::Stable | HpState::Dead => {
+                        DamageOutcome::DyingFailure
+                    }
+                    HpState::Active => DamageOutcome::Reduced,
+                },
+                0,
+            );
+        }
+        let outcome = self.take_damage(to_hp);
+        (outcome, to_hp)
     }
 
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {
