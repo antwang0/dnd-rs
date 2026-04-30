@@ -47,7 +47,13 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 4. Hold Person — lock down toughest enemy if we have it and
+        // 4. Bless — round 1 self+ally buff. Only valid before we're
+        //    already concentrating on something.
+        if let Some(aei) = try_bless(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 5. Hold Person — lock down toughest enemy if we have it and
         //    aren't already concentrating on something.
         if let Some(aei) = try_hold_person(encounter, actor_id) {
             return ControllerDecision::Act(aei);
@@ -69,7 +75,13 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 8. Nothing useful. End the turn.
+        // 8. Last-line tactical choice: Dodge if we're under threat with
+        //    nothing else to do (rather than wasting the turn on Skip).
+        if let Some(aei) = try_dodge(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 9. Nothing useful. End the turn.
         skip_or_await(encounter, actor_id)
     }
 }
@@ -136,6 +148,57 @@ fn try_hold_person(
         }
     }
     best.map(|(_, aei)| aei)
+}
+
+/// Cast Bless if we have it, aren't already concentrating, and there's at
+/// least one combat-active ally (otherwise the buff is wasted on solo).
+fn try_bless(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() {
+        return None;
+    }
+    let bless = actor.actions.iter().find(|a| a.name() == "bless").copied()?;
+    // Only worth casting if at least one other allied combatant exists.
+    let my_team = actor.team();
+    let has_ally = encounter.actors.iter().any(|(id, a)| {
+        *id != actor_id && a.team() == my_team && a.is_combat_active()
+    });
+    if !has_ally {
+        return None;
+    }
+    let aei = ActionExecutionInfo::new(bless, actor_id, None, None, None);
+    if aei.validate(encounter) {
+        Some(aei)
+    } else {
+        None
+    }
+}
+
+/// Take the Dodge action when we're below half HP and an enemy still
+/// threatens us. Better than Skip when the actor has nothing else to do.
+fn try_dodge(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.has_condition(Condition::Dodging) {
+        return None;
+    }
+    let hp = actor.hitpoints() as f32;
+    let max = actor.max_hitpoints().max(1) as f32;
+    if hp / max >= 0.5 {
+        return None;
+    }
+    let dodge = actor.actions.iter().find(|a| a.name() == "dodge").copied()?;
+    let aei = ActionExecutionInfo::new(dodge, actor_id, None, None, None);
+    if aei.validate(encounter) {
+        Some(aei)
+    } else {
+        None
+    }
 }
 
 /// Sort key for advantage-aware target selection — lower wins.
@@ -1028,6 +1091,64 @@ mod tests {
             "healing word",
             "AI should not target an enemy with a heal"
         );
+    }
+
+    #[test]
+    fn cleric_casts_bless_on_opening_turn() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = empty_arena();
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let _ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(7, 5), 0, 1)
+            .unwrap();
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(20, 14), 1, 0)
+            .unwrap();
+        let ai = SimpleAi;
+        let decision = ai.decide(&e, cleric);
+        let ControllerDecision::Act(aei) = decision else {
+            panic!("expected an action");
+        };
+        assert_eq!(aei.action().name(), "bless");
+    }
+
+    #[test]
+    fn cleric_skips_bless_solo() {
+        // No allies → Bless is wasted, AI should pick a damage tactic.
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = empty_arena();
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(15, 5), 1, 0)
+            .unwrap();
+        let ai = SimpleAi;
+        let decision = ai.decide(&e, cleric);
+        let ControllerDecision::Act(aei) = decision else {
+            panic!("expected an action");
+        };
+        assert_ne!(aei.action().name(), "bless");
+    }
+
+    #[test]
+    fn low_hp_actor_dodges_when_no_better_option() {
+        let mut e = empty_arena();
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // No enemies → no attacks available, no movement target. Drop HP
+        // to <50%. AI should Dodge instead of Skip.
+        let max = e.actors[&id].max_hitpoints();
+        e.actors.get_mut(&id).unwrap().take_damage(max - 1);
+        let ai = SimpleAi;
+        let decision = ai.decide(&e, id);
+        let ControllerDecision::Act(aei) = decision else {
+            panic!("expected an action");
+        };
+        assert_eq!(aei.action().name(), "dodge");
     }
 
     #[test]
