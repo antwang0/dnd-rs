@@ -64,19 +64,27 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 7. No one in reach — close on the lowest-HP enemy.
+        // 7. Defensive dodge: if we're below 30% HP, no allies need
+        //    healing, and we don't have a high-leverage attack queued
+        //    above, take the Dodge action so incoming swings have
+        //    disadvantage. Better than trading blows on the way down.
+        if let Some(aei) = try_dodge_when_low_hp(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 8. No one in reach — close on the lowest-HP enemy.
         if let Some(aei) = try_step_toward_lowest_hp(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
-        // 8. Stalemate breaker: if we can't see anyone but there are
+        // 9. Stalemate breaker: if we can't see anyone but there are
         //    enemies alive, take one step in any walkable direction so
         //    an LOS-blocked corner doesn't lock up the simulation.
         if let Some(aei) = try_wander(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
-        // 9. Nothing useful. End the turn.
+        // 10. Nothing useful. End the turn.
         skip_or_await(encounter, actor_id)
     }
 }
@@ -576,6 +584,30 @@ fn try_step_toward_lowest_hp(
     }
 }
 
+/// Take the Dodge action if the actor is below 30% HP and no attack
+/// would land at advantage. The earlier focus-fire pipeline already
+/// returned an attack if one was a clear win; we get here only when no
+/// attack could be queued or attacks would all be at disadvantage,
+/// which makes Dodge a strict upgrade over trading.
+fn try_dodge_when_low_hp(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let hp = actor.hitpoints();
+    let max = actor.max_hitpoints().max(1);
+    if (hp as f32) / (max as f32) >= 0.3 {
+        return None;
+    }
+    let dodge = actor.actions.iter().find(|a| a.name() == "dodge").copied()?;
+    let aei = ActionExecutionInfo::new(dodge, actor_id, None, None, None);
+    if aei.validate(encounter) {
+        Some(aei)
+    } else {
+        None
+    }
+}
+
 /// Step one walkable tile in any direction. Used as a stalemate breaker
 /// when step_toward_lowest_hp finds no path (e.g. footprint-adjacent
 /// across a wall) — taking *any* step is better than skipping forever.
@@ -1062,6 +1094,36 @@ mod tests {
             "healing word",
             "AI should not target an enemy with a heal"
         );
+    }
+
+    #[test]
+    fn ai_dodges_when_low_hp_and_no_attack_target() {
+        // Skeleton (longbow only) on team 0, no enemies in LOS — focus
+        // fire can't fire and step_toward returns nothing useful. With
+        // HP below 30%, AI should pick Dodge.
+        let mut e = empty_arena();
+        let archer = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Drop the archer's HP below the 30% threshold.
+        let max = e.actors[&archer].max_hitpoints();
+        e.actors
+            .get_mut(&archer)
+            .unwrap()
+            .take_damage(max * 4 / 5);
+        // Place an enemy archer too far to reach by step (BFS would
+        // succeed, but we'll force a "no attack target reachable" by
+        // hiding LOS / reach. Instead, just confirm: with no enemies on
+        // the map, the AI falls through to Dodge.
+        // Actually: focus_fire needs a target, so without any enemy the
+        // pipeline falls through. step_toward_lowest_hp also needs a
+        // target. Dodge tactic should fire.
+        let ai = SimpleAi;
+        let decision = ai.decide(&e, archer);
+        let ControllerDecision::Act(aei) = decision else {
+            panic!("expected an action");
+        };
+        assert_eq!(aei.action().name(), "dodge");
     }
 
     #[test]
