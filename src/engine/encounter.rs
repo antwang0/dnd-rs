@@ -3304,6 +3304,70 @@ mod tests {
     }
 
     #[test]
+    fn blindness_consumes_action_and_level2_slot() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::BLINDNESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let costs = BLINDNESS.cost(&e, cleric, None, None, None);
+        assert!(costs.iter().any(|c| matches!(c, Resource::Action)));
+        assert!(costs
+            .iter()
+            .any(|c| matches!(c, Resource::SpellSlot(2))));
+    }
+
+    #[test]
+    fn blindness_failed_save_blinds_target_and_starts_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::BLINDNESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+
+        // Cast Blindness many times — the target's CON save will fail
+        // sometimes; we just need *one* failure to validate the wiring.
+        // A Zombie's CON +3 vs cleric DC 8+2=10 means save fails on
+        // d20 ≤ 6 ≈ 30% of the time; 50 attempts is plenty.
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            .unwrap();
+
+        let mut blinded_seen = false;
+        for _ in 0..50 {
+            // Clear concentration so each call starts fresh.
+            e.drop_concentration(cleric);
+            // Reset condition for next attempt.
+            e.actors
+                .get_mut(&target)
+                .unwrap()
+                .remove_condition(Condition::Blinded);
+            let target_vec = vec![target];
+            let effects =
+                BLINDNESS.side_effects(&mut e, cleric, Some(&target_vec), None, None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            if e.actors[&target].has_condition(Condition::Blinded) {
+                assert!(
+                    e.actors[&cleric].is_concentrating(),
+                    "cleric must be concentrating when target is Blinded"
+                );
+                blinded_seen = true;
+                break;
+            }
+        }
+        assert!(blinded_seen, "expected at least one failed CON save");
+    }
+
+    #[test]
     fn damage_modifier_normal_unchanged() {
         use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
         use crate::engine::types::DamageType;

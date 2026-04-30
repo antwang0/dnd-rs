@@ -356,3 +356,87 @@ impl Action for HoldPerson {
 }
 
 pub static HOLD_PERSON: LazyLock<HoldPerson> = LazyLock::new(|| HoldPerson {});
+
+/// Blindness — single-target denial cantrip-style spell. Range 30ft (12
+/// tiles), CON save vs the caster's WIS-based DC. On fail, target is
+/// Blinded for 10 rounds (advantage on attacks against them, disadvantage
+/// on their attacks). Concentration: damage-failed CON save or 0 HP
+/// drops the spell and clears Blinded immediately.
+pub struct Blindness {}
+
+impl Action for Blindness {
+    fn name(&self) -> &str {
+        "blindness"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["blind", "bl"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(12)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // Level-2 leveled spell — Action + a level-2 spell slot.
+        vec![Resource::Action, Resource::SpellSlot(2)]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::{ApplyCondition, StartConcentration};
+
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Blinded,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData {
+                    spell_name: "Blindness".to_string(),
+                    conditions: vec![(target_id, Condition::Blinded)],
+                },
+            }),
+        ]
+    }
+}
+
+pub static BLINDNESS: LazyLock<Blindness> = LazyLock::new(|| Blindness {});
