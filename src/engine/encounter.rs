@@ -1210,6 +1210,21 @@ impl EncounterInstance {
         Err("Actor not found".into())
     }
 
+    /// Move an actor to `coord`, syncing both the actor map and the actor's
+    /// own location field. Single source of truth for "teleport / step
+    /// without OAs"; OA-honoring movement goes through `MoveActor::apply`.
+    pub fn place_actor_at(
+        &mut self,
+        actor_id: usize,
+        coord: Coordinate,
+    ) -> Result<(), Box<dyn Error>> {
+        self.set_actor_map(actor_id, coord)?;
+        if let Some(a) = self.get_actor(actor_id) {
+            a.set_location(coord);
+        }
+        Ok(())
+    }
+
     pub fn instantiate_creature(
         &mut self,
         creature_template: &'static CreatureTemplate,

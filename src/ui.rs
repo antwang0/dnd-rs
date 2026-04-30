@@ -296,6 +296,15 @@ pub fn render_sideinfo(
     let mut hp_spans: Vec<Span<'static>> = vec![Span::raw("HP: ")];
     hp_spans.extend(hp_bar_spans(hp, max_hp, 10));
     hp_spans.push(Span::raw(format!(" {}/{}", hp, max_hp)));
+    // Temp HP: only show when nonzero so the panel doesn't clutter for
+    // creatures that never had any.
+    let temp = curr_actor.temp_hp();
+    if temp > 0 {
+        hp_spans.push(Span::styled(
+            format!(" (+{} temp)", temp),
+            Style::default().fg(Color::LightCyan),
+        ));
+    }
 
     let mut stats_lines: Vec<Line<'static>> = vec![
         Line::from(hp_spans),

@@ -106,12 +106,9 @@ impl ApplicableSideEffect for MoveActor {
             {
                 return;
             }
-            if let Err(e) = ei.set_actor_map(self.actor_id, dest) {
+            if let Err(e) = ei.place_actor_at(self.actor_id, dest) {
                 ei.log(format!("MoveActor failed: {}", e));
                 return;
-            }
-            if let Some(actor) = ei.get_actor(self.actor_id) {
-                actor.set_location(dest);
             }
             // Walk-over auto-pickup: any items at the destination tile
             // get added to the actor's inventory. Logged inside.
