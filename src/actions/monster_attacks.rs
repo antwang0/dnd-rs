@@ -778,6 +778,18 @@ fn weapon_attack(
     let mode = encounter.compute_attack_mode(caster_id, target_id, is_melee);
     let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
     let is_crit = raw_attack == 20;
+    // Blessed: +2 average (d4) to attack rolls. Apply once and clear the
+    // one-shot Helped flag (advantage already baked into mode).
+    let bless_bonus = if encounter
+        .actors
+        .get(&caster_id)
+        .is_some_and(|a| a.has_condition(crate::conditions::Condition::Blessed))
+    {
+        2
+    } else {
+        0
+    };
+    let attack_bonus = attack_bonus + bless_bonus;
     let attack_total = raw_attack + attack_bonus;
     // Crits auto-hit regardless of AC. Otherwise compare normally.
     let hit = is_crit || attack_total >= target_ac;
@@ -798,6 +810,11 @@ fn weapon_attack(
         mode.log_suffix(),
         outcome,
     ));
+    // Help is a one-shot advantage grant — clear after the attack lands or
+    // misses, regardless of outcome.
+    if let Some(a) = encounter.actors.get_mut(&caster_id) {
+        a.remove_condition(crate::conditions::Condition::Helped);
+    }
     if !hit {
         return Vec::new();
     }
