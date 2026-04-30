@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use crate::{
-    actions::action_template::{Action, TargetingSchema},
+    actions::action_template::{first_target_id, Action, TargetingSchema},
     engine::{
         action_overrides::ActionOverride,
         dice::Dice,
@@ -59,7 +59,7 @@ impl Action for SacredFlame {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -136,7 +136,7 @@ impl Action for HealingWord {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -323,7 +323,7 @@ impl Action for HoldPerson {
         use crate::conditions::{Condition, ConditionTimer};
         use crate::engine::side_effects::{ApplyCondition, StartConcentration};
 
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -404,7 +404,7 @@ impl Action for CureWounds {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -473,7 +473,7 @@ impl Action for FireBolt {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::engine::side_effects::DealDamage;
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -581,7 +581,7 @@ impl Action for MagicMissile {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::engine::side_effects::DealDamage;
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         // Three darts; each rolls its own 1d4. Auto-hit, no save.

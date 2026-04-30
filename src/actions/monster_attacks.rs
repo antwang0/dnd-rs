@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use crate::{
-    actions::action_template::{Action, MELEE_REACH, TargetingSchema},
+    actions::action_template::{first_target_id, Action, MELEE_REACH, TargetingSchema},
     engine::{
         action_overrides::ActionOverride,
         dice::Dice,
@@ -61,7 +61,7 @@ impl Action for Longbow {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -131,7 +131,7 @@ impl Action for Slam {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -206,7 +206,7 @@ impl Action for TripAttack {
         use crate::engine::side_effects::ApplyCondition;
         use crate::engine::types::AbilityScoreType;
 
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -304,7 +304,7 @@ impl Action for AcidSpit {
         use crate::engine::types::AbilityScoreType;
         use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -426,7 +426,7 @@ impl Action for Scimitar {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -492,7 +492,7 @@ impl Action for Greataxe {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -558,7 +558,7 @@ impl Action for Dagger {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
         use crate::engine::types::AbilityScoreType;
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -628,7 +628,7 @@ impl Action for Sling {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -696,7 +696,7 @@ impl Action for SpiderBite {
         use crate::conditions::{Condition, ConditionTimer};
         use crate::engine::side_effects::ApplyCondition;
         use crate::engine::types::AbilityScoreType;
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -789,7 +789,7 @@ impl Action for Shortbow {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -855,7 +855,7 @@ impl Action for Greatclub {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -927,7 +927,7 @@ impl Action for WolfBite {
         use crate::engine::side_effects::ApplyCondition;
         use crate::engine::types::AbilityScoreType;
 
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {

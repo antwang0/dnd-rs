@@ -7,6 +7,18 @@ use crate::engine::{
     types::Coordinate,
 };
 
+/// Pull the first id out of a SingleActor target list. Centralizes the
+/// `target_ids.and_then(|ids| ids.first().copied())` chain that every
+/// SingleActor action repeats in its `side_effects`.
+pub fn first_target_id(target_ids: Option<&Vec<usize>>) -> Option<usize> {
+    target_ids.and_then(|ids| ids.first().copied())
+}
+
+/// Pull the first point out of a SinglePoint or Burst target-locations list.
+pub fn first_target_point(target_locations: Option<&Vec<Coordinate>>) -> Option<Coordinate> {
+    target_locations.and_then(|locs| locs.first().copied())
+}
+
 /// Reach for melee/touch actions, expressed as a footprint-Chebyshev gap cap.
 /// 5e melee weapons are 5ft = 1-tile gap in this 2.5ft grid. Polearms /
 /// reach weapons would be 2. Ranged actions return their max range here.
