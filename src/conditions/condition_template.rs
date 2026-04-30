@@ -43,6 +43,13 @@ pub enum Condition {
     /// (melee reach). Modeled as the strict superset of Stunned in our
     /// engine: action economy locked, no movement, plus per-attack rules.
     Paralyzed,
+    /// You took the Dodge action: attacks against you have disadvantage
+    /// and you make DEX saves with advantage. Lasts until the start of
+    /// your next turn (Rounds(1) ticks down at the round wrap).
+    Dodging,
+    /// You took the Disengage action: your movement doesn't provoke
+    /// opportunity attacks for the rest of the turn. Rounds(1) timer.
+    Disengaging,
 }
 
 impl Condition {
@@ -59,6 +66,8 @@ impl Condition {
             Condition::Charmed => "charmed",
             Condition::Invisible => "invisible",
             Condition::Paralyzed => "paralyzed",
+            Condition::Dodging => "dodging",
+            Condition::Disengaging => "disengaging",
         }
     }
 
