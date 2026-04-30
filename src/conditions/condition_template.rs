@@ -3,23 +3,46 @@
 /// while `Prone`; `can_consume_resource` blocks Action/BonusAction/Reaction
 /// while `Stunned`). New variants land here and then plug into the
 /// relevant accessor — no central dispatcher.
-///
-/// Durations aren't tracked yet: conditions persist until something
-/// explicitly removes them via `RemoveCondition`. Round-tracked durations
-/// (e.g. "stunned for 1 round") need a turn-end hook the engine doesn't
-/// have yet; deferred.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Condition {
     /// Speed = 0; ranged attacks against you have disadvantage; melee
     /// against you have advantage; you have disadvantage on attacks.
-    /// Today only the speed clause is wired.
     Prone,
     /// Cannot take Actions, Bonus Actions, or Reactions. Movement is also
     /// 0 (in 5e via Incapacitated, but we collapse for simplicity).
     Stunned,
-    /// Disadvantage on attack rolls and ability checks. Marker only today
-    /// (no advantage/disadvantage system yet).
+    /// Disadvantage on attack rolls and on saves derived from ability
+    /// checks. Today we apply the disadv to all saves uniformly.
     Poisoned,
+    /// Cannot take Actions, Bonus Actions, or Reactions. Looser than
+    /// Stunned: still has movement (unless paired with another condition
+    /// that zeroes it).
+    Incapacitated,
+    /// Speed = 0. Attacks against you have advantage; you have
+    /// disadvantage on attacks; disadvantage on DEX saves.
+    Restrained,
+    /// Speed = 0. Doesn't impose attack adv/disadv on its own — just
+    /// pinned in place. Removed when the grappler dies / drops it; we
+    /// don't model the source today, so it's cleared by explicit means.
+    Grappled,
+    /// Can't see. Auto-fail any check requiring sight; disadvantage on
+    /// attacks; attacks against you have advantage.
+    Blinded,
+    /// Disadvantage on attack rolls and ability checks. We don't model
+    /// the "while source is in sight" clause yet; treat as flat disadv.
+    Frightened,
+    /// Cannot perform attacks or harmful effects against the charmer.
+    /// Marker only — we don't yet track the charmer relationship, so
+    /// the AI uses this as a soft signal.
+    Charmed,
+    /// Attacks have advantage; attacks against you have disadvantage.
+    /// (We don't yet model who can perceive whom — assume universal.)
+    Invisible,
+    /// Incapacitated + immobile. Auto-fail STR/DEX saves; attacks against
+    /// you have advantage and crit on hit when the attacker is within 5ft
+    /// (melee reach). Modeled as the strict superset of Stunned in our
+    /// engine: action economy locked, no movement, plus per-attack rules.
+    Paralyzed,
 }
 
 impl Condition {
@@ -28,7 +51,38 @@ impl Condition {
             Condition::Prone => "prone",
             Condition::Stunned => "stunned",
             Condition::Poisoned => "poisoned",
+            Condition::Incapacitated => "incapacitated",
+            Condition::Restrained => "restrained",
+            Condition::Grappled => "grappled",
+            Condition::Blinded => "blinded",
+            Condition::Frightened => "frightened",
+            Condition::Charmed => "charmed",
+            Condition::Invisible => "invisible",
+            Condition::Paralyzed => "paralyzed",
         }
+    }
+
+    /// Conditions that zero an actor's movement budget. Centralized so
+    /// `remaining_movement` and any future "could you walk to X" check
+    /// agree on which conditions root the actor.
+    pub fn immobilizes(&self) -> bool {
+        matches!(
+            self,
+            Condition::Prone
+                | Condition::Stunned
+                | Condition::Restrained
+                | Condition::Grappled
+                | Condition::Paralyzed
+        )
+    }
+
+    /// Conditions that lock the action / bonus-action / reaction economy.
+    /// Same idea as `immobilizes` — one place to look up the rule.
+    pub fn locks_action_economy(&self) -> bool {
+        matches!(
+            self,
+            Condition::Stunned | Condition::Incapacitated | Condition::Paralyzed
+        )
     }
 }
 

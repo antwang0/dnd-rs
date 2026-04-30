@@ -758,7 +758,8 @@ pub static ZOMBIE_MULTISLAM: LazyLock<Multiattack> = LazyLock::new(|| Multiattac
 ///
 /// **Critical hits**: a final d20 of 20 (after advantage / disadvantage)
 /// auto-hits regardless of AC and rolls the damage dice twice — the
-/// modifier is added once. 5e RAW.
+/// modifier is added once. 5e RAW. A *melee* hit on a Paralyzed target
+/// also crits, regardless of the d20.
 ///
 /// Returns the side-effect vec (empty on miss). Centralizes the pattern
 /// so every weapon-style attack logs in the same shape.
@@ -775,12 +776,20 @@ fn weapon_attack(
     damage_type: DamageType,
     is_melee: bool,
 ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+    use crate::conditions::Condition;
     let mode = encounter.compute_attack_mode(caster_id, target_id, is_melee);
     let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
-    let is_crit = raw_attack == 20;
+    let nat_20 = raw_attack == 20;
     let attack_total = raw_attack + attack_bonus;
+    let target_paralyzed = encounter
+        .actors
+        .get(&target_id)
+        .is_some_and(|a| a.has_condition(Condition::Paralyzed));
     // Crits auto-hit regardless of AC. Otherwise compare normally.
-    let hit = is_crit || attack_total >= target_ac;
+    let hit = nat_20 || attack_total >= target_ac;
+    // Melee hits on a paralyzed target always crit (5e: paralyzed gives
+    // crit-on-hit within 5ft, which is melee reach in our grid).
+    let is_crit = nat_20 || (hit && is_melee && target_paralyzed);
     let outcome = if is_crit {
         "CRIT!"
     } else if hit {

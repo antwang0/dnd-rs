@@ -294,10 +294,13 @@ impl EncounterInstance {
 
     /// Compute the attack-roll mode given attacker / target conditions.
     /// 5e clauses we model today:
-    /// - Attacker Prone → disadvantage on all attacks.
-    /// - Attacker Poisoned → disadvantage.
-    /// - Target Prone → melee attacks have advantage, ranged have disadvantage.
-    /// - Target Stunned → advantage on attacks vs them.
+    /// - Attacker Prone / Poisoned / Blinded / Frightened / Restrained
+    ///   → disadvantage on all attacks.
+    /// - Attacker Invisible → advantage on all attacks.
+    /// - Target Prone → melee adv, ranged disadv.
+    /// - Target Stunned / Restrained / Blinded / Paralyzed / Invisible-target
+    ///   adjustments → advantage on attacks vs them
+    ///   (Invisible *target* gives the attacker *disadvantage*).
     ///
     /// Multiple sources of the same direction don't stack; opposing
     /// sources cancel via `RollMode::combine`.
@@ -310,11 +313,19 @@ impl EncounterInstance {
         use crate::conditions::Condition;
         let mut mode = RollMode::Normal;
         if let Some(attacker) = self.actors.get(&attacker_id) {
-            if attacker.has_condition(Condition::Prone) {
-                mode = mode.combine(RollMode::Disadvantage);
+            for &c in &[
+                Condition::Prone,
+                Condition::Poisoned,
+                Condition::Blinded,
+                Condition::Frightened,
+                Condition::Restrained,
+            ] {
+                if attacker.has_condition(c) {
+                    mode = mode.combine(RollMode::Disadvantage);
+                }
             }
-            if attacker.has_condition(Condition::Poisoned) {
-                mode = mode.combine(RollMode::Disadvantage);
+            if attacker.has_condition(Condition::Invisible) {
+                mode = mode.combine(RollMode::Advantage);
             }
         }
         if let Some(target) = self.actors.get(&target_id) {
@@ -325,26 +336,49 @@ impl EncounterInstance {
                     RollMode::Disadvantage
                 });
             }
-            if target.has_condition(Condition::Stunned) {
-                mode = mode.combine(RollMode::Advantage);
+            for &c in &[
+                Condition::Stunned,
+                Condition::Restrained,
+                Condition::Blinded,
+                Condition::Paralyzed,
+            ] {
+                if target.has_condition(c) {
+                    mode = mode.combine(RollMode::Advantage);
+                }
+            }
+            // Invisible target: harder to hit (disadvantage on attacks
+            // against them).
+            if target.has_condition(Condition::Invisible) {
+                mode = mode.combine(RollMode::Disadvantage);
             }
         }
         mode
     }
 
-    /// Compute the save-roll mode for an actor's ability save. Today
-    /// `Poisoned` imposes disadvantage on all saves derived from ability
-    /// checks (we conflate save-vs-check until we model that distinction).
+    /// Compute the save-roll mode for an actor's ability save.
+    /// - `Poisoned` → disadv on all saves (we conflate save-vs-check).
+    /// - `Restrained` → disadv on DEX saves specifically (5e: restrained
+    ///   creatures can't dodge area effects).
+    /// - `Frightened` → disadv on ability checks; we apply to saves too
+    ///   for symmetry until checks are modeled separately.
     pub fn compute_save_mode(
         &self,
         actor_id: usize,
-        _ability: crate::engine::types::AbilityScoreType,
+        ability: crate::engine::types::AbilityScoreType,
     ) -> RollMode {
         use crate::conditions::Condition;
+        use crate::engine::types::AbilityScoreType;
         let mut mode = RollMode::Normal;
-        if let Some(actor) = self.actors.get(&actor_id)
-            && actor.has_condition(Condition::Poisoned)
-        {
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return mode;
+        };
+        if actor.has_condition(Condition::Poisoned) {
+            mode = mode.combine(RollMode::Disadvantage);
+        }
+        if actor.has_condition(Condition::Frightened) {
+            mode = mode.combine(RollMode::Disadvantage);
+        }
+        if actor.has_condition(Condition::Restrained) && ability == AbilityScoreType::Dexterity {
             mode = mode.combine(RollMode::Disadvantage);
         }
         mode
@@ -359,8 +393,25 @@ impl EncounterInstance {
         ability: crate::engine::types::AbilityScoreType,
         dc: i32,
     ) -> crate::engine::saves::SaveOutcome {
+        use crate::conditions::Condition;
         use crate::engine::saves::SaveOutcome;
+        use crate::engine::types::AbilityScoreType;
         use crate::engine::util::modifier_from_score;
+
+        // Paralyzed (and Petrified, when added) auto-fail STR/DEX saves —
+        // 5e RAW. Skip the d20 entirely so the log line reflects that this
+        // wasn't a real roll.
+        if let Some(actor) = self.actors.get(&actor_id)
+            && actor.has_condition(Condition::Paralyzed)
+            && matches!(ability, AbilityScoreType::Strength | AbilityScoreType::Dexterity)
+        {
+            let name = actor.name().to_string();
+            self.log(format!(
+                "  {} {:?} save: auto-fail (paralyzed)",
+                name, ability
+            ));
+            return SaveOutcome::Fail;
+        }
 
         let mode = self.compute_save_mode(actor_id, ability);
         let raw = self.roll_d20_with_mode(mode);
