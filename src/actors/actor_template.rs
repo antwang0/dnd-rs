@@ -129,6 +129,11 @@ pub struct CreatureTemplate {
     /// Damage types that double up on this creature (5e Vulnerability).
     /// Skeletons in MM are vulnerable to bludgeoning.
     pub damage_vulnerabilities: HashSet<DamageType>,
+    /// Ability scores this creature is proficient in saving throws for.
+    /// 5e: each class grants two save proficiencies; monsters get them
+    /// per the stat block. Proficient saves add the proficiency bonus
+    /// on top of the ability modifier.
+    pub save_proficiencies: HashSet<AbilityScoreType>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -302,6 +307,9 @@ pub struct ActorInstance {
     damage_immunities: HashSet<DamageType>,
     /// Damage types doubled against this actor.
     damage_vulnerabilities: HashSet<DamageType>,
+    /// Ability scores this actor adds the proficiency bonus to when
+    /// rolling that save.
+    save_proficiencies: HashSet<AbilityScoreType>,
 }
 
 impl ActorInstance {
@@ -371,7 +379,26 @@ impl ActorInstance {
             damage_resistances: ct.damage_resistances.clone(),
             damage_immunities: ct.damage_immunities.clone(),
             damage_vulnerabilities: ct.damage_vulnerabilities.clone(),
+            save_proficiencies: ct.save_proficiencies.clone(),
         })
+    }
+
+    /// 5e proficiency bonus by level. Level 1-4 = +2, 5-8 = +3, 9-12 = +4,
+    /// 13-16 = +5, 17+ = +6. Used by attack bonuses and proficient saves.
+    pub fn proficiency_bonus(&self) -> i32 {
+        match self.level {
+            0..=4 => 2,
+            5..=8 => 3,
+            9..=12 => 4,
+            13..=16 => 5,
+            _ => 6,
+        }
+    }
+
+    /// True if this actor adds their proficiency bonus when rolling a
+    /// save against `ability`.
+    pub fn is_save_proficient(&self, ability: AbilityScoreType) -> bool {
+        self.save_proficiencies.contains(&ability)
     }
 
     /// Resolve the damage interaction for `damage_type`. Immunity wins
@@ -800,11 +827,11 @@ impl ActorInstance {
         }
     }
 
-    /// 5e spell save DC: 8 + spellcasting ability modifier (we don't track
-    /// proficiency yet; once we do, add it here). Actions that force saves
-    /// call this on the caster to set their DC.
+    /// 5e spell save DC: 8 + proficiency bonus + spellcasting ability
+    /// modifier. Actions that force saves call this on the caster to set
+    /// their DC.
     pub fn spell_save_dc(&self, ability: AbilityScoreType) -> i32 {
-        8 + modifier_from_score(self.ability_score(ability))
+        8 + self.proficiency_bonus() + modifier_from_score(self.ability_score(ability))
     }
 
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {
@@ -924,8 +951,10 @@ impl ActorInstance {
     }
 
     pub fn attack_bonus(&self) -> i32 {
-        // TODO: add proficiency bonus once it's tracked
-        modifier_from_score(self.strength)
+        // STR-based melee weapon attacks (the default in this engine).
+        // Adds the proficiency bonus — every actor is treated as
+        // proficient with their canonical weapons today.
+        modifier_from_score(self.strength) + self.proficiency_bonus()
     }
 
     pub fn damage_bonus(&self) -> i32 {

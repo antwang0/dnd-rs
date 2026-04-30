@@ -40,5 +40,6 @@ pub static ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         damage_resistances: HashSet::from([DamageType::Necrotic]),
         damage_immunities: HashSet::from([DamageType::Poison]),
         damage_vulnerabilities: HashSet::new(),
+        save_proficiencies: HashSet::new(),
     }
 });

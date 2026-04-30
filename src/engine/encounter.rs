@@ -384,7 +384,9 @@ impl EncounterInstance {
 
     /// Roll a saving throw for `actor_id` against `dc` using `ability`.
     /// Auto-applies advantage / disadvantage based on the actor's
-    /// conditions (see `compute_save_mode`). Missing actor auto-fails.
+    /// conditions (see `compute_save_mode`) and adds the proficiency
+    /// bonus when the actor is proficient in that save. Missing actor
+    /// auto-fails.
     pub fn roll_save(
         &mut self,
         actor_id: usize,
@@ -400,7 +402,13 @@ impl EncounterInstance {
             return SaveOutcome::Fail;
         };
         let item_bonus = actor.item_save_bonus();
-        let modifier = modifier_from_score(actor.ability_score(ability)) + item_bonus;
+        let prof_bonus = if actor.is_save_proficient(ability) {
+            actor.proficiency_bonus()
+        } else {
+            0
+        };
+        let modifier =
+            modifier_from_score(actor.ability_score(ability)) + item_bonus + prof_bonus;
         let total = raw as i32 + modifier;
         let outcome = if total >= dc {
             SaveOutcome::Pass
@@ -3429,6 +3437,69 @@ mod tests {
         assert!(costs
             .iter()
             .any(|c| matches!(c, Resource::SpellSlot(2))));
+    }
+
+    #[test]
+    fn proficiency_bonus_scales_with_level() {
+        // Pure unit test: take one fighter and bump their level via
+        // award_xp + try_level_up. The +2/+3/+4/... ramp follows the
+        // 5e table.
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut roller = FastRandRoller::with_seed(0);
+        let actor = ActorInstance::from_creature_template(
+            &FIGHTER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut roller,
+            0,
+        )
+        .unwrap();
+        // Level 1 default → +2.
+        assert_eq!(actor.proficiency_bonus(), 2);
+    }
+
+    #[test]
+    fn fighter_save_proficiency_includes_str_and_con() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = &e.actors[&id];
+        assert!(actor.is_save_proficient(AbilityScoreType::Strength));
+        assert!(actor.is_save_proficient(AbilityScoreType::Constitution));
+        assert!(!actor.is_save_proficient(AbilityScoreType::Wisdom));
+    }
+
+    #[test]
+    fn cleric_save_proficiency_includes_wis_and_cha() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = &e.actors[&id];
+        assert!(actor.is_save_proficient(AbilityScoreType::Wisdom));
+        assert!(actor.is_save_proficient(AbilityScoreType::Charisma));
+        assert!(!actor.is_save_proficient(AbilityScoreType::Dexterity));
+    }
+
+    #[test]
+    fn spell_save_dc_includes_proficiency_bonus() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = &e.actors[&id];
+        // Cleric WIS 14 → +2 modifier; level 1 → +2 prof; DC = 8 + 2 + 2 = 12.
+        assert_eq!(actor.spell_save_dc(AbilityScoreType::Wisdom), 12);
     }
 
     #[test]

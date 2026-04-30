@@ -43,5 +43,6 @@ pub static SLIME_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         damage_resistances: HashSet::from([DamageType::Piercing, DamageType::Slashing]),
         damage_immunities: HashSet::from([DamageType::Acid]),
         damage_vulnerabilities: HashSet::from([DamageType::Fire]),
+        save_proficiencies: HashSet::new(),
     }
 });

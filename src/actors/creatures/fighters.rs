@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::SCIMITAR;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{Language, Size};
+use crate::engine::types::{AbilityScoreType, Language, Size};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -42,5 +42,10 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         damage_resistances: HashSet::new(),
         damage_immunities: HashSet::new(),
         damage_vulnerabilities: HashSet::new(),
+        // 5e Fighter class: STR + CON saves.
+        save_proficiencies: HashSet::from([
+            AbilityScoreType::Strength,
+            AbilityScoreType::Constitution,
+        ]),
     }
 });

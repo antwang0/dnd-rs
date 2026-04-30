@@ -39,5 +39,6 @@ pub static OGRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         damage_resistances: HashSet::new(),
         damage_immunities: HashSet::new(),
         damage_vulnerabilities: HashSet::new(),
+        save_proficiencies: HashSet::new(),
     }
 });
