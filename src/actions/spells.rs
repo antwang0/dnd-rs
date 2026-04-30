@@ -206,8 +206,6 @@ impl Action for SacredBurst {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
-
         let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
             return Vec::new();
         };
@@ -227,32 +225,9 @@ impl Action for SacredBurst {
             raw, raw
         ));
 
-        // Snapshot affected ids in actor-id order for deterministic save
-        // sequencing — order matters because the roller is shared and each
-        // save consumes a d20.
-        let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
-        ids.sort_unstable();
-
+        let target_ids = encounter.burst_targets(caster_id, point, radius);
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for target_id in ids {
-            let Some(target) = encounter.actors.get(&target_id) else {
-                continue;
-            };
-            // The caster is exempt — sacred-flavored AoE wouldn't burn its
-            // own caster. Inactive actors (dying/stable) also skip.
-            if target_id == caster_id || !target.is_combat_active() {
-                continue;
-            }
-            let dist = footprint_chebyshev(
-                target.location(),
-                get_tiles_from_size(target.size()),
-                point,
-                1,
-            );
-            if dist > radius {
-                continue;
-            }
-
+        for target_id in target_ids {
             let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, dc);
             let dmg = if save.passed() { raw / 2 } else { raw };
             if dmg == 0 {
@@ -491,70 +466,16 @@ impl Action for Web {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::actors::actor_template::ConcentrationData;
-        use crate::conditions::{Condition, ConditionTimer};
-        use crate::engine::side_effects::{ApplyCondition, StartConcentration};
-        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
-
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
-            return Vec::new();
-        };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
-        let radius: isize = match self.targeting_schema() {
-            TargetingSchema::Burst { radius } => radius,
-            _ => return Vec::new(),
-        };
-
-        // Sorted ids so RNG ordering of saves is deterministic with a seed.
-        let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
-        ids.sort_unstable();
-
-        let mut conds_for_concentration: Vec<(usize, Condition)> = Vec::new();
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for target_id in ids {
-            let Some(target) = encounter.actors.get(&target_id) else {
-                continue;
-            };
-            // Caster steps clear of their own webbing; downed actors skip.
-            if target_id == caster_id || !target.is_combat_active() {
-                continue;
-            }
-            let dist = footprint_chebyshev(
-                target.location(),
-                get_tiles_from_size(target.size()),
-                point,
-                1,
-            );
-            if dist > radius {
-                continue;
-            }
-
-            let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, dc);
-            if save.passed() {
-                continue;
-            }
-            effects.push(Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Restrained,
-                timer: ConditionTimer::Rounds(10),
-            }));
-            conds_for_concentration.push((target_id, Condition::Restrained));
-        }
-        if conds_for_concentration.is_empty() {
-            // Nobody got webbed — spell fizzles, no concentration.
-            return Vec::new();
-        }
-        effects.push(Box::new(StartConcentration {
+        burst_save_or_condition(
+            encounter,
             caster_id,
-            data: ConcentrationData {
-                spell_name: "Web".to_string(),
-                conditions: conds_for_concentration,
-            },
-        }));
-        effects
+            target_locations,
+            self.targeting_schema(),
+            AbilityScoreType::Dexterity,
+            crate::conditions::Condition::Restrained,
+            10,
+            "Web",
+        )
     }
 }
 
@@ -610,68 +531,79 @@ impl Action for FaerieFire {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::actors::actor_template::ConcentrationData;
-        use crate::conditions::{Condition, ConditionTimer};
-        use crate::engine::side_effects::{ApplyCondition, StartConcentration};
-        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
-
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
-            return Vec::new();
-        };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
-        let radius: isize = match self.targeting_schema() {
-            TargetingSchema::Burst { radius } => radius,
-            _ => return Vec::new(),
-        };
-
-        let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
-        ids.sort_unstable();
-
-        let mut conds_for_concentration: Vec<(usize, Condition)> = Vec::new();
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for target_id in ids {
-            let Some(target) = encounter.actors.get(&target_id) else {
-                continue;
-            };
-            if target_id == caster_id || !target.is_combat_active() {
-                continue;
-            }
-            let dist = footprint_chebyshev(
-                target.location(),
-                get_tiles_from_size(target.size()),
-                point,
-                1,
-            );
-            if dist > radius {
-                continue;
-            }
-
-            let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, dc);
-            if save.passed() {
-                continue;
-            }
-            effects.push(Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Outlined,
-                timer: ConditionTimer::Rounds(10),
-            }));
-            conds_for_concentration.push((target_id, Condition::Outlined));
-        }
-        if conds_for_concentration.is_empty() {
-            return Vec::new();
-        }
-        effects.push(Box::new(StartConcentration {
+        burst_save_or_condition(
+            encounter,
             caster_id,
-            data: ConcentrationData {
-                spell_name: "Faerie Fire".to_string(),
-                conditions: conds_for_concentration,
-            },
-        }));
-        effects
+            target_locations,
+            self.targeting_schema(),
+            AbilityScoreType::Dexterity,
+            crate::conditions::Condition::Outlined,
+            10,
+            "Faerie Fire",
+        )
     }
 }
 
 pub static FAERIE_FIRE: LazyLock<FaerieFire> = LazyLock::new(|| FaerieFire {});
+
+/// Burst-AoE-with-condition pattern shared by Web, Faerie Fire, and any
+/// future control spell with the same shape. Returns empty (no
+/// concentration started) when no target failed the save — letting a
+/// control spell "fizzle" without leaving the caster locked into
+/// concentrating on nothing. Save DC is the caster's WIS-based spell
+/// DC (which is what every control spell in this engine uses today;
+/// switch to a parameter if a future spell needs another ability).
+#[allow(clippy::too_many_arguments)]
+fn burst_save_or_condition(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    target_locations: Option<&Vec<Coordinate>>,
+    schema: TargetingSchema,
+    save_ability: AbilityScoreType,
+    condition: crate::conditions::Condition,
+    duration_rounds: u32,
+    spell_name: &str,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    use crate::actors::actor_template::ConcentrationData;
+    use crate::conditions::ConditionTimer;
+    use crate::engine::side_effects::{ApplyCondition, StartConcentration};
+
+    let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        return Vec::new();
+    };
+    let Some(caster) = encounter.actors.get(&caster_id) else {
+        return Vec::new();
+    };
+    let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+    let radius: isize = match schema {
+        TargetingSchema::Burst { radius } => radius,
+        _ => return Vec::new(),
+    };
+
+    let target_ids = encounter.burst_targets(caster_id, point, radius);
+    let mut conds_for_concentration: Vec<(usize, crate::conditions::Condition)> = Vec::new();
+    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+    for target_id in target_ids {
+        let save = encounter.roll_save(target_id, save_ability, dc);
+        if save.passed() {
+            continue;
+        }
+        effects.push(Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition,
+            timer: ConditionTimer::Rounds(duration_rounds),
+        }));
+        conds_for_concentration.push((target_id, condition));
+    }
+    if conds_for_concentration.is_empty() {
+        return Vec::new();
+    }
+    effects.push(Box::new(StartConcentration {
+        caster_id,
+        data: ConcentrationData {
+            spell_name: spell_name.to_string(),
+            conditions: conds_for_concentration,
+        },
+    }));
+    effects
+}

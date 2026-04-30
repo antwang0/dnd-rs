@@ -769,6 +769,45 @@ impl EncounterInstance {
         false
     }
 
+    /// Sorted ids of every combat-active actor whose footprint touches a
+    /// `radius`-tile burst centered on `point`, with the caster always
+    /// excluded. Returned in actor-id order so dependent rolls (saves,
+    /// damage rerolls per target) consume the shared seedable roller in
+    /// a deterministic order.
+    ///
+    /// Burst spells (Sacred Burst, Web, Faerie Fire) all want this exact
+    /// list — factoring it here keeps the per-spell `side_effects` tight
+    /// and means the "exclude caster, skip downed, footprint-Chebyshev"
+    /// invariant lives in one place.
+    pub fn burst_targets(
+        &self,
+        caster_id: usize,
+        point: Coordinate,
+        radius: isize,
+    ) -> Vec<usize> {
+        let mut ids: Vec<usize> = self.actors.keys().copied().collect();
+        ids.sort_unstable();
+        ids.retain(|&id| {
+            if id == caster_id {
+                return false;
+            }
+            let Some(actor) = self.actors.get(&id) else {
+                return false;
+            };
+            if !actor.is_combat_active() {
+                return false;
+            }
+            let dist = footprint_chebyshev(
+                actor.location(),
+                get_tiles_from_size(actor.size()),
+                point,
+                1,
+            );
+            dist <= radius
+        });
+        ids
+    }
+
     /// Footprint-Chebyshev distance between two living actors, or `None` if
     /// either id is unknown. 0 means they're touching/adjacent.
     pub fn footprint_distance(&self, a_id: usize, b_id: usize) -> Option<isize> {
