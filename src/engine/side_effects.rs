@@ -137,7 +137,31 @@ impl ApplicableSideEffect for DealDamage {
             return;
         };
         let name = actor.name().to_string();
-        let outcome = actor.take_damage(self.amount);
+        // Resolve resistance / immunity / vulnerability against the
+        // declared damage type before HP is touched. Logging the
+        // adjustment lets the player see *why* the number changed.
+        let modifier = actor.damage_modifier(self.damage_type);
+        let final_amount = modifier.apply(self.amount);
+        if modifier != crate::engine::types::DamageModifier::Normal {
+            ei.log(format!(
+                "  {} {:?}: {} \u{2192} {}{}",
+                name,
+                self.damage_type,
+                self.amount,
+                final_amount,
+                modifier.log_suffix(),
+            ));
+        }
+        // Immunity: no HP change, no concentration check, no downing.
+        // Bail before take_damage so we don't even touch hp_state.
+        if final_amount == 0 {
+            return;
+        }
+        let actor = match ei.get_actor(self.actor_id) {
+            Some(a) => a,
+            None => return,
+        };
+        let outcome = actor.take_damage(final_amount);
         let was_concentrating = actor.is_concentrating();
         // actor borrow ends here.
 
@@ -155,7 +179,7 @@ impl ApplicableSideEffect for DealDamage {
             }
             DamageOutcome::Reduced if was_concentrating => {
                 // 5e: take damage while concentrating → CON save vs DC max(10, dmg/2).
-                let dc = ((self.amount / 2) as i32).max(10);
+                let dc = ((final_amount / 2) as i32).max(10);
                 let save = ei.roll_save(
                     self.actor_id,
                     crate::engine::types::AbilityScoreType::Constitution,

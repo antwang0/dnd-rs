@@ -50,6 +50,45 @@ pub enum DamageType {
     Thunder,
 }
 
+/// How an actor's body interacts with a given damage type. Resolved per
+/// `(actor, damage_type)` from the actor's resistance / immunity / vulnerability
+/// sets and applied to the dealt amount before HP is reduced. `Immune` short-
+/// circuits the damage entirely (and any dependent side-effects, like
+/// concentration checks); `Resistant` halves (round down per 5e); `Vulnerable`
+/// doubles. Multiple sources of the same direction don't stack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DamageModifier {
+    Normal,
+    Resistant,
+    Immune,
+    Vulnerable,
+}
+
+impl DamageModifier {
+    /// Apply this modifier to a raw damage amount. Resistance halves
+    /// (5e: round down via integer divide), immunity zeros, vulnerability
+    /// doubles (saturating).
+    pub fn apply(self, amount: u32) -> u32 {
+        match self {
+            DamageModifier::Normal => amount,
+            DamageModifier::Resistant => amount / 2,
+            DamageModifier::Immune => 0,
+            DamageModifier::Vulnerable => amount.saturating_mul(2),
+        }
+    }
+
+    /// Short tag for log lines so the player can see *why* the damage
+    /// number changed. Empty for `Normal` so the common case stays quiet.
+    pub fn log_suffix(self) -> &'static str {
+        match self {
+            DamageModifier::Normal => "",
+            DamageModifier::Resistant => " (resisted)",
+            DamageModifier::Immune => " (immune)",
+            DamageModifier::Vulnerable => " (vulnerable)",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Size {
     Tiny,

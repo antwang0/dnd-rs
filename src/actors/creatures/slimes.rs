@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::ACID_SPIT;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::Size;
+use crate::engine::types::{DamageType, Size};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -37,5 +37,11 @@ pub static SLIME_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
+        // Acid runs off acid; piercing / slashing dealt to a blob barely
+        // registers (the body just reforms). Vulnerable to fire — heat
+        // dries them out fast.
+        damage_resistances: HashSet::from([DamageType::Piercing, DamageType::Slashing]),
+        damage_immunities: HashSet::from([DamageType::Acid]),
+        damage_vulnerabilities: HashSet::from([DamageType::Fire]),
     }
 });

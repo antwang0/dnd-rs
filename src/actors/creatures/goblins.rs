@@ -35,5 +35,8 @@ pub static GOBLIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
+        damage_resistances: HashSet::new(),
+        damage_immunities: HashSet::new(),
+        damage_vulnerabilities: HashSet::new(),
     }
 });

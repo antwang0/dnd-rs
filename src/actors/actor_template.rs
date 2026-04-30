@@ -72,7 +72,7 @@ pub enum HealOutcome {
     NoOp,
 }
 use crate::engine::side_effects::Resource;
-use crate::engine::types::Coordinate;
+use crate::engine::types::{Coordinate, DamageModifier, DamageType};
 use crate::items::item_template::{Item, ItemBonuses};
 use crate::{
     actions::action_template::Action,
@@ -120,6 +120,15 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Damage types this creature takes half damage from (5e Resistance).
+    /// Skeletons resist piercing, fiends resist nonmagical bludgeoning, etc.
+    pub damage_resistances: HashSet<DamageType>,
+    /// Damage types this creature takes zero damage from (5e Immunity).
+    /// Undead poison immunity is the canonical example.
+    pub damage_immunities: HashSet<DamageType>,
+    /// Damage types that double up on this creature (5e Vulnerability).
+    /// Skeletons in MM are vulnerable to bludgeoning.
+    pub damage_vulnerabilities: HashSet<DamageType>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -287,6 +296,12 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    /// Damage types halved against this actor.
+    damage_resistances: HashSet<DamageType>,
+    /// Damage types nullified against this actor.
+    damage_immunities: HashSet<DamageType>,
+    /// Damage types doubled against this actor.
+    damage_vulnerabilities: HashSet<DamageType>,
 }
 
 impl ActorInstance {
@@ -353,7 +368,26 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            damage_resistances: ct.damage_resistances.clone(),
+            damage_immunities: ct.damage_immunities.clone(),
+            damage_vulnerabilities: ct.damage_vulnerabilities.clone(),
         })
+    }
+
+    /// Resolve the damage interaction for `damage_type`. Immunity wins
+    /// over vulnerability wins over resistance (matching 5e: a creature
+    /// immune to fire takes 0 even if also vulnerable, though that combo
+    /// is unusual). Default is `Normal`.
+    pub fn damage_modifier(&self, damage_type: DamageType) -> DamageModifier {
+        if self.damage_immunities.contains(&damage_type) {
+            DamageModifier::Immune
+        } else if self.damage_vulnerabilities.contains(&damage_type) {
+            DamageModifier::Vulnerable
+        } else if self.damage_resistances.contains(&damage_type) {
+            DamageModifier::Resistant
+        } else {
+            DamageModifier::Normal
+        }
     }
 
     pub fn rolls_death_saves(&self) -> bool {

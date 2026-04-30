@@ -3011,4 +3011,92 @@ mod tests {
         let enemy_count = next.actors.values().filter(|a| a.team() != 0).count();
         assert!(enemy_count > 0, "expected enemies on teams 1+");
     }
+
+    #[test]
+    fn damage_modifier_immunity_zeros_damage() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // Zombies are immune to poison.
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 999,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(
+            e.actors[&id].hitpoints(),
+            max,
+            "poison-immune zombie shouldn't lose HP"
+        );
+    }
+
+    #[test]
+    fn damage_modifier_resistance_halves_damage() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // Zombies resist necrotic (halved).
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 8,
+            damage_type: DamageType::Necrotic,
+        }
+        .apply(&mut e);
+        // 8 -> 4 after resistance.
+        assert_eq!(e.actors[&id].hitpoints(), max - 4);
+    }
+
+    #[test]
+    fn damage_modifier_vulnerability_doubles_damage() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // Skeletons vulnerable to bludgeoning.
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        // Use a small amount so doubling doesn't kill / saturate.
+        let amount = 3.min(max / 4).max(1);
+        DealDamage {
+            actor_id: id,
+            amount,
+            damage_type: DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max - amount * 2);
+    }
+
+    #[test]
+    fn damage_modifier_normal_unchanged() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // Zombie has no fire interaction → normal damage.
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Fire,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max - 4);
+    }
 }
