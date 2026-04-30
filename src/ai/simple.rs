@@ -69,7 +69,14 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 8. Nothing useful. End the turn.
+        // 8. Stalemate breaker: if we can't see anyone but there are
+        //    enemies alive, take one step in any walkable direction so
+        //    an LOS-blocked corner doesn't lock up the simulation.
+        if let Some(aei) = try_wander(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 9. Nothing useful. End the turn.
         skip_or_await(encounter, actor_id)
     }
 }
@@ -567,6 +574,35 @@ fn try_step_toward_lowest_hp(
     } else {
         None
     }
+}
+
+/// Step one walkable tile in any direction. Used as a stalemate breaker
+/// when step_toward_lowest_hp finds no path (e.g. footprint-adjacent
+/// across a wall) — taking *any* step is better than skipping forever.
+/// Picks the first valid 8-direction move in a deterministic order so
+/// the seeded RNG still drives the run.
+fn try_wander(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let move_action = actor.actions.iter().find(|a| a.name() == "move").copied()?;
+    let loc = actor.location();
+    // Spiral-ish ordering biases toward cardinal moves first so an
+    // archer whose corner is blocked tends to take a clean lateral step.
+    const STEPS: &[(isize, isize)] = &[
+        (1, 0), (-1, 0), (0, 1), (0, -1),
+        (1, 1), (-1, 1), (1, -1), (-1, -1),
+    ];
+    for (dx, dy) in STEPS {
+        let cand = Coordinate::new(loc.x + dx, loc.y + dy);
+        let aei =
+            ActionExecutionInfo::new(move_action, actor_id, None, Some(vec![cand]), None);
+        if aei.validate(encounter) {
+            return Some(aei);
+        }
+    }
+    None
 }
 
 /// Last-resort: invoke the actor's Skip action so the turn advances. If

@@ -2945,6 +2945,32 @@ mod tests {
     }
 
     #[test]
+    fn proficiency_bonus_scales_with_level() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // L1 fighter with CR 1 → +2 proficiency.
+        assert_eq!(e.actors[&id].proficiency_bonus(), 2);
+    }
+
+    #[test]
+    fn cleric_spell_save_dc_includes_proficiency() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // 8 + prof(2) + WIS_mod(14 → +2) = 12.
+        assert_eq!(
+            e.actors[&id].spell_save_dc(AbilityScoreType::Wisdom),
+            12
+        );
+    }
+
+    #[test]
     fn skeleton_takes_double_bludgeoning() {
         use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
         use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
