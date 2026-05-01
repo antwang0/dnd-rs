@@ -64,15 +64,17 @@ impl Action for Longbow {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::engine::types::AbilityScoreType;
         let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dex = caster.ability_score(crate::engine::types::AbilityScoreType::Dexterity);
+        let dex = caster.ability_score(AbilityScoreType::Dexterity);
         // Bows use DEX for both attack and damage in 5e (finesse / ranged).
-        let attack_bonus = modifier_from_score(dex);
+        // Attack roll includes proficiency via weapon_attack_bonus.
+        let attack_bonus = caster.weapon_attack_bonus(AbilityScoreType::Dexterity);
         let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
         else {
             return Vec::new();
@@ -312,10 +314,7 @@ impl Action for AcidSpit {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dex_mod = modifier_from_score(
-            caster.ability_score(AbilityScoreType::Dexterity),
-        );
-        let attack_bonus = dex_mod;
+        let attack_bonus = caster.weapon_attack_bonus(AbilityScoreType::Dexterity);
         let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
         else {
             return Vec::new();
@@ -499,15 +498,15 @@ impl Action for Shortbow {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::engine::types::AbilityScoreType;
         let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dex_mod = modifier_from_score(
-            caster.ability_score(crate::engine::types::AbilityScoreType::Dexterity),
-        );
+        let dex_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Dexterity));
+        let attack_bonus = caster.weapon_attack_bonus(AbilityScoreType::Dexterity);
         let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
         else {
             return Vec::new();
@@ -517,7 +516,7 @@ impl Action for Shortbow {
             caster_id,
             target_id,
             self.name(),
-            dex_mod,
+            attack_bonus,
             target_ac,
             Dice::new(1, 4),
             dex_mod,

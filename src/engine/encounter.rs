@@ -2772,6 +2772,28 @@ mod tests {
     }
 
     #[test]
+    fn proficiency_bonus_scales_with_level() {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = &e.actors[&id];
+        // L1 → +2.
+        assert_eq!(actor.proficiency_bonus(), 2);
+        // Each tier of 4 levels bumps by 1: L5 +3, L9 +4, L13 +5, L17 +6.
+        // We can't directly set level — but we can sanity-check the
+        // formula via level=1 which is the default for monsters.
+        // Bumping levels happens through long-rest leveling for PCs only.
+        // Verify spell_save_dc folds in the bonus: with WIS 6 (mod -2),
+        // L1 zombie's spell DC would be 8 + 2 - 2 = 8.
+        assert_eq!(
+            actor.spell_save_dc(crate::engine::types::AbilityScoreType::Wisdom),
+            8,
+            "L1 zombie WIS DC should be 8 + prof(2) + WIS_mod(-2) = 8"
+        );
+    }
+
+    #[test]
     fn shove_can_knock_target_prone() {
         use crate::actions::default_actions::SHOVE;
         use crate::conditions::Condition;

@@ -840,11 +840,11 @@ impl ActorInstance {
         }
     }
 
-    /// 5e spell save DC: 8 + spellcasting ability modifier (we don't track
-    /// proficiency yet; once we do, add it here). Actions that force saves
-    /// call this on the caster to set their DC.
+    /// 5e spell save DC: 8 + proficiency bonus + spellcasting ability
+    /// modifier. Actions that force saves call this on the caster to set
+    /// their DC.
     pub fn spell_save_dc(&self, ability: AbilityScoreType) -> i32 {
-        8 + modifier_from_score(self.ability_score(ability))
+        8 + self.proficiency_bonus() + modifier_from_score(self.ability_score(ability))
     }
 
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {
@@ -963,9 +963,25 @@ impl ActorInstance {
         }
     }
 
+    /// 5e proficiency bonus, derived from level. The official table:
+    /// L1-4 → +2, L5-8 → +3, L9-12 → +4, L13-16 → +5, L17-20 → +6.
+    /// Closed form: ((level - 1) / 4) + 2. Monsters use the same curve
+    /// (levels stuck at 1 → +2 across the board, which matches the MM's
+    /// CR-derived proficiency for low-CR creatures).
+    pub fn proficiency_bonus(&self) -> i32 {
+        ((self.level.saturating_sub(1)) / 4 + 2) as i32
+    }
+
     pub fn attack_bonus(&self) -> i32 {
-        // TODO: add proficiency bonus once it's tracked
-        modifier_from_score(self.strength)
+        modifier_from_score(self.strength) + self.proficiency_bonus()
+    }
+
+    /// Weapon attack-roll bonus using a non-default ability (e.g. DEX for
+    /// finesse / ranged weapons): ability modifier + proficiency bonus.
+    /// Use this from finesse / ranged actions instead of computing the
+    /// ability mod manually so proficiency stays in one place.
+    pub fn weapon_attack_bonus(&self, ability: AbilityScoreType) -> i32 {
+        modifier_from_score(self.ability_score(ability)) + self.proficiency_bonus()
     }
 
     pub fn damage_bonus(&self) -> i32 {
