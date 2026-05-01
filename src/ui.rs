@@ -340,6 +340,7 @@ pub fn render_sideinfo(
                 let label = match timer {
                     crate::conditions::ConditionTimer::Permanent => c.name().to_string(),
                     crate::conditions::ConditionTimer::Rounds(n) => format!("{}({})", c.name(), n),
+                    crate::conditions::ConditionTimer::UntilOwnTurn => format!("{}(turn)", c.name()),
                 };
                 (label, c.name())
             })

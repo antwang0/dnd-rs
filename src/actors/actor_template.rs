@@ -525,8 +525,9 @@ impl ActorInstance {
     }
 
     /// Decrement every `Rounds(n)` timer by 1 and report which conditions
-    /// expired (were removed because their timer hit 0). Permanent timers
-    /// are untouched. The engine calls this on every round-end.
+    /// expired (were removed because their timer hit 0). Permanent and
+    /// UntilOwnTurn timers are untouched here — UntilOwnTurn is cleared
+    /// by `reset_for_new_round`. The engine calls this on every round-end.
     pub fn tick_condition_timers(&mut self) -> Vec<Condition> {
         let mut expired = Vec::new();
         let snapshot: Vec<(Condition, ConditionTimer)> = self
@@ -536,7 +537,7 @@ impl ActorInstance {
             .collect();
         for (c, timer) in snapshot {
             match timer {
-                ConditionTimer::Permanent => {}
+                ConditionTimer::Permanent | ConditionTimer::UntilOwnTurn => {}
                 ConditionTimer::Rounds(0) | ConditionTimer::Rounds(1) => {
                     self.conditions.remove(&c);
                     expired.push(c);
@@ -547,6 +548,22 @@ impl ActorInstance {
             }
         }
         expired
+    }
+
+    /// Drop every condition tagged with `UntilOwnTurn`. Called from
+    /// `reset_for_new_round` so single-turn buffs like Dodge expire when
+    /// the holder's next turn starts. Returns the list cleared so the
+    /// engine can log them.
+    pub fn clear_until_own_turn_conditions(&mut self) -> Vec<Condition> {
+        let to_clear: Vec<Condition> = self
+            .conditions
+            .iter()
+            .filter_map(|(c, t)| matches!(t, ConditionTimer::UntilOwnTurn).then_some(*c))
+            .collect();
+        for c in &to_clear {
+            self.conditions.remove(c);
+        }
+        to_clear
     }
 
     pub fn glyph(&self) -> char {
@@ -574,12 +591,13 @@ impl ActorInstance {
     }
 
     pub fn can_consume_resource(&self, resource: Resource) -> bool {
-        // Stunned actors lose their entire action economy. Prone is NOT
-        // checked here for Movement: stand-up itself pays in Movement, so
-        // blocking the resource here would create a catch-22. Move-the-
-        // action is still blocked because `remaining_movement()` returns 0
-        // when Prone, which makes `path_cost_to` find no path.
+        // Stunned and Incapacitated both lose the action economy.
+        // Stunned additionally loses movement; Incapacitated keeps it.
+        // Prone is NOT checked here for Movement: stand-up itself pays in
+        // Movement, so blocking the resource here would create a catch-22.
+        // Move-the-action is still blocked via `remaining_movement()`.
         let stunned = self.has_condition(Condition::Stunned);
+        let incapacitated = stunned || self.has_condition(Condition::Incapacitated);
         match resource {
             Resource::Movement(amt) => {
                 if stunned {
@@ -588,15 +606,15 @@ impl ActorInstance {
                 amt <= self.movement
             }
             Resource::SpellSlot(spell_lvl) => {
-                if stunned {
+                if incapacitated {
                     return false;
                 }
                 self.spell_slot_manager.spell_slots(spell_lvl).spell_slots >= 1
             }
-            Resource::Action => !stunned && self.action_slots >= 1,
-            Resource::BonusAction => !stunned && self.bonus_action_slots >= 1,
-            Resource::Reaction => !stunned && self.reaction_slots >= 1,
-            Resource::LegendaryAction => !stunned && self.legendary_action_slots >= 1,
+            Resource::Action => !incapacitated && self.action_slots >= 1,
+            Resource::BonusAction => !incapacitated && self.bonus_action_slots >= 1,
+            Resource::Reaction => !incapacitated && self.reaction_slots >= 1,
+            Resource::LegendaryAction => !incapacitated && self.legendary_action_slots >= 1,
         }
     }
 
@@ -680,7 +698,14 @@ impl ActorInstance {
     }
 
     pub fn remaining_movement(&self) -> f32 {
-        if self.has_condition(Condition::Prone) || self.has_condition(Condition::Stunned) {
+        // Prone keeps movement zero so a path-cost search returns no path
+        // unless StandUp clears the condition first. Stunned/Restrained/
+        // Grappled all freeze speed at 0 in 5e.
+        if self.has_condition(Condition::Prone)
+            || self.has_condition(Condition::Stunned)
+            || self.has_condition(Condition::Restrained)
+            || self.has_condition(Condition::Grappled)
+        {
             return 0.0;
         }
         self.movement
@@ -720,6 +745,11 @@ impl ActorInstance {
         self.bonus_action_slots = 1;
         self.reaction_slots = 1;
         // TODO: legendary actions
+
+        // UntilOwnTurn buffs (Dodge, Help) expire when the holder's next
+        // turn begins. Clearing here keeps the timer model consistent —
+        // round-end ticking happens for the whole queue, not per actor.
+        self.clear_until_own_turn_conditions();
     }
 
     pub fn action_slots(&self) -> u32 {

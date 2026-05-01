@@ -241,6 +241,7 @@ impl ApplicableSideEffect for ApplyCondition {
             let suffix = match self.timer {
                 ConditionTimer::Permanent => String::new(),
                 ConditionTimer::Rounds(n) => format!(" ({} round{})", n, if n == 1 { "" } else { "s" }),
+                ConditionTimer::UntilOwnTurn => " (until next turn)".to_string(),
             };
             ei.log(format!("{} is now {}{}.", name, self.condition.name(), suffix));
         }
