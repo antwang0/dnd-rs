@@ -687,7 +687,12 @@ impl EncounterInstance {
                     .actions
                     .iter()
                     .find(|act| {
-                        matches!(act.targeting_schema(), TargetingSchema::SingleActor)
+                        // Must be a hostile melee attack — non-harmful
+                        // SingleActor actions (Help, Bless, healing) live
+                        // in the same action list and would otherwise be
+                        // mistaken for OA attacks.
+                        act.is_harmful()
+                            && matches!(act.targeting_schema(), TargetingSchema::SingleActor)
                             && act.reach_tiles().is_some_and(|r| r <= MELEE_REACH)
                     })
                     .copied()?;
