@@ -3213,6 +3213,79 @@ mod tests {
     }
 
     #[test]
+    fn cure_wounds_revives_dying_ally() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::actor_template::HpState;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Adjacent dying fighter (touch range).
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&fighter].max_hitpoints();
+        e.actors.get_mut(&fighter).unwrap().take_damage(max);
+        assert!(matches!(
+            e.actors[&fighter].hp_state(),
+            HpState::Dying { .. }
+        ));
+
+        let target_vec = vec![fighter];
+        let effects =
+            CURE_WOUNDS.side_effects(&mut e, cleric, Some(&target_vec), None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert!(
+            matches!(e.actors[&fighter].hp_state(), HpState::Active),
+            "fighter should be revived to Active"
+        );
+        assert!(e.actors[&fighter].hitpoints() > 0);
+    }
+
+    #[test]
+    fn magic_missile_emits_three_force_damage_effects() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::MAGIC_MISSILE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        let target_vec = vec![target];
+        let effects =
+            MAGIC_MISSILE.side_effects(&mut e, caster, Some(&target_vec), None, None);
+        // Three darts.
+        assert_eq!(effects.len(), 3);
+        // Each is force damage.
+        let before = e.actors[&target].hitpoints();
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        let after = e.actors[&target].hitpoints();
+        assert!(
+            before > after,
+            "magic missile should always deal damage (auto-hit)"
+        );
+        // Verify type by looking at the log lines.
+        assert!(
+            e.messages().iter().any(|m| m.contains("force")),
+            "magic missile log should mention force damage"
+        );
+        let _ = DamageType::Force;
+    }
+
+    #[test]
     fn ranged_attack_in_melee_imposes_disadvantage() {
         use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
         use crate::engine::dice::RollMode;
