@@ -398,7 +398,8 @@ impl EncounterInstance {
             return SaveOutcome::Fail;
         };
         let item_bonus = actor.item_save_bonus();
-        let modifier = modifier_from_score(actor.ability_score(ability)) + item_bonus;
+        let bless_bonus = actor.bless_bonus();
+        let modifier = modifier_from_score(actor.ability_score(ability)) + item_bonus + bless_bonus;
         let total = raw as i32 + modifier;
         let outcome = if total >= dc {
             SaveOutcome::Pass
@@ -406,8 +407,9 @@ impl EncounterInstance {
             SaveOutcome::Fail
         };
         let name = actor.name().to_string();
+        let bless_tag = if bless_bonus != 0 { " (bless)" } else { "" };
         self.log(format!(
-            "  {} {:?} save: 1d20({}){:+} = {} vs DC {}{} \u{2014} {}",
+            "  {} {:?} save: 1d20({}){:+} = {} vs DC {}{}{} \u{2014} {}",
             name,
             ability,
             raw,
@@ -415,6 +417,7 @@ impl EncounterInstance {
             total,
             dc,
             mode.log_suffix(),
+            bless_tag,
             if outcome.passed() { "pass" } else { "fail" }
         ));
         outcome
@@ -2681,6 +2684,75 @@ mod tests {
             !aei.validate(&e),
             "stand should not validate without Prone"
         );
+    }
+
+    #[test]
+    fn magic_missile_auto_hits_with_force_damage() {
+        use crate::actions::spells::MAGIC_MISSILE;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        let max = e.actors[&target].max_hitpoints();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*MAGIC_MISSILE,
+            cleric,
+            Some(vec![target]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        // 3 darts × (1d4+1) = 6..15 damage. Auto-hit: target HP must drop.
+        assert!(
+            e.actors[&target].hitpoints() < max,
+            "magic missile must always damage (auto-hit)"
+        );
+    }
+
+    #[test]
+    fn bless_starts_concentration_and_marks_target() {
+        use crate::actions::spells::BLESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*BLESS, cleric, Some(vec![ally]), None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&ally].has_condition(Condition::Blessed));
+        assert!(e.actors[&cleric].is_concentrating());
+    }
+
+    #[test]
+    fn blessed_actor_has_attack_bonus() {
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert_eq!(e.actors[&id].bless_bonus(), 0);
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Blessed, ConditionTimer::Rounds(10));
+        assert_eq!(e.actors[&id].bless_bonus(), 2);
     }
 
     #[test]

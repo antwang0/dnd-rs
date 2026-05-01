@@ -778,7 +778,13 @@ fn weapon_attack(
     let mode = encounter.compute_attack_mode(caster_id, target_id, is_melee);
     let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
     let is_crit = raw_attack == 20;
-    let attack_total = raw_attack + attack_bonus;
+    // Bless: +2 flat to attack rolls (we model the 1d4 as its average).
+    let bless_bonus = encounter
+        .actors
+        .get(&caster_id)
+        .map(|a| a.bless_bonus())
+        .unwrap_or(0);
+    let attack_total = raw_attack + attack_bonus + bless_bonus;
     // Crits auto-hit regardless of AC. Otherwise compare normally.
     let hit = is_crit || attack_total >= target_ac;
     let outcome = if is_crit {
@@ -788,14 +794,16 @@ fn weapon_attack(
     } else {
         "miss"
     };
+    let bless_tag = if bless_bonus != 0 { " (bless)" } else { "" };
     encounter.log(format!(
-        "  {}: 1d20({}){:+} = {} vs AC {}{} \u{2014} {}",
+        "  {}: 1d20({}){:+} = {} vs AC {}{}{} \u{2014} {}",
         action_name,
         raw_attack,
-        attack_bonus,
+        attack_bonus + bless_bonus,
         attack_total,
         target_ac,
         mode.log_suffix(),
+        bless_tag,
         outcome,
     ));
     if !hit {

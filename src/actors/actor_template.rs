@@ -966,4 +966,12 @@ impl ActorInstance {
     pub fn damage_bonus(&self) -> i32 {
         modifier_from_score(self.strength)
     }
+
+    /// Flat bonus this actor adds to attack rolls and saving throws from
+    /// the Blessed condition. We approximate the 5e Bless 1d4 with a flat
+    /// +2 (the average) so the math stays cheap and the engine doesn't
+    /// have to roll extra dice per attack. Returns 0 when not blessed.
+    pub fn bless_bonus(&self) -> i32 {
+        if self.has_condition(Condition::Blessed) { 2 } else { 0 }
+    }
 }
