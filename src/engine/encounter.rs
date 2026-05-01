@@ -3077,4 +3077,159 @@ mod tests {
         let enemy_count = next.actors.values().filter(|a| a.team() != 0).count();
         assert!(enemy_count > 0, "expected enemies on teams 1+");
     }
+
+    #[test]
+    fn skeleton_resists_via_template_modifier() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+
+        // Poison: immune → no HP change.
+        DealDamage {
+            actor_id: id,
+            amount: 100,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max, "poison should be immune");
+
+        // Bludgeoning: vulnerable → 4 → 8 damage applied.
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        assert!(
+            e.actors[&id].hitpoints() <= max.saturating_sub(8),
+            "vulnerable should double damage"
+        );
+    }
+
+    #[test]
+    fn dodging_grants_disadvantage_to_attackers() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Dodging, ConditionTimer::UntilOwnTurn);
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn helped_grants_advantage_then_clears_after_attack() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::SLAM;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Helped, ConditionTimer::UntilOwnTurn);
+        let target_vec = vec![target];
+        let _effects = SLAM.side_effects(&mut e, attacker, Some(&target_vec), None, None);
+        // Helped is consumed by the attack regardless of hit/miss.
+        assert!(!e.actors[&target].has_condition(Condition::Helped));
+    }
+
+    #[test]
+    fn disengage_skips_opportunity_attack() {
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        e.actors.get_mut(&mover_id).unwrap().set_disengaged(true);
+        let move_effect = MoveActor {
+            actor_id: mover_id,
+            path: vec![Coordinate::new(15, 5)],
+        };
+        move_effect.apply(&mut e);
+        // Disengaged movers don't trigger OAs — reactor still has reaction.
+        assert!(
+            e.actors[&reactor_id].can_consume_resource(Resource::Reaction),
+            "disengaged mover should not provoke OA"
+        );
+    }
+
+    #[test]
+    fn restrained_actor_cannot_move() {
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Restrained, ConditionTimer::Permanent);
+        assert_eq!(e.actors[&id].remaining_movement(), 0.0);
+    }
+
+    #[test]
+    fn incapacitated_loses_actions_keeps_movement() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Incapacitated, ConditionTimer::Permanent);
+        assert!(!e.actors[&id].can_consume_resource(Resource::Action));
+        assert!(!e.actors[&id].can_consume_resource(Resource::BonusAction));
+        assert!(!e.actors[&id].can_consume_resource(Resource::Reaction));
+        // Movement still allowed (Stunned would zero it, Incapacitated doesn't).
+        assert!(e.actors[&id].remaining_movement() > 0.0);
+    }
+
+    #[test]
+    fn until_own_turn_condition_cleared_on_reset() {
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Dodging, ConditionTimer::UntilOwnTurn);
+        assert!(e.actors[&id].has_condition(Condition::Dodging));
+        e.actors.get_mut(&id).unwrap().reset_for_new_round();
+        assert!(!e.actors[&id].has_condition(Condition::Dodging));
+    }
 }
