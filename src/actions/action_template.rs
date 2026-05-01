@@ -56,6 +56,15 @@ pub trait Action {
         true
     }
 
+    /// True for actions whose primary effect is restoring HP on the
+    /// target (Healing Word, Cure Wounds, drinking a potion). The AI's
+    /// support-heal pipeline picks among these — defaulting to false
+    /// keeps non-heal "helpful" actions like Help / Bless / Dodge out
+    /// of that selection.
+    fn is_heal(&self) -> bool {
+        false
+    }
+
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,

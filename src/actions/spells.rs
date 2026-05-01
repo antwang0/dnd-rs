@@ -116,6 +116,10 @@ impl Action for HealingWord {
         false
     }
 
+    fn is_heal(&self) -> bool {
+        true
+    }
+
     fn cost(
         &self,
         _encounter: &EncounterInstance,
