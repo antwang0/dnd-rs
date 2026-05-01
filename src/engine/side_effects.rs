@@ -137,9 +137,30 @@ impl ApplicableSideEffect for DealDamage {
             return;
         };
         let name = actor.name().to_string();
-        let outcome = actor.take_damage(self.amount);
+        // 5e: resistance/vulnerability/immunity adjusts the incoming
+        // damage *before* HP is reduced. Log the modifier so players see
+        // why a 12-damage hit only landed 6.
+        let raw = self.amount;
+        let final_damage = actor.damage_taken(raw, self.damage_type);
+        let modifier_tag = if final_damage == 0 && raw > 0 {
+            Some("immune")
+        } else if final_damage < raw {
+            Some("resists")
+        } else if final_damage > raw {
+            Some("vulnerable")
+        } else {
+            None
+        };
+        let outcome = actor.take_damage(final_damage);
         let was_concentrating = actor.is_concentrating();
         // actor borrow ends here.
+
+        if let Some(tag) = modifier_tag {
+            ei.log(format!(
+                "  {} {} {:?} ({} -> {})",
+                name, tag, self.damage_type, raw, final_damage
+            ));
+        }
 
         match outcome {
             DamageOutcome::Downed => {
@@ -155,7 +176,9 @@ impl ApplicableSideEffect for DealDamage {
             }
             DamageOutcome::Reduced if was_concentrating => {
                 // 5e: take damage while concentrating → CON save vs DC max(10, dmg/2).
-                let dc = ((self.amount / 2) as i32).max(10);
+                // Use the *post-mitigation* damage for the DC so resisted
+                // hits don't disproportionately threaten concentration.
+                let dc = ((final_damage / 2) as i32).max(10);
                 let save = ei.roll_save(
                     self.actor_id,
                     crate::engine::types::AbilityScoreType::Constitution,

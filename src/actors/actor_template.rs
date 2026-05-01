@@ -72,7 +72,7 @@ pub enum HealOutcome {
     NoOp,
 }
 use crate::engine::side_effects::Resource;
-use crate::engine::types::Coordinate;
+use crate::engine::types::{Coordinate, DamageType};
 use crate::items::item_template::{Item, ItemBonuses};
 use crate::{
     actions::action_template::Action,
@@ -120,6 +120,16 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Damage types this creature takes half damage from (5e Resistance).
+    /// Skeletons resist Bludgeoning, dragons resist their breath element,
+    /// etc. Empty for no resistances.
+    pub resistances: HashSet<DamageType>,
+    /// Damage types this creature takes double damage from (5e Vulnerability).
+    /// Zombies/skeletons typically vulnerable to Bludgeoning (fragile bones).
+    pub vulnerabilities: HashSet<DamageType>,
+    /// Damage types this creature ignores entirely (5e Immunity). Undead
+    /// are typically immune to Poison; constructs to many types.
+    pub immunities: HashSet<DamageType>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -287,6 +297,13 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    /// 5e damage modifiers (resistance/vulnerability/immunity). See
+    /// `damage_taken` for the application order: immunity → 0, then
+    /// resistance halves, then vulnerability doubles. Resistance and
+    /// vulnerability cancel (5e RAW: ".. don't add up").
+    resistances: HashSet<DamageType>,
+    vulnerabilities: HashSet<DamageType>,
+    immunities: HashSet<DamageType>,
 }
 
 impl ActorInstance {
@@ -353,7 +370,41 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            resistances: ct.resistances.clone(),
+            vulnerabilities: ct.vulnerabilities.clone(),
+            immunities: ct.immunities.clone(),
         })
+    }
+
+    /// Apply 5e damage modifiers (resistance / vulnerability / immunity)
+    /// to a raw damage amount. Order per RAW: immunity zeroes; resistance
+    /// halves (round down); vulnerability doubles. Resistance and
+    /// vulnerability for the same type cancel — 5e treats them as not
+    /// stacking, so the effective multiplier is 1×.
+    pub fn damage_taken(&self, raw: u32, damage_type: DamageType) -> u32 {
+        if self.immunities.contains(&damage_type) {
+            return 0;
+        }
+        let resists = self.resistances.contains(&damage_type);
+        let vulnerable = self.vulnerabilities.contains(&damage_type);
+        match (resists, vulnerable) {
+            (true, false) => raw / 2,
+            (false, true) => raw.saturating_mul(2),
+            // (true, true) cancels per 5e; (false, false) is normal.
+            _ => raw,
+        }
+    }
+
+    pub fn resistances(&self) -> &HashSet<DamageType> {
+        &self.resistances
+    }
+
+    pub fn vulnerabilities(&self) -> &HashSet<DamageType> {
+        &self.vulnerabilities
+    }
+
+    pub fn immunities(&self) -> &HashSet<DamageType> {
+        &self.immunities
     }
 
     pub fn rolls_death_saves(&self) -> bool {
