@@ -295,9 +295,12 @@ impl EncounterInstance {
     /// Compute the attack-roll mode given attacker / target conditions.
     /// 5e clauses we model today:
     /// - Attacker Prone → disadvantage on all attacks.
-    /// - Attacker Poisoned → disadvantage.
+    /// - Attacker Poisoned/Blinded/Frightened/Charmed/Restrained → disadvantage.
+    /// - Attacker Invisible → advantage on their attacks.
+    /// - Ranged attacker with a hostile creature in melee reach → disadvantage.
     /// - Target Prone → melee attacks have advantage, ranged have disadvantage.
-    /// - Target Stunned → advantage on attacks vs them.
+    /// - Target Stunned/Restrained/Blinded/Invisible-target inversion →
+    ///   advantage to the attacker.
     ///
     /// Multiple sources of the same direction don't stack; opposing
     /// sources cancel via `RollMode::combine`.
@@ -307,14 +310,54 @@ impl EncounterInstance {
         target_id: usize,
         is_melee: bool,
     ) -> RollMode {
+        use crate::actions::action_template::MELEE_REACH;
         use crate::conditions::Condition;
         let mut mode = RollMode::Normal;
         if let Some(attacker) = self.actors.get(&attacker_id) {
-            if attacker.has_condition(Condition::Prone) {
-                mode = mode.combine(RollMode::Disadvantage);
+            for cond in [
+                Condition::Prone,
+                Condition::Poisoned,
+                Condition::Blinded,
+                Condition::Frightened,
+                Condition::Charmed,
+                Condition::Restrained,
+            ] {
+                if attacker.has_condition(cond) {
+                    mode = mode.combine(RollMode::Disadvantage);
+                    break;
+                }
             }
-            if attacker.has_condition(Condition::Poisoned) {
-                mode = mode.combine(RollMode::Disadvantage);
+            if attacker.has_condition(Condition::Invisible) {
+                mode = mode.combine(RollMode::Advantage);
+            }
+            // 5e ranged-in-melee: a hostile, non-incapacitated creature
+            // within 5ft (1 tile) of the shooter imposes disadvantage on
+            // ranged attacks. Stunned threats don't count.
+            if !is_melee {
+                let attacker_team = attacker.team();
+                let attacker_loc = attacker.location();
+                let attacker_size = get_tiles_from_size(attacker.size());
+                let threatened =
+                    self.actors.iter().any(|(other_id, other)| {
+                        if *other_id == attacker_id
+                            || other.team() == attacker_team
+                            || !other.is_combat_active()
+                            || other.has_condition(Condition::Stunned)
+                            || *other_id == target_id
+                        {
+                            return false;
+                        }
+                        let dist = footprint_chebyshev(
+                            attacker_loc,
+                            attacker_size,
+                            other.location(),
+                            get_tiles_from_size(other.size()),
+                        );
+                        dist <= MELEE_REACH
+                    });
+                if threatened {
+                    mode = mode.combine(RollMode::Disadvantage);
+                }
             }
         }
         if let Some(target) = self.actors.get(&target_id) {
@@ -325,29 +368,74 @@ impl EncounterInstance {
                     RollMode::Disadvantage
                 });
             }
-            if target.has_condition(Condition::Stunned) {
+            if target.has_condition(Condition::Stunned)
+                || target.has_condition(Condition::Restrained)
+                || target.has_condition(Condition::Blinded)
+            {
                 mode = mode.combine(RollMode::Advantage);
+            }
+            if target.has_condition(Condition::Invisible) {
+                mode = mode.combine(RollMode::Disadvantage);
             }
         }
         mode
     }
 
-    /// Compute the save-roll mode for an actor's ability save. Today
-    /// `Poisoned` imposes disadvantage on all saves derived from ability
-    /// checks (we conflate save-vs-check until we model that distinction).
+    /// Compute the save-roll mode for an actor's ability save.
+    /// 5e clauses we model today:
+    /// - Poisoned → disadvantage on ability-check-style saves (we conflate).
+    /// - Restrained → disadvantage on DEX saves.
+    /// - Frightened → disadvantage on all ability checks (and we extend to
+    ///   saves until we split check vs save).
+    /// - Stunned → auto-fail STR and DEX saves.
+    /// - Paralyzed-equivalent (we don't have it yet) would do the same;
+    ///   when we add it, plug it in here.
+    ///
+    /// Returns `Some(mode)` for advantage/disadv; `None` signals an
+    /// auto-fail short-circuit (caller treats as a failed save without
+    /// rolling).
     pub fn compute_save_mode(
         &self,
         actor_id: usize,
-        _ability: crate::engine::types::AbilityScoreType,
+        ability: crate::engine::types::AbilityScoreType,
     ) -> RollMode {
         use crate::conditions::Condition;
+        use crate::engine::types::AbilityScoreType;
         let mut mode = RollMode::Normal;
-        if let Some(actor) = self.actors.get(&actor_id)
-            && actor.has_condition(Condition::Poisoned)
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return mode;
+        };
+        if actor.has_condition(Condition::Poisoned)
+            || actor.has_condition(Condition::Frightened)
+        {
+            mode = mode.combine(RollMode::Disadvantage);
+        }
+        if actor.has_condition(Condition::Restrained)
+            && ability == AbilityScoreType::Dexterity
         {
             mode = mode.combine(RollMode::Disadvantage);
         }
         mode
+    }
+
+    /// True when a save by `actor_id` with `ability` should auto-fail
+    /// without rolling (e.g. Stunned auto-fails STR and DEX saves in 5e).
+    /// Save callsites consult this before rolling.
+    pub fn save_auto_fails(
+        &self,
+        actor_id: usize,
+        ability: crate::engine::types::AbilityScoreType,
+    ) -> bool {
+        use crate::conditions::Condition;
+        use crate::engine::types::AbilityScoreType;
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return false;
+        };
+        actor.has_condition(Condition::Stunned)
+            && matches!(
+                ability,
+                AbilityScoreType::Strength | AbilityScoreType::Dexterity
+            )
     }
 
     /// Roll a saving throw for `actor_id` against `dc` using `ability`.
@@ -361,6 +449,19 @@ impl EncounterInstance {
     ) -> crate::engine::saves::SaveOutcome {
         use crate::engine::saves::SaveOutcome;
         use crate::engine::util::modifier_from_score;
+
+        if self.save_auto_fails(actor_id, ability) {
+            let name = self
+                .actors
+                .get(&actor_id)
+                .map(|a| a.name().to_string())
+                .unwrap_or_else(|| format!("actor#{}", actor_id));
+            self.log(format!(
+                "  {} {:?} save: auto-fail (incapacitated)",
+                name, ability
+            ));
+            return SaveOutcome::Fail;
+        }
 
         let mode = self.compute_save_mode(actor_id, ability);
         let raw = self.roll_d20_with_mode(mode);

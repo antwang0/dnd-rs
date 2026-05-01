@@ -3,23 +3,36 @@
 /// while `Prone`; `can_consume_resource` blocks Action/BonusAction/Reaction
 /// while `Stunned`). New variants land here and then plug into the
 /// relevant accessor — no central dispatcher.
-///
-/// Durations aren't tracked yet: conditions persist until something
-/// explicitly removes them via `RemoveCondition`. Round-tracked durations
-/// (e.g. "stunned for 1 round") need a turn-end hook the engine doesn't
-/// have yet; deferred.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Condition {
     /// Speed = 0; ranged attacks against you have disadvantage; melee
     /// against you have advantage; you have disadvantage on attacks.
-    /// Today only the speed clause is wired.
     Prone,
     /// Cannot take Actions, Bonus Actions, or Reactions. Movement is also
     /// 0 (in 5e via Incapacitated, but we collapse for simplicity).
     Stunned,
-    /// Disadvantage on attack rolls and ability checks. Marker only today
-    /// (no advantage/disadvantage system yet).
+    /// Disadvantage on attack rolls and ability checks.
     Poisoned,
+    /// Can't see — auto-fail any check requiring sight, attacks against
+    /// have advantage, attacks made have disadvantage.
+    Blinded,
+    /// Speed = 0; attacks against have advantage; you have disadvantage on
+    /// attacks and DEX saves. Same speed clause as Prone (folded into
+    /// `remaining_movement`).
+    Restrained,
+    /// Disadvantage on attacks and ability checks while you can see the
+    /// source of fear (we conflate to "always, while frightened" — no
+    /// per-source line-of-sight tracking yet).
+    Frightened,
+    /// You can't take attacks of opportunity vs your charmer; you have
+    /// disadvantage on attacks against them. Marker only today — we apply
+    /// the disadvantage clause globally rather than per-charmer because
+    /// our combat doesn't model the source of charm.
+    Charmed,
+    /// Attacks against have disadvantage; attacks you make have advantage.
+    /// (5e RAW also requires "the creature cannot see you," which we
+    /// conflate to plain Invisible since our LOS is binary.)
+    Invisible,
 }
 
 impl Condition {
@@ -28,6 +41,11 @@ impl Condition {
             Condition::Prone => "prone",
             Condition::Stunned => "stunned",
             Condition::Poisoned => "poisoned",
+            Condition::Blinded => "blinded",
+            Condition::Restrained => "restrained",
+            Condition::Frightened => "frightened",
+            Condition::Charmed => "charmed",
+            Condition::Invisible => "invisible",
         }
     }
 }
