@@ -137,9 +137,21 @@ impl ApplicableSideEffect for DealDamage {
             return;
         };
         let name = actor.name().to_string();
-        let outcome = actor.take_damage(self.amount);
+        // Apply per-type damage modifiers (resistance/vulnerability/immunity)
+        // before the HP delta. Logged inline so the reader sees
+        // "Skeleton resistant to piercing: 7 → 3".
+        let (adjusted, modifier_label) =
+            actor.apply_damage_modifier(self.amount, self.damage_type);
+        let outcome = actor.take_damage(adjusted);
         let was_concentrating = actor.is_concentrating();
         // actor borrow ends here.
+
+        if let Some(label) = modifier_label {
+            ei.log(format!(
+                "  {} is {} to {:?}: {} \u{2192} {}",
+                name, label, self.damage_type, self.amount, adjusted
+            ));
+        }
 
         match outcome {
             DamageOutcome::Downed => {
@@ -153,9 +165,11 @@ impl ApplicableSideEffect for DealDamage {
                 // drop concentration before the actor is gone.
                 ei.drop_concentration(self.actor_id);
             }
-            DamageOutcome::Reduced if was_concentrating => {
+            DamageOutcome::Reduced if was_concentrating && adjusted > 0 => {
                 // 5e: take damage while concentrating → CON save vs DC max(10, dmg/2).
-                let dc = ((self.amount / 2) as i32).max(10);
+                // Use the post-modifier amount; immune damage doesn't trigger
+                // a concentration check at all (no damage actually landed).
+                let dc = ((adjusted / 2) as i32).max(10);
                 let save = ei.roll_save(
                     self.actor_id,
                     crate::engine::types::AbilityScoreType::Constitution,

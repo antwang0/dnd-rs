@@ -775,10 +775,19 @@ fn weapon_attack(
     damage_type: DamageType,
     is_melee: bool,
 ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+    use crate::conditions::Condition;
     let mode = encounter.compute_attack_mode(caster_id, target_id, is_melee);
     let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
     let is_crit = raw_attack == 20;
-    let attack_total = raw_attack + attack_bonus;
+    // Bless adds a 1d4 to the attack roll for the attacker (5e: actually
+    // the buff is on the attacker, not the target). Roll once per attack
+    // through the seedable roller so reproducibility is preserved.
+    let blessed = encounter
+        .actors
+        .get(&caster_id)
+        .is_some_and(|a| a.has_condition(Condition::Blessed));
+    let bless_bonus = if blessed { encounter.roll(&Dice::new(1, 4)) as i32 } else { 0 };
+    let attack_total = raw_attack + attack_bonus + bless_bonus;
     // Crits auto-hit regardless of AC. Otherwise compare normally.
     let hit = is_crit || attack_total >= target_ac;
     let outcome = if is_crit {
@@ -788,16 +797,28 @@ fn weapon_attack(
     } else {
         "miss"
     };
+    let bless_suffix = if blessed {
+        format!(" + bless({})", bless_bonus)
+    } else {
+        String::new()
+    };
     encounter.log(format!(
-        "  {}: 1d20({}){:+} = {} vs AC {}{} \u{2014} {}",
+        "  {}: 1d20({}){:+}{} = {} vs AC {}{} \u{2014} {}",
         action_name,
         raw_attack,
         attack_bonus,
+        bless_suffix,
         attack_total,
         target_ac,
         mode.log_suffix(),
         outcome,
     ));
+    // Helped is single-shot — consume on the next attack against the helped
+    // target whether it hit or missed (5e RAW: the d20 itself, advantage was
+    // granted regardless of outcome).
+    if let Some(target) = encounter.actors.get_mut(&target_id) {
+        target.remove_condition(Condition::Helped);
+    }
     if !hit {
         return Vec::new();
     }

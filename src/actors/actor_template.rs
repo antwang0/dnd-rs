@@ -72,7 +72,7 @@ pub enum HealOutcome {
     NoOp,
 }
 use crate::engine::side_effects::Resource;
-use crate::engine::types::Coordinate;
+use crate::engine::types::{Coordinate, DamageType};
 use crate::items::item_template::{Item, ItemBonuses};
 use crate::{
     actions::action_template::Action,
@@ -84,6 +84,18 @@ use crate::{
 use std::collections::{HashMap, HashSet};
 
 use std::error::Error;
+
+/// 5e damage modifier for a single damage type. Resistance halves the
+/// incoming amount (rounded down); Vulnerability doubles it; Immunity
+/// nullifies. The numeric values double as multipliers in the damage
+/// pipeline, but `DealDamage::apply` treats the enum explicitly so the
+/// resistance log line names the effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DamageModifier {
+    Vulnerable,
+    Resistant,
+    Immune,
+}
 
 pub struct CreatureTemplate {
     pub name: &'static str,
@@ -120,6 +132,11 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Per-damage-type modifiers applied in `DealDamage::apply` before
+    /// the HP delta. Empty = no modifiers. Example: a Skeleton would set
+    /// Bludgeoning -> Vulnerable and Poison -> Immune. Omit a damage type
+    /// to leave it at normal.
+    pub damage_modifiers: HashMap<DamageType, DamageModifier>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -287,6 +304,10 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    /// Per-damage-type modifiers (Resistant / Vulnerable / Immune). Read
+    /// by `apply_damage_modifier` before HP changes. Empty for ordinary
+    /// flesh creatures.
+    damage_modifiers: HashMap<DamageType, DamageModifier>,
 }
 
 impl ActorInstance {
@@ -353,7 +374,26 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            damage_modifiers: ct.damage_modifiers.clone(),
         })
+    }
+
+    /// 5e damage-modifier resolution: Immune zeroes, Resistant halves
+    /// (rounded down), Vulnerable doubles. No modifier returns `amount`
+    /// unchanged. Returns `(adjusted_amount, modifier_label)`. The label
+    /// is `Some("immune"/"resistant"/"vulnerable")` when a modifier
+    /// applied so callers can log "(resistant: 6 → 3)".
+    pub fn apply_damage_modifier(
+        &self,
+        amount: u32,
+        damage_type: DamageType,
+    ) -> (u32, Option<&'static str>) {
+        match self.damage_modifiers.get(&damage_type).copied() {
+            Some(DamageModifier::Immune) => (0, Some("immune")),
+            Some(DamageModifier::Resistant) => (amount / 2, Some("resistant")),
+            Some(DamageModifier::Vulnerable) => (amount.saturating_mul(2), Some("vulnerable")),
+            None => (amount, None),
+        }
     }
 
     pub fn rolls_death_saves(&self) -> bool {
