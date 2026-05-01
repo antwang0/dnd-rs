@@ -2918,6 +2918,29 @@ mod tests {
     }
 
     #[test]
+    fn heal_respects_item_bonus_max_hp() {
+        use crate::items::item_template::AMULET_OF_HEALTH;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        actor.pickup_item(&AMULET_OF_HEALTH);
+        let max_with_amulet = actor.max_hitpoints();
+        // Take a chunk of damage so heal has room to fill.
+        let dmg = max_with_amulet / 2;
+        actor.take_damage(dmg);
+        // Heal a huge amount; should top out at the *amulet-boosted* max.
+        actor.heal(1_000);
+        assert_eq!(
+            actor.hitpoints(),
+            max_with_amulet,
+            "heal should cap at item-boosted max, not raw base HP"
+        );
+    }
+
+    #[test]
     fn heal_caps_at_max() {
         let mut e = ei_with_terrain(10, 10, &[]);
         let id = e
