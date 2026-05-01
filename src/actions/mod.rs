@@ -1,4 +1,5 @@
 pub mod action_template;
+pub mod attack;
 pub mod default_actions;
 pub mod item_actions;
 pub mod monster_attacks;
