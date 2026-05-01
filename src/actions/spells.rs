@@ -356,3 +356,233 @@ impl Action for HoldPerson {
 }
 
 pub static HOLD_PERSON: LazyLock<HoldPerson> = LazyLock::new(|| HoldPerson {});
+
+/// Fire Bolt — wizard cantrip. Ranged spell attack vs target AC; on hit,
+/// 1d10 fire. No spell slot consumed (cantrip). Range 24 tiles (~120ft).
+/// Uses INT for the spell-attack bonus.
+pub struct FireBolt {}
+
+impl Action for FireBolt {
+    fn name(&self) -> &str {
+        "fire bolt"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fb", "bolt"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let int_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Intelligence));
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+
+        crate::actions::monster_attacks::weapon_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            int_mod,
+            target_ac,
+            crate::engine::dice::Dice::new(1, 10),
+            0, // cantrips don't add the casting modifier to damage at low level
+            DamageType::Fire,
+            false, // ranged
+        )
+    }
+}
+
+pub static FIRE_BOLT: LazyLock<FireBolt> = LazyLock::new(|| FireBolt {});
+
+/// Magic Missile — level-1 spell. Three darts of force, each automatically
+/// hits a chosen creature for 1d4+1. No attack roll, no save, just damage —
+/// the only way to dodge is the Shield reaction (not yet modeled). Range
+/// 24 tiles. We allow a single target absorbing all 3 darts (RAW lets the
+/// caster split, but single-target is the most common play).
+pub struct MagicMissile {}
+
+impl Action for MagicMissile {
+    fn name(&self) -> &str {
+        "magic missile"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mm", "missile"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        // 3 darts × (1d4 + 1 force). Each dart rolls separately so the
+        // total damage variance is preserved.
+        const DARTS: u32 = 3;
+        let mut total: u32 = 0;
+        for i in 0..DARTS {
+            let raw = encounter.roll(&crate::engine::dice::Dice::new(1, 4));
+            let dart_dmg = raw + 1;
+            total = total.saturating_add(dart_dmg);
+            encounter.log(format!(
+                "  magic missile dart {}: 1d4({})+1 = {} force",
+                i + 1,
+                raw,
+                dart_dmg
+            ));
+        }
+        // Stack into one DealDamage so a single resistance / immunity
+        // check applies to the volley as a whole — matches 5e's "all
+        // missiles are one damage instance" interpretation under the
+        // sage advice on the Shield spell.
+        vec![Box::new(crate::engine::side_effects::DealDamage {
+            actor_id: target_id,
+            amount: total,
+            damage_type: DamageType::Force,
+        })]
+    }
+}
+
+pub static MAGIC_MISSILE: LazyLock<MagicMissile> = LazyLock::new(|| MagicMissile {});
+
+/// Bless — level-1 spell. Concentration. Target gets +1d4 to attack rolls
+/// and saving throws for 10 rounds. We currently target only one ally
+/// instead of the RAW three; multi-target is a future extension. Bless
+/// is a "helpful" action so the AI won't pick it as an attack.
+pub struct Bless {}
+
+impl Action for Bless {
+    fn name(&self) -> &str {
+        "bless"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bls"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(12)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::{ApplyCondition, StartConcentration};
+
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Blessed,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData {
+                    spell_name: "Bless".to_string(),
+                    conditions: vec![(target_id, Condition::Blessed)],
+                },
+            }),
+        ]
+    }
+}
+
+pub static BLESS: LazyLock<Bless> = LazyLock::new(|| Bless {});
