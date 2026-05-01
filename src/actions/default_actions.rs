@@ -1,5 +1,5 @@
 use crate::{
-    actions::action_template::TargetingSchema,
+    actions::action_template::{MELEE_REACH, TargetingSchema},
     engine::{side_effects::GiveResource, types::Coordinate},
 };
 use std::{collections::HashSet, sync::LazyLock};
@@ -349,5 +349,109 @@ impl Action for Disengage {
 
 pub static DISENGAGE: LazyLock<Disengage> = LazyLock::new(|| Disengage {});
 
-pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> =
-    LazyLock::new(|| vec![&*MOVE, &*DASH, &*SKIP, &*STAND_UP, &*DODGE, &*DISENGAGE]);
+/// Shove — 5e Action. Replace one of your attacks with a STR (Athletics)
+/// check vs target's STR (Athletics) or DEX (Acrobatics), target's choice.
+/// On success: knock prone. We approximate as a flat STR-vs-STR ability
+/// check (no proficiency, no skill bonus) — DC equals 8 + target STR mod
+/// so the contest math collapses to "attacker rolls vs DC." Can only be
+/// attempted in melee reach.
+pub struct Shove {}
+
+impl Action for Shove {
+    fn name(&self) -> &str {
+        "shove"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sh"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::Dice;
+        use crate::engine::side_effects::ApplyCondition;
+        use crate::engine::types::AbilityScoreType;
+        use crate::engine::util::modifier_from_score;
+
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let caster_name = caster.name().to_string();
+        // Target's STR mod sets the DC: 8 + target STR mod (collapsing the
+        // 5e opposed roll into a static DC for engine simplicity).
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return Vec::new();
+        };
+        let target_name = target.name().to_string();
+        let target_str_mod =
+            modifier_from_score(target.ability_score(AbilityScoreType::Strength));
+        let dc = 8 + target_str_mod;
+
+        let raw = encounter.roll(&Dice::new(1, 20)) as i32;
+        let total = raw + str_mod;
+        let success = total >= dc;
+        encounter.log(format!(
+            "  shove: {} 1d20({}){:+} = {} vs DC {} \u{2014} {}",
+            caster_name,
+            raw,
+            str_mod,
+            total,
+            dc,
+            if success { "topples" } else { "no effect" }
+        ));
+        if !success {
+            return Vec::new();
+        }
+        // Don't shove an already-prone target — adding the condition
+        // would log "is now prone" twice.
+        if encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| a.has_condition(Condition::Prone))
+        {
+            return Vec::new();
+        }
+        let _ = target_name; // log already used the name
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Prone,
+            timer: ConditionTimer::Permanent,
+        })]
+    }
+}
+
+pub static SHOVE: LazyLock<Shove> = LazyLock::new(|| Shove {});
+
+pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> = LazyLock::new(
+    || vec![&*MOVE, &*DASH, &*SKIP, &*STAND_UP, &*DODGE, &*DISENGAGE, &*SHOVE],
+);

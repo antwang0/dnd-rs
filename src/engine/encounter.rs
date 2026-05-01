@@ -2772,6 +2772,47 @@ mod tests {
     }
 
     #[test]
+    fn shove_can_knock_target_prone() {
+        use crate::actions::default_actions::SHOVE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // Use ogre vs zombie — ogre STR 19 (+4), zombie STR 13 (+1).
+        // DC = 8 + 1 = 9; attacker rolls d20 + 4 → 5 minimum, near-certain pass.
+        let attacker = e
+            .instantiate_creature(
+                &crate::actors::creatures::ogres::OGRE_TEMPLATE,
+                Coordinate::new(2, 2),
+                0,
+                0,
+            )
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 2), 1, 0)
+            .unwrap();
+        // Try several times to land at least one shove (occasional rolls
+        // of 1 with +4 = 5 < 9 fail; ~80% success).
+        let mut knocked = false;
+        for _ in 0..30 {
+            // Restore prone-clear state if we already toppled them.
+            e.actors.get_mut(&target).unwrap().remove_condition(Condition::Prone);
+            let aei = ActionExecutionInfo::new(&*SHOVE, attacker, Some(vec![target]), None, None);
+            if !aei.validate(&e) {
+                continue;
+            }
+            let effects = aei.execute(&mut e);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e.actors[&target].has_condition(Condition::Prone) {
+                knocked = true;
+                break;
+            }
+        }
+        assert!(knocked, "ogre +4 vs zombie DC 9 should land a shove in 30 tries");
+    }
+
+    #[test]
     fn dodge_applies_dodging_condition() {
         use crate::actions::default_actions::DODGE;
         use crate::conditions::Condition;
