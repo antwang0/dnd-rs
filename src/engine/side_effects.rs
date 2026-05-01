@@ -155,6 +155,12 @@ impl ApplicableSideEffect for DealDamage {
                 name, tag, self.damage_type, self.amount, adjusted
             ));
         }
+        // Immunity / resistance can drop adjusted to 0 — a 0-damage hit
+        // shouldn't transition a Stable actor into Dying. Bail before
+        // touching state.
+        if adjusted == 0 {
+            return;
+        }
         let Some(actor) = ei.get_actor(self.actor_id) else {
             return;
         };

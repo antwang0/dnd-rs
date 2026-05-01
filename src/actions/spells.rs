@@ -13,6 +13,74 @@ use crate::{
     },
 };
 
+/// Resolve a spell attack roll vs `target_id`'s AC. Logs the breakdown,
+/// rolls damage on hit (with crit-doubled dice on a nat-20), returns the
+/// queued `DealDamage` (or nothing on a miss). Centralized so single-target
+/// damaging spells (Guiding Bolt, Inflict Wounds, future spells) don't
+/// each re-implement attack-roll + crit + log glue.
+fn spell_attack(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    target_id: usize,
+    action_name: &str,
+    attack_bonus: i32,
+    damage_dice: Dice,
+    damage_type: DamageType,
+    is_melee: bool,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let target_ac = encounter
+        .actors
+        .get(&target_id)
+        .map(|a| a.armor_class() as i32)
+        .unwrap_or(10);
+    let mode = encounter.compute_attack_mode(caster_id, target_id, is_melee);
+    let raw = encounter.roll_d20_with_mode(mode) as i32;
+    let total = raw + attack_bonus;
+    let is_crit = raw == 20;
+    let hit = is_crit || total >= target_ac;
+    let outcome = if is_crit {
+        "CRIT!"
+    } else if hit {
+        "hit"
+    } else {
+        "miss"
+    };
+    encounter.log(format!(
+        "  {}: 1d20({}){:+} = {} vs AC {}{} \u{2014} {}",
+        action_name,
+        raw,
+        attack_bonus,
+        total,
+        target_ac,
+        mode.log_suffix(),
+        outcome,
+    ));
+    if !hit {
+        return Vec::new();
+    }
+    let dmg = encounter.roll(&damage_dice);
+    let crit_extra = if is_crit { encounter.roll(&damage_dice) } else { 0 };
+    let total_dmg = dmg + crit_extra;
+    encounter.log(format!(
+        "  {}: {}({}) = {} {:?}{}",
+        action_name,
+        damage_dice,
+        dmg,
+        total_dmg,
+        damage_type,
+        if is_crit {
+            format!(" (+{} crit)", crit_extra)
+        } else {
+            String::new()
+        }
+    ));
+    vec![Box::new(DealDamage {
+        actor_id: target_id,
+        amount: total_dmg,
+        damage_type,
+    })]
+}
+
 /// Sacred Flame — cleric cantrip. Range 60ft (24 tiles), DEX save vs the
 /// caster's WIS-based spell save DC. On fail: 1d8 radiant. On success:
 /// nothing (cantrips don't half-on-save). No spell slot consumed.
@@ -561,55 +629,16 @@ impl Action for GuidingBolt {
             return Vec::new();
         };
         let wis_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
-        let target_ac = encounter
-            .actors
-            .get(&target_id)
-            .map(|a| a.armor_class() as i32)
-            .unwrap_or(10);
-
-        // Spell attack roll, advantage/disadvantage from conditions.
-        let mode = encounter.compute_attack_mode(caster_id, target_id, false);
-        let raw = encounter.roll_d20_with_mode(mode) as i32;
-        let total = raw + wis_mod;
-        let is_crit = raw == 20;
-        let hit = is_crit || total >= target_ac;
-        encounter.log(format!(
-            "  guiding bolt: 1d20({}){:+} = {} vs AC {}{} \u{2014} {}",
-            raw,
+        spell_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
             wis_mod,
-            total,
-            target_ac,
-            mode.log_suffix(),
-            if is_crit {
-                "CRIT!"
-            } else if hit {
-                "hit"
-            } else {
-                "miss"
-            }
-        ));
-        if !hit {
-            return Vec::new();
-        }
-        let dmg_dice = Dice::new(4, 6);
-        let dmg = encounter.roll(&dmg_dice);
-        let crit_extra = if is_crit { encounter.roll(&dmg_dice) } else { 0 };
-        let total_dmg = dmg + crit_extra;
-        encounter.log(format!(
-            "  guiding bolt: 4d6({}) = {} radiant{}",
-            dmg,
-            total_dmg,
-            if is_crit {
-                format!(" (+{} crit)", crit_extra)
-            } else {
-                String::new()
-            }
-        ));
-        vec![Box::new(DealDamage {
-            actor_id: target_id,
-            amount: total_dmg,
-            damage_type: DamageType::Radiant,
-        })]
+            Dice::new(4, 6),
+            DamageType::Radiant,
+            false,
+        )
     }
 }
 
@@ -666,54 +695,16 @@ impl Action for InflictWounds {
             return Vec::new();
         };
         let wis_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
-        let target_ac = encounter
-            .actors
-            .get(&target_id)
-            .map(|a| a.armor_class() as i32)
-            .unwrap_or(10);
-
-        let mode = encounter.compute_attack_mode(caster_id, target_id, true);
-        let raw = encounter.roll_d20_with_mode(mode) as i32;
-        let total = raw + wis_mod;
-        let is_crit = raw == 20;
-        let hit = is_crit || total >= target_ac;
-        encounter.log(format!(
-            "  inflict wounds: 1d20({}){:+} = {} vs AC {}{} \u{2014} {}",
-            raw,
+        spell_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
             wis_mod,
-            total,
-            target_ac,
-            mode.log_suffix(),
-            if is_crit {
-                "CRIT!"
-            } else if hit {
-                "hit"
-            } else {
-                "miss"
-            }
-        ));
-        if !hit {
-            return Vec::new();
-        }
-        let dmg_dice = Dice::new(3, 10);
-        let dmg = encounter.roll(&dmg_dice);
-        let crit_extra = if is_crit { encounter.roll(&dmg_dice) } else { 0 };
-        let total_dmg = dmg + crit_extra;
-        encounter.log(format!(
-            "  inflict wounds: 3d10({}) = {} necrotic{}",
-            dmg,
-            total_dmg,
-            if is_crit {
-                format!(" (+{} crit)", crit_extra)
-            } else {
-                String::new()
-            }
-        ));
-        vec![Box::new(DealDamage {
-            actor_id: target_id,
-            amount: total_dmg,
-            damage_type: DamageType::Necrotic,
-        })]
+            Dice::new(3, 10),
+            DamageType::Necrotic,
+            true,
+        )
     }
 }
 
@@ -776,7 +767,9 @@ impl Action for Bane {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
+        // Cleric DC = 8 + spellcasting (WIS) modifier. Target rolls a CHA
+        // save against it.
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
 
         let save = encounter.roll_save(target_id, AbilityScoreType::Charisma, dc);
         if save.passed() {

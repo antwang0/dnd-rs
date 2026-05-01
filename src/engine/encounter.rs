@@ -332,7 +332,9 @@ impl EncounterInstance {
             }
             // 5e ranged-in-melee: a hostile, non-incapacitated creature
             // within 5ft (1 tile) of the shooter imposes disadvantage on
-            // ranged attacks. Stunned threats don't count.
+            // ranged attacks. Stunned threats don't count. Note the
+            // target *itself* counts — shooting an adjacent enemy still
+            // suffers the penalty in 5e.
             if !is_melee {
                 let attacker_team = attacker.team();
                 let attacker_loc = attacker.location();
@@ -343,7 +345,6 @@ impl EncounterInstance {
                             || other.team() == attacker_team
                             || !other.is_combat_active()
                             || other.has_condition(Condition::Stunned)
-                            || *other_id == target_id
                         {
                             return false;
                         }
