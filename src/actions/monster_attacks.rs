@@ -755,3 +755,11 @@ pub static ZOMBIE_MULTISLAM: LazyLock<Multiattack> = LazyLock::new(|| Multiattac
     count: 2,
 });
 
+/// Goblin Boss multiattack: 2 scimitar swings per Action. Standard 5e
+/// Goblin Boss "Multiattack" entry.
+pub static GOBLIN_BOSS_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double scimitar",
+    sub_attack: &*SCIMITAR,
+    count: 2,
+});
+

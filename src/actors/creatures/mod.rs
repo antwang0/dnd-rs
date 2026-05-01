@@ -1,5 +1,6 @@
 pub mod clerics;
 pub mod fighters;
+pub mod goblin_bosses;
 pub mod goblins;
 pub mod ogres;
 pub mod skeletons;

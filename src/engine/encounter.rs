@@ -1,4 +1,5 @@
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+use crate::actors::creatures::goblin_bosses::GOBLIN_BOSS_TEMPLATE;
 use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
@@ -1012,6 +1013,7 @@ impl EncounterInstance {
             &CLERIC_TEMPLATE,
             &SLIME_TEMPLATE,
             &GOBLIN_TEMPLATE,
+            &GOBLIN_BOSS_TEMPLATE,
             &OGRE_TEMPLATE,
             &WOLF_TEMPLATE,
         ]
@@ -2753,6 +2755,20 @@ mod tests {
             .unwrap()
             .add_condition(Condition::Blessed, ConditionTimer::Rounds(10));
         assert_eq!(e.actors[&id].bless_bonus(), 2);
+    }
+
+    #[test]
+    fn goblin_boss_has_multiattack_and_higher_ac() {
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&GOBLIN_BOSS_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = &e.actors[&id];
+        assert_eq!(actor.armor_class(), 17, "boss has chain shirt + shield");
+        assert!(
+            actor.actions.iter().any(|a| a.name() == "double scimitar"),
+            "boss should have multiattack"
+        );
     }
 
     #[test]
