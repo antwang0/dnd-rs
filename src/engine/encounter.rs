@@ -660,10 +660,14 @@ impl EncounterInstance {
         use crate::actions::action_template::{MELEE_REACH, TargetingSchema};
         use crate::engine::side_effects::Resource;
 
-        let (mover_team, mover_size) = match self.actors.get(&mover_id) {
-            Some(a) => (a.team(), get_tiles_from_size(a.size())),
+        let (mover_team, mover_size, mover_disengaged) = match self.actors.get(&mover_id) {
+            Some(a) => (a.team(), get_tiles_from_size(a.size()), a.is_disengaged()),
             None => return,
         };
+        // Disengaged movers don't provoke OAs this turn (5e Disengage action).
+        if mover_disengaged {
+            return;
+        }
 
         // Snapshot reactor candidates up-front — the loop body will mutate
         // self, which would conflict with holding an iterator into self.actors.

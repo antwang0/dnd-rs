@@ -308,6 +308,11 @@ pub struct ActorInstance {
     /// by `apply_damage_modifier` before HP changes. Empty for ordinary
     /// flesh creatures.
     damage_modifiers: HashMap<DamageType, DamageModifier>,
+    /// Set true by the Disengage action; cleared in `reset_for_new_round`.
+    /// While true, the OA dispatcher skips this actor when they leave a
+    /// threatened tile. Not a `Condition` because nothing else queries it
+    /// and "until next turn" is exactly the right scope.
+    disengaged: bool,
 }
 
 impl ActorInstance {
@@ -375,7 +380,16 @@ impl ActorInstance {
             level: 1,
             xp: 0,
             damage_modifiers: ct.damage_modifiers.clone(),
+            disengaged: false,
         })
+    }
+
+    pub fn is_disengaged(&self) -> bool {
+        self.disengaged
+    }
+
+    pub fn set_disengaged(&mut self, value: bool) {
+        self.disengaged = value;
     }
 
     /// 5e damage-modifier resolution: Immune zeroes, Resistant halves
@@ -790,6 +804,10 @@ impl ActorInstance {
         // turn begins. Clearing here keeps the timer model consistent —
         // round-end ticking happens for the whole queue, not per actor.
         self.clear_until_own_turn_conditions();
+        // Disengage is a single-turn marker — clear at the start of the
+        // next turn (matches the UntilOwnTurn condition lifecycle but
+        // sits on the actor's own state since OA dispatch reads it).
+        self.disengaged = false;
     }
 
     pub fn action_slots(&self) -> u32 {

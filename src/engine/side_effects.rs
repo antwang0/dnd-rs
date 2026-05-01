@@ -290,3 +290,22 @@ impl ApplicableSideEffect for SkipTurn {
         ei.skip_turn();
     }
 }
+
+/// Mark an actor as disengaged for this turn — the OA dispatcher will
+/// skip them when they leave a threatened tile. Cleared automatically by
+/// `ActorInstance::reset_for_new_round` on the actor's next turn start.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct SetDisengaged {
+    pub actor_id: usize,
+}
+
+impl ApplicableSideEffect for SetDisengaged {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        actor.set_disengaged(true);
+        let name = actor.name().to_string();
+        ei.log(format!("{} disengages.", name));
+    }
+}
