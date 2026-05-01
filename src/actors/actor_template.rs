@@ -304,6 +304,13 @@ pub struct ActorInstance {
     resistances: HashSet<DamageType>,
     vulnerabilities: HashSet<DamageType>,
     immunities: HashSet<DamageType>,
+    /// Turn-scoped flag set by the Disengage action. While true, the
+    /// actor's movement does not provoke opportunity attacks. Reset in
+    /// `reset_for_new_round` so it lasts at most one turn — same lifetime
+    /// as 5e's "until the end of your turn." We use a flag rather than a
+    /// condition because condition timers tick on round wrap, not on
+    /// turn end.
+    disengaged_this_turn: bool,
 }
 
 impl ActorInstance {
@@ -373,7 +380,16 @@ impl ActorInstance {
             resistances: ct.resistances.clone(),
             vulnerabilities: ct.vulnerabilities.clone(),
             immunities: ct.immunities.clone(),
+            disengaged_this_turn: false,
         })
+    }
+
+    pub fn is_disengaged(&self) -> bool {
+        self.disengaged_this_turn
+    }
+
+    pub fn set_disengaged(&mut self, value: bool) {
+        self.disengaged_this_turn = value;
     }
 
     /// Apply 5e damage modifiers (resistance / vulnerability / immunity)
@@ -778,6 +794,10 @@ impl ActorInstance {
         self.bonus_action_slots = 1;
         self.reaction_slots = 1;
         // TODO: legendary actions
+
+        // Disengage is a turn-scoped flag — reset on every turn start so
+        // it doesn't bleed past "until the end of your turn."
+        self.disengaged_this_turn = false;
     }
 
     pub fn action_slots(&self) -> u32 {

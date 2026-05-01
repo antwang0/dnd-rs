@@ -298,3 +298,21 @@ impl ApplicableSideEffect for SkipTurn {
         ei.skip_turn();
     }
 }
+
+/// Set the actor's `disengaged_this_turn` flag. Used by the Disengage
+/// action to suppress OAs from the rest-of-turn movement. The flag
+/// auto-clears on the actor's next `reset_for_new_round`, so the side
+/// effect itself doesn't have a removal counterpart — installing once
+/// per Disengage is enough.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct SetDisengaged {
+    pub actor_id: usize,
+}
+
+impl ApplicableSideEffect for SetDisengaged {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        if let Some(actor) = ei.get_actor(self.actor_id) {
+            actor.set_disengaged(true);
+        }
+    }
+}
