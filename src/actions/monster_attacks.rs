@@ -752,6 +752,153 @@ pub static ZOMBIE_MULTISLAM: LazyLock<Multiattack> = LazyLock::new(|| Multiattac
     count: 2,
 });
 
+/// Spider bite — DEX-based 1d6 piercing. On hit, target makes a CON save
+/// vs DC 11 or takes 2d6 poison damage (poison-save rider, separate from
+/// the bite damage roll).
+pub struct SpiderBite {}
+
+impl Action for SpiderBite {
+    fn name(&self) -> &str {
+        "spider bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sbite"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::engine::types::AbilityScoreType;
+
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dex_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Dexterity));
+        let attack_bonus = dex_mod;
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+        let mut effects = weapon_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            attack_bonus,
+            target_ac,
+            Dice::new(1, 6),
+            dex_mod,
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        // Poison rider: CON save DC 11 vs 2d6 poison.
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 11);
+        if !save.passed() {
+            let poison_dice = Dice::new(2, 6);
+            let poison_amt = encounter.roll(&poison_dice);
+            encounter.log(format!(
+                "  spider bite poison: 2d6({}) = {} poison",
+                poison_amt, poison_amt
+            ));
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: poison_amt,
+                damage_type: DamageType::Poison,
+            }));
+        }
+        effects
+    }
+}
+pub static SPIDER_BITE: LazyLock<SpiderBite> = LazyLock::new(|| SpiderBite {});
+
+/// Web — ranged action, no attack roll. Single target makes a DEX save
+/// vs DC 12 or is Restrained for 5 rounds (we don't model the actual
+/// web tile or escape-by-STR-check yet — the timer + condition is the
+/// 90% playable mechanic). Recharges every encounter is not modeled
+/// either; for now, treat as at-will via Action.
+pub struct Web {}
+
+impl Action for Web {
+    fn name(&self) -> &str {
+        "web"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wb"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft / 2.5 ft = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::ApplyCondition;
+        use crate::engine::types::AbilityScoreType;
+
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, 12);
+        if save.passed() {
+            return Vec::new();
+        }
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Restrained,
+            timer: ConditionTimer::Rounds(5),
+        })]
+    }
+}
+pub static WEB: LazyLock<Web> = LazyLock::new(|| Web {});
+
 /// Roll a d20 attack against `target_ac`, log the breakdown, and on a hit
 /// roll `damage_dice + damage_bonus` of `damage_type` against `target_id`.
 /// `is_melee` drives Prone-target advantage / ranged disadvantage clauses.

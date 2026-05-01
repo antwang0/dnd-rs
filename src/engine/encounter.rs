@@ -3,6 +3,7 @@ use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
 use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+use crate::actors::creatures::spiders::SPIDER_TEMPLATE;
 use crate::actors::creatures::wolves::WOLF_TEMPLATE;
 use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
 use std::collections::HashMap;
@@ -1079,6 +1080,7 @@ impl EncounterInstance {
             &GOBLIN_TEMPLATE,
             &OGRE_TEMPLATE,
             &WOLF_TEMPLATE,
+            &SPIDER_TEMPLATE,
         ]
     }
 
@@ -3284,6 +3286,35 @@ mod tests {
             "magic missile log should mention force damage"
         );
         let _ = DamageType::Force;
+    }
+
+    #[test]
+    fn web_restrains_target_on_failed_save() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::WEB;
+        use crate::actors::creatures::spiders::SPIDER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let spider = e
+            .instantiate_creature(&SPIDER_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 2), 0, 0)
+            .unwrap();
+        // Hit fighter with web until they fail the save (DC 12 vs DEX +1).
+        let target_vec = vec![fighter];
+        for _ in 0..50 {
+            let effects = WEB.side_effects(&mut e, spider, Some(&target_vec), None, None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            if e.actors[&fighter].has_condition(Condition::Restrained) {
+                return;
+            }
+        }
+        panic!("50 web casts and never landed Restrained — save logic broken?");
     }
 
     #[test]

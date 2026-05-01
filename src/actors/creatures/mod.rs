@@ -4,6 +4,7 @@ pub mod goblins;
 pub mod ogres;
 pub mod skeletons;
 pub mod slimes;
+pub mod spiders;
 pub mod wizards;
 pub mod wolves;
 pub mod zombies;
