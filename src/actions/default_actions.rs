@@ -358,7 +358,7 @@ impl Action for Help {
     }
 
     fn aliases(&self) -> Vec<&str> {
-        vec!["hp", "assist"]
+        vec!["hlp", "assist"]
     }
 
     fn targeting_schema(&self) -> TargetingSchema {
