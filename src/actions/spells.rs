@@ -18,6 +18,7 @@ use crate::{
 /// queued `DealDamage` (or nothing on a miss). Centralized so single-target
 /// damaging spells (Guiding Bolt, Inflict Wounds, future spells) don't
 /// each re-implement attack-roll + crit + log glue.
+#[allow(clippy::too_many_arguments)]
 fn spell_attack(
     encounter: &mut EncounterInstance,
     caster_id: usize,
