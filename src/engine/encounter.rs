@@ -294,10 +294,12 @@ impl EncounterInstance {
 
     /// Compute the attack-roll mode given attacker / target conditions.
     /// 5e clauses we model today:
-    /// - Attacker Prone → disadvantage on all attacks.
-    /// - Attacker Poisoned → disadvantage.
-    /// - Target Prone → melee attacks have advantage, ranged have disadvantage.
-    /// - Target Stunned → advantage on attacks vs them.
+    /// - Attacker Prone / Poisoned / Blinded / Frightened / Restrained →
+    ///   disadvantage on all attacks.
+    /// - Attacker Invisible → advantage on attacks (unseen attacker).
+    /// - Target Prone → melee has advantage, ranged has disadvantage.
+    /// - Target Stunned / Restrained / Blinded → advantage on attacks vs them.
+    /// - Target Dodging / Invisible → disadvantage on attacks vs them.
     ///
     /// Multiple sources of the same direction don't stack; opposing
     /// sources cancel via `RollMode::combine`.
@@ -310,11 +312,16 @@ impl EncounterInstance {
         use crate::conditions::Condition;
         let mut mode = RollMode::Normal;
         if let Some(attacker) = self.actors.get(&attacker_id) {
-            if attacker.has_condition(Condition::Prone) {
+            if attacker.has_condition(Condition::Prone)
+                || attacker.has_condition(Condition::Poisoned)
+                || attacker.has_condition(Condition::Blinded)
+                || attacker.has_condition(Condition::Frightened)
+                || attacker.has_condition(Condition::Restrained)
+            {
                 mode = mode.combine(RollMode::Disadvantage);
             }
-            if attacker.has_condition(Condition::Poisoned) {
-                mode = mode.combine(RollMode::Disadvantage);
+            if attacker.has_condition(Condition::Invisible) {
+                mode = mode.combine(RollMode::Advantage);
             }
         }
         if let Some(target) = self.actors.get(&target_id) {
@@ -325,27 +332,50 @@ impl EncounterInstance {
                     RollMode::Disadvantage
                 });
             }
-            if target.has_condition(Condition::Stunned) {
+            if target.has_condition(Condition::Stunned)
+                || target.has_condition(Condition::Restrained)
+                || target.has_condition(Condition::Blinded)
+            {
                 mode = mode.combine(RollMode::Advantage);
+            }
+            if target.has_condition(Condition::Dodging)
+                || target.has_condition(Condition::Invisible)
+            {
+                mode = mode.combine(RollMode::Disadvantage);
             }
         }
         mode
     }
 
-    /// Compute the save-roll mode for an actor's ability save. Today
-    /// `Poisoned` imposes disadvantage on all saves derived from ability
-    /// checks (we conflate save-vs-check until we model that distinction).
+    /// Compute the save-roll mode for an actor's ability save. 5e clauses
+    /// we model:
+    /// - Poisoned / Frightened → disadvantage on every save (we conflate
+    ///   save-vs-ability-check).
+    /// - Restrained → disadvantage on DEX saves specifically.
+    /// - Dodging → advantage on DEX saves until next turn.
     pub fn compute_save_mode(
         &self,
         actor_id: usize,
-        _ability: crate::engine::types::AbilityScoreType,
+        ability: crate::engine::types::AbilityScoreType,
     ) -> RollMode {
         use crate::conditions::Condition;
+        use crate::engine::types::AbilityScoreType;
         let mut mode = RollMode::Normal;
-        if let Some(actor) = self.actors.get(&actor_id)
-            && actor.has_condition(Condition::Poisoned)
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return mode;
+        };
+        if actor.has_condition(Condition::Poisoned)
+            || actor.has_condition(Condition::Frightened)
         {
             mode = mode.combine(RollMode::Disadvantage);
+        }
+        if ability == AbilityScoreType::Dexterity {
+            if actor.has_condition(Condition::Restrained) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+            if actor.has_condition(Condition::Dodging) {
+                mode = mode.combine(RollMode::Advantage);
+            }
         }
         mode
     }

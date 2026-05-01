@@ -680,7 +680,14 @@ impl ActorInstance {
     }
 
     pub fn remaining_movement(&self) -> f32 {
-        if self.has_condition(Condition::Prone) || self.has_condition(Condition::Stunned) {
+        // 5e: Prone halves speed via crawl (we zero for simplicity).
+        // Stunned/Restrained/Grappled all set speed to 0 explicitly per
+        // the conditions table.
+        if self.has_condition(Condition::Prone)
+            || self.has_condition(Condition::Stunned)
+            || self.has_condition(Condition::Restrained)
+            || self.has_condition(Condition::Grappled)
+        {
             return 0.0;
         }
         self.movement
