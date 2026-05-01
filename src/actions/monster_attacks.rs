@@ -752,6 +752,41 @@ pub static ZOMBIE_MULTISLAM: LazyLock<Multiattack> = LazyLock::new(|| Multiattac
     count: 2,
 });
 
+/// Parameters for a single weapon-style attack roll. Bundled into a struct
+/// so call sites at the action layer fill in named fields rather than
+/// passing 10 positional arguments.
+pub struct WeaponAttack<'a> {
+    pub caster_id: usize,
+    pub target_id: usize,
+    pub action_name: &'a str,
+    pub attack_bonus: i32,
+    pub target_ac: i32,
+    pub damage_dice: Dice,
+    pub damage_bonus: i32,
+    pub damage_type: DamageType,
+    pub is_melee: bool,
+}
+
+impl<'a> WeaponAttack<'a> {
+    pub fn resolve(
+        self,
+        encounter: &mut EncounterInstance,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        weapon_attack(
+            encounter,
+            self.caster_id,
+            self.target_id,
+            self.action_name,
+            self.attack_bonus,
+            self.target_ac,
+            self.damage_dice,
+            self.damage_bonus,
+            self.damage_type,
+            self.is_melee,
+        )
+    }
+}
+
 /// Roll a d20 attack against `target_ac`, log the breakdown, and on a hit
 /// roll `damage_dice + damage_bonus` of `damage_type` against `target_id`.
 /// `is_melee` drives Prone-target advantage / ranged disadvantage clauses.
@@ -762,7 +797,8 @@ pub static ZOMBIE_MULTISLAM: LazyLock<Multiattack> = LazyLock::new(|| Multiattac
 ///
 /// Returns the side-effect vec (empty on miss). Centralizes the pattern
 /// so every weapon-style attack logs in the same shape. Public so spell
-/// attack rolls (Fire Bolt, etc.) can share the helper.
+/// attack rolls (Fire Bolt, etc.) can share the helper. Prefer
+/// `WeaponAttack { ... }.resolve(encounter)` at call sites for clarity.
 #[allow(clippy::too_many_arguments)]
 pub fn weapon_attack(
     encounter: &mut EncounterInstance,
