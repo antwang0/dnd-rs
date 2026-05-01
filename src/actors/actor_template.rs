@@ -72,7 +72,7 @@ pub enum HealOutcome {
     NoOp,
 }
 use crate::engine::side_effects::Resource;
-use crate::engine::types::Coordinate;
+use crate::engine::types::{Coordinate, DamageType};
 use crate::items::item_template::{Item, ItemBonuses};
 use crate::{
     actions::action_template::Action,
@@ -120,6 +120,13 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Damage types this creature takes half from. `DealDamage::apply`
+    /// halves the amount (rounded down) before applying.
+    pub damage_resistances: HashSet<DamageType>,
+    /// Damage types this creature ignores entirely.
+    pub damage_immunities: HashSet<DamageType>,
+    /// Damage types this creature takes double from.
+    pub damage_vulnerabilities: HashSet<DamageType>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -287,6 +294,9 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    damage_resistances: HashSet<DamageType>,
+    damage_immunities: HashSet<DamageType>,
+    damage_vulnerabilities: HashSet<DamageType>,
 }
 
 impl ActorInstance {
@@ -353,6 +363,9 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            damage_resistances: ct.damage_resistances.clone(),
+            damage_immunities: ct.damage_immunities.clone(),
+            damage_vulnerabilities: ct.damage_vulnerabilities.clone(),
         })
     }
 
@@ -762,6 +775,37 @@ impl ActorInstance {
     /// call this on the caster to set their DC.
     pub fn spell_save_dc(&self, ability: AbilityScoreType) -> i32 {
         8 + modifier_from_score(self.ability_score(ability))
+    }
+
+    /// Apply this creature's resistance / immunity / vulnerability to
+    /// `amount` of `dt` damage. Order: immunity (zeroes out) > vulnerability
+    /// (doubles) > resistance (halves, rounded down). Returning the
+    /// adjusted amount lets callers log the original / final pair if they
+    /// care; today only `DealDamage` reads this.
+    pub fn apply_damage_modifiers(&self, amount: u32, dt: DamageType) -> u32 {
+        if self.damage_immunities.contains(&dt) {
+            return 0;
+        }
+        let mut adj = amount;
+        if self.damage_vulnerabilities.contains(&dt) {
+            adj = adj.saturating_mul(2);
+        }
+        if self.damage_resistances.contains(&dt) {
+            adj /= 2;
+        }
+        adj
+    }
+
+    pub fn is_immune_to(&self, dt: DamageType) -> bool {
+        self.damage_immunities.contains(&dt)
+    }
+
+    pub fn is_resistant_to(&self, dt: DamageType) -> bool {
+        self.damage_resistances.contains(&dt)
+    }
+
+    pub fn is_vulnerable_to(&self, dt: DamageType) -> bool {
+        self.damage_vulnerabilities.contains(&dt)
     }
 
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {

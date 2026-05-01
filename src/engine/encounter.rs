@@ -3112,4 +3112,125 @@ mod tests {
         let enemy_count = next.actors.values().filter(|a| a.team() != 0).count();
         assert!(enemy_count > 0, "expected enemies on teams 1+");
     }
+
+    #[test]
+    fn damage_immunity_zeroes_damage() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        // Zombies are immune to poison (set in template).
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 99,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(
+            e.actors[&id].hitpoints(),
+            before,
+            "poison-immune zombie should ignore damage"
+        );
+    }
+
+    #[test]
+    fn damage_resistance_halves_damage() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        // Slimes resist piercing (set in template).
+        let id = e
+            .instantiate_creature(&SLIME_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 8,
+            damage_type: DamageType::Piercing,
+        }
+        .apply(&mut e);
+        let after = e.actors[&id].hitpoints();
+        assert_eq!(before - after, 4, "slime should take half (4) of 8 piercing");
+    }
+
+    #[test]
+    fn damage_vulnerability_doubles_damage() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        // Skeletons are vulnerable to bludgeoning.
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 3,
+            damage_type: DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        let after = e.actors[&id].hitpoints();
+        assert_eq!(
+            before - after,
+            6,
+            "skeleton should take double (6) of 3 bludgeoning"
+        );
+    }
+
+    #[test]
+    fn stunned_save_auto_fails_str_dex() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Stunned, ConditionTimer::Permanent);
+
+        // STR / DEX saves auto-fail; CON saves still roll.
+        assert!(!e
+            .roll_save(id, AbilityScoreType::Strength, 1)
+            .passed());
+        assert!(!e
+            .roll_save(id, AbilityScoreType::Dexterity, 1)
+            .passed());
+        // CON 1 is below any plausible roll — passes.
+        assert!(e
+            .roll_save(id, AbilityScoreType::Constitution, 1)
+            .passed());
+    }
+
+    #[test]
+    fn ranged_attack_in_melee_imposes_disadvantage() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let shooter = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Adjacent zombie (different team) — counts as a melee threat.
+        let _zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Far target — the actual one we'd shoot at.
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(15, 5), 1, 1)
+            .unwrap();
+
+        let mode = e.compute_attack_mode(shooter, target, false);
+        assert_eq!(mode, RollMode::Disadvantage);
+    }
 }
