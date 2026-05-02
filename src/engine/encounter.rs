@@ -644,12 +644,23 @@ impl EncounterInstance {
         to: Coordinate,
     ) {
         use crate::actions::action_template::{MELEE_REACH, TargetingSchema};
+        use crate::conditions::Condition;
         use crate::engine::side_effects::Resource;
 
-        let (mover_team, mover_size) = match self.actors.get(&mover_id) {
-            Some(a) => (a.team(), get_tiles_from_size(a.size())),
+        let (mover_team, mover_size, disengaging) = match self.actors.get(&mover_id) {
+            Some(a) => (
+                a.team(),
+                get_tiles_from_size(a.size()),
+                a.has_condition(Condition::Disengaging),
+            ),
             None => return,
         };
+        // Disengaging mover: skip OA dispatch entirely. The marker is
+        // applied by the Disengage action and clears at the start of
+        // the holder's next turn.
+        if disengaging {
+            return;
+        }
 
         // Snapshot reactor candidates up-front — the loop body will mutate
         // self, which would conflict with holding an iterator into self.actors.
@@ -3056,5 +3067,126 @@ mod tests {
 
         let enemy_count = next.actors.values().filter(|a| a.team() != 0).count();
         assert!(enemy_count > 0, "expected enemies on teams 1+");
+    }
+
+    #[test]
+    fn dodge_grants_dex_save_advantage_and_attacker_disadvantage() {
+        use crate::actions::default_actions::DODGE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*DODGE, id, None, None, None);
+        assert!(aei.validate(&e), "dodge should validate at full action economy");
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&id].has_condition(Condition::Dodging));
+        let mode = e.compute_attack_mode(attacker, id, true);
+        assert!(matches!(mode, RollMode::Disadvantage));
+        let save_mode =
+            e.compute_save_mode(id, crate::engine::types::AbilityScoreType::Dexterity);
+        assert!(matches!(save_mode, RollMode::Advantage));
+    }
+
+    #[test]
+    fn disengage_skips_opportunity_attacks() {
+        use crate::actions::default_actions::DISENGAGE;
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Apply Disengaging directly (skips needing to pop prompt etc).
+        e.actors
+            .get_mut(&mover)
+            .unwrap()
+            .add_condition(crate::conditions::Condition::Disengaging,
+                crate::conditions::ConditionTimer::Rounds(1));
+        let move_effect = MoveActor {
+            actor_id: mover,
+            path: vec![Coordinate::new(15, 5)],
+        };
+        move_effect.apply(&mut e);
+        // Reactor's reaction should be intact — disengage skipped OAs.
+        assert!(
+            e.actors[&reactor].can_consume_resource(Resource::Reaction),
+            "reactor should not have spent reaction against a disengaging mover"
+        );
+    }
+
+    #[test]
+    fn help_grants_one_attack_advantage_and_consumes_marker() {
+        use crate::actions::default_actions::HELP;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // Two allies on team 0 right next to each other.
+        let helper = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let recipient = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 3), 0, 1)
+            .unwrap();
+        // Distant enemy so attacker→recipient distance check on Help passes.
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 3), 1, 0)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*HELP,
+            helper,
+            Some(vec![recipient]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e), "help on adjacent ally must validate");
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&recipient].has_condition(Condition::Helped));
+    }
+
+    #[test]
+    fn restrained_zeros_movement_and_imposes_attack_disadvantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Restrained, ConditionTimer::Permanent);
+        assert_eq!(e.actors[&id].remaining_movement(), 0.0);
+        // Attacker against restrained target gets advantage.
+        let mode = e.compute_attack_mode(attacker, id, true);
+        assert!(matches!(mode, RollMode::Advantage));
+        // Restrained attacker has disadvantage.
+        let mode2 = e.compute_attack_mode(id, attacker, true);
+        assert!(matches!(mode2, RollMode::Disadvantage));
+    }
+
+    #[test]
+    fn shielded_increases_armor_class_by_5() {
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base = e.actors[&id].armor_class();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Shielded, ConditionTimer::Rounds(1));
+        assert_eq!(e.actors[&id].armor_class(), base + 5);
     }
 }

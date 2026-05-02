@@ -273,12 +273,13 @@ fn try_support_heal(
     let actor = encounter.actors.get(&actor_id)?;
     let my_team = actor.team();
 
-    // Helpful actions only — `is_harmful=false` guards against ever
-    // picking an attack here. SingleActor schema so we can pick a target.
+    // Healing actions only — `heals=true` filters out Help / Bless /
+    // other buffs that don't actually restore HP. Pre-filtered to
+    // SingleActor so we can pick a target.
     let heal_actions: Vec<&'static (dyn Action + Send + Sync)> = actor
         .actions
         .iter()
-        .filter(|a| !a.is_harmful() && matches!(a.targeting_schema(), TargetingSchema::SingleActor))
+        .filter(|a| a.heals() && matches!(a.targeting_schema(), TargetingSchema::SingleActor))
         .copied()
         .collect();
     if heal_actions.is_empty() {

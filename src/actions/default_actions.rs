@@ -240,5 +240,179 @@ impl Action for StandUp {
 
 pub static STAND_UP: LazyLock<StandUp> = LazyLock::new(|| StandUp {});
 
+/// Dodge action — until the start of your next turn, attacks against you
+/// have disadvantage and you have advantage on DEX saves. Costs an Action;
+/// applies the `Dodging` marker with a Rounds(1) timer so it auto-clears
+/// on the next round wrap.
+pub struct Dodge {}
+
+impl Action for Dodge {
+    fn name(&self) -> &str {
+        "dodge"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dg"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::ApplyCondition;
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::Dodging,
+            timer: ConditionTimer::Rounds(1),
+        })]
+    }
+}
+pub static DODGE: LazyLock<Dodge> = LazyLock::new(|| Dodge {});
+
+/// Disengage action — until the start of your next turn, your movement
+/// does not provoke opportunity attacks. Costs an Action; applies the
+/// `Disengaging` marker with a Rounds(1) timer.
+pub struct Disengage {}
+
+impl Action for Disengage {
+    fn name(&self) -> &str {
+        "disengage"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["de"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::ApplyCondition;
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::Disengaging,
+            timer: ConditionTimer::Rounds(1),
+        })]
+    }
+}
+pub static DISENGAGE: LazyLock<Disengage> = LazyLock::new(|| Disengage {});
+
+/// Help action — pick an ally within 5 ft (1 tile gap). Their next attack
+/// roll has advantage. Applies the `Helped` marker (consumed on first
+/// attack roll). Helping a non-adjacent or hostile target is rejected
+/// at validate time.
+pub struct Help {}
+
+impl Action for Help {
+    fn name(&self) -> &str {
+        "help"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hp"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(tid) = target_ids.and_then(|v| v.first().copied()) else {
+            return false;
+        };
+        if tid == caster_id {
+            return false;
+        }
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        let Some(target) = encounter.actors.get(&tid) else {
+            return false;
+        };
+        // Same team only — and the recipient must be combat-active.
+        caster.team() == target.team() && target.is_combat_active()
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::ApplyCondition;
+        let Some(tid) = target_ids.and_then(|v| v.first().copied()) else {
+            return Vec::new();
+        };
+        // Help expires at the start of the recipient's next turn if not
+        // consumed by an attack — Rounds(1) on the timer handles that.
+        vec![Box::new(ApplyCondition {
+            actor_id: tid,
+            condition: Condition::Helped,
+            timer: ConditionTimer::Rounds(1),
+        })]
+    }
+}
+pub static HELP: LazyLock<Help> = LazyLock::new(|| Help {});
+
 pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> =
-    LazyLock::new(|| vec![&*MOVE, &*DASH, &*SKIP, &*STAND_UP]);
+    LazyLock::new(|| vec![&*MOVE, &*DASH, &*SKIP, &*STAND_UP, &*DODGE, &*DISENGAGE, &*HELP]);

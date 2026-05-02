@@ -56,6 +56,14 @@ pub trait Action {
         true
     }
 
+    /// True for actions that restore HP to a target. Lets the AI's
+    /// support pipeline pick "real" heals over buffs (Help, Bless, etc.)
+    /// when triaging a wounded ally — both are `is_harmful=false`, but
+    /// only `heals=true` actually closes the HP gap.
+    fn heals(&self) -> bool {
+        false
+    }
+
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
