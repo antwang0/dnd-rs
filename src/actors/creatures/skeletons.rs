@@ -40,5 +40,6 @@ pub static SKELETON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         immunities: HashSet::from([DamageType::Poison]),
         resistances: HashSet::new(),
         condition_immunities: HashSet::from([Condition::Poisoned]),
+        proficient_saves: HashSet::new(),
     }
 });

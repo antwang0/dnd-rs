@@ -33,6 +33,19 @@ pub fn modifier_from_score(score: u32) -> i32 {
     (score as i32 / 2) - 5
 }
 
+/// 5e proficiency bonus by level: levels 1-4 = +2, 5-8 = +3, 9-12 = +4,
+/// 13-16 = +5, 17+ = +6. Used for proficient saves, attack rolls,
+/// and spellcasting modifiers.
+pub fn proficiency_bonus_from_level(level: u32) -> i32 {
+    match level {
+        0..=4 => 2,
+        5..=8 => 3,
+        9..=12 => 4,
+        13..=16 => 5,
+        _ => 6,
+    }
+}
+
 /// Min Chebyshev gap (in tiles) between two square footprints. 0 means
 /// touching/overlapping; 1 means one tile of clear space between them, etc.
 /// Used everywhere "is X next to Y" matters — origin-to-origin distance gives
@@ -105,5 +118,16 @@ mod tests {
         assert_eq!(modifier_from_score(10), 0);
         assert_eq!(modifier_from_score(8), -1);
         assert_eq!(modifier_from_score(20), 5);
+    }
+
+    #[test]
+    fn proficiency_bonus_thresholds() {
+        assert_eq!(proficiency_bonus_from_level(1), 2);
+        assert_eq!(proficiency_bonus_from_level(4), 2);
+        assert_eq!(proficiency_bonus_from_level(5), 3);
+        assert_eq!(proficiency_bonus_from_level(9), 4);
+        assert_eq!(proficiency_bonus_from_level(13), 5);
+        assert_eq!(proficiency_bonus_from_level(17), 6);
+        assert_eq!(proficiency_bonus_from_level(99), 6);
     }
 }

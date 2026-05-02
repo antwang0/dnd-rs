@@ -415,7 +415,15 @@ impl EncounterInstance {
         };
         let item_bonus = actor.item_save_bonus();
         let cond_bonus = actor.condition_save_bonus();
-        let modifier = modifier_from_score(actor.ability_score(ability)) + item_bonus + cond_bonus;
+        let prof_bonus = if actor.is_save_proficient(ability) {
+            actor.proficiency_bonus()
+        } else {
+            0
+        };
+        let modifier = modifier_from_score(actor.ability_score(ability))
+            + item_bonus
+            + cond_bonus
+            + prof_bonus;
         let total = raw as i32 + modifier;
         let outcome = if total >= dc {
             SaveOutcome::Pass
@@ -2444,6 +2452,20 @@ mod tests {
         .apply(&mut e);
         // 1 bludgeoning becomes 2 with vulnerability.
         assert_eq!(e.actors.get(&id).map(|a| a.hitpoints()).unwrap_or(0), max - 2);
+    }
+
+    #[test]
+    fn fighter_is_strength_save_proficient() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&id].is_save_proficient(AbilityScoreType::Strength));
+        assert!(e.actors[&id].is_save_proficient(AbilityScoreType::Constitution));
+        assert!(!e.actors[&id].is_save_proficient(AbilityScoreType::Wisdom));
+        assert_eq!(e.actors[&id].proficiency_bonus(), 2);
     }
 
     #[test]

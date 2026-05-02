@@ -133,6 +133,11 @@ pub struct CreatureTemplate {
     /// e.g. Skeletons immune to Poisoned. `add_condition` short-circuits
     /// when the condition is in this set. Default empty.
     pub condition_immunities: HashSet<crate::conditions::Condition>,
+    /// Ability scores this creature is proficient in saves for. Saves
+    /// against these abilities add the proficiency bonus on top of the
+    /// ability modifier. 5e fighters are STR/CON-proficient, wizards
+    /// are INT/WIS-proficient, etc. Default empty (no saves proficient).
+    pub proficient_saves: HashSet<AbilityScoreType>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -307,6 +312,7 @@ pub struct ActorInstance {
     vulnerabilities: HashSet<crate::engine::types::DamageType>,
     immunities: HashSet<crate::engine::types::DamageType>,
     condition_immunities: HashSet<crate::conditions::Condition>,
+    proficient_saves: HashSet<AbilityScoreType>,
 }
 
 impl ActorInstance {
@@ -378,6 +384,7 @@ impl ActorInstance {
             vulnerabilities: ct.vulnerabilities.clone(),
             immunities: ct.immunities.clone(),
             condition_immunities: ct.condition_immunities.clone(),
+            proficient_saves: ct.proficient_saves.clone(),
         })
     }
 
@@ -466,6 +473,16 @@ impl ActorInstance {
 
     pub fn level(&self) -> u32 {
         self.level
+    }
+
+    /// 5e proficiency bonus, derived from level. Used by save and attack
+    /// roll modifiers when the actor is proficient in the relevant ability.
+    pub fn proficiency_bonus(&self) -> i32 {
+        crate::engine::util::proficiency_bonus_from_level(self.level)
+    }
+
+    pub fn is_save_proficient(&self, ability: AbilityScoreType) -> bool {
+        self.proficient_saves.contains(&ability)
     }
 
     pub fn xp(&self) -> u32 {
@@ -864,13 +881,6 @@ impl ActorInstance {
         }
     }
 
-    /// 5e spell save DC: 8 + spellcasting ability modifier (we don't track
-    /// proficiency yet; once we do, add it here). Actions that force saves
-    /// call this on the caster to set their DC.
-    pub fn spell_save_dc(&self, ability: AbilityScoreType) -> i32 {
-        8 + modifier_from_score(self.ability_score(ability))
-    }
-
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {
         match self.hp_state {
             HpState::Stable => {
@@ -997,11 +1007,20 @@ impl ActorInstance {
     }
 
     pub fn attack_bonus(&self) -> i32 {
-        // TODO: add proficiency bonus once it's tracked
-        modifier_from_score(self.strength)
+        // STR-based by default for melee weapons (slam / scimitar / bite).
+        // Proficiency bonus added because all weapon-wielding creatures
+        // we model are assumed proficient with their canonical weapon.
+        modifier_from_score(self.strength) + self.proficiency_bonus()
     }
 
     pub fn damage_bonus(&self) -> i32 {
         modifier_from_score(self.strength)
+    }
+
+    /// Spell save DC: 8 + spellcasting modifier + proficiency bonus.
+    /// Replaces the prior "no proficiency yet" stub on the public
+    /// `spell_save_dc` accessor.
+    pub fn spell_save_dc(&self, ability: AbilityScoreType) -> i32 {
+        8 + modifier_from_score(self.ability_score(ability)) + self.proficiency_bonus()
     }
 }

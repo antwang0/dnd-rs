@@ -39,5 +39,6 @@ pub static GOBLIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         vulnerabilities: HashSet::new(),
         immunities: HashSet::new(),
         condition_immunities: HashSet::new(),
+        proficient_saves: HashSet::new(),
     }
 });
