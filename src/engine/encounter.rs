@@ -3,6 +3,7 @@ use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
 use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
 use crate::actors::creatures::wolves::WOLF_TEMPLATE;
 use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
 use std::collections::HashMap;
@@ -1043,6 +1044,7 @@ impl EncounterInstance {
             &GOBLIN_TEMPLATE,
             &OGRE_TEMPLATE,
             &WOLF_TEMPLATE,
+            &WIZARD_TEMPLATE,
         ]
     }
 
@@ -2754,6 +2756,115 @@ mod tests {
         let lost_out = max_out - e.actors.get(&outside).map(|a| a.hitpoints()).unwrap_or(max_out);
         assert!(lost_a > 0 || lost_b > 0, "at least one in-radius zombie should be hurt");
         assert_eq!(lost_out, 0, "outside-radius zombie should be untouched");
+    }
+
+    #[test]
+    fn cure_wounds_heals_adjacent_ally_and_consumes_slot() {
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let healer = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Adjacent ally for the touch range. 2x2 footprint at (5,5) and (7,5)
+        // gives gap = 0 (touching).
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(7, 5), 0, 1)
+            .unwrap();
+        // Drop ally to 1 HP.
+        let max = e.actors[&ally].max_hitpoints();
+        e.actors.get_mut(&ally).unwrap().take_damage(max - 1);
+        let slots_before = e
+            .actors
+            .get(&healer)
+            .unwrap()
+            .spell_slot_manager
+            .spell_slots(1)
+            .spell_slots;
+
+        e.pop_prompt();
+        let aei =
+            ActionExecutionInfo::new(&*CURE_WOUNDS, healer, Some(vec![ally]), None, None);
+        assert!(aei.validate(&e), "cure wounds should validate on adj ally");
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(e.actors[&ally].hitpoints() > 1);
+        let slots_after = e
+            .actors
+            .get(&healer)
+            .unwrap()
+            .spell_slot_manager
+            .spell_slots(1)
+            .spell_slots;
+        assert_eq!(slots_after, slots_before - 1, "level-1 slot consumed");
+        // No SpellSlot resource left if the healer started with 3 — irrelevant
+        // here, but make sure Resource enum still serializes.
+        let _ = Resource::SpellSlot(1);
+    }
+
+    #[test]
+    fn magic_missile_auto_hits_and_consumes_slot() {
+        use crate::actions::spells::MAGIC_MISSILE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(10, 10),
+                1,
+                0,
+            )
+            .unwrap();
+        let target_max = e.actors[&target].max_hitpoints();
+
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*MAGIC_MISSILE,
+            wizard,
+            Some(vec![target]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e), "magic missile should validate within LOS+range");
+        e.push_action(aei);
+        e.process_stack();
+
+        // Magic Missile auto-hits — target must have lost HP.
+        assert!(
+            e.actors[&target].hitpoints() < target_max,
+            "magic missile should always damage"
+        );
+    }
+
+    #[test]
+    fn bless_applies_blessed_condition_and_starts_concentration() {
+        use crate::actions::spells::BLESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let caster = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(7, 5), 0, 1)
+            .unwrap();
+
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*BLESS, caster, Some(vec![ally]), None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(e.actors[&ally].has_condition(Condition::Blessed));
+        assert!(e.actors[&caster].is_concentrating());
     }
 
     #[test]

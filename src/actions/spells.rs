@@ -360,3 +360,242 @@ impl Action for HoldPerson {
 }
 
 pub static HOLD_PERSON: LazyLock<HoldPerson> = LazyLock::new(|| HoldPerson {});
+
+/// Cure Wounds — touch-range healing. Action + level-1 slot. Heals
+/// 1d8 + WIS modifier. Stronger per-cast than Healing Word but uses
+/// the Action slot so it can't pair with another Action attack.
+pub struct CureWounds {}
+
+impl Action for CureWounds {
+    fn name(&self) -> &str {
+        "cure wounds"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cw", "cure"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch — 5e melee reach.
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn is_heal(&self) -> bool {
+        true
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let wis_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
+        let raw = encounter.roll(&Dice::new(1, 8)) as i32;
+        let amount = (raw + wis_mod).max(1) as u32;
+        encounter.log(format!(
+            "  cure wounds: 1d8({}){:+} = {} HP",
+            raw, wis_mod, amount
+        ));
+        vec![Box::new(Heal {
+            actor_id: target_id,
+            amount,
+        })]
+    }
+}
+
+pub static CURE_WOUNDS: LazyLock<CureWounds> = LazyLock::new(|| CureWounds {});
+
+/// Magic Missile — auto-hitting force damage. Action + level-1 slot.
+/// Three darts, each dealing 1d4+1 force damage. Always hits — no
+/// attack roll. Targets the caster's chosen enemy (we don't yet split
+/// across multiple targets; future work). Range 120ft (~48 tiles).
+pub struct MagicMissile {}
+
+impl Action for MagicMissile {
+    fn name(&self) -> &str {
+        "magic missile"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mm", "missile"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(48)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::DealDamage;
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        // Three darts, each 1d4+1. Roll separately so the log shows each
+        // dart's contribution.
+        let mut total: u32 = 0;
+        for i in 1..=3 {
+            let raw = encounter.roll(&Dice::new(1, 4));
+            let dart = raw + 1;
+            total = total.saturating_add(dart);
+            encounter.log(format!("  magic missile dart {}: 1d4({})+1 = {}", i, raw, dart));
+        }
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: total,
+            damage_type: DamageType::Force,
+        })]
+    }
+}
+
+pub static MAGIC_MISSILE: LazyLock<MagicMissile> = LazyLock::new(|| MagicMissile {});
+
+/// Bless — concentration buff on a single ally for 10 rounds. Targeted
+/// ally gets advantage on saves and attack rolls (we approximate +d4 as
+/// a flat advantage flag via the Blessed condition). Action + level-1
+/// slot. Concentration: drops if the caster takes damage and fails a
+/// CON save, or hits 0 HP.
+pub struct Bless {}
+
+impl Action for Bless {
+    fn name(&self) -> &str {
+        "bless"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bs"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(12) // 30ft
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return false;
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return false;
+        };
+        // Bless only goes on allies (or self).
+        target.team() == caster.team() && target.is_combat_active()
+    }
+
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::{ApplyCondition, StartConcentration};
+
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Blessed,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData {
+                    spell_name: "Bless".to_string(),
+                    conditions: vec![(target_id, Condition::Blessed)],
+                },
+            }),
+        ]
+    }
+}
+
+pub static BLESS: LazyLock<Bless> = LazyLock::new(|| Bless {});
