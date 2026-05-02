@@ -3270,6 +3270,34 @@ mod tests {
     }
 
     #[test]
+    fn integration_disengage_dodge_round_trip() {
+        // End-to-end: disengage, then dodge — both flags set after each
+        // process_stack pass; both clear at next reset_for_new_round.
+        use crate::actions::default_actions::{DISENGAGE, DODGE};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*DISENGAGE, id, None, None, None);
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&id].is_disengaging());
+
+        // Reset (next round) — both flags should clear.
+        e.actors.get_mut(&id).unwrap().reset_for_new_round();
+        assert!(!e.actors[&id].is_disengaging());
+        assert!(!e.actors[&id].is_dodging());
+
+        // Now dodge — flag set, disengage stays clear.
+        let aei = ActionExecutionInfo::new(&*DODGE, id, None, None, None);
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&id].is_dodging());
+        assert!(!e.actors[&id].is_disengaging());
+    }
+
+    #[test]
     fn shield_grants_ac_bonus() {
         use crate::items::item_template::SHIELD;
         let mut e = ei_with_terrain(10, 10, &[]);
