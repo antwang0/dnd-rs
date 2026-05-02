@@ -77,7 +77,13 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 8. Nothing useful. End the turn.
+        // 8. Couldn't move closer or attack. Dodge to soak the next hit
+        //    rather than wasting the turn on a Skip.
+        if let Some(aei) = try_dodge(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 9. Nothing useful. End the turn.
         skip_or_await(encounter, actor_id)
     }
 }
@@ -623,6 +629,30 @@ fn try_step_toward_lowest_hp(
         .0;
     let dest = encounter.step_toward_actor(actor_id, target_id)?;
     let aei = ActionExecutionInfo::new(move_action, actor_id, None, Some(vec![dest]), None);
+    if aei.validate(encounter) {
+        Some(aei)
+    } else {
+        None
+    }
+}
+
+/// Take the Dodge action if available and not already dodging — better
+/// than Skip when there's nothing else to do, since attackers next turn
+/// will roll at disadvantage.
+fn try_dodge(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_dodging() {
+        return None;
+    }
+    let dodge = actor
+        .actions
+        .iter()
+        .find(|a| a.name() == "dodge")
+        .copied()?;
+    let aei = ActionExecutionInfo::new(dodge, actor_id, None, None, None);
     if aei.validate(encounter) {
         Some(aei)
     } else {
