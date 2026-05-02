@@ -119,6 +119,54 @@ pub static SCROLL_OF_FIREBALL: Item = Item {
     on_use: Some(&crate::actions::item_actions::READ_FIREBALL_SCROLL),
 };
 
+pub static SHIELD: Item = Item {
+    name: "Shield",
+    glyph: ']',
+    bonuses: ItemBonuses {
+        ac: 2,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: None,
+};
+
+pub static BRACERS_OF_DEFENSE: Item = Item {
+    name: "Bracers of Defense",
+    glyph: 'B',
+    bonuses: ItemBonuses {
+        ac: 2,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: None,
+};
+
+pub static GAUNTLETS_OF_OGRE_POWER: Item = Item {
+    name: "Gauntlets of Ogre Power",
+    glyph: 'g',
+    bonuses: ItemBonuses {
+        ac: 0,
+        max_hp: 5,
+        speed: 0,
+        save: 1,
+    },
+    on_use: None,
+};
+
+pub static POTION_OF_GREATER_HEALING: Item = Item {
+    name: "Potion of Greater Healing",
+    glyph: 'P',
+    bonuses: ItemBonuses {
+        ac: 0,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: Some(&crate::actions::item_actions::DRINK_GREATER_HEALING_POTION),
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites.
@@ -130,4 +178,8 @@ pub static LOOT_POOL: &[&Item] = &[
     &POTION_OF_HEALING,
     &POTION_OF_HEALING,
     &SCROLL_OF_FIREBALL,
+    &SHIELD,
+    &BRACERS_OF_DEFENSE,
+    &GAUNTLETS_OF_OGRE_POWER,
+    &POTION_OF_GREATER_HEALING,
 ];

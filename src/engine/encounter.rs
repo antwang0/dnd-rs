@@ -3270,6 +3270,48 @@ mod tests {
     }
 
     #[test]
+    fn shield_grants_ac_bonus() {
+        use crate::items::item_template::SHIELD;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base = e.actors[&id].armor_class();
+        e.actors.get_mut(&id).unwrap().pickup_item(&SHIELD);
+        assert_eq!(e.actors[&id].armor_class(), base + 2);
+    }
+
+    #[test]
+    fn drink_greater_healing_potion_heals_more_than_basic() {
+        use crate::actions::item_actions::DRINK_GREATER_HEALING_POTION;
+        use crate::items::item_template::POTION_OF_GREATER_HEALING;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(2, 2),
+                0,
+                0,
+            )
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        let max = actor.max_hitpoints();
+        actor.take_damage(max - 1);
+        actor.pickup_item(&POTION_OF_GREATER_HEALING);
+        assert_eq!(e.actors[&id].hitpoints(), 1);
+
+        let aei =
+            ActionExecutionInfo::new(&DRINK_GREATER_HEALING_POTION, id, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        // Greater healing is 4d4+4 (min 8, avg 14, max 20). Basic is 2d4+2.
+        assert!(e.actors[&id].hitpoints() >= 9, "expected at least 8 HP healed");
+        assert!(e.actors[&id].items().is_empty(), "potion should be consumed");
+    }
+
+    #[test]
     fn item_bonuses_apply_to_ac_speed_max_hp() {
         use crate::items::item_template::{
             AMULET_OF_HEALTH, BOOTS_OF_STRIDING, RING_OF_PROTECTION,
