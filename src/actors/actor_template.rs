@@ -305,6 +305,16 @@ pub struct ActorInstance {
     immunities: HashSet<DamageType>,
     /// Damage types doubled before applying to HP.
     vulnerabilities: HashSet<DamageType>,
+    /// 5e Dodge action: until the start of your next turn, attacks vs you
+    /// are at disadvantage and you have advantage on DEX saves. Cleared
+    /// at `reset_for_new_round`.
+    dodging: bool,
+    /// 5e Disengage action: until the end of this turn, your movement
+    /// doesn't trigger opportunity attacks. Cleared at `reset_for_new_round`.
+    disengaging: bool,
+    /// Actor id of an ally who used Help on you; you have advantage on the
+    /// next attack you make. Cleared after consuming or at end of next turn.
+    helped_by: Option<usize>,
 }
 
 impl ActorInstance {
@@ -375,7 +385,34 @@ impl ActorInstance {
             resistances: ct.resistances.clone(),
             immunities: ct.immunities.clone(),
             vulnerabilities: ct.vulnerabilities.clone(),
+            dodging: false,
+            disengaging: false,
+            helped_by: None,
         })
+    }
+
+    pub fn is_dodging(&self) -> bool {
+        self.dodging
+    }
+
+    pub fn is_disengaging(&self) -> bool {
+        self.disengaging
+    }
+
+    pub fn helped_by(&self) -> Option<usize> {
+        self.helped_by
+    }
+
+    pub fn set_dodging(&mut self, v: bool) {
+        self.dodging = v;
+    }
+
+    pub fn set_disengaging(&mut self, v: bool) {
+        self.disengaging = v;
+    }
+
+    pub fn set_helped_by(&mut self, helper: Option<usize>) {
+        self.helped_by = helper;
     }
 
     /// Apply 5e damage modifiers (immunity → 0, resistance → halved,
@@ -786,6 +823,14 @@ impl ActorInstance {
         self.bonus_action_slots = 1;
         self.reaction_slots = 1;
         // TODO: legendary actions
+
+        // 5e: Dodge / Disengage last "until the start of your next turn",
+        // which is when this resets for our turn-driven model. Help-target
+        // advantage is consumed on the next attack roll, but expires here
+        // if it wasn't used.
+        self.dodging = false;
+        self.disengaging = false;
+        self.helped_by = None;
     }
 
     pub fn action_slots(&self) -> u32 {

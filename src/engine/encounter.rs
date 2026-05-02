@@ -345,8 +345,38 @@ impl EncounterInstance {
                     mode = mode.combine(RollMode::Advantage);
                 }
             }
+            // 5e Dodge: attacks against you have disadvantage until start
+            // of your next turn. Doesn't apply if you're incapacitated
+            // (handled implicitly: dodging is reset by reset_for_new_round
+            // on the dodger's next turn).
+            if target.is_dodging() {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+        }
+        // 5e Help: the helped-by actor attacks at advantage on its next
+        // attack roll. We consume the flag in `consume_help` after the
+        // attack mode is computed (caller pattern); here we just observe.
+        if let Some(attacker) = self.actors.get(&attacker_id)
+            && attacker.helped_by().is_some()
+        {
+            mode = mode.combine(RollMode::Advantage);
+        }
+        // Blessed attacker also gets advantage on attack rolls.
+        if let Some(attacker) = self.actors.get(&attacker_id)
+            && attacker.has_condition(Condition::Blessed)
+        {
+            mode = mode.combine(RollMode::Advantage);
         }
         mode
+    }
+
+    /// Consume the helped-by buff after an attack roll. Call from the
+    /// attack pipeline once the d20 has been rolled with `compute_attack_mode`,
+    /// so the advantage doesn't carry over to a second attack the same turn.
+    pub fn consume_help(&mut self, attacker_id: usize) {
+        if let Some(actor) = self.actors.get_mut(&attacker_id) {
+            actor.set_helped_by(None);
+        }
     }
 
     /// Compute the save-roll mode for an actor's ability save.
@@ -630,10 +660,16 @@ impl EncounterInstance {
         use crate::actions::action_template::{MELEE_REACH, TargetingSchema};
         use crate::engine::side_effects::Resource;
 
-        let (mover_team, mover_size) = match self.actors.get(&mover_id) {
-            Some(a) => (a.team(), get_tiles_from_size(a.size())),
+        let (mover_team, mover_size, mover_disengaging) = match self.actors.get(&mover_id) {
+            Some(a) => (a.team(), get_tiles_from_size(a.size()), a.is_disengaging()),
             None => return,
         };
+        // 5e Disengage: until end of turn, your movement doesn't trigger
+        // opportunity attacks. We honor that here at the dispatcher level
+        // so reach / reaction-cost checks below don't even run.
+        if mover_disengaging {
+            return;
+        }
 
         // Snapshot reactor candidates up-front — the loop body will mutate
         // self, which would conflict with holding an iterator into self.actors.
@@ -2718,6 +2754,95 @@ mod tests {
         let lost_out = max_out - e.actors.get(&outside).map(|a| a.hitpoints()).unwrap_or(max_out);
         assert!(lost_a > 0 || lost_b > 0, "at least one in-radius zombie should be hurt");
         assert_eq!(lost_out, 0, "outside-radius zombie should be untouched");
+    }
+
+    #[test]
+    fn dodge_grants_disadvantage_on_attacks_against_actor() {
+        use crate::actions::default_actions::DODGE;
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let dodger = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*DODGE, dodger, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(e.actors[&dodger].is_dodging());
+        assert_eq!(
+            e.compute_attack_mode(attacker, dodger, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn disengage_skips_opportunity_attack() {
+        use crate::actions::default_actions::DISENGAGE;
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Pop any prompt and queue Disengage on the mover.
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*DISENGAGE, mover, None, None, None);
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&mover].is_disengaging());
+
+        // Now run the OA-triggering move. With disengage active, no OA fires.
+        let move_effect = MoveActor {
+            actor_id: mover,
+            path: vec![Coordinate::new(15, 5)],
+        };
+        move_effect.apply(&mut e);
+        assert!(
+            e.actors[&reactor].can_consume_resource(Resource::Reaction),
+            "reactor should not have spent their reaction — mover disengaged"
+        );
+    }
+
+    #[test]
+    fn help_grants_advantage_to_target_attack() {
+        use crate::actions::default_actions::HELP;
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let helper = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*HELP, helper, Some(vec![target]), None, None);
+        assert!(aei.validate(&e), "help should validate on adjacent ally");
+        e.push_action(aei);
+        e.process_stack();
+        assert_eq!(e.actors[&target].helped_by(), Some(helper));
+
+        // The helped-by buff should give the helped target advantage on
+        // its next attack against an enemy.
+        assert_eq!(
+            e.compute_attack_mode(target, enemy, true),
+            RollMode::Advantage
+        );
+        // After consume_help, the buff is gone.
+        e.consume_help(target);
+        assert_eq!(e.actors[&target].helped_by(), None);
     }
 
     #[test]

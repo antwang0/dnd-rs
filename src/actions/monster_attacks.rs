@@ -777,6 +777,9 @@ fn weapon_attack(
 ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
     let mode = encounter.compute_attack_mode(caster_id, target_id, is_melee);
     let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
+    // 5e Help: consume the once-per-attack advantage marker now that the
+    // d20 has been rolled. No-op if no helper.
+    encounter.consume_help(caster_id);
     let is_crit = raw_attack == 20;
     let attack_total = raw_attack + attack_bonus;
     // Crits auto-hit regardless of AC. Otherwise compare normally.

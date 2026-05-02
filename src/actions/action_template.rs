@@ -56,6 +56,14 @@ pub trait Action {
         true
     }
 
+    /// True for actions that restore HP. Distinct from `is_harmful` so the
+    /// AI's heal pipeline can pick *only* healing actions, not generic
+    /// supportive ones (Help, Bless, Dodge target an ally / self but
+    /// don't restore HP).
+    fn is_heal(&self) -> bool {
+        false
+    }
+
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,

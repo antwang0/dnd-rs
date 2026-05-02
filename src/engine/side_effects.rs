@@ -318,3 +318,60 @@ impl ApplicableSideEffect for SkipTurn {
         ei.skip_turn();
     }
 }
+
+/// Mark an actor as Dodging. Cleared at next `reset_for_new_round`.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct SetDodging {
+    pub actor_id: usize,
+}
+
+impl ApplicableSideEffect for SetDodging {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        if let Some(actor) = ei.get_actor(self.actor_id) {
+            let name = actor.name().to_string();
+            actor.set_dodging(true);
+            ei.log(format!("{} takes the Dodge action.", name));
+        }
+    }
+}
+
+/// Mark an actor as Disengaging. Cleared at next `reset_for_new_round`.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct SetDisengaging {
+    pub actor_id: usize,
+}
+
+impl ApplicableSideEffect for SetDisengaging {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        if let Some(actor) = ei.get_actor(self.actor_id) {
+            let name = actor.name().to_string();
+            actor.set_disengaging(true);
+            ei.log(format!("{} takes the Disengage action.", name));
+        }
+    }
+}
+
+/// `helper_id` flags `target_id` as helped — they get advantage on their
+/// next attack until end of `helper_id`'s next turn. We don't track the
+/// expiration window precisely; the flag is cleared when consumed by the
+/// next attack roll, or at end of `target_id`'s next turn.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct SetHelped {
+    pub helper_id: usize,
+    pub target_id: usize,
+}
+
+impl ApplicableSideEffect for SetHelped {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let helper_name = ei
+            .actors
+            .get(&self.helper_id)
+            .map(|a| a.name().to_string())
+            .unwrap_or_default();
+        if let Some(target) = ei.get_actor(self.target_id) {
+            let target_name = target.name().to_string();
+            target.set_helped_by(Some(self.helper_id));
+            ei.log(format!("{} aids {} (advantage on next attack).", helper_name, target_name));
+        }
+    }
+}

@@ -273,12 +273,15 @@ fn try_support_heal(
     let actor = encounter.actors.get(&actor_id)?;
     let my_team = actor.team();
 
-    // Helpful actions only — `is_harmful=false` guards against ever
-    // picking an attack here. SingleActor schema so we can pick a target.
+    // True heal actions only — `is_heal` distinguishes Healing Word /
+    // Cure Wounds from other "supportive" actions like Help or Bless
+    // that don't restore HP. Restricted to SingleActor schema so we
+    // can pick an ally; NoArgs heals (self-only potions) are handled
+    // by the prompt picker on the player's side.
     let heal_actions: Vec<&'static (dyn Action + Send + Sync)> = actor
         .actions
         .iter()
-        .filter(|a| !a.is_harmful() && matches!(a.targeting_schema(), TargetingSchema::SingleActor))
+        .filter(|a| a.is_heal() && matches!(a.targeting_schema(), TargetingSchema::SingleActor))
         .copied()
         .collect();
     if heal_actions.is_empty() {
