@@ -728,3 +728,82 @@ impl Action for ShieldSpell {
 }
 
 pub static SHIELD_SPELL: LazyLock<ShieldSpell> = LazyLock::new(|| ShieldSpell {});
+
+/// Aid — touch-range single-target temp-HP buff. Action + level-2 slot.
+/// Target gains 5 temp HP. 5e Aid grants a max-HP raise; we model it
+/// as temp HP since temp HP is the closest pre-built "buffer pool" the
+/// engine has, and the gameplay shape ("absorb 5 damage now") matches.
+pub struct Aid {}
+
+impl Action for Aid {
+    fn name(&self) -> &str {
+        "aid"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ad"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(2)]
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(tid) = target_ids.and_then(|v| v.first().copied()) else {
+            return false;
+        };
+        let Some(c) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        let Some(t) = encounter.actors.get(&tid) else {
+            return false;
+        };
+        c.team() == t.team() && t.is_combat_active()
+    }
+
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::GrantTempHp;
+        let Some(tid) = target_ids.and_then(|v| v.first().copied()) else {
+            return Vec::new();
+        };
+        vec![Box::new(GrantTempHp {
+            actor_id: tid,
+            amount: 5,
+        })]
+    }
+}
+
+pub static AID: LazyLock<Aid> = LazyLock::new(|| Aid {});

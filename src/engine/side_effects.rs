@@ -193,6 +193,26 @@ impl ApplicableSideEffect for DealDamage {
     }
 }
 
+/// Grant temp HP to an actor. 5e: temp HP doesn't stack — the higher
+/// pool replaces the lower. Logs only when the new pool actually grows.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct GrantTempHp {
+    pub actor_id: usize,
+    pub amount: u32,
+}
+
+impl ApplicableSideEffect for GrantTempHp {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        if actor.grant_temp_hp(self.amount) {
+            ei.log(format!("{} gains {} temporary HP.", name, self.amount));
+        }
+    }
+}
+
 /// Restore HP to an actor. Logs a "comes back to consciousness" line when
 /// the heal pulls them out of Dying / Stable.
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]

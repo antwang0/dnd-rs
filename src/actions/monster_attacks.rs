@@ -674,6 +674,93 @@ impl Action for WolfBite {
 }
 pub static WOLF_BITE: LazyLock<WolfBite> = LazyLock::new(|| WolfBite {});
 
+/// Frightful Howl — wolf bonus action. Every enemy within 4 tiles must
+/// make a WIS save against DC 11 or be Frightened for 3 rounds.
+/// Doesn't deal damage. Demonstrates the AoE-no-damage save pattern.
+pub struct FrightfulHowl {}
+
+impl Action for FrightfulHowl {
+    fn name(&self) -> &str {
+        "howl"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hwl"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::ApplyCondition;
+        use crate::engine::types::AbilityScoreType;
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        const RADIUS: isize = 4;
+        const DC: i32 = 11;
+
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let caster_loc = caster.location();
+        let caster_size = get_tiles_from_size(caster.size());
+        let caster_team = caster.team();
+        encounter.log("  howl: enemies in 4 tiles must save vs DC 11 WIS or be frightened");
+
+        let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
+        ids.sort_unstable();
+
+        let mut effects: Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> =
+            Vec::new();
+        for tid in ids {
+            if tid == caster_id {
+                continue;
+            }
+            let Some(target) = encounter.actors.get(&tid) else {
+                continue;
+            };
+            if target.team() == caster_team || !target.is_combat_active() {
+                continue;
+            }
+            let dist = footprint_chebyshev(
+                target.location(),
+                get_tiles_from_size(target.size()),
+                caster_loc,
+                caster_size,
+            );
+            if dist > RADIUS {
+                continue;
+            }
+            let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, DC);
+            if !save.passed() {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: tid,
+                    condition: Condition::Frightened,
+                    timer: ConditionTimer::Rounds(3),
+                }));
+            }
+        }
+        effects
+    }
+}
+pub static FRIGHTFUL_HOWL: LazyLock<FrightfulHowl> = LazyLock::new(|| FrightfulHowl {});
+
 /// Wraps another action and runs it `count` times for one Action-slot
 /// expenditure. Reach / LOS / targeting schema are inherited from the
 /// sub-attack so creatures can declare e.g. `Multiattack { sub: &SLAM, count: 2 }`

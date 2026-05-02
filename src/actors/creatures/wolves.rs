@@ -1,5 +1,5 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::WOLF_BITE;
+use crate::actions::monster_attacks::{FRIGHTFUL_HOWL, WOLF_BITE};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{Size, SpecialSense};
 use std::collections::HashSet;
@@ -13,6 +13,7 @@ use std::sync::LazyLock;
 pub static WOLF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*WOLF_BITE);
+    actions.push(&*FRIGHTFUL_HOWL);
     CreatureTemplate {
         name: "Wolf",
         // 'w' lowercase to avoid colliding with the Wizard's 'W'.
