@@ -599,3 +599,113 @@ impl Action for Bless {
 }
 
 pub static BLESS: LazyLock<Bless> = LazyLock::new(|| Bless {});
+
+/// Burning Hands — 15ft cone of fire (we approximate as a small radius-2
+/// burst since proper cone targeting isn't modeled). Action + level-1
+/// slot. DEX save vs WIS-based DC; on fail 3d6 fire and the target is
+/// Burning for 2 rounds. On save, half damage and no Burning rider.
+pub struct BurningHands {}
+
+impl Action for BurningHands {
+    fn name(&self) -> &str {
+        "burning hands"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bh", "burn"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 2 }
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        // 15ft cone — short range; we treat origin as caster's reach.
+        Some(6)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::{ApplyCondition, DealDamage};
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let radius: isize = match self.targeting_schema() {
+            TargetingSchema::Burst { radius } => radius,
+            _ => return Vec::new(),
+        };
+
+        let raw = encounter.roll(&Dice::new(3, 6));
+        encounter.log(format!("  burning hands: 3d6({}) = {} fire area", raw, raw));
+
+        let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
+        ids.sort_unstable();
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for target_id in ids {
+            let Some(target) = encounter.actors.get(&target_id) else {
+                continue;
+            };
+            if target_id == caster_id || !target.is_combat_active() {
+                continue;
+            }
+            let dist = footprint_chebyshev(
+                target.location(),
+                get_tiles_from_size(target.size()),
+                point,
+                1,
+            );
+            if dist > radius {
+                continue;
+            }
+            let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, dc);
+            let dmg = if save.passed() { raw / 2 } else { raw };
+            if dmg > 0 {
+                effects.push(Box::new(DealDamage {
+                    actor_id: target_id,
+                    amount: dmg,
+                    damage_type: DamageType::Fire,
+                }));
+            }
+            // Burning DOT only on fail. Lasts 2 rounds.
+            if !save.passed() {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: target_id,
+                    condition: Condition::Burning,
+                    timer: ConditionTimer::Rounds(2),
+                }));
+            }
+        }
+        effects
+    }
+}
+
+pub static BURNING_HANDS: LazyLock<BurningHands> = LazyLock::new(|| BurningHands {});

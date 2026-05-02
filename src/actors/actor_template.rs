@@ -1019,7 +1019,17 @@ impl ActorInstance {
     }
 
     pub fn attack_bonus(&self) -> i32 {
-        modifier_from_score(self.strength) + self.proficiency_bonus()
+        modifier_from_score(self.strength) + self.proficiency_bonus() + self.transient_attack_bonus()
+    }
+
+    /// Per-roll bonuses from short-lived buffs (e.g. Bless adds +d4 ≈ 2).
+    /// Folded into `attack_bonus` and the save modifier in `roll_save`.
+    pub fn transient_attack_bonus(&self) -> i32 {
+        if self.has_condition(Condition::Blessed) { 2 } else { 0 }
+    }
+
+    pub fn transient_save_bonus(&self) -> i32 {
+        if self.has_condition(Condition::Blessed) { 2 } else { 0 }
     }
 
     pub fn damage_bonus(&self) -> i32 {

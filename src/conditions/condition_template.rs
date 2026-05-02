@@ -41,8 +41,10 @@ pub enum Condition {
     /// Lit on fire; takes a tick of damage at end-of-round. Used by
     /// Burning Hands' lingering effect on fail (when modeled).
     Burning,
-    /// Bonus to attack and saving throws (Bless). +d4 abstracted as +2 in
-    /// the modifier path so we don't need to roll an extra die per attack.
+    /// 5e Bless: +d4 to attack rolls and saves. We expose it via
+    /// `attack_bonus_modifier` and `save_bonus_modifier` (rolling an
+    /// avg-d4 = 2) rather than the advantage/disadvantage path so a
+    /// non-Blessed adv source can still combine cleanly.
     Blessed,
 }
 

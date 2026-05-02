@@ -342,10 +342,6 @@ impl EncounterInstance {
             if attacker.helped_by().is_some() {
                 mode = mode.combine(RollMode::Advantage);
             }
-            // Blessed attackers gain advantage on attack rolls.
-            if attacker.has_condition(Condition::Blessed) {
-                mode = mode.combine(RollMode::Advantage);
-            }
         }
         if let Some(target) = self.actors.get(&target_id) {
             if target.has_condition(Condition::Prone) {
@@ -385,6 +381,7 @@ impl EncounterInstance {
     /// - `Restrained` / `Grappled` → disadvantage on DEX saves only
     ///   (RAW: Restrained imposes disadv on DEX saves; Grappled doesn't,
     ///   but we approximate the "you can't dodge while held" intent).
+    /// - Dodging actors get advantage on DEX saves until their next turn.
     pub fn compute_save_mode(
         &self,
         actor_id: usize,
@@ -405,7 +402,7 @@ impl EncounterInstance {
         {
             mode = mode.combine(RollMode::Disadvantage);
         }
-        if actor.has_condition(Condition::Blessed) {
+        if matches!(ability, AbilityScoreType::Dexterity) && actor.is_dodging() {
             mode = mode.combine(RollMode::Advantage);
         }
         mode
@@ -434,7 +431,11 @@ impl EncounterInstance {
         } else {
             0
         };
-        let modifier = modifier_from_score(actor.ability_score(ability)) + item_bonus + prof_bonus;
+        let transient = actor.transient_save_bonus();
+        let modifier = modifier_from_score(actor.ability_score(ability))
+            + item_bonus
+            + prof_bonus
+            + transient;
         let total = raw as i32 + modifier;
         let outcome = if total >= dc {
             SaveOutcome::Pass
@@ -1180,11 +1181,35 @@ impl EncounterInstance {
 
     /// Tick condition timers on every actor. `Rounds(n)` becomes
     /// `Rounds(n-1)`; `Rounds(0|1)` removes the condition. Logs each
-    /// expiration. Iterates by sorted id for deterministic ordering.
+    /// expiration. Also applies recurring round-end effects (e.g.
+    /// Burning takes 1d4 fire damage). Iterates by sorted id for
+    /// deterministic ordering.
     fn round_end(&mut self) {
+        use crate::conditions::Condition;
+        use crate::engine::dice::Dice;
         let mut ids: Vec<usize> = self.actors.keys().copied().collect();
         ids.sort_unstable();
         for id in ids {
+            // Burning DOT: 1d4 fire at end-of-round per the Burning
+            // condition. Apply before timer-tick so the damage lands on
+            // the round the burning expires too — symmetrical with most
+            // tabletop DOT timing.
+            if self
+                .actors
+                .get(&id)
+                .is_some_and(|a| a.has_condition(Condition::Burning))
+            {
+                let dmg = self.roll(&Dice::new(1, 4));
+                let name = self.actors.get(&id).map(|a| a.name().to_string()).unwrap_or_default();
+                self.log(format!("  {} burns: 1d4({}) fire", name, dmg));
+                let de = crate::engine::side_effects::DealDamage {
+                    actor_id: id,
+                    amount: dmg,
+                    damage_type: crate::engine::types::DamageType::Fire,
+                };
+                use crate::engine::side_effects::ApplicableSideEffect;
+                de.apply(self);
+            }
             let Some(actor) = self.actors.get_mut(&id) else {
                 continue;
             };
@@ -1194,6 +1219,7 @@ impl EncounterInstance {
                 self.log(format!("{} is no longer {}.", name, c.name()));
             }
         }
+        self.cleanup_dead_actors();
     }
 
     pub fn set_actor_map(
@@ -2763,6 +2789,54 @@ mod tests {
         let lost_out = max_out - e.actors.get(&outside).map(|a| a.hitpoints()).unwrap_or(max_out);
         assert!(lost_a > 0 || lost_b > 0, "at least one in-radius zombie should be hurt");
         assert_eq!(lost_out, 0, "outside-radius zombie should be untouched");
+    }
+
+    #[test]
+    fn burning_condition_deals_dot_at_round_end() {
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let burner = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&burner)
+            .unwrap()
+            .add_condition(Condition::Burning, ConditionTimer::Rounds(5));
+        let before = e.actors[&burner].hitpoints();
+        // Two skips = one round wrap → round_end fires once → 1d4 fire damage.
+        e.skip_turn();
+        e.skip_turn();
+        let after = e.actors.get(&burner).map(|a| a.hitpoints()).unwrap_or(0);
+        assert!(
+            after < before,
+            "burning condition should DOT (was {} → {})",
+            before,
+            after
+        );
+    }
+
+    #[test]
+    fn blessed_attack_bonus_is_positive() {
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e.actors[&id].attack_bonus();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Blessed, ConditionTimer::Rounds(3));
+        let blessed = e.actors[&id].attack_bonus();
+        assert!(
+            blessed > baseline,
+            "Bless should bump attack_bonus ({} → {})",
+            baseline,
+            blessed
+        );
     }
 
     #[test]

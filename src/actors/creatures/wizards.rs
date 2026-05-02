@@ -1,5 +1,5 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::spells::{MAGIC_MISSILE, SACRED_BURST, SACRED_FLAME};
+use crate::actions::spells::{BURNING_HANDS, MAGIC_MISSILE, SACRED_BURST, SACRED_FLAME};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, DamageType, Language, Size, SpecialSense};
 use std::collections::HashSet;
@@ -18,6 +18,7 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*SACRED_FLAME);
     actions.push(&*SACRED_BURST);
     actions.push(&*MAGIC_MISSILE);
+    actions.push(&*BURNING_HANDS);
     CreatureTemplate {
         name: "Wizard",
         glyph: 'M',
