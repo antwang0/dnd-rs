@@ -2721,6 +2721,42 @@ mod tests {
     }
 
     #[test]
+    fn temp_hp_absorbs_damage_before_hp() {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        let max = actor.max_hitpoints();
+        actor.grant_temp_hp(5);
+        assert_eq!(actor.temp_hp(), 5);
+        // 3 damage burns part of the temp pool; real HP intact.
+        actor.take_damage(3);
+        assert_eq!(actor.temp_hp(), 2);
+        assert_eq!(actor.hitpoints(), max);
+        // 5 damage burns the rest plus 3 to real HP.
+        actor.take_damage(5);
+        assert_eq!(actor.temp_hp(), 0);
+        assert_eq!(actor.hitpoints(), max - 3);
+    }
+
+    #[test]
+    fn temp_hp_does_not_stack_unless_larger() {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        actor.grant_temp_hp(5);
+        // Smaller application leaves the pool alone.
+        assert!(!actor.grant_temp_hp(3));
+        assert_eq!(actor.temp_hp(), 5);
+        // Larger application replaces.
+        assert!(actor.grant_temp_hp(8));
+        assert_eq!(actor.temp_hp(), 8);
+    }
+
+    #[test]
     fn heal_active_actor_restores_hp() {
         let mut e = ei_with_terrain(10, 10, &[]);
         let id = e

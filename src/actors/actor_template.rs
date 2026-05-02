@@ -287,6 +287,11 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    /// 5e temporary HP: a buffer absorbed before real HP. Doesn't stack
+    /// (a new application overrides only if it's larger), and is cleared
+    /// on a long rest. Independent of `hitpoints` and `max_hitpoints` —
+    /// going above max real HP is fine.
+    temp_hp: u32,
 }
 
 impl ActorInstance {
@@ -353,7 +358,23 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            temp_hp: 0,
         })
+    }
+
+    pub fn temp_hp(&self) -> u32 {
+        self.temp_hp
+    }
+
+    /// 5e temp HP: doesn't stack. A new application overrides only if it's
+    /// larger than the current pool. Returns true if the pool grew.
+    pub fn grant_temp_hp(&mut self, amount: u32) -> bool {
+        if amount > self.temp_hp {
+            self.temp_hp = amount;
+            true
+        } else {
+            false
+        }
     }
 
     pub fn rolls_death_saves(&self) -> bool {
@@ -414,15 +435,17 @@ impl ActorInstance {
         out
     }
 
-    /// Restore full HP, all spell slots, clear non-permanent conditions
-    /// and concentration. 5e long rest semantics — at the multi-encounter
-    /// game-loop boundary, this is what "rest between fights" means.
+    /// Restore full HP, all spell slots, clear non-permanent conditions,
+    /// concentration, and temp HP. 5e long rest semantics — at the
+    /// multi-encounter game-loop boundary, this is what "rest between
+    /// fights" means.
     pub fn long_rest(&mut self) {
         self.hp_state = HpState::Active;
         self.hitpoints = self.max_hitpoints();
         self.spell_slot_manager.restore_spell_slots();
         self.conditions.clear();
         self.concentration = None;
+        self.temp_hp = 0;
     }
 
     pub fn cr(&self) -> f32 {
@@ -798,7 +821,18 @@ impl ActorInstance {
             }
             HpState::Dead => DamageOutcome::DyingFailure, // already gone; no-op
             HpState::Active => {
-                self.hitpoints = self.hitpoints.saturating_sub(amount);
+                // 5e: temp HP absorbs damage first, with the leftover
+                // hitting real HP. A 5-damage hit on 3 temp HP burns the
+                // pool and applies 2 damage to real HP.
+                let after_temp = if self.temp_hp >= amount {
+                    self.temp_hp -= amount;
+                    0
+                } else {
+                    let leftover = amount - self.temp_hp;
+                    self.temp_hp = 0;
+                    leftover
+                };
+                self.hitpoints = self.hitpoints.saturating_sub(after_temp);
                 if self.hitpoints == 0 {
                     if self.rolls_death_saves {
                         self.hp_state = HpState::Dying {
