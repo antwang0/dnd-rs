@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{SCIMITAR, SHORTBOW};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{Language, Size, SpecialSense};
+use crate::engine::types::{AbilityScoreType, Language, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -38,5 +38,6 @@ pub static GOBLIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         resistances: HashSet::new(),
         immunities: HashSet::new(),
         vulnerabilities: HashSet::new(),
+        save_proficiencies: HashSet::from([AbilityScoreType::Dexterity]),
     }
 });

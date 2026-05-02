@@ -429,7 +429,12 @@ impl EncounterInstance {
             return SaveOutcome::Fail;
         };
         let item_bonus = actor.item_save_bonus();
-        let modifier = modifier_from_score(actor.ability_score(ability)) + item_bonus;
+        let prof_bonus = if actor.is_save_proficient(ability) {
+            actor.proficiency_bonus()
+        } else {
+            0
+        };
+        let modifier = modifier_from_score(actor.ability_score(ability)) + item_bonus + prof_bonus;
         let total = raw as i32 + modifier;
         let outcome = if total >= dc {
             SaveOutcome::Pass
@@ -437,12 +442,14 @@ impl EncounterInstance {
             SaveOutcome::Fail
         };
         let name = actor.name().to_string();
+        let prof_marker = if prof_bonus != 0 { " (prof)" } else { "" };
         self.log(format!(
-            "  {} {:?} save: 1d20({}){:+} = {} vs DC {}{} \u{2014} {}",
+            "  {} {:?} save: 1d20({}){:+}{} = {} vs DC {}{} \u{2014} {}",
             name,
             ability,
             raw,
             modifier,
+            prof_marker,
             total,
             dc,
             mode.log_suffix(),
@@ -2756,6 +2763,44 @@ mod tests {
         let lost_out = max_out - e.actors.get(&outside).map(|a| a.hitpoints()).unwrap_or(max_out);
         assert!(lost_a > 0 || lost_b > 0, "at least one in-radius zombie should be hurt");
         assert_eq!(lost_out, 0, "outside-radius zombie should be untouched");
+    }
+
+    #[test]
+    fn proficiency_bonus_scales_with_level() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Level 1: +2 proficiency.
+        assert_eq!(e.actors[&id].proficiency_bonus(), 2);
+        // Award enough XP to bump several levels and rest.
+        e.actors.get_mut(&id).unwrap().award_xp(100_000);
+        e.long_rest();
+        // Should now be at level 5+ → +3 minimum.
+        let lvl = e.actors[&id].level();
+        let prof = e.actors[&id].proficiency_bonus();
+        assert!(lvl >= 5);
+        assert!(prof >= 3, "expected prof ≥ 3 at level {}", lvl);
+    }
+
+    #[test]
+    fn fighter_pc_save_uses_proficiency_for_strength() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let e = ei_with_terrain(10, 10, &[]);
+        // Just verify that the template marks STR as proficient.
+        let f = ActorInstance::from_creature_template(
+            &FIGHTER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(1),
+            0,
+        )
+        .unwrap();
+        assert!(f.is_save_proficient(crate::engine::types::AbilityScoreType::Strength));
+        assert!(f.is_save_proficient(crate::engine::types::AbilityScoreType::Constitution));
+        assert!(!f.is_save_proficient(crate::engine::types::AbilityScoreType::Charisma));
+        let _ = e;
     }
 
     #[test]

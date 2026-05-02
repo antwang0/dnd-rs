@@ -127,6 +127,10 @@ pub struct CreatureTemplate {
     pub immunities: HashSet<DamageType>,
     /// Damage types this creature takes double damage from.
     pub vulnerabilities: HashSet<DamageType>,
+    /// Saving throw proficiencies: a save in any of these abilities
+    /// adds the proficiency bonus on top of the normal ability mod.
+    /// 5e: monsters pick 1-3, classes have 2 fixed.
+    pub save_proficiencies: HashSet<AbilityScoreType>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -305,6 +309,8 @@ pub struct ActorInstance {
     immunities: HashSet<DamageType>,
     /// Damage types doubled before applying to HP.
     vulnerabilities: HashSet<DamageType>,
+    /// Saves the actor is proficient in: roll adds the proficiency bonus.
+    save_proficiencies: HashSet<AbilityScoreType>,
     /// 5e Dodge action: until the start of your next turn, attacks vs you
     /// are at disadvantage and you have advantage on DEX saves. Cleared
     /// at `reset_for_new_round`.
@@ -385,10 +391,21 @@ impl ActorInstance {
             resistances: ct.resistances.clone(),
             immunities: ct.immunities.clone(),
             vulnerabilities: ct.vulnerabilities.clone(),
+            save_proficiencies: ct.save_proficiencies.clone(),
             dodging: false,
             disengaging: false,
             helped_by: None,
         })
+    }
+
+    /// 5e proficiency bonus by character level: +2 at 1-4, +3 at 5-8, etc.
+    /// Used for save proficiencies and (eventually) attack rolls.
+    pub fn proficiency_bonus(&self) -> i32 {
+        2 + ((self.level.saturating_sub(1)) / 4) as i32
+    }
+
+    pub fn is_save_proficient(&self, ability: AbilityScoreType) -> bool {
+        self.save_proficiencies.contains(&ability)
     }
 
     pub fn is_dodging(&self) -> bool {
@@ -868,11 +885,10 @@ impl ActorInstance {
         }
     }
 
-    /// 5e spell save DC: 8 + spellcasting ability modifier (we don't track
-    /// proficiency yet; once we do, add it here). Actions that force saves
-    /// call this on the caster to set their DC.
+    /// 5e spell save DC: 8 + proficiency + spellcasting ability modifier.
+    /// Actions that force saves call this on the caster to set their DC.
     pub fn spell_save_dc(&self, ability: AbilityScoreType) -> i32 {
-        8 + modifier_from_score(self.ability_score(ability))
+        8 + self.proficiency_bonus() + modifier_from_score(self.ability_score(ability))
     }
 
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {
@@ -1003,8 +1019,7 @@ impl ActorInstance {
     }
 
     pub fn attack_bonus(&self) -> i32 {
-        // TODO: add proficiency bonus once it's tracked
-        modifier_from_score(self.strength)
+        modifier_from_score(self.strength) + self.proficiency_bonus()
     }
 
     pub fn damage_bonus(&self) -> i32 {

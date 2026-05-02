@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{TRIP, ZOMBIE_MULTISLAM};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{DamageType, Language, Size, SpecialSense};
+use crate::engine::types::{AbilityScoreType, DamageType, Language, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -38,5 +38,6 @@ pub static ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         resistances: HashSet::from([DamageType::Necrotic]),
         immunities: HashSet::from([DamageType::Poison]),
         vulnerabilities: HashSet::from([DamageType::Radiant]),
+        save_proficiencies: HashSet::from([AbilityScoreType::Wisdom]),
     }
 });

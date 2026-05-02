@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::WOLF_BITE;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{Size, SpecialSense};
+use crate::engine::types::{AbilityScoreType, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -38,5 +38,6 @@ pub static WOLF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         resistances: HashSet::new(),
         immunities: HashSet::new(),
         vulnerabilities: HashSet::new(),
+        save_proficiencies: HashSet::from([AbilityScoreType::Dexterity]),
     }
 });

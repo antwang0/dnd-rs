@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{MAGIC_MISSILE, SACRED_BURST, SACRED_FLAME};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{DamageType, Language, Size, SpecialSense};
+use crate::engine::types::{AbilityScoreType, DamageType, Language, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -44,5 +44,10 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         resistances: HashSet::new(),
         immunities: HashSet::new(),
         vulnerabilities: HashSet::from([DamageType::Bludgeoning]),
+        // Wizard: INT + WIS proficient saves (5e RAW).
+        save_proficiencies: HashSet::from([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+        ]),
     }
 });

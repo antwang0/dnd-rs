@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::ACID_SPIT;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{DamageType, Size};
+use crate::engine::types::{AbilityScoreType, DamageType, Size};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -42,5 +42,6 @@ pub static SLIME_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         resistances: HashSet::from([DamageType::Slashing]),
         immunities: HashSet::from([DamageType::Acid]),
         vulnerabilities: HashSet::from([DamageType::Cold]),
+        save_proficiencies: HashSet::from([AbilityScoreType::Constitution]),
     }
 });
