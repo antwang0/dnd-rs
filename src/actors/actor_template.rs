@@ -573,30 +573,40 @@ impl ActorInstance {
         }
     }
 
+    /// True if any current condition blocks the action economy. Used as a
+    /// shared gate in `can_consume_resource` so adding new conditions only
+    /// needs to flip a method on `Condition`, not touch this file.
+    fn action_economy_blocked(&self) -> bool {
+        self.conditions
+            .keys()
+            .any(|c| c.blocks_action_economy())
+    }
+
     pub fn can_consume_resource(&self, resource: Resource) -> bool {
-        // Stunned actors lose their entire action economy. Prone is NOT
-        // checked here for Movement: stand-up itself pays in Movement, so
-        // blocking the resource here would create a catch-22. Move-the-
-        // action is still blocked because `remaining_movement()` returns 0
-        // when Prone, which makes `path_cost_to` find no path.
-        let stunned = self.has_condition(Condition::Stunned);
+        // Stunned / Incapacitated / Unconscious all kill the action
+        // economy. Prone is intentionally NOT in that list for Movement:
+        // stand-up itself pays in Movement, so blocking the resource here
+        // would create a catch-22. Move-the-action is still blocked
+        // because `remaining_movement()` returns 0 while Prone, which
+        // makes `path_cost_to` find no path.
+        let blocked = self.action_economy_blocked();
         match resource {
             Resource::Movement(amt) => {
-                if stunned {
+                if blocked {
                     return false;
                 }
                 amt <= self.movement
             }
             Resource::SpellSlot(spell_lvl) => {
-                if stunned {
+                if blocked {
                     return false;
                 }
                 self.spell_slot_manager.spell_slots(spell_lvl).spell_slots >= 1
             }
-            Resource::Action => !stunned && self.action_slots >= 1,
-            Resource::BonusAction => !stunned && self.bonus_action_slots >= 1,
-            Resource::Reaction => !stunned && self.reaction_slots >= 1,
-            Resource::LegendaryAction => !stunned && self.legendary_action_slots >= 1,
+            Resource::Action => !blocked && self.action_slots >= 1,
+            Resource::BonusAction => !blocked && self.bonus_action_slots >= 1,
+            Resource::Reaction => !blocked && self.reaction_slots >= 1,
+            Resource::LegendaryAction => !blocked && self.legendary_action_slots >= 1,
         }
     }
 
@@ -680,7 +690,7 @@ impl ActorInstance {
     }
 
     pub fn remaining_movement(&self) -> f32 {
-        if self.has_condition(Condition::Prone) || self.has_condition(Condition::Stunned) {
+        if self.conditions.keys().any(|c| c.zeros_movement()) {
             return 0.0;
         }
         self.movement
