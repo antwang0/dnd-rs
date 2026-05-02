@@ -312,18 +312,39 @@ impl EncounterInstance {
         is_melee: bool,
     ) -> RollMode {
         use crate::conditions::Condition;
+        // Conditions on the *attacker* that impose disadvantage on attacks.
+        const ATTACKER_DISADV: [Condition; 5] = [
+            Condition::Prone,
+            Condition::Poisoned,
+            Condition::Frightened,
+            Condition::Blinded,
+            Condition::Restrained,
+        ];
+        // Conditions on the *target* that grant advantage to attackers.
+        const TARGET_ADV: [Condition; 6] = [
+            Condition::Stunned,
+            Condition::Restrained,
+            Condition::Grappled,
+            Condition::Unconscious,
+            Condition::Blinded,
+            Condition::Incapacitated,
+        ];
         let mut mode = RollMode::Normal;
         if let Some(attacker) = self.actors.get(&attacker_id) {
-            for c in [
-                Condition::Prone,
-                Condition::Poisoned,
-                Condition::Frightened,
-                Condition::Blinded,
-                Condition::Restrained,
-            ] {
+            for c in ATTACKER_DISADV {
                 if attacker.has_condition(c) {
                     mode = mode.combine(RollMode::Disadvantage);
                 }
+            }
+            // 5e Help: the helped-by actor attacks at advantage on its
+            // next attack roll. Cleared in `consume_help` once the d20
+            // has been rolled.
+            if attacker.helped_by().is_some() {
+                mode = mode.combine(RollMode::Advantage);
+            }
+            // Blessed attackers gain advantage on attack rolls.
+            if attacker.has_condition(Condition::Blessed) {
+                mode = mode.combine(RollMode::Advantage);
             }
         }
         if let Some(target) = self.actors.get(&target_id) {
@@ -334,39 +355,18 @@ impl EncounterInstance {
                     RollMode::Disadvantage
                 });
             }
-            for c in [
-                Condition::Stunned,
-                Condition::Restrained,
-                Condition::Grappled,
-                Condition::Unconscious,
-                Condition::Blinded,
-                Condition::Incapacitated,
-            ] {
+            for c in TARGET_ADV {
                 if target.has_condition(c) {
                     mode = mode.combine(RollMode::Advantage);
                 }
             }
             // 5e Dodge: attacks against you have disadvantage until start
-            // of your next turn. Doesn't apply if you're incapacitated
-            // (handled implicitly: dodging is reset by reset_for_new_round
-            // on the dodger's next turn).
+            // of your next turn. (Incapacitated dodgers don't qualify; that
+            // case is implicit because the dodge flag is cleared on their
+            // next reset_for_new_round.)
             if target.is_dodging() {
                 mode = mode.combine(RollMode::Disadvantage);
             }
-        }
-        // 5e Help: the helped-by actor attacks at advantage on its next
-        // attack roll. We consume the flag in `consume_help` after the
-        // attack mode is computed (caller pattern); here we just observe.
-        if let Some(attacker) = self.actors.get(&attacker_id)
-            && attacker.helped_by().is_some()
-        {
-            mode = mode.combine(RollMode::Advantage);
-        }
-        // Blessed attacker also gets advantage on attack rolls.
-        if let Some(attacker) = self.actors.get(&attacker_id)
-            && attacker.has_condition(Condition::Blessed)
-        {
-            mode = mode.combine(RollMode::Advantage);
         }
         mode
     }

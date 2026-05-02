@@ -53,6 +53,14 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 5. Bless a different ally if we have it and aren't already
+        //    concentrating. Skip if the only ally in range is ourselves —
+        //    self-buffs are usually a worse use of an action than
+        //    pressing offense.
+        if let Some(aei) = try_bless(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 5. AoE — point that catches 2+ enemies, no friendly fire.
         if let Some(aei) = try_attack_aoe(encounter, actor_id) {
             return ControllerDecision::Act(aei);
@@ -92,6 +100,56 @@ fn try_stand_up(
     } else {
         None
     }
+}
+
+/// Cast Bless on a non-already-blessed ally if we have it and aren't
+/// concentrating on something else. Picks the ally with the highest HP —
+/// they're most likely to be the front-line whose attacks the buff
+/// helps. Validates against the action's reach + cost.
+fn try_bless(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() {
+        return None;
+    }
+    let bless = actor
+        .actions
+        .iter()
+        .find(|a| a.name() == "bless")
+        .copied()?;
+    let my_team = actor.team();
+
+    let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
+    ids.sort_unstable();
+
+    let mut best: Option<(u32, ActionExecutionInfo)> = None;
+    for ally_id in ids {
+        // Skip self — self-bless wastes an action that's better spent
+        // on offense for a back-line caster.
+        if ally_id == actor_id {
+            continue;
+        }
+        let Some(ally) = encounter.actors.get(&ally_id) else {
+            continue;
+        };
+        if ally.team() != my_team || !ally.is_combat_active() {
+            continue;
+        }
+        if ally.has_condition(Condition::Blessed) {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(bless, actor_id, Some(vec![ally_id]), None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        let hp = ally.hitpoints();
+        if best.as_ref().is_none_or(|(best_hp, _)| hp > *best_hp) {
+            best = Some((hp, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
 }
 
 /// Cast Hold Person on the toughest in-range enemy if we have it and
