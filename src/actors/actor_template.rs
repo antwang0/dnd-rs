@@ -779,9 +779,10 @@ impl ActorInstance {
     }
 
     /// Flat bonus from buff conditions (e.g. Bless contributes +2 average,
-    /// modeled as a flat +2 for simplicity rather than a separate die roll).
-    /// Returns the sum of all stacking buff sources.
-    pub fn condition_save_bonus(&self) -> i32 {
+    /// modeled as a flat bonus for simplicity rather than a separate die
+    /// roll). Saves and attacks pull from the same set today, so the two
+    /// public accessors share an internal sum.
+    fn buff_flat_bonus(&self) -> i32 {
         let mut bonus = 0;
         if self.has_condition(Condition::Blessed) {
             bonus += 2;
@@ -789,13 +790,12 @@ impl ActorInstance {
         bonus
     }
 
-    /// Flat attack bonus from buff conditions. Mirrors `condition_save_bonus`.
+    pub fn condition_save_bonus(&self) -> i32 {
+        self.buff_flat_bonus()
+    }
+
     pub fn condition_attack_bonus(&self) -> i32 {
-        let mut bonus = 0;
-        if self.has_condition(Condition::Blessed) {
-            bonus += 2;
-        }
-        bonus
+        self.buff_flat_bonus()
     }
 
     pub fn remaining_movement(&self) -> f32 {

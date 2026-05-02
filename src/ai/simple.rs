@@ -570,13 +570,20 @@ fn try_step_toward_lowest_hp(
     }
 }
 
-/// Last-resort: invoke the actor's Skip action so the turn advances. If
-/// the actor somehow has no Skip in their action list, fall back to
-/// AwaitInput to avoid an infinite engine loop.
+/// Last-resort: prefer Dodge (defensive posture if we still have an Action
+/// slot) over Skip so the turn doesn't go to waste. Falls through to Skip
+/// if Dodge isn't available, and finally AwaitInput if neither is —
+/// preventing an infinite loop on a malformed actor.
 fn skip_or_await(encounter: &EncounterInstance, caster_id: usize) -> ControllerDecision {
     let Some(actor) = encounter.actors.get(&caster_id) else {
         return ControllerDecision::AwaitInput;
     };
+    if let Some(dodge) = actor.actions.iter().find(|a| a.name() == "dodge").copied() {
+        let aei = ActionExecutionInfo::new(dodge, caster_id, None, None, None);
+        if aei.validate(encounter) {
+            return ControllerDecision::Act(aei);
+        }
+    }
     let Some(skip) = actor.actions.iter().find(|a| a.name() == "skip").copied() else {
         return ControllerDecision::AwaitInput;
     };

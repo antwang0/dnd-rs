@@ -2449,6 +2449,40 @@ mod tests {
     }
 
     #[test]
+    fn wizard_has_arcane_action_set() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let w = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let names: Vec<&str> = e.actors[&w].actions.iter().map(|a| a.name()).collect();
+        for required in ["fire bolt", "magic missile", "shield"] {
+            assert!(
+                names.contains(&required),
+                "wizard missing {} (have: {:?})",
+                required,
+                names
+            );
+        }
+    }
+
+    #[test]
+    fn fire_bolt_uses_intelligence_for_attack() {
+        use crate::actions::spells::FIRE_BOLT;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let w = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*FIRE_BOLT, w, Some(vec![target]), None, None);
+        assert!(aei.validate(&e), "fire bolt should validate in range with LOS");
+    }
+
+    #[test]
     fn aid_grants_temp_hp() {
         use crate::actions::spells::AID;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
@@ -3236,7 +3270,6 @@ mod tests {
 
     #[test]
     fn disengage_skips_opportunity_attacks() {
-        use crate::actions::default_actions::DISENGAGE;
         use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
         let mut e = ei_with_terrain(20, 20, &[]);
         let mover = e
