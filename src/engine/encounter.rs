@@ -2386,13 +2386,15 @@ mod tests {
 
     #[test]
     fn save_mode_poisoned_disadvantage() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
         use crate::conditions::{Condition, ConditionTimer};
         use crate::engine::dice::RollMode;
         use crate::engine::types::AbilityScoreType;
 
+        // Fighter (not a zombie) — zombies are condition-immune to Poisoned.
         let mut e = ei_with_terrain(15, 15, &[]);
         let id = e
-            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
         e.actors
             .get_mut(&id)
@@ -2402,6 +2404,81 @@ mod tests {
             e.compute_save_mode(id, AbilityScoreType::Dexterity),
             RollMode::Disadvantage
         );
+    }
+
+    #[test]
+    fn skeleton_is_immune_to_poison_damage() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 100,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max, "skeleton ignores poison");
+    }
+
+    #[test]
+    fn skeleton_takes_double_bludgeoning() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        // Heal up to ensure full HP.
+        DealDamage {
+            actor_id: id,
+            amount: 1,
+            damage_type: DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        // 1 bludgeoning becomes 2 with vulnerability.
+        assert_eq!(e.actors.get(&id).map(|a| a.hitpoints()).unwrap_or(0), max - 2);
+    }
+
+    #[test]
+    fn temp_hp_absorbs_damage_first() {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        let max = actor.max_hitpoints();
+        actor.grant_temp_hp(5);
+        assert_eq!(actor.temp_hitpoints(), 5);
+        actor.take_damage(3);
+        assert_eq!(actor.temp_hitpoints(), 2);
+        assert_eq!(actor.hitpoints(), max);
+        actor.take_damage(4);
+        // Temp drained, remaining 2 hits real HP.
+        assert_eq!(actor.temp_hitpoints(), 0);
+        assert_eq!(actor.hitpoints(), max - 2);
+    }
+
+    #[test]
+    fn grant_temp_hp_does_not_stack() {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        assert!(actor.grant_temp_hp(5));
+        // Smaller value: ignored.
+        assert!(!actor.grant_temp_hp(3));
+        assert_eq!(actor.temp_hitpoints(), 5);
+        // Bigger value: replaces.
+        assert!(actor.grant_temp_hp(8));
+        assert_eq!(actor.temp_hitpoints(), 8);
     }
 
     #[test]

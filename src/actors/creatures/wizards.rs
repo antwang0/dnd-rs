@@ -37,5 +37,9 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 3 level-1 slots: Magic Missile + Shield reactions.
         spell_slots_by_level: vec![3],
         rolls_death_saves: false,
+        resistances: HashSet::new(),
+        vulnerabilities: HashSet::new(),
+        immunities: HashSet::new(),
+        condition_immunities: HashSet::new(),
     }
 });

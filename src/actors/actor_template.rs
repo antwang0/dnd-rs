@@ -120,6 +120,19 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Damage types this creature takes half damage from. Applied via
+    /// `effective_damage` after vulnerabilities/immunities. Default empty.
+    pub resistances: HashSet<crate::engine::types::DamageType>,
+    /// Damage types this creature takes double damage from. Applied via
+    /// `effective_damage`. Default empty.
+    pub vulnerabilities: HashSet<crate::engine::types::DamageType>,
+    /// Damage types this creature takes zero damage from. Wins over
+    /// resistance and vulnerability when set. Default empty.
+    pub immunities: HashSet<crate::engine::types::DamageType>,
+    /// Status conditions this creature can never be afflicted with —
+    /// e.g. Skeletons immune to Poisoned. `add_condition` short-circuits
+    /// when the condition is in this set. Default empty.
+    pub condition_immunities: HashSet<crate::conditions::Condition>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -287,6 +300,13 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    /// Temporary HP buffer. Damage drains this first; healing never
+    /// touches it; expires on long rest. Mirror of 5e temp HP rules.
+    temp_hitpoints: u32,
+    resistances: HashSet<crate::engine::types::DamageType>,
+    vulnerabilities: HashSet<crate::engine::types::DamageType>,
+    immunities: HashSet<crate::engine::types::DamageType>,
+    condition_immunities: HashSet<crate::conditions::Condition>,
 }
 
 impl ActorInstance {
@@ -353,6 +373,11 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            temp_hitpoints: 0,
+            resistances: ct.resistances.clone(),
+            vulnerabilities: ct.vulnerabilities.clone(),
+            immunities: ct.immunities.clone(),
+            condition_immunities: ct.condition_immunities.clone(),
         })
     }
 
@@ -423,6 +448,8 @@ impl ActorInstance {
         self.spell_slot_manager.restore_spell_slots();
         self.conditions.clear();
         self.concentration = None;
+        // Temp HP doesn't persist across rests in 5e.
+        self.temp_hitpoints = 0;
     }
 
     pub fn cr(&self) -> f32 {
@@ -511,8 +538,60 @@ impl ActorInstance {
     /// present, the timer is replaced (longer-lasting application overrides
     /// shorter — but for now we just take the new value either way; revisit
     /// when stacking semantics matter). Returns true if newly added.
+    /// Returns false (and does nothing) if the actor is immune to the
+    /// condition via `condition_immunities`.
     pub fn add_condition(&mut self, c: Condition, timer: ConditionTimer) -> bool {
+        if self.condition_immunities.contains(&c) {
+            return false;
+        }
         self.conditions.insert(c, timer).is_none()
+    }
+
+    pub fn is_immune_to_condition(&self, c: Condition) -> bool {
+        self.condition_immunities.contains(&c)
+    }
+
+    pub fn temp_hitpoints(&self) -> u32 {
+        self.temp_hitpoints
+    }
+
+    /// Add temp HP. 5e: temp HP doesn't stack — the higher value wins.
+    /// Returns true if temp HP changed (e.g. because the new value was
+    /// higher than the existing pool).
+    pub fn grant_temp_hp(&mut self, amount: u32) -> bool {
+        if amount > self.temp_hitpoints {
+            self.temp_hitpoints = amount;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Apply resistance / vulnerability / immunity to a raw damage roll.
+    /// Order: immunity (zero) > vulnerability (×2) > resistance (½).
+    /// `DamageResistant` condition further halves on top — stacks with
+    /// damage-type resistance for half-of-half = quarter damage when both
+    /// apply; matches the "general damage reduction" intent of effects
+    /// like Stoneskin.
+    pub fn effective_damage(
+        &self,
+        amount: u32,
+        damage_type: crate::engine::types::DamageType,
+    ) -> u32 {
+        if self.immunities.contains(&damage_type) {
+            return 0;
+        }
+        let mut amt = amount;
+        if self.vulnerabilities.contains(&damage_type) {
+            amt = amt.saturating_mul(2);
+        }
+        if self.resistances.contains(&damage_type) {
+            amt /= 2;
+        }
+        if self.has_condition(Condition::DamageResistant) {
+            amt /= 2;
+        }
+        amt
     }
 
     /// Remove a condition. Returns true if the condition was present.
@@ -816,7 +895,16 @@ impl ActorInstance {
             }
             HpState::Dead => DamageOutcome::DyingFailure, // already gone; no-op
             HpState::Active => {
-                self.hitpoints = self.hitpoints.saturating_sub(amount);
+                // Drain temporary HP first; remainder hits real HP.
+                let remaining = if self.temp_hitpoints >= amount {
+                    self.temp_hitpoints -= amount;
+                    0
+                } else {
+                    let r = amount - self.temp_hitpoints;
+                    self.temp_hitpoints = 0;
+                    r
+                };
+                self.hitpoints = self.hitpoints.saturating_sub(remaining);
                 if self.hitpoints == 0 {
                     if self.rolls_death_saves {
                         self.hp_state = HpState::Dying {

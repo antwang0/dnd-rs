@@ -137,7 +137,30 @@ impl ApplicableSideEffect for DealDamage {
             return;
         };
         let name = actor.name().to_string();
-        let outcome = actor.take_damage(self.amount);
+        // Apply resistance / vulnerability / immunity before HP.
+        let effective = actor.effective_damage(self.amount, self.damage_type);
+        if effective != self.amount {
+            if effective == 0 {
+                ei.log(format!(
+                    "  {} is immune to {:?} — no damage taken",
+                    name, self.damage_type
+                ));
+            } else if effective < self.amount {
+                ei.log(format!(
+                    "  {} resists {:?}: {} -> {}",
+                    name, self.damage_type, self.amount, effective
+                ));
+            } else {
+                ei.log(format!(
+                    "  {} is vulnerable to {:?}: {} -> {}",
+                    name, self.damage_type, self.amount, effective
+                ));
+            }
+        }
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let outcome = actor.take_damage(effective);
         let was_concentrating = actor.is_concentrating();
         // actor borrow ends here.
 

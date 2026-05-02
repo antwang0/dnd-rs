@@ -15,7 +15,8 @@ pub static WOLF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*WOLF_BITE);
     CreatureTemplate {
         name: "Wolf",
-        glyph: 'W',
+        // 'w' lowercase to avoid colliding with the Wizard's 'W'.
+        glyph: 'w',
         n_instances: 0,
         ac: 13,
         hitpoints: "2d8+2".parse().unwrap(),
@@ -35,5 +36,9 @@ pub static WOLF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
+        resistances: HashSet::new(),
+        vulnerabilities: HashSet::new(),
+        immunities: HashSet::new(),
+        condition_immunities: HashSet::new(),
     }
 });
