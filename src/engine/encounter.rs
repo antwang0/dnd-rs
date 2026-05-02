@@ -310,11 +310,19 @@ impl EncounterInstance {
         use crate::conditions::Condition;
         let mut mode = RollMode::Normal;
         if let Some(attacker) = self.actors.get(&attacker_id) {
-            if attacker.has_condition(Condition::Prone) {
-                mode = mode.combine(RollMode::Disadvantage);
+            for c in [
+                Condition::Prone,
+                Condition::Poisoned,
+                Condition::Blinded,
+                Condition::Restrained,
+                Condition::Frightened,
+            ] {
+                if attacker.has_condition(c) {
+                    mode = mode.combine(RollMode::Disadvantage);
+                }
             }
-            if attacker.has_condition(Condition::Poisoned) {
-                mode = mode.combine(RollMode::Disadvantage);
+            if attacker.has_condition(Condition::Invisible) {
+                mode = mode.combine(RollMode::Advantage);
             }
         }
         if let Some(target) = self.actors.get(&target_id) {
@@ -325,26 +333,63 @@ impl EncounterInstance {
                     RollMode::Disadvantage
                 });
             }
-            if target.has_condition(Condition::Stunned) {
-                mode = mode.combine(RollMode::Advantage);
+            for c in [
+                Condition::Stunned,
+                Condition::Blinded,
+                Condition::Restrained,
+                Condition::Grappled,
+                Condition::Incapacitated,
+            ] {
+                if target.has_condition(c) {
+                    mode = mode.combine(RollMode::Advantage);
+                }
             }
+            if target.has_condition(Condition::Invisible) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+            if target.has_condition(Condition::Dodging) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+        }
+        // Attacker-side perks. Help-aided attackers get advantage on their
+        // single next attack; consume it after the mode is computed.
+        if let Some(attacker) = self.actors.get(&attacker_id)
+            && attacker.has_condition(Condition::Helped)
+        {
+            mode = mode.combine(RollMode::Advantage);
         }
         mode
     }
 
     /// Compute the save-roll mode for an actor's ability save. Today
-    /// `Poisoned` imposes disadvantage on all saves derived from ability
-    /// checks (we conflate save-vs-check until we model that distinction).
+    /// `Poisoned`/`Frightened` impose disadvantage on saves derived from
+    /// ability checks; `Restrained` imposes disadvantage on DEX saves;
+    /// `Dodging` grants advantage on DEX saves.
     pub fn compute_save_mode(
         &self,
         actor_id: usize,
-        _ability: crate::engine::types::AbilityScoreType,
+        ability: crate::engine::types::AbilityScoreType,
     ) -> RollMode {
         use crate::conditions::Condition;
+        use crate::engine::types::AbilityScoreType;
         let mut mode = RollMode::Normal;
-        if let Some(actor) = self.actors.get(&actor_id)
-            && actor.has_condition(Condition::Poisoned)
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return mode;
+        };
+        if actor.has_condition(Condition::Poisoned)
+            || actor.has_condition(Condition::Frightened)
         {
+            mode = mode.combine(RollMode::Disadvantage);
+        }
+        if actor.has_condition(Condition::Restrained) && ability == AbilityScoreType::Dexterity {
+            mode = mode.combine(RollMode::Disadvantage);
+        }
+        if actor.has_condition(Condition::Dodging) && ability == AbilityScoreType::Dexterity {
+            mode = mode.combine(RollMode::Advantage);
+        }
+        if actor.has_condition(Condition::Stunned) && ability == AbilityScoreType::Dexterity {
+            // Stunned auto-fails STR/DEX saves in 5e; disadvantage is the
+            // closest we model without an auto-fail short-circuit.
             mode = mode.combine(RollMode::Disadvantage);
         }
         mode
@@ -368,7 +413,8 @@ impl EncounterInstance {
             return SaveOutcome::Fail;
         };
         let item_bonus = actor.item_save_bonus();
-        let modifier = modifier_from_score(actor.ability_score(ability)) + item_bonus;
+        let cond_bonus = actor.condition_save_bonus();
+        let modifier = modifier_from_score(actor.ability_score(ability)) + item_bonus + cond_bonus;
         let total = raw as i32 + modifier;
         let outcome = if total >= dc {
             SaveOutcome::Pass

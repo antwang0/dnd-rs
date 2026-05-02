@@ -574,29 +574,30 @@ impl ActorInstance {
     }
 
     pub fn can_consume_resource(&self, resource: Resource) -> bool {
-        // Stunned actors lose their entire action economy. Prone is NOT
-        // checked here for Movement: stand-up itself pays in Movement, so
-        // blocking the resource here would create a catch-22. Move-the-
-        // action is still blocked because `remaining_movement()` returns 0
-        // when Prone, which makes `path_cost_to` find no path.
-        let stunned = self.has_condition(Condition::Stunned);
+        // Stunned/Incapacitated actors lose their entire action economy.
+        // Prone is NOT checked here for Movement: stand-up itself pays in
+        // Movement, so blocking the resource here would create a catch-22.
+        // Move-the-action is still blocked because `remaining_movement()`
+        // returns 0 when Prone, which makes `path_cost_to` find no path.
+        let no_action_economy = self.has_condition(Condition::Stunned)
+            || self.has_condition(Condition::Incapacitated);
         match resource {
             Resource::Movement(amt) => {
-                if stunned {
+                if no_action_economy {
                     return false;
                 }
                 amt <= self.movement
             }
             Resource::SpellSlot(spell_lvl) => {
-                if stunned {
+                if no_action_economy {
                     return false;
                 }
                 self.spell_slot_manager.spell_slots(spell_lvl).spell_slots >= 1
             }
-            Resource::Action => !stunned && self.action_slots >= 1,
-            Resource::BonusAction => !stunned && self.bonus_action_slots >= 1,
-            Resource::Reaction => !stunned && self.reaction_slots >= 1,
-            Resource::LegendaryAction => !stunned && self.legendary_action_slots >= 1,
+            Resource::Action => !no_action_economy && self.action_slots >= 1,
+            Resource::BonusAction => !no_action_economy && self.bonus_action_slots >= 1,
+            Resource::Reaction => !no_action_economy && self.reaction_slots >= 1,
+            Resource::LegendaryAction => !no_action_economy && self.legendary_action_slots >= 1,
         }
     }
 
@@ -654,7 +655,9 @@ impl ActorInstance {
 
     pub fn armor_class(&self) -> u32 {
         let bonus = self.total_item_bonuses().ac;
-        (self.base_ac as i32 + bonus).max(0) as u32
+        // Shield spell adds +5 AC until the start of holder's next turn.
+        let shield_bonus = if self.has_condition(Condition::Shielded) { 5 } else { 0 };
+        (self.base_ac as i32 + bonus + shield_bonus).max(0) as u32
     }
 
     pub fn hitpoints(&self) -> u32 {
@@ -679,8 +682,33 @@ impl ActorInstance {
         self.total_item_bonuses().save
     }
 
+    /// Flat bonus from buff conditions (e.g. Bless contributes +2 average,
+    /// modeled as a flat +2 for simplicity rather than a separate die roll).
+    /// Returns the sum of all stacking buff sources.
+    pub fn condition_save_bonus(&self) -> i32 {
+        let mut bonus = 0;
+        if self.has_condition(Condition::Blessed) {
+            bonus += 2;
+        }
+        bonus
+    }
+
+    /// Flat attack bonus from buff conditions. Mirrors `condition_save_bonus`.
+    pub fn condition_attack_bonus(&self) -> i32 {
+        let mut bonus = 0;
+        if self.has_condition(Condition::Blessed) {
+            bonus += 2;
+        }
+        bonus
+    }
+
     pub fn remaining_movement(&self) -> f32 {
-        if self.has_condition(Condition::Prone) || self.has_condition(Condition::Stunned) {
+        if self.has_condition(Condition::Prone)
+            || self.has_condition(Condition::Stunned)
+            || self.has_condition(Condition::Restrained)
+            || self.has_condition(Condition::Grappled)
+            || self.has_condition(Condition::Incapacitated)
+        {
             return 0.0;
         }
         self.movement

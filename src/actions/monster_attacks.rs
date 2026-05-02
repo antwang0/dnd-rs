@@ -763,7 +763,7 @@ pub static ZOMBIE_MULTISLAM: LazyLock<Multiattack> = LazyLock::new(|| Multiattac
 /// Returns the side-effect vec (empty on miss). Centralizes the pattern
 /// so every weapon-style attack logs in the same shape.
 #[allow(clippy::too_many_arguments)]
-fn weapon_attack(
+pub(crate) fn weapon_attack(
     encounter: &mut EncounterInstance,
     caster_id: usize,
     target_id: usize,
@@ -778,7 +778,18 @@ fn weapon_attack(
     let mode = encounter.compute_attack_mode(caster_id, target_id, is_melee);
     let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
     let is_crit = raw_attack == 20;
-    let attack_total = raw_attack + attack_bonus;
+    // Fold Bless / other condition-driven flat bonuses into the to-hit total.
+    let cond_bonus = encounter
+        .actors
+        .get(&caster_id)
+        .map(|a| a.condition_attack_bonus())
+        .unwrap_or(0);
+    let attack_total = raw_attack + attack_bonus + cond_bonus;
+    // The Help action grants advantage on the recipient's *next* attack.
+    // Consume the marker now that we've used it to compute mode.
+    if let Some(a) = encounter.actors.get_mut(&caster_id) {
+        a.remove_condition(crate::conditions::Condition::Helped);
+    }
     // Crits auto-hit regardless of AC. Otherwise compare normally.
     let hit = is_crit || attack_total >= target_ac;
     let outcome = if is_crit {
@@ -792,7 +803,7 @@ fn weapon_attack(
         "  {}: 1d20({}){:+} = {} vs AC {}{} \u{2014} {}",
         action_name,
         raw_attack,
-        attack_bonus,
+        attack_bonus + cond_bonus,
         attack_total,
         target_ac,
         mode.log_suffix(),
