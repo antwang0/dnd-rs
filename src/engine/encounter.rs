@@ -2721,6 +2721,60 @@ mod tests {
     }
 
     #[test]
+    fn zombie_takes_double_radiant_damage() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Use a small damage value (3 → 6 doubled) so zombies on the
+        // minimum HP roll (8 HP) still don't drop below 1.
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 3,
+            damage_type: crate::engine::types::DamageType::Radiant,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), before - 6);
+    }
+
+    #[test]
+    fn zombie_immune_to_poison() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 100,
+            damage_type: crate::engine::types::DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), before, "immune blocks all damage");
+    }
+
+    #[test]
+    fn zombie_resists_necrotic() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: crate::engine::types::DamageType::Necrotic,
+        }
+        .apply(&mut e);
+        // 4 / 2 = 2 damage applied.
+        assert_eq!(e.actors[&id].hitpoints(), before - 2);
+    }
+
+    #[test]
     fn temp_hp_absorbs_damage_before_hp() {
         let mut e = ei_with_terrain(10, 10, &[]);
         let id = e

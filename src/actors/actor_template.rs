@@ -1,5 +1,6 @@
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::{Dice, DiceExpr, Roller};
+use crate::engine::types::DamageType;
 
 /// Lifecycle state of an actor's hit points. Replaces the previous
 /// `dying: bool` + `stable: bool` pair so the four meaningful states are
@@ -120,6 +121,12 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Damage types this creature takes half damage from.
+    pub resistances: HashSet<DamageType>,
+    /// Damage types this creature is immune to (zero damage).
+    pub immunities: HashSet<DamageType>,
+    /// Damage types this creature takes double damage from.
+    pub vulnerabilities: HashSet<DamageType>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -292,6 +299,12 @@ pub struct ActorInstance {
     /// on a long rest. Independent of `hitpoints` and `max_hitpoints` —
     /// going above max real HP is fine.
     temp_hp: u32,
+    /// Damage types reduced by half before applying to HP.
+    resistances: HashSet<DamageType>,
+    /// Damage types fully ignored (zero damage applied).
+    immunities: HashSet<DamageType>,
+    /// Damage types doubled before applying to HP.
+    vulnerabilities: HashSet<DamageType>,
 }
 
 impl ActorInstance {
@@ -359,7 +372,27 @@ impl ActorInstance {
             level: 1,
             xp: 0,
             temp_hp: 0,
+            resistances: ct.resistances.clone(),
+            immunities: ct.immunities.clone(),
+            vulnerabilities: ct.vulnerabilities.clone(),
         })
+    }
+
+    /// Apply 5e damage modifiers (immunity → 0, resistance → halved,
+    /// vulnerability → doubled). Immunity wins over the others; resistance
+    /// and vulnerability cancel for the same type so the order doesn't
+    /// matter. Used by `DealDamage` to scale incoming damage before HP.
+    pub fn modify_incoming_damage(&self, damage: u32, dt: DamageType) -> u32 {
+        if self.immunities.contains(&dt) {
+            return 0;
+        }
+        let resist = self.resistances.contains(&dt);
+        let vuln = self.vulnerabilities.contains(&dt);
+        match (resist, vuln) {
+            (true, false) => damage / 2,
+            (false, true) => damage.saturating_mul(2),
+            _ => damage,
+        }
     }
 
     pub fn temp_hp(&self) -> u32 {
