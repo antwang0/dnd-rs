@@ -16,7 +16,7 @@ use std::sync::LazyLock;
 /// chain mail, STR 16 (the standard "strength build" defaults).
 pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*SCIMITAR);
+    actions.push(&SCIMITAR);
     CreatureTemplate {
         name: "Fighter",
         glyph: 'F',

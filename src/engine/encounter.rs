@@ -2104,7 +2104,7 @@ mod tests {
             .unwrap();
         assert_eq!(GREATCLUB.reach_tiles(), Some(2));
         let aei =
-            ActionExecutionInfo::new(&*GREATCLUB, ogre, Some(vec![target]), None, None);
+            ActionExecutionInfo::new(&GREATCLUB, ogre, Some(vec![target]), None, None);
         assert!(aei.validate(&e), "greatclub should reach 2-gap target");
 
         // Place a target further out — outside reach.
@@ -2112,7 +2112,7 @@ mod tests {
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 10), 1, 1)
             .unwrap();
         let aei_far =
-            ActionExecutionInfo::new(&*GREATCLUB, ogre, Some(vec![far]), None, None);
+            ActionExecutionInfo::new(&GREATCLUB, ogre, Some(vec![far]), None, None);
         assert!(!aei_far.validate(&e), "greatclub should not reach gap-7 target");
     }
 
@@ -2151,7 +2151,7 @@ mod tests {
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
             .unwrap();
         let aei =
-            ActionExecutionInfo::new(&*WOLF_BITE, wolf, Some(vec![target]), None, None);
+            ActionExecutionInfo::new(&WOLF_BITE, wolf, Some(vec![target]), None, None);
         assert!(aei.validate(&e));
         // Reach is plain melee (1-tile gap).
         assert_eq!(WOLF_BITE.reach_tiles(), Some(1));
