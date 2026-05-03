@@ -3011,4 +3011,92 @@ mod tests {
         let enemy_count = next.actors.values().filter(|a| a.team() != 0).count();
         assert!(enemy_count > 0, "expected enemies on teams 1+");
     }
+
+    #[test]
+    fn resistance_halves_damage() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        // Zombies are resistant to necrotic.
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 10,
+            damage_type: DamageType::Necrotic,
+        }
+        .apply(&mut e);
+        // 10 necrotic against resistant target = 5 actual damage.
+        assert_eq!(e.actors[&id].hitpoints(), max - 5);
+    }
+
+    #[test]
+    fn vulnerability_doubles_damage() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        // Skeletons are vulnerable to bludgeoning.
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 3,
+            damage_type: DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        // 3 bludgeoning x2 = 6 actual damage. Saturating sub guards a
+        // 1-HP skeleton from underflow but we're starting at full.
+        let expected = max.saturating_sub(6);
+        assert_eq!(e.actors[&id].hitpoints(), expected);
+    }
+
+    #[test]
+    fn immunity_zeros_damage() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        // Slimes are immune to acid.
+        let id = e
+            .instantiate_creature(&SLIME_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 100,
+            damage_type: DamageType::Acid,
+        }
+        .apply(&mut e);
+        assert_eq!(
+            e.actors[&id].hitpoints(),
+            max,
+            "acid against an immune target should be a no-op"
+        );
+    }
+
+    #[test]
+    fn no_modifier_for_unmatched_damage_type() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        // Slashing isn't on the zombie's resist/vuln/immune lists.
+        DealDamage {
+            actor_id: id,
+            amount: 5,
+            damage_type: DamageType::Slashing,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max - 5);
+    }
 }

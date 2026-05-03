@@ -72,7 +72,7 @@ pub enum HealOutcome {
     NoOp,
 }
 use crate::engine::side_effects::Resource;
-use crate::engine::types::Coordinate;
+use crate::engine::types::{Coordinate, DamageType};
 use crate::items::item_template::{Item, ItemBonuses};
 use crate::{
     actions::action_template::Action,
@@ -120,6 +120,17 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Damage types this creature takes only half of (rounded down). 5e
+    /// resistance. Order doesn't matter; presence is what's checked.
+    pub resistances: HashSet<DamageType>,
+    /// Damage types this creature takes double of. 5e vulnerability.
+    pub vulnerabilities: HashSet<DamageType>,
+    /// Damage types this creature ignores entirely. 5e immunity. Stacks
+    /// with `resistances`/`vulnerabilities` only by precedence: immunity
+    /// short-circuits to 0, then vulnerability doubles, then resistance
+    /// halves. A type listed in both immunities and vulnerabilities is
+    /// effectively just immune.
+    pub damage_immunities: HashSet<DamageType>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -287,6 +298,9 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    resistances: HashSet<DamageType>,
+    vulnerabilities: HashSet<DamageType>,
+    damage_immunities: HashSet<DamageType>,
 }
 
 impl ActorInstance {
@@ -353,7 +367,40 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            resistances: ct.resistances.clone(),
+            vulnerabilities: ct.vulnerabilities.clone(),
+            damage_immunities: ct.damage_immunities.clone(),
         })
+    }
+
+    /// Apply 5e damage-type-vs-defender modifiers to a raw damage roll.
+    /// Immunity wins outright (returns 0). Otherwise vulnerability doubles
+    /// and resistance halves (rounded down) — both are applied if both
+    /// are listed, but no creature today does that.
+    pub fn effective_damage(&self, raw: u32, damage_type: DamageType) -> u32 {
+        if self.damage_immunities.contains(&damage_type) {
+            return 0;
+        }
+        let mut amount = raw;
+        if self.vulnerabilities.contains(&damage_type) {
+            amount = amount.saturating_mul(2);
+        }
+        if self.resistances.contains(&damage_type) {
+            amount /= 2;
+        }
+        amount
+    }
+
+    pub fn is_resistant_to(&self, damage_type: DamageType) -> bool {
+        self.resistances.contains(&damage_type)
+    }
+
+    pub fn is_vulnerable_to(&self, damage_type: DamageType) -> bool {
+        self.vulnerabilities.contains(&damage_type)
+    }
+
+    pub fn is_immune_to(&self, damage_type: DamageType) -> bool {
+        self.damage_immunities.contains(&damage_type)
     }
 
     pub fn rolls_death_saves(&self) -> bool {
