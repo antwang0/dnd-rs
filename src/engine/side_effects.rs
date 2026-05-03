@@ -173,8 +173,11 @@ impl ApplicableSideEffect for DealDamage {
                 // drop concentration before the actor is gone.
                 ei.drop_concentration(self.actor_id);
             }
-            DamageOutcome::Reduced if was_concentrating => {
+            DamageOutcome::Reduced if was_concentrating && scaled > 0 => {
                 // 5e: take damage while concentrating → CON save vs DC max(10, dmg/2).
+                // Damage that resolves to 0 (immunity, halved-to-zero) does
+                // NOT trigger concentration saves — you only save when
+                // damage actually lands.
                 let dc = ((scaled / 2) as i32).max(10);
                 let save = ei.roll_save(
                     self.actor_id,

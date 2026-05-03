@@ -661,7 +661,11 @@ impl EncounterInstance {
                     .actions
                     .iter()
                     .find(|act| {
-                        matches!(act.targeting_schema(), TargetingSchema::SingleActor)
+                        // is_harmful filters out touch-range buffs / heals
+                        // (Cure Wounds is reach 1, SingleActor, but harmless)
+                        // so allies don't opportunity-heal a leaving target.
+                        act.is_harmful()
+                            && matches!(act.targeting_schema(), TargetingSchema::SingleActor)
                             && act.reach_tiles().is_some_and(|r| r <= MELEE_REACH)
                     })
                     .copied()?;
@@ -3258,6 +3262,59 @@ mod tests {
         assert!(
             e.actors[&reactor_id].can_consume_resource(Resource::Reaction),
             "Disengaged mover shouldn't have provoked"
+        );
+    }
+
+    #[test]
+    fn immunity_does_not_break_concentration() {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Cleric isn't poison-immune by default — manually rig damage
+        // adjustments via direct condition: instead, give the cleric a
+        // concentration spell, then deal it 5 poison damage with a
+        // poison-immune actor variant. Simpler: deal 0 damage by using
+        // the resistance/immunity machinery explicitly. We use the
+        // Zombie which is poison-immune and check NO concentration save
+        // is triggered.
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .start_concentration(ConcentrationData {
+                spell_name: "Test".to_string(),
+                conditions: Vec::new(),
+            });
+        // Move the cleric's adjustment to add poison immunity manually
+        // for this test.
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&zombie)
+            .unwrap()
+            .start_concentration(ConcentrationData {
+                spell_name: "Test".to_string(),
+                conditions: Vec::new(),
+            });
+        assert!(e.actors[&zombie].is_concentrating());
+        // Zombie is poison-immune — 50 poison damage scales to 0; no
+        // concentration save should be needed (and the zombie should
+        // still be concentrating afterwards).
+        DealDamage {
+            actor_id: zombie,
+            amount: 50,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert!(
+            e.actors[&zombie].is_concentrating(),
+            "immunity-zeroed damage should not trigger concentration save"
         );
     }
 
