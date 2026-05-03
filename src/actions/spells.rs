@@ -84,38 +84,42 @@ impl Action for SacredFlame {
 
 pub static SACRED_FLAME: LazyLock<SacredFlame> = LazyLock::new(|| SacredFlame {});
 
-/// Healing Word — cleric spell. Bonus action, range 60ft (24 tiles), no
-/// save: target regains 1d4 + caster's WIS modifier HP. We currently treat
-/// it as a cantrip (no spell slot) until spell-slot levels are wired.
-/// LOS not strictly required in 5e (audibly heard), but we require it for
-/// simplicity until "audible reach" is a thing.
-pub struct HealingWord {}
+/// Single-target healing spell driven by configuration. Replaces the
+/// per-spell impls of Healing Word and Cure Wounds — they only differ
+/// in name, reach, action-economy slot, and dice. Heal amount = roll +
+/// caster's `ability` modifier.
+pub struct HealSpell {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub reach: isize,
+    pub requires_los: bool,
+    /// Action / BonusAction. Plus a level-`spell_slot_lvl` slot.
+    pub action_cost: Resource,
+    pub spell_slot_lvl: u32,
+    pub heal_dice: Dice,
+    /// Spellcasting ability whose modifier is added to the heal roll.
+    pub ability: AbilityScoreType,
+}
 
-impl Action for HealingWord {
+impl Action for HealSpell {
     fn name(&self) -> &str {
-        "healing word"
+        self.display_name
     }
-
     fn aliases(&self) -> Vec<&str> {
-        vec!["hw", "heal"]
+        self.aliases.to_vec()
     }
-
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::SingleActor
     }
-
     fn reach_tiles(&self) -> Option<isize> {
-        Some(24)
+        Some(self.reach)
     }
-
     fn requires_los(&self) -> bool {
-        true
+        self.requires_los
     }
-
     fn is_harmful(&self) -> bool {
         false
     }
-
     fn cost(
         &self,
         _encounter: &EncounterInstance,
@@ -124,10 +128,8 @@ impl Action for HealingWord {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        // Healing Word — bonus-action level-1 spell.
-        vec![Resource::BonusAction, Resource::SpellSlot(1)]
+        vec![self.action_cost, Resource::SpellSlot(self.spell_slot_lvl)]
     }
-
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -142,12 +144,12 @@ impl Action for HealingWord {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let wis_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
-        let raw = encounter.roll(&Dice::new(1, 4)) as i32;
-        let amount = (raw + wis_mod).max(1) as u32;
+        let ability_mod = modifier_from_score(caster.ability_score(self.ability));
+        let raw = encounter.roll(&self.heal_dice) as i32;
+        let amount = (raw + ability_mod).max(1) as u32;
         encounter.log(format!(
-            "  healing word: 1d4({}){:+} = {} HP",
-            raw, wis_mod, amount
+            "  {}: {}({}){:+} = {} HP",
+            self.display_name, self.heal_dice, raw, ability_mod, amount
         ));
         vec![Box::new(Heal {
             actor_id: target_id,
@@ -156,7 +158,17 @@ impl Action for HealingWord {
     }
 }
 
-pub static HEALING_WORD: LazyLock<HealingWord> = LazyLock::new(|| HealingWord {});
+/// Healing Word — bonus-action level-1 heal at 60ft (24 tiles).
+pub static HEALING_WORD: HealSpell = HealSpell {
+    display_name: "healing word",
+    aliases: &["hw", "heal"],
+    reach: 24,
+    requires_los: true,
+    action_cost: Resource::BonusAction,
+    spell_slot_lvl: 1,
+    heal_dice: Dice::new(1, 4),
+    ability: AbilityScoreType::Wisdom,
+};
 
 /// Sacred Burst — generic cleric AoE cantrip. Pick a tile within 30ft;
 /// every actor (friend or foe) whose footprint touches the burst takes
@@ -357,73 +369,20 @@ impl Action for HoldPerson {
 
 pub static HOLD_PERSON: LazyLock<HoldPerson> = LazyLock::new(|| HoldPerson {});
 
-/// Cure Wounds — touch-range single-target heal. 1d8 + caster's spellcasting
-/// modifier (we use WIS, matching the cleric chassis), Action + level-1
-/// spell slot. Reach 1 (5e: melee touch). Skips LOS — touch obviously implies
-/// line of sight.
-pub struct CureWounds {}
-
-impl Action for CureWounds {
-    fn name(&self) -> &str {
-        "cure wounds"
-    }
-
-    fn aliases(&self) -> Vec<&str> {
-        vec!["cw", "cure"]
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(1)
-    }
-
-    fn is_harmful(&self) -> bool {
-        false
-    }
-
-    fn cost(
-        &self,
-        _encounter: &EncounterInstance,
-        _caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
-    }
-
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
-            return Vec::new();
-        };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let wis_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
-        let raw = encounter.roll(&Dice::new(1, 8)) as i32;
-        let amount = (raw + wis_mod).max(1) as u32;
-        encounter.log(format!(
-            "  cure wounds: 1d8({}){:+} = {} HP",
-            raw, wis_mod, amount
-        ));
-        vec![Box::new(crate::engine::side_effects::Heal {
-            actor_id: target_id,
-            amount,
-        })]
-    }
-}
-
-pub static CURE_WOUNDS: LazyLock<CureWounds> = LazyLock::new(|| CureWounds {});
+/// Cure Wounds — touch-range Action heal. Heavier dice than Healing Word
+/// (1d8 vs 1d4) but trades the bonus-action economy for melee reach.
+pub static CURE_WOUNDS: HealSpell = HealSpell {
+    display_name: "cure wounds",
+    aliases: &["cw", "cure"],
+    reach: 1,
+    // Touch — LOS check would be redundant with the reach=1 check, and
+    // 5e RAW doesn't require LOS for touch spells.
+    requires_los: false,
+    action_cost: Resource::Action,
+    spell_slot_lvl: 1,
+    heal_dice: Dice::new(1, 8),
+    ability: AbilityScoreType::Wisdom,
+};
 
 /// Magic Missile — three darts of force damage that auto-hit. Each dart
 /// deals 1d4+1; we resolve them as a single damage roll of 3d4+3 against
