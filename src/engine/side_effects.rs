@@ -137,8 +137,28 @@ impl ApplicableSideEffect for DealDamage {
             return;
         };
         let name = actor.name().to_string();
-        let outcome = actor.take_damage(self.amount);
+        // Resistance / immunity / vulnerability scales raw damage before
+        // it changes HP. Log when the adjustment is non-trivial so the
+        // player understands why a fireball "felt" stronger or weaker.
+        let scaled = actor.damage_after_resistances(self.amount, self.damage_type);
         let was_concentrating = actor.is_concentrating();
+        if scaled != self.amount {
+            let suffix = if scaled == 0 {
+                "immune"
+            } else if scaled < self.amount {
+                "resistant"
+            } else {
+                "vulnerable"
+            };
+            ei.log(format!(
+                "  {} is {} to {:?}: {} -> {} damage",
+                name, suffix, self.damage_type, self.amount, scaled
+            ));
+        }
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let outcome = actor.take_damage(scaled);
         // actor borrow ends here.
 
         match outcome {
@@ -155,7 +175,7 @@ impl ApplicableSideEffect for DealDamage {
             }
             DamageOutcome::Reduced if was_concentrating => {
                 // 5e: take damage while concentrating → CON save vs DC max(10, dmg/2).
-                let dc = ((self.amount / 2) as i32).max(10);
+                let dc = ((scaled / 2) as i32).max(10);
                 let save = ei.roll_save(
                     self.actor_id,
                     crate::engine::types::AbilityScoreType::Constitution,

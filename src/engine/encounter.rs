@@ -368,7 +368,13 @@ impl EncounterInstance {
             return SaveOutcome::Fail;
         };
         let item_bonus = actor.item_save_bonus();
-        let modifier = modifier_from_score(actor.ability_score(ability)) + item_bonus;
+        let prof_bonus = if actor.has_save_proficiency(ability) {
+            actor.proficiency_bonus()
+        } else {
+            0
+        };
+        let modifier =
+            modifier_from_score(actor.ability_score(ability)) + item_bonus + prof_bonus;
         let total = raw as i32 + modifier;
         let outcome = if total >= dc {
             SaveOutcome::Pass
@@ -3010,5 +3016,101 @@ mod tests {
 
         let enemy_count = next.actors.values().filter(|a| a.team() != 0).count();
         assert!(enemy_count > 0, "expected enemies on teams 1+");
+    }
+
+    #[test]
+    fn skeleton_vulnerable_to_bludgeoning_takes_double() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        // 4 damage doubled → 8.
+        assert_eq!(e.actors[&id].hitpoints(), max.saturating_sub(8));
+    }
+
+    #[test]
+    fn zombie_immune_to_poison_takes_no_damage() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 50,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max);
+    }
+
+    #[test]
+    fn zombie_resistant_to_necrotic_halves() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Necrotic,
+        }
+        .apply(&mut e);
+        // 4 / 2 = 2 (5e: round down).
+        assert_eq!(e.actors[&id].hitpoints(), max.saturating_sub(2));
+    }
+
+    #[test]
+    fn fighter_save_proficiency_adds_proficiency_bonus() {
+        // Fighter is proficient in STR + CON saves; baseline level 1 →
+        // proficiency bonus +2. With STR 16 (mod +3), a STR save should
+        // beat any DC <= 1d20(min)+3+2 = 6 every time. Use that to
+        // confirm the proficiency bonus is being added.
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // INT save has no proficiency, INT 10 (mod 0) — DC 6 should
+        // sometimes fail (1d20 >= 6 is 75%). Run lots of saves and
+        // count: STR-prof must outperform INT-noprof on the same DC.
+        let mut str_passes = 0;
+        let mut int_passes = 0;
+        for _ in 0..200 {
+            if e.roll_save(id, AbilityScoreType::Strength, 6).passed() {
+                str_passes += 1;
+            }
+            if e.roll_save(id, AbilityScoreType::Intelligence, 6)
+                .passed()
+            {
+                int_passes += 1;
+            }
+        }
+        assert!(
+            str_passes > int_passes,
+            "STR-proficient saves should pass more often than non-proficient INT (got {} vs {})",
+            str_passes,
+            int_passes
+        );
     }
 }

@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::WOLF_BITE;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{Size, SpecialSense};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 /// Fast melee with a built-in trip rider. Bite always rolls the STR save
@@ -35,5 +35,7 @@ pub static WOLF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
+        damage_adjustments: HashMap::new(),
+        save_proficiencies: HashSet::new(),
     }
 });

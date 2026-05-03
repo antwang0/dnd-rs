@@ -1,8 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{TRIP, ZOMBIE_MULTISLAM};
-use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{Language, Size, SpecialSense};
-use std::collections::HashSet;
+use crate::actors::actor_template::{CreatureTemplate, DamageAdjust};
+use crate::engine::types::{DamageType, Language, Size, SpecialSense};
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 pub static ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -34,5 +34,15 @@ pub static ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
+        // 5e zombies are undead — poison-immune, necrotic-resistant, and
+        // (matches MM theme) take a beating from radiant. The
+        // bludgeoning vulnerability is a small homebrew nudge so blunt
+        // weapons feel impactful against unliving meat.
+        damage_adjustments: HashMap::from([
+            (DamageType::Poison, DamageAdjust::Immune),
+            (DamageType::Necrotic, DamageAdjust::Resistant),
+            (DamageType::Radiant, DamageAdjust::Vulnerable),
+        ]),
+        save_proficiencies: HashSet::new(),
     }
 });

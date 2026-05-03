@@ -1,5 +1,6 @@
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::{Dice, DiceExpr, Roller};
+use crate::engine::types::DamageType;
 
 /// Lifecycle state of an actor's hit points. Replaces the previous
 /// `dying: bool` + `stable: bool` pair so the four meaningful states are
@@ -85,6 +86,16 @@ use std::collections::{HashMap, HashSet};
 
 use std::error::Error;
 
+/// 5e damage adjustment. `Vulnerable` doubles incoming damage of that
+/// type, `Resistant` halves (rounded down), `Immune` zeroes it. Applied
+/// in `ActorInstance::damage_after_resistances` before HP changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DamageAdjust {
+    Vulnerable,
+    Resistant,
+    Immune,
+}
+
 pub struct CreatureTemplate {
     pub name: &'static str,
     /// Single-character glyph for the map. Convention: capital letter
@@ -120,6 +131,15 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Per-damage-type vulnerability/resistance/immunity. Empty by default
+    /// — most creatures take baseline damage from everything. Skeletons
+    /// pick `Vulnerable(Bludgeoning)` and `Immune(Poison)`; zombies might
+    /// `Resistant(Necrotic)`. See `DamageAdjust`.
+    pub damage_adjustments: HashMap<DamageType, DamageAdjust>,
+    /// Ability score saving-throw proficiencies. Each listed ability
+    /// adds the actor's proficiency bonus to that save's d20. Empty for
+    /// monsters that don't have spelled-out save proficiencies.
+    pub save_proficiencies: HashSet<AbilityScoreType>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -287,6 +307,12 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    /// Per-damage-type adjustment table (resistance / immunity /
+    /// vulnerability). Read by `damage_after_resistances` to scale
+    /// incoming damage before HP changes.
+    damage_adjustments: HashMap<DamageType, DamageAdjust>,
+    /// Abilities for which this actor adds proficiency bonus to saves.
+    save_proficiencies: HashSet<AbilityScoreType>,
 }
 
 impl ActorInstance {
@@ -353,7 +379,39 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            damage_adjustments: ct.damage_adjustments.clone(),
+            save_proficiencies: ct.save_proficiencies.clone(),
         })
+    }
+
+    /// Resistance / vulnerability / immunity-aware damage scaling. 5e
+    /// rounds resistance down (3 → 1). Immunity zeroes; vulnerability
+    /// doubles (with saturation). Applied once per damage application
+    /// before HP changes — does not stack.
+    pub fn damage_after_resistances(&self, raw: u32, damage_type: DamageType) -> u32 {
+        match self.damage_adjustments.get(&damage_type) {
+            None => raw,
+            Some(DamageAdjust::Immune) => 0,
+            Some(DamageAdjust::Resistant) => raw / 2,
+            Some(DamageAdjust::Vulnerable) => raw.saturating_mul(2),
+        }
+    }
+
+    pub fn damage_adjustments(&self) -> &HashMap<DamageType, DamageAdjust> {
+        &self.damage_adjustments
+    }
+
+    pub fn has_save_proficiency(&self, ability: AbilityScoreType) -> bool {
+        self.save_proficiencies.contains(&ability)
+    }
+
+    /// 5e proficiency bonus by character level: +2 at 1-4, +3 at 5-8, etc.
+    /// Used for save bonuses, attack bonuses (once wired through), and
+    /// spell save DCs. Monsters with declared proficient saves use this
+    /// same scale even when they're "level 1" — close enough for our
+    /// model.
+    pub fn proficiency_bonus(&self) -> i32 {
+        2 + ((self.level.saturating_sub(1)) / 4) as i32
     }
 
     pub fn rolls_death_saves(&self) -> bool {
