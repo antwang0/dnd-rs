@@ -3151,4 +3151,55 @@ mod tests {
             RollMode::Advantage
         );
     }
+
+    #[test]
+    fn bless_adds_to_attack_log_when_active() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::SLAM;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Blessed, ConditionTimer::Permanent);
+
+        // Attack a few times — at least one log line should mention bless.
+        let mut bless_seen = false;
+        for _ in 0..40 {
+            let log_before = e.messages().len();
+            let target_vec = vec![target];
+            let effects = SLAM.side_effects(&mut e, attacker, Some(&target_vec), None, None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            if e.messages()[log_before..]
+                .iter()
+                .any(|line| line.contains("bless("))
+            {
+                bless_seen = true;
+                break;
+            }
+        }
+        assert!(bless_seen, "blessed attacker should log bless bonus");
+    }
+
+    #[test]
+    fn wizard_has_spell_actions() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let names: Vec<&str> = e.actors[&id].actions.iter().map(|a| a.name()).collect();
+        assert!(names.contains(&"fire bolt"));
+        assert!(names.contains(&"magic missile"));
+        assert!(names.contains(&"cause fear"));
+    }
 }

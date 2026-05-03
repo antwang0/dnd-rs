@@ -652,3 +652,80 @@ impl Action for CauseFear {
 }
 
 pub static CAUSE_FEAR: LazyLock<CauseFear> = LazyLock::new(|| CauseFear {});
+
+/// Fire Bolt — wizard cantrip. Ranged spell attack (INT-based) for 1d10
+/// fire on hit; no save, no slot. Range 24 tiles, requires LOS. Crits
+/// double the damage dice (5e RAW) — handled by the underlying weapon
+/// attack helper, since we treat it as a spell-attack equivalent.
+pub struct FireBolt {}
+
+impl Action for FireBolt {
+    fn name(&self) -> &str {
+        "fire bolt"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fb", "bolt"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let int_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Intelligence));
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+        // Spell attack: INT modifier as the to-hit bonus, no damage rider
+        // on the modifier (cantrips don't add ability mod to damage at
+        // low levels in 5e). Treated as ranged for advantage clauses.
+        crate::actions::monster_attacks::weapon_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            int_mod,
+            target_ac,
+            Dice::new(1, 10),
+            0,
+            DamageType::Fire,
+            false,
+        )
+    }
+}
+
+pub static FIRE_BOLT: LazyLock<FireBolt> = LazyLock::new(|| FireBolt {});
