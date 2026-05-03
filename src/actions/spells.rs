@@ -572,3 +572,83 @@ impl Action for Bless {
 }
 
 pub static BLESS: LazyLock<Bless> = LazyLock::new(|| Bless {});
+
+/// Cause Fear — single-target frighten spell. WIS save vs caster's WIS-
+/// based DC; on fail the target is Frightened for up to 10 rounds. Drops
+/// off concentration / timer expiry. Action + level-1 spell slot, range
+/// 24 tiles, requires LOS.
+pub struct CauseFear {}
+
+impl Action for CauseFear {
+    fn name(&self) -> &str {
+        "cause fear"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fear", "frighten"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::{ApplyCondition, StartConcentration};
+
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Frightened,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData {
+                    spell_name: "Cause Fear".to_string(),
+                    conditions: vec![(target_id, Condition::Frightened)],
+                },
+            }),
+        ]
+    }
+}
+
+pub static CAUSE_FEAR: LazyLock<CauseFear> = LazyLock::new(|| CauseFear {});
