@@ -625,6 +625,8 @@ impl Action for FireBolt {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::attacks::resolve_d20_attack;
+
         let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
             return Vec::new();
         };
@@ -632,52 +634,24 @@ impl Action for FireBolt {
             return Vec::new();
         };
         let int_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Intelligence));
-        let mode = encounter.compute_attack_mode(caster_id, target_id, false);
-        let raw = encounter.roll_d20_with_mode(mode) as i32;
-        let attack_total = raw + int_mod;
         let target_ac = match encounter.actors.get(&target_id) {
             Some(a) => a.armor_class() as i32,
             None => return Vec::new(),
         };
-        let is_crit = raw == 20;
-        let hit = is_crit || attack_total >= target_ac;
-        let outcome = if is_crit {
-            "CRIT!"
-        } else if hit {
-            "hit"
-        } else {
-            "miss"
-        };
-        encounter.log(format!(
-            "  fire bolt: 1d20({}){:+} = {} vs AC {}{} \u{2014} {}",
-            raw,
+        // Cantrip — no damage modifier (Fire Bolt scales with level, not
+        // the caster's INT mod). is_melee=false: ranged spell attack.
+        resolve_d20_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
             int_mod,
-            attack_total,
             target_ac,
-            mode.log_suffix(),
-            outcome
-        ));
-        if !hit {
-            return Vec::new();
-        }
-        let raw_dmg = encounter.roll(&Dice::new(1, 10));
-        let crit_extra = if is_crit { encounter.roll(&Dice::new(1, 10)) } else { 0 };
-        let damage = raw_dmg + crit_extra;
-        encounter.log(format!(
-            "  fire bolt: 1d10({}){} = {} fire",
-            raw_dmg,
-            if is_crit {
-                format!("+1d10({})", crit_extra)
-            } else {
-                String::new()
-            },
-            damage
-        ));
-        vec![Box::new(DealDamage {
-            actor_id: target_id,
-            amount: damage,
-            damage_type: DamageType::Fire,
-        })]
+            Dice::new(1, 10),
+            0,
+            DamageType::Fire,
+            false,
+        )
     }
 }
 

@@ -18,7 +18,6 @@ pub static SLIME_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     CreatureTemplate {
         name: "Slime",
         glyph: 's',
-        n_instances: 0,
         ac: 10,
         hitpoints: "2d6+2".parse().unwrap(),
         speed: 20.,

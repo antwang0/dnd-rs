@@ -494,6 +494,24 @@ impl EncounterInstance {
             }
     }
 
+    /// Stamp `actor_id` (or `None` to clear) into every tile of the size's
+    /// `width × width` footprint anchored at `origin`. Out-of-bounds offsets
+    /// no-op (set_actor_id_at silently rejects them).
+    fn write_footprint(
+        &mut self,
+        actor_id: Option<usize>,
+        origin: Coordinate,
+        size: Size,
+    ) {
+        let width = get_tiles_from_size(size);
+        for x_off in 0..width {
+            for y_off in 0..width {
+                let offset = Coordinate::new(x_off as isize, y_off as isize);
+                self.set_actor_id_at(actor_id, origin + offset);
+            }
+        }
+    }
+
     pub fn terrain_at(&self, coord: Coordinate) -> Option<&TerrainInfo> {
         let idx = self.idx(coord).ok()?;
         self.terrain.get(idx)
@@ -1138,26 +1156,14 @@ impl EncounterInstance {
         actor_id: usize,
         coord: Coordinate,
     ) -> Result<(), Box<dyn Error>> {
-        if let Some(actor) = self.actors.get(&actor_id) {
-            let actor_width = get_tiles_from_size(actor.size());
-
-            let coord_old = actor.location();
-            for x_off in 0..actor_width {
-                for y_off in 0..actor_width {
-                    let offset = Coordinate::new(x_off as isize, y_off as isize);
-                    self.set_actor_id_at(None, coord_old + offset);
-                }
-            }
-
-            for x_off in 0..actor_width {
-                for y_off in 0..actor_width {
-                    let offset = Coordinate::new(x_off as isize, y_off as isize);
-                    self.set_actor_id_at(Some(actor_id), coord + offset);
-                }
-            }
-            return Ok(());
-        }
-        Err("Actor not found".into())
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return Err("Actor not found".into());
+        };
+        let size = actor.size();
+        let coord_old = actor.location();
+        self.write_footprint(None, coord_old, size);
+        self.write_footprint(Some(actor_id), coord, size);
+        Ok(())
     }
 
     pub fn instantiate_creature(
@@ -1276,7 +1282,7 @@ impl EncounterInstance {
             return;
         };
         self.log(format!("{} dies.", actor.name()));
-        let actor_width = get_tiles_from_size(actor.size());
+        let size = actor.size();
         let loc = actor.location();
         let team = actor.team();
         let xp_award = actor.xp_value();
@@ -1286,12 +1292,7 @@ impl EncounterInstance {
         let carried: Vec<&'static crate::items::item_template::Item> =
             actor.items().to_vec();
         drop(actor);
-        for x_off in 0..actor_width {
-            for y_off in 0..actor_width {
-                let offset = Coordinate::new(x_off as isize, y_off as isize);
-                self.set_actor_id_at(None, loc + offset);
-            }
-        }
+        self.write_footprint(None, loc, size);
         self.initiative_tracker.remove_actor(id);
         for item in carried {
             self.drop_item(loc, item);

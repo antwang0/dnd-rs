@@ -20,7 +20,6 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     CreatureTemplate {
         name: "Fighter",
         glyph: 'F',
-        n_instances: 0,
         ac: 16,
         hitpoints: "3d10+6".parse().unwrap(),
         speed: 30.,

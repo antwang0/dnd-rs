@@ -17,7 +17,6 @@ pub static OGRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     CreatureTemplate {
         name: "Ogre",
         glyph: 'O',
-        n_instances: 0,
         ac: 11,
         hitpoints: "4d10+8".parse().unwrap(),
         speed: 40.,
