@@ -20,6 +20,15 @@ pub enum Condition {
     /// Disadvantage on attack rolls and ability checks. Marker only today
     /// (no advantage/disadvantage system yet).
     Poisoned,
+    /// Disadvantage on attack rolls and ability checks. In 5e the source
+    /// of fear matters (line of sight) — we collapse to "always disadv on
+    /// attacks" while the condition is up. Cleared by save / source death
+    /// / timer expiry.
+    Frightened,
+    /// 5e Bless target: +1d4 (modeled here as `Advantage`) to attack rolls
+    /// and saving throws. Concentration-bound — caster drops it via the
+    /// usual concentration channel.
+    Blessed,
 }
 
 impl Condition {
@@ -28,6 +37,8 @@ impl Condition {
             Condition::Prone => "prone",
             Condition::Stunned => "stunned",
             Condition::Poisoned => "poisoned",
+            Condition::Frightened => "frightened",
+            Condition::Blessed => "blessed",
         }
     }
 }

@@ -316,6 +316,12 @@ impl EncounterInstance {
             if attacker.has_condition(Condition::Poisoned) {
                 mode = mode.combine(RollMode::Disadvantage);
             }
+            if attacker.has_condition(Condition::Frightened) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+            if attacker.has_condition(Condition::Blessed) {
+                mode = mode.combine(RollMode::Advantage);
+            }
         }
         if let Some(target) = self.actors.get(&target_id) {
             if target.has_condition(Condition::Prone) {
@@ -342,10 +348,14 @@ impl EncounterInstance {
     ) -> RollMode {
         use crate::conditions::Condition;
         let mut mode = RollMode::Normal;
-        if let Some(actor) = self.actors.get(&actor_id)
-            && actor.has_condition(Condition::Poisoned)
-        {
-            mode = mode.combine(RollMode::Disadvantage);
+        if let Some(actor) = self.actors.get(&actor_id) {
+            if actor.has_condition(Condition::Poisoned) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+            // Bless adds advantage on saves as well as attacks.
+            if actor.has_condition(Condition::Blessed) {
+                mode = mode.combine(RollMode::Advantage);
+            }
         }
         mode
     }
@@ -3078,6 +3088,84 @@ mod tests {
             max,
             "acid against an immune target should be a no-op"
         );
+    }
+
+    #[test]
+    fn frightened_imposes_attack_disadvantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Frightened, ConditionTimer::Rounds(3));
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn blessed_grants_attack_and_save_advantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let me = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&me)
+            .unwrap()
+            .add_condition(Condition::Blessed, ConditionTimer::Rounds(10));
+        assert_eq!(
+            e.compute_attack_mode(me, target, true),
+            RollMode::Advantage
+        );
+        assert_eq!(
+            e.compute_save_mode(me, AbilityScoreType::Wisdom),
+            RollMode::Advantage
+        );
+    }
+
+    #[test]
+    fn bless_is_concentration_and_drops_blessed_when_dropped() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::spells::BLESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*BLESS, cleric, Some(vec![ally]), None, None);
+        assert!(aei.validate(&e), "bless on adjacent ally should validate");
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(e.actors[&cleric].is_concentrating());
+        assert!(e.actors[&ally].has_condition(Condition::Blessed));
+
+        // Drop the cleric's concentration — Blessed must be cleared.
+        e.drop_concentration(cleric);
+        assert!(!e.actors[&cleric].is_concentrating());
+        assert!(!e.actors[&ally].has_condition(Condition::Blessed));
     }
 
     #[test]
