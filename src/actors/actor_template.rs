@@ -733,20 +733,23 @@ impl ActorInstance {
     /// Restore HP. A Dying or Stable actor with `amount > 0` snaps back to
     /// Active at exactly `amount` HP (5e: regaining HP from 0 sets you to
     /// the new value, not adds to it). Active actors heal up to their
-    /// max. Dead actors are unrecoverable here.
+    /// max. Dead actors are unrecoverable here. Caps against
+    /// `max_hitpoints()` so item-granted max-HP bonuses (Amulet of Health,
+    /// etc.) actually grant headroom for healing.
     pub fn heal(&mut self, amount: u32) -> HealOutcome {
         if amount == 0 {
             return HealOutcome::AlreadyFull;
         }
+        let cap = self.max_hitpoints();
         match self.hp_state {
             HpState::Dead => HealOutcome::NoOp,
             HpState::Dying { .. } | HpState::Stable => {
                 self.hp_state = HpState::Active;
-                self.hitpoints = amount.min(self.base_hitpoints);
+                self.hitpoints = amount.min(cap);
                 HealOutcome::Revived
             }
             HpState::Active => {
-                let new_hp = (self.hitpoints + amount).min(self.base_hitpoints);
+                let new_hp = self.hitpoints.saturating_add(amount).min(cap);
                 if new_hp == self.hitpoints {
                     HealOutcome::AlreadyFull
                 } else {
