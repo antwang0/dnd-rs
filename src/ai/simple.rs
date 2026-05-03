@@ -69,8 +69,36 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 8. Nothing useful. End the turn.
+        // 8. Nothing else useful — Dodge if we can. Better than skip:
+        //    attackers get disadvantage on us and DEX saves get
+        //    advantage. Free upgrade for any actor with a spare Action.
+        if let Some(aei) = try_dodge(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 9. Truly nothing. End the turn.
         skip_or_await(encounter, actor_id)
+    }
+}
+
+/// Use the Dodge action as a fallback when no offensive option exists.
+/// Validates against the action's normal cost (1 Action) so a stunned
+/// actor or one out of action slots still falls through to skip.
+fn try_dodge(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    // Don't double-Dodge — wastes the action.
+    if actor.has_condition(Condition::Dodging) {
+        return None;
+    }
+    let dodge = actor.actions.iter().find(|a| a.name() == "dodge").copied()?;
+    let aei = ActionExecutionInfo::new(dodge, actor_id, None, None, None);
+    if aei.validate(encounter) {
+        Some(aei)
+    } else {
+        None
     }
 }
 
@@ -466,7 +494,9 @@ fn try_attack_focus_fire(
         if target_id == actor_id || target.team() == my_team || !target.is_combat_active() {
             continue;
         }
-        let Some((reach, action)) = best_attack_against(actor, encounter, target_id) else {
+        let Some((reach, action)) =
+            best_attack_against(actor_id, actor, encounter, target_id)
+        else {
             continue;
         };
         let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![target_id]), None, None);
@@ -491,11 +521,14 @@ fn try_attack_focus_fire(
     best.map(|(_, _, _, aei)| aei)
 }
 
-/// Among the actor's SingleActor actions, the longest-reach one whose
-/// reach covers the current footprint distance to `target_id`. Doesn't
-/// validate cost / LOS; the caller wraps it in `ActionExecutionInfo` and
-/// validates.
+/// Among the actor's SingleActor *harmful* actions, the longest-reach
+/// one whose reach covers `target_id` and that the actor can actually
+/// afford right now. Validating cost here means we don't return Magic
+/// Missile (reach 48, costs a spell slot) when no slots remain — the
+/// caller would then skip the target entirely instead of falling back
+/// to Fire Bolt at reach 24.
 fn best_attack_against(
+    actor_id: usize,
     actor: &crate::actors::actor_template::ActorInstance,
     encounter: &EncounterInstance,
     target_id: usize,
@@ -524,6 +557,14 @@ fn best_attack_against(
             continue;
         }
         if best.is_some_and(|(r, _)| r >= reach) {
+            continue;
+        }
+        // Affordability gate: can't pay → keep looking for a cheaper
+        // option. Full LOS / range / custom-validation still runs at
+        // the caller via `ActionExecutionInfo::validate`.
+        let aei =
+            ActionExecutionInfo::new(action, actor_id, Some(vec![target_id]), None, None);
+        if !aei.validate(encounter) {
             continue;
         }
         best = Some((reach, action));
@@ -1047,5 +1088,43 @@ mod tests {
         };
         // Confirm it's a Move, not the longbow.
         assert_eq!(aei.action().name(), "move", "skeleton should kite first");
+    }
+
+    #[test]
+    fn wizard_falls_back_to_fire_bolt_when_out_of_slots() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut e = empty_arena();
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(15, 5), 1, 0)
+            .unwrap();
+
+        // Drain every level-1 slot the wizard owns so Magic Missile is
+        // unavailable. best_attack_against should now pick Fire Bolt.
+        let max_slots = e.actors[&wizard]
+            .spell_slot_manager
+            .spell_slots(1)
+            .max_spell_slots;
+        for _ in 0..max_slots {
+            e.actors
+                .get_mut(&wizard)
+                .unwrap()
+                .spell_slot_manager
+                .consume_spell_slot(1);
+        }
+
+        let ai = SimpleAi;
+        let decision = ai.decide(&e, wizard);
+        let ControllerDecision::Act(aei) = decision else {
+            panic!("expected an attack, got skip / dodge");
+        };
+        assert_eq!(
+            aei.action().name(),
+            "fire bolt",
+            "wizard with no slots should fall back to Fire Bolt"
+        );
     }
 }
