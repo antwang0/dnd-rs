@@ -454,111 +454,48 @@ impl Action for MagicMissile {
 
 pub static MAGIC_MISSILE: LazyLock<MagicMissile> = LazyLock::new(|| MagicMissile {});
 
-/// Bless — concentration buff on a single ally. Applies the Blessed
-/// condition for up to 10 rounds (5e: 1 minute = 10 rounds). The
-/// condition adds +1d4 to the target's attack rolls and saves while
-/// active; concentration drop or timer expiry clears it. Action +
-/// level-1 spell slot, reach 6 tiles (5e: 30ft "spread" — we keep it
-/// modest so the cleric has to be close).
-pub struct Bless {}
-
-impl Action for Bless {
-    fn name(&self) -> &str {
-        "bless"
-    }
-
-    fn aliases(&self) -> Vec<&str> {
-        vec!["bls", "buff"]
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(12)
-    }
-
-    fn requires_los(&self) -> bool {
-        true
-    }
-
-    fn is_harmful(&self) -> bool {
-        false
-    }
-
-    fn cost(
-        &self,
-        _encounter: &EncounterInstance,
-        _caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
-    }
-
-    fn side_effects(
-        &self,
-        _encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::actors::actor_template::ConcentrationData;
-        use crate::conditions::{Condition, ConditionTimer};
-        use crate::engine::side_effects::{ApplyCondition, StartConcentration};
-
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
-            return Vec::new();
-        };
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Blessed,
-                timer: ConditionTimer::Rounds(10),
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData {
-                    spell_name: "Bless".to_string(),
-                    conditions: vec![(target_id, Condition::Blessed)],
-                },
-            }),
-        ]
-    }
+/// Single-target concentration spell that applies a `Condition` to its
+/// target for `duration` rounds. Optional `save`: if Some, the target
+/// rolls that save vs the caster's spell save DC (computed from
+/// `caster_dc_ability`); on a pass, the spell fizzles. If None, the
+/// effect lands unconditionally (typical of buff spells like Bless).
+///
+/// Replaces the per-spell impls of Bless and Cause Fear.
+pub struct ConcentrationConditionSpell {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub reach: isize,
+    pub requires_los: bool,
+    pub action_cost: Resource,
+    pub spell_slot_lvl: u32,
+    pub harmful: bool,
+    pub condition: crate::conditions::Condition,
+    pub duration: crate::conditions::ConditionTimer,
+    /// Save ability for the target (None = no save) and the caster's
+    /// spellcasting ability used to derive the DC.
+    pub save_ability: Option<AbilityScoreType>,
+    pub caster_dc_ability: AbilityScoreType,
 }
 
-pub static BLESS: LazyLock<Bless> = LazyLock::new(|| Bless {});
-
-/// Cause Fear — single-target frighten spell. WIS save vs caster's WIS-
-/// based DC; on fail the target is Frightened for up to 10 rounds. Drops
-/// off concentration / timer expiry. Action + level-1 spell slot, range
-/// 24 tiles, requires LOS.
-pub struct CauseFear {}
-
-impl Action for CauseFear {
+impl Action for ConcentrationConditionSpell {
     fn name(&self) -> &str {
-        "cause fear"
+        self.display_name
     }
-
     fn aliases(&self) -> Vec<&str> {
-        vec!["fear", "frighten"]
+        self.aliases.to_vec()
     }
-
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::SingleActor
     }
-
     fn reach_tiles(&self) -> Option<isize> {
-        Some(24)
+        Some(self.reach)
     }
-
     fn requires_los(&self) -> bool {
-        true
+        self.requires_los
     }
-
+    fn is_harmful(&self) -> bool {
+        self.harmful
+    }
     fn cost(
         &self,
         _encounter: &EncounterInstance,
@@ -567,9 +504,8 @@ impl Action for CauseFear {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
+        vec![self.action_cost, Resource::SpellSlot(self.spell_slot_lvl)]
     }
-
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -579,38 +515,70 @@ impl Action for CauseFear {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::actors::actor_template::ConcentrationData;
-        use crate::conditions::{Condition, ConditionTimer};
         use crate::engine::side_effects::{ApplyCondition, StartConcentration};
 
         let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
             return Vec::new();
         };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
-        if save.passed() {
-            return Vec::new();
+        if let Some(save_ability) = self.save_ability {
+            let Some(caster) = encounter.actors.get(&caster_id) else {
+                return Vec::new();
+            };
+            let dc = caster.spell_save_dc(self.caster_dc_ability);
+            let save = encounter.roll_save(target_id, save_ability, dc);
+            if save.passed() {
+                return Vec::new();
+            }
         }
         vec![
             Box::new(ApplyCondition {
                 actor_id: target_id,
-                condition: Condition::Frightened,
-                timer: ConditionTimer::Rounds(10),
+                condition: self.condition,
+                timer: self.duration,
             }),
             Box::new(StartConcentration {
                 caster_id,
                 data: ConcentrationData {
-                    spell_name: "Cause Fear".to_string(),
-                    conditions: vec![(target_id, Condition::Frightened)],
+                    spell_name: self.display_name.to_string(),
+                    conditions: vec![(target_id, self.condition)],
                 },
             }),
         ]
     }
 }
 
-pub static CAUSE_FEAR: LazyLock<CauseFear> = LazyLock::new(|| CauseFear {});
+/// Bless — concentration buff on a single ally. Applies the Blessed
+/// condition for up to 10 rounds (5e: 1 minute = 10 rounds). The
+/// condition adds +1d4 to the target's attack rolls and saves.
+pub static BLESS: ConcentrationConditionSpell = ConcentrationConditionSpell {
+    display_name: "bless",
+    aliases: &["bls", "buff"],
+    reach: 12,
+    requires_los: true,
+    action_cost: Resource::Action,
+    spell_slot_lvl: 1,
+    harmful: false,
+    condition: crate::conditions::Condition::Blessed,
+    duration: crate::conditions::ConditionTimer::Rounds(10),
+    save_ability: None,
+    caster_dc_ability: AbilityScoreType::Wisdom,
+};
+
+/// Cause Fear — single-target frighten. WIS save vs the caster's WIS-
+/// based DC; on fail the target is Frightened for up to 10 rounds.
+pub static CAUSE_FEAR: ConcentrationConditionSpell = ConcentrationConditionSpell {
+    display_name: "cause fear",
+    aliases: &["fear", "frighten"],
+    reach: 24,
+    requires_los: true,
+    action_cost: Resource::Action,
+    spell_slot_lvl: 1,
+    harmful: true,
+    condition: crate::conditions::Condition::Frightened,
+    duration: crate::conditions::ConditionTimer::Rounds(10),
+    save_ability: Some(AbilityScoreType::Wisdom),
+    caster_dc_ability: AbilityScoreType::Wisdom,
+};
 
 /// Fire Bolt — wizard cantrip. Ranged spell attack (INT-based) for 1d10
 /// fire on hit; no save, no slot. Range 24 tiles, requires LOS. Crits

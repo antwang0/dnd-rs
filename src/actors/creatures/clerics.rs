@@ -18,9 +18,9 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&HEALING_WORD);
     actions.push(&*HOLD_PERSON);
     actions.push(&CURE_WOUNDS);
-    actions.push(&*BLESS);
+    actions.push(&BLESS);
     actions.push(&*MAGIC_MISSILE);
-    actions.push(&*CAUSE_FEAR);
+    actions.push(&CAUSE_FEAR);
     CreatureTemplate {
         name: "Cleric",
         glyph: 'C',

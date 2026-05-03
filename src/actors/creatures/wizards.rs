@@ -14,7 +14,7 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*FIRE_BOLT);
     actions.push(&*MAGIC_MISSILE);
-    actions.push(&*CAUSE_FEAR);
+    actions.push(&CAUSE_FEAR);
     CreatureTemplate {
         name: "Wizard",
         glyph: 'M',
