@@ -3,11 +3,6 @@
 /// while `Prone`; `can_consume_resource` blocks Action/BonusAction/Reaction
 /// while `Stunned`). New variants land here and then plug into the
 /// relevant accessor — no central dispatcher.
-///
-/// Durations aren't tracked yet: conditions persist until something
-/// explicitly removes them via `RemoveCondition`. Round-tracked durations
-/// (e.g. "stunned for 1 round") need a turn-end hook the engine doesn't
-/// have yet; deferred.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Condition {
     /// Speed = 0; ranged attacks against you have disadvantage; melee
@@ -20,6 +15,18 @@ pub enum Condition {
     /// Disadvantage on attack rolls and ability checks. Marker only today
     /// (no advantage/disadvantage system yet).
     Poisoned,
+    /// Disadvantage on attack rolls and ability checks while you can see
+    /// the source of the fear. We don't track sources, so we apply the
+    /// disadvantage unconditionally — close enough for our model.
+    Frightened,
+    /// You auto-fail attack rolls (we model as disadvantage for now —
+    /// the closest analog without representing "see the target") and
+    /// attacks against you have advantage.
+    Blinded,
+    /// Bless rider — adds 1d4 to attack rolls and saving throws. Treated
+    /// as a condition so concentration drop / round timer cleanup uses
+    /// the same wiring as everything else.
+    Blessed,
 }
 
 impl Condition {
@@ -28,6 +35,9 @@ impl Condition {
             Condition::Prone => "prone",
             Condition::Stunned => "stunned",
             Condition::Poisoned => "poisoned",
+            Condition::Frightened => "frightened",
+            Condition::Blinded => "blinded",
+            Condition::Blessed => "blessed",
         }
     }
 }

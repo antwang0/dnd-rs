@@ -316,6 +316,12 @@ impl EncounterInstance {
             if attacker.has_condition(Condition::Poisoned) {
                 mode = mode.combine(RollMode::Disadvantage);
             }
+            if attacker.has_condition(Condition::Frightened) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+            if attacker.has_condition(Condition::Blinded) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
         }
         if let Some(target) = self.actors.get(&target_id) {
             if target.has_condition(Condition::Prone) {
@@ -328,13 +334,17 @@ impl EncounterInstance {
             if target.has_condition(Condition::Stunned) {
                 mode = mode.combine(RollMode::Advantage);
             }
+            if target.has_condition(Condition::Blinded) {
+                mode = mode.combine(RollMode::Advantage);
+            }
         }
         mode
     }
 
     /// Compute the save-roll mode for an actor's ability save. Today
-    /// `Poisoned` imposes disadvantage on all saves derived from ability
-    /// checks (we conflate save-vs-check until we model that distinction).
+    /// `Poisoned` and `Frightened` impose disadvantage on all saves
+    /// derived from ability checks (we conflate save-vs-check until we
+    /// model that distinction).
     pub fn compute_save_mode(
         &self,
         actor_id: usize,
@@ -342,10 +352,13 @@ impl EncounterInstance {
     ) -> RollMode {
         use crate::conditions::Condition;
         let mut mode = RollMode::Normal;
-        if let Some(actor) = self.actors.get(&actor_id)
-            && actor.has_condition(Condition::Poisoned)
-        {
-            mode = mode.combine(RollMode::Disadvantage);
+        if let Some(actor) = self.actors.get(&actor_id) {
+            if actor.has_condition(Condition::Poisoned) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+            if actor.has_condition(Condition::Frightened) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
         }
         mode
     }
@@ -359,29 +372,49 @@ impl EncounterInstance {
         ability: crate::engine::types::AbilityScoreType,
         dc: i32,
     ) -> crate::engine::saves::SaveOutcome {
+        use crate::conditions::Condition;
         use crate::engine::saves::SaveOutcome;
         use crate::engine::util::modifier_from_score;
 
         let mode = self.compute_save_mode(actor_id, ability);
         let raw = self.roll_d20_with_mode(mode);
+        // Bless rider: +1d4 to saves (and attack rolls) while the
+        // condition is active. Roll separately so the log can break it
+        // out — a flat-add bonus stays with the rolling character so the
+        // dice trail remains reproducible by seed.
+        let bless_bonus = if self
+            .actors
+            .get(&actor_id)
+            .is_some_and(|a| a.has_condition(Condition::Blessed))
+        {
+            self.roll(&Dice::new(1, 4)) as i32
+        } else {
+            0
+        };
         let Some(actor) = self.actors.get(&actor_id) else {
             return SaveOutcome::Fail;
         };
         let item_bonus = actor.item_save_bonus();
         let modifier = modifier_from_score(actor.ability_score(ability)) + item_bonus;
-        let total = raw as i32 + modifier;
+        let total = raw as i32 + modifier + bless_bonus;
         let outcome = if total >= dc {
             SaveOutcome::Pass
         } else {
             SaveOutcome::Fail
         };
         let name = actor.name().to_string();
+        let bless_suffix = if bless_bonus > 0 {
+            format!(" + bless({})", bless_bonus)
+        } else {
+            String::new()
+        };
         self.log(format!(
-            "  {} {:?} save: 1d20({}){:+} = {} vs DC {}{} \u{2014} {}",
+            "  {} {:?} save: 1d20({}){:+}{} = {} vs DC {}{} \u{2014} {}",
             name,
             ability,
             raw,
             modifier,
+            bless_suffix,
             total,
             dc,
             mode.log_suffix(),
