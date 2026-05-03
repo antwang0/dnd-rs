@@ -295,9 +295,11 @@ impl EncounterInstance {
     /// Compute the attack-roll mode given attacker / target conditions.
     /// 5e clauses we model today:
     /// - Attacker Prone → disadvantage on all attacks.
-    /// - Attacker Poisoned → disadvantage.
+    /// - Attacker Poisoned / Restrained / Blinded → disadvantage.
     /// - Target Prone → melee attacks have advantage, ranged have disadvantage.
-    /// - Target Stunned → advantage on attacks vs them.
+    /// - Target Stunned / Restrained → advantage on attacks vs them.
+    /// - Target Blinded → advantage on attacks vs them.
+    /// - Target Dodging → disadvantage on attacks vs them.
     ///
     /// Multiple sources of the same direction don't stack; opposing
     /// sources cancel via `RollMode::combine`.
@@ -313,7 +315,10 @@ impl EncounterInstance {
             if attacker.has_condition(Condition::Prone) {
                 mode = mode.combine(RollMode::Disadvantage);
             }
-            if attacker.has_condition(Condition::Poisoned) {
+            if attacker.has_condition(Condition::Poisoned)
+                || attacker.has_condition(Condition::Restrained)
+                || attacker.has_condition(Condition::Blinded)
+            {
                 mode = mode.combine(RollMode::Disadvantage);
             }
         }
@@ -325,27 +330,46 @@ impl EncounterInstance {
                     RollMode::Disadvantage
                 });
             }
-            if target.has_condition(Condition::Stunned) {
+            if target.has_condition(Condition::Stunned)
+                || target.has_condition(Condition::Restrained)
+                || target.has_condition(Condition::Blinded)
+            {
                 mode = mode.combine(RollMode::Advantage);
+            }
+            if target.has_condition(Condition::Dodging) {
+                mode = mode.combine(RollMode::Disadvantage);
             }
         }
         mode
     }
 
     /// Compute the save-roll mode for an actor's ability save. Today
-    /// `Poisoned` imposes disadvantage on all saves derived from ability
-    /// checks (we conflate save-vs-check until we model that distinction).
+    /// modeled clauses:
+    /// - `Poisoned` imposes disadvantage on all saves (we conflate
+    ///   save-vs-check until we model that distinction).
+    /// - `Restrained` imposes disadvantage on DEX saves only.
+    /// - `Dodging` grants advantage on DEX saves.
     pub fn compute_save_mode(
         &self,
         actor_id: usize,
-        _ability: crate::engine::types::AbilityScoreType,
+        ability: crate::engine::types::AbilityScoreType,
     ) -> RollMode {
         use crate::conditions::Condition;
+        use crate::engine::types::AbilityScoreType;
         let mut mode = RollMode::Normal;
-        if let Some(actor) = self.actors.get(&actor_id)
-            && actor.has_condition(Condition::Poisoned)
-        {
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return mode;
+        };
+        if actor.has_condition(Condition::Poisoned) {
             mode = mode.combine(RollMode::Disadvantage);
+        }
+        if matches!(ability, AbilityScoreType::Dexterity) {
+            if actor.has_condition(Condition::Restrained) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+            if actor.has_condition(Condition::Dodging) {
+                mode = mode.combine(RollMode::Advantage);
+            }
         }
         mode
     }
@@ -596,7 +620,8 @@ impl EncounterInstance {
     /// Iterate enemy actors with a Reaction slot and a melee attack; for each
     /// whose reach covered `mover` at `from` but no longer covers them at
     /// `to`, run the attack against the mover and consume the reaction.
-    /// Stops early if the mover is downed mid-loop.
+    /// Stops early if the mover is downed mid-loop. The Disengaged
+    /// condition on the mover suppresses every OA this dispatch (5e).
     fn dispatch_opportunity_attacks(
         &mut self,
         mover_id: usize,
@@ -604,10 +629,16 @@ impl EncounterInstance {
         to: Coordinate,
     ) {
         use crate::actions::action_template::{MELEE_REACH, TargetingSchema};
+        use crate::conditions::Condition;
         use crate::engine::side_effects::Resource;
 
         let (mover_team, mover_size) = match self.actors.get(&mover_id) {
-            Some(a) => (a.team(), get_tiles_from_size(a.size())),
+            Some(a) => {
+                if a.has_condition(Condition::Disengaged) {
+                    return;
+                }
+                (a.team(), get_tiles_from_size(a.size()))
+            }
             None => return,
         };
 
@@ -3076,6 +3107,98 @@ mod tests {
         .apply(&mut e);
         // 4 / 2 = 2 (5e: round down).
         assert_eq!(e.actors[&id].hitpoints(), max.saturating_sub(2));
+    }
+
+    #[test]
+    fn dodge_imposes_disadvantage_on_attackers() {
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        let mode_before = e.compute_attack_mode(attacker, target, true);
+        assert_eq!(mode_before, RollMode::Normal);
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Dodging, ConditionTimer::Permanent);
+        let mode_after = e.compute_attack_mode(attacker, target, true);
+        assert_eq!(mode_after, RollMode::Disadvantage);
+    }
+
+    #[test]
+    fn restrained_zeros_movement_and_advantages_attackers() {
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Restrained, ConditionTimer::Permanent);
+        // Movement is zeroed
+        assert_eq!(e.actors[&target].remaining_movement(), 0.0);
+        // Attackers gain advantage
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage
+        );
+        // Target has disadvantage on DEX saves
+        let mode = e.compute_save_mode(target, crate::engine::types::AbilityScoreType::Dexterity);
+        assert_eq!(mode, RollMode::Disadvantage);
+    }
+
+    #[test]
+    fn dodging_clears_on_next_turn_start() {
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Dodging, ConditionTimer::Permanent);
+        assert!(e.actors[&id].has_condition(Condition::Dodging));
+        // reset_for_new_round drops Dodging.
+        e.actors.get_mut(&id).unwrap().reset_for_new_round();
+        assert!(!e.actors[&id].has_condition(Condition::Dodging));
+    }
+
+    #[test]
+    fn disengage_suppresses_opportunity_attacks() {
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Apply Disengaged before moving — OAs should not fire.
+        e.actors.get_mut(&mover_id).unwrap().add_condition(
+            crate::conditions::Condition::Disengaged,
+            crate::conditions::ConditionTimer::Permanent,
+        );
+        let move_effect = MoveActor {
+            actor_id: mover_id,
+            path: vec![Coordinate::new(15, 5)],
+        };
+        move_effect.apply(&mut e);
+        assert!(
+            e.actors[&reactor_id].can_consume_resource(Resource::Reaction),
+            "Disengaged mover shouldn't have provoked"
+        );
     }
 
     #[test]

@@ -738,7 +738,10 @@ impl ActorInstance {
     }
 
     pub fn remaining_movement(&self) -> f32 {
-        if self.has_condition(Condition::Prone) || self.has_condition(Condition::Stunned) {
+        if self.has_condition(Condition::Prone)
+            || self.has_condition(Condition::Stunned)
+            || self.has_condition(Condition::Restrained)
+        {
             return 0.0;
         }
         self.movement
@@ -778,6 +781,12 @@ impl ActorInstance {
         self.bonus_action_slots = 1;
         self.reaction_slots = 1;
         // TODO: legendary actions
+
+        // Dodging / Disengaged only last until the start of the actor's
+        // own next turn (5e). Drop them here so a Dodge spent on round
+        // N's turn doesn't keep benefiting the actor on round N+1.
+        self.conditions.remove(&Condition::Dodging);
+        self.conditions.remove(&Condition::Disengaged);
     }
 
     pub fn action_slots(&self) -> u32 {
