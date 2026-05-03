@@ -72,7 +72,7 @@ pub enum HealOutcome {
     NoOp,
 }
 use crate::engine::side_effects::Resource;
-use crate::engine::types::Coordinate;
+use crate::engine::types::{Coordinate, DamageModifier, DamageType};
 use crate::items::item_template::{Item, ItemBonuses};
 use crate::{
     actions::action_template::Action,
@@ -120,6 +120,10 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Per-damage-type modifiers (resistance / immunity / vulnerability).
+    /// Looked up by `damage_modifier_for`; missing entry = normal damage.
+    /// Empty by default — most creatures have no resistances.
+    pub damage_modifiers: HashMap<DamageType, DamageModifier>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -287,6 +291,7 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    damage_modifiers: HashMap<DamageType, DamageModifier>,
 }
 
 impl ActorInstance {
@@ -353,7 +358,26 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            damage_modifiers: ct.damage_modifiers.clone(),
         })
+    }
+
+    /// Damage-type modifier for this actor, if any. `None` = normal damage.
+    pub fn damage_modifier_for(&self, ty: DamageType) -> Option<DamageModifier> {
+        self.damage_modifiers.get(&ty).copied()
+    }
+
+    /// Apply this actor's damage-type modifier to a raw amount: immune
+    /// returns 0, resistant halves (rounded down), vulnerable doubles.
+    /// No modifier = unchanged. Used by `DealDamage::apply` and any
+    /// damage path that wants to honor resistance.
+    pub fn modified_damage(&self, ty: DamageType, raw: u32) -> u32 {
+        match self.damage_modifier_for(ty) {
+            Some(DamageModifier::Immune) => 0,
+            Some(DamageModifier::Resistant) => raw / 2,
+            Some(DamageModifier::Vulnerable) => raw.saturating_mul(2),
+            None => raw,
+        }
     }
 
     pub fn rolls_death_saves(&self) -> bool {

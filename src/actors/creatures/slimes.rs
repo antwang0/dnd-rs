@@ -1,8 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::ACID_SPIT;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::Size;
-use std::collections::HashSet;
+use crate::engine::types::{DamageModifier, DamageType, Size};
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 /// Acid Slime — squishy ranged splash dealer. Spits an acidic blob at a
@@ -37,5 +37,11 @@ pub static SLIME_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
+        // Acid slime: immune to its own acid, vulnerable to fire (the
+        // jelly burns up fast).
+        damage_modifiers: HashMap::from([
+            (DamageType::Acid, DamageModifier::Immune),
+            (DamageType::Fire, DamageModifier::Vulnerable),
+        ]),
     }
 });

@@ -50,6 +50,17 @@ pub enum DamageType {
     Thunder,
 }
 
+/// How an actor reacts to a particular damage type. 5e RAW:
+/// Resistant = half damage rounded down; Immune = 0 damage;
+/// Vulnerable = double damage. The default (no entry) is normal damage.
+/// Stored on `CreatureTemplate` and looked up by `damage_modifier_for`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DamageModifier {
+    Resistant,
+    Immune,
+    Vulnerable,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Size {
     Tiny,

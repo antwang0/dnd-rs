@@ -129,6 +129,8 @@ pub struct DealDamage {
 
 impl ApplicableSideEffect for DealDamage {
     fn apply(&self, ei: &mut EncounterInstance) {
+        use crate::engine::types::DamageModifier;
+
         let Some(actor) = ei.get_actor(self.actor_id) else {
             ei.log(format!(
                 "DealDamage: actor {} missing, ignoring",
@@ -137,7 +139,26 @@ impl ApplicableSideEffect for DealDamage {
             return;
         };
         let name = actor.name().to_string();
-        let outcome = actor.take_damage(self.amount);
+        // Apply resistance / immunity / vulnerability before deducting HP
+        // so a downed-by-modified-damage transition reflects what the
+        // actor actually took.
+        let modifier = actor.damage_modifier_for(self.damage_type);
+        let actual = actor.modified_damage(self.damage_type, self.amount);
+        if let Some(m) = modifier {
+            let label = match m {
+                DamageModifier::Immune => "immune",
+                DamageModifier::Resistant => "resistant",
+                DamageModifier::Vulnerable => "vulnerable",
+            };
+            ei.log(format!(
+                "  {} is {} to {:?} ({} -> {})",
+                name, label, self.damage_type, self.amount, actual
+            ));
+        }
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let outcome = actor.take_damage(actual);
         let was_concentrating = actor.is_concentrating();
         // actor borrow ends here.
 
@@ -155,7 +176,7 @@ impl ApplicableSideEffect for DealDamage {
             }
             DamageOutcome::Reduced if was_concentrating => {
                 // 5e: take damage while concentrating → CON save vs DC max(10, dmg/2).
-                let dc = ((self.amount / 2) as i32).max(10);
+                let dc = ((actual / 2) as i32).max(10);
                 let save = ei.roll_save(
                     self.actor_id,
                     crate::engine::types::AbilityScoreType::Constitution,

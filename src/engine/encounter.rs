@@ -3044,4 +3044,111 @@ mod tests {
         let enemy_count = next.actors.values().filter(|a| a.team() != 0).count();
         assert!(enemy_count > 0, "expected enemies on teams 1+");
     }
+
+    #[test]
+    fn zombie_immune_to_poison() {
+        use crate::engine::side_effects::DealDamage;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 10,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(
+            e.actors[&id].hitpoints(),
+            before,
+            "zombie is poison-immune; damage should be 0"
+        );
+    }
+
+    #[test]
+    fn zombie_vulnerable_to_radiant() {
+        use crate::engine::side_effects::DealDamage;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Radiant,
+        }
+        .apply(&mut e);
+        // Vulnerable doubles damage: 4 -> 8.
+        assert_eq!(e.actors[&id].hitpoints() + 8, before);
+    }
+
+    #[test]
+    fn zombie_resistant_to_necrotic() {
+        use crate::engine::side_effects::DealDamage;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 6,
+            damage_type: DamageType::Necrotic,
+        }
+        .apply(&mut e);
+        // Resistant halves: 6 -> 3.
+        assert_eq!(e.actors[&id].hitpoints() + 3, before);
+    }
+
+    #[test]
+    fn frightened_imposes_disadvantage_on_attacks() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Frightened, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn blinded_grants_advantage_against_target() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage
+        );
+    }
 }
