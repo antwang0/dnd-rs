@@ -1,8 +1,10 @@
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
 use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+use crate::actors::creatures::orcs::ORC_TEMPLATE;
 use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
 use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
 use crate::actors::creatures::wolves::WOLF_TEMPLATE;
 use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
 use std::collections::HashMap;
@@ -1014,6 +1016,8 @@ impl EncounterInstance {
             &GOBLIN_TEMPLATE,
             &OGRE_TEMPLATE,
             &WOLF_TEMPLATE,
+            &ORC_TEMPLATE,
+            &WIZARD_TEMPLATE,
         ]
     }
 
@@ -3047,6 +3051,62 @@ mod tests {
 
         let enemy_count = next.actors.values().filter(|a| a.team() != 0).count();
         assert!(enemy_count > 0, "expected enemies on teams 1+");
+    }
+
+    #[test]
+    fn magic_missile_auto_hits_for_force_damage() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::MAGIC_MISSILE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        let max_hp = e.actors[&target].max_hitpoints();
+        let target_vec = vec![target];
+        let effects = MAGIC_MISSILE.side_effects(&mut e, caster, Some(&target_vec), None, None);
+        // 3 darts of 1d4+1 = min 6, max 15. We can only assert it's in range.
+        for effect in effects {
+            effect.apply(&mut e);
+        }
+        let hp = e.actors[&target].hitpoints();
+        assert!(hp < max_hp, "magic missile should always hit");
+        let damage_taken = max_hp - hp;
+        assert!(
+            (6..=15).contains(&damage_taken),
+            "magic missile damage should be 6-15, got {}",
+            damage_taken
+        );
+    }
+
+    #[test]
+    fn cure_wounds_heals_dying_ally_back_to_active() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        // Drop the fighter to dying.
+        let max = e.actors[&fighter].max_hitpoints();
+        e.actors.get_mut(&fighter).unwrap().take_damage(max);
+        assert!(e.actors[&fighter].is_dying());
+        let target_vec = vec![fighter];
+        for eff in CURE_WOUNDS.side_effects(&mut e, cleric, Some(&target_vec), None, None) {
+            eff.apply(&mut e);
+        }
+        assert!(e.actors[&fighter].is_combat_active(), "cure wounds revives");
+        assert!(e.actors[&fighter].hitpoints() > 0);
     }
 
     #[test]
