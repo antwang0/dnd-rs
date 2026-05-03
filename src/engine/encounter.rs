@@ -3,6 +3,7 @@ use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
 use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
 use crate::actors::creatures::wolves::WOLF_TEMPLATE;
 use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
 use std::collections::HashMap;
@@ -987,6 +988,7 @@ impl EncounterInstance {
             &GOBLIN_TEMPLATE,
             &OGRE_TEMPLATE,
             &WOLF_TEMPLATE,
+            &WIZARD_TEMPLATE,
         ]
     }
 
@@ -3166,6 +3168,62 @@ mod tests {
         e.drop_concentration(cleric);
         assert!(!e.actors[&cleric].is_concentrating());
         assert!(!e.actors[&ally].has_condition(Condition::Blessed));
+    }
+
+    #[test]
+    fn magic_missile_always_damages() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::spells::MAGIC_MISSILE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+            .unwrap();
+        let max = e.actors[&target].max_hitpoints();
+
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*MAGIC_MISSILE,
+            wiz,
+            Some(vec![target]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+
+        // 3 darts × (1d4+1) = min 6, max 15. Always nonzero.
+        let lost = max - e.actors[&target].hitpoints();
+        assert!(
+            (6..=15).contains(&lost),
+            "magic missile total {} outside 6..=15",
+            lost
+        );
+    }
+
+    #[test]
+    fn wizard_can_be_instantiated_and_has_slots() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Wizard ships with 3 level-1 slots.
+        assert_eq!(
+            e.actors[&id]
+                .spell_slot_manager
+                .spell_slots(1)
+                .spell_slots,
+            3
+        );
+        assert!(e.actors[&id].can_consume_resource(Resource::SpellSlot(1)));
     }
 
     #[test]
