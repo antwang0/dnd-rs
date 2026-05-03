@@ -3228,6 +3228,22 @@ mod tests {
     }
 
     #[test]
+    fn heals_flag_distinguishes_heal_from_buff() {
+        use crate::actions::action_template::Action;
+        use crate::actions::item_actions::DRINK_HEALING_POTION;
+        use crate::actions::spells::{BLESS, HEALING_WORD, SACRED_FLAME};
+
+        let heal: &dyn Action = &*HEALING_WORD;
+        let bless: &dyn Action = &*BLESS;
+        let attack: &dyn Action = &*SACRED_FLAME;
+        let potion: &dyn Action = &DRINK_HEALING_POTION;
+        assert!(heal.heals());
+        assert!(potion.heals());
+        assert!(!bless.heals(), "bless is a buff, not a heal");
+        assert!(!attack.heals());
+    }
+
+    #[test]
     fn no_modifier_for_unmatched_damage_type() {
         use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
         use crate::engine::types::DamageType;

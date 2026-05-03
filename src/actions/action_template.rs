@@ -56,6 +56,13 @@ pub trait Action {
         true
     }
 
+    /// True if this action restores HP. Used by the AI to distinguish a
+    /// healing tactic (revive a dying ally) from a buff tactic (Bless).
+    /// Default false — any action that heals must opt in.
+    fn heals(&self) -> bool {
+        false
+    }
+
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
