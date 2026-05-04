@@ -137,7 +137,29 @@ impl ApplicableSideEffect for DealDamage {
             return;
         };
         let name = actor.name().to_string();
-        let outcome = actor.take_damage(self.amount);
+        // Apply resistance / vulnerability / immunity before the HP delta.
+        // We log the modifier explicitly so the player can see why a hit
+        // landed for less / more / nothing.
+        let modifier = actor.damage_mod_for(self.damage_type);
+        let final_amount = match modifier {
+            Some(m) => m.apply(self.amount),
+            None => self.amount,
+        };
+        if let Some(m) = modifier {
+            ei.log(format!(
+                "  {} takes {} {:?}{} (was {})",
+                name,
+                final_amount,
+                self.damage_type,
+                m.log_suffix(),
+                self.amount,
+            ));
+        }
+        // Re-fetch — `ei.log` borrows ei mutably and invalidates the prior actor borrow.
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let outcome = actor.take_damage(final_amount);
         let was_concentrating = actor.is_concentrating();
         // actor borrow ends here.
 
@@ -155,7 +177,7 @@ impl ApplicableSideEffect for DealDamage {
             }
             DamageOutcome::Reduced if was_concentrating => {
                 // 5e: take damage while concentrating → CON save vs DC max(10, dmg/2).
-                let dc = ((self.amount / 2) as i32).max(10);
+                let dc = ((final_amount / 2) as i32).max(10);
                 let save = ei.roll_save(
                     self.actor_id,
                     crate::engine::types::AbilityScoreType::Constitution,

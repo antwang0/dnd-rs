@@ -50,6 +50,41 @@ pub enum DamageType {
     Thunder,
 }
 
+/// How an actor's body responds to a particular damage type. 5e:
+/// `Resistant` halves incoming damage, `Vulnerable` doubles it,
+/// `Immune` zeroes it out. A type with no modifier listed takes
+/// damage at face value. If both Resistant and Vulnerable are listed,
+/// 5e RAW: they cancel — but we keep one explicit modifier per type
+/// for simplicity, so the template author chooses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DamageMod {
+    Resistant,
+    Vulnerable,
+    Immune,
+}
+
+impl DamageMod {
+    /// Apply the modifier to a raw damage amount. `Resistant` halves
+    /// (rounding down per 5e), `Vulnerable` doubles, `Immune` zeroes.
+    pub fn apply(self, amount: u32) -> u32 {
+        match self {
+            DamageMod::Resistant => amount / 2,
+            DamageMod::Vulnerable => amount.saturating_mul(2),
+            DamageMod::Immune => 0,
+        }
+    }
+
+    /// Short suffix for log lines (e.g. " (resisted)") so the player can
+    /// see why a hit landed for less / more / nothing.
+    pub fn log_suffix(self) -> &'static str {
+        match self {
+            DamageMod::Resistant => " (resisted)",
+            DamageMod::Vulnerable => " (vulnerable)",
+            DamageMod::Immune => " (immune)",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Size {
     Tiny,

@@ -77,7 +77,7 @@ use crate::items::item_template::{Item, ItemBonuses};
 use crate::{
     actions::action_template::Action,
     engine::{
-        types::{AbilityScoreType, Language, Size, Skill, SpecialSense},
+        types::{AbilityScoreType, DamageMod, DamageType, Language, Size, Skill, SpecialSense},
         util::modifier_from_score,
     },
 };
@@ -120,6 +120,11 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Damage-type modifiers (resistance / vulnerability / immunity).
+    /// Types missing from the map take damage at face value. Applied
+    /// in `DealDamage::apply` before the HP delta. Order: a type listed
+    /// here always wins over default behavior.
+    pub damage_mods: HashMap<DamageType, DamageMod>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -287,6 +292,11 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    /// Per-damage-type modifier (resistance / vulnerability / immunity).
+    /// Cloned from the template at instantiation; conditions like
+    /// Petrified that grant temporary resistances would mutate this in
+    /// the future, but today it stays static after spawn.
+    damage_mods: HashMap<DamageType, DamageMod>,
 }
 
 impl ActorInstance {
@@ -353,7 +363,18 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            damage_mods: ct.damage_mods.clone(),
         })
+    }
+
+    pub fn damage_mod_for(&self, dt: DamageType) -> Option<DamageMod> {
+        self.damage_mods.get(&dt).copied()
+    }
+
+    /// Read-only view of the actor's damage type table. UI uses this to
+    /// surface "resistant to fire" tags in the side panel.
+    pub fn damage_mods(&self) -> &HashMap<DamageType, DamageMod> {
+        &self.damage_mods
     }
 
     pub fn rolls_death_saves(&self) -> bool {

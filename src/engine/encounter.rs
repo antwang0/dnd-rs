@@ -3011,4 +3011,90 @@ mod tests {
         let enemy_count = next.actors.values().filter(|a| a.team() != 0).count();
         assert!(enemy_count > 0, "expected enemies on teams 1+");
     }
+
+    #[test]
+    fn vulnerable_target_takes_double_damage() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::DealDamage;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        // Skeletons are Vulnerable to bludgeoning.
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        // 4 doubled = 8 lost.
+        assert_eq!(e.actors[&id].hitpoints(), max.saturating_sub(8));
+    }
+
+    #[test]
+    fn immune_target_takes_no_damage() {
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::engine::side_effects::DealDamage;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        // Zombies are Immune to poison.
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 50,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max);
+    }
+
+    #[test]
+    fn resistant_target_takes_half_damage() {
+        use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+        use crate::engine::side_effects::DealDamage;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        // Slimes are Resistant to slashing.
+        let id = e
+            .instantiate_creature(&SLIME_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 6,
+            damage_type: DamageType::Slashing,
+        }
+        .apply(&mut e);
+        // 6 / 2 = 3 lost.
+        assert_eq!(e.actors[&id].hitpoints(), max.saturating_sub(3));
+    }
+
+    #[test]
+    fn untyped_damage_passes_through_unmodified() {
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::engine::side_effects::DealDamage;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        // Zombies have no Force modifier — should land at face value.
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 5,
+            damage_type: DamageType::Force,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max.saturating_sub(5));
+    }
 }

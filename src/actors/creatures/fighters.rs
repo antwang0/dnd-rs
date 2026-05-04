@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::SCIMITAR;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{Language, Size};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 /// Fighter — the simplest player class. Heavy armor, decent HP, one
@@ -39,5 +39,6 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: true,
+        damage_mods: HashMap::new(),
     }
 });
