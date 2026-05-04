@@ -674,6 +674,98 @@ impl Action for WolfBite {
 }
 pub static WOLF_BITE: LazyLock<WolfBite> = LazyLock::new(|| WolfBite {});
 
+/// Imp Sting — DEX-based melee for 1d4 piercing PLUS, on hit, a CON
+/// save vs DC 11 or take 2d6 poison and become Poisoned for 3 rounds.
+/// Demonstrates a damage-rider-on-save-fail pattern (the trip rider
+/// applies a condition on save fail; this one applies *both* extra
+/// damage AND the condition on save fail).
+pub struct ImpSting {}
+
+impl Action for ImpSting {
+    fn name(&self) -> &str {
+        "sting"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["st"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::ApplyCondition;
+        use crate::engine::types::AbilityScoreType;
+
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dex_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Dexterity));
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+        let mut effects = weapon_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            dex_mod,
+            target_ac,
+            Dice::new(1, 4),
+            dex_mod,
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        // Save vs poison rider. Failure: 2d6 poison + Poisoned 3 rounds.
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 11);
+        if !save.passed() {
+            let poison_dmg = encounter.roll(&Dice::new(2, 6));
+            encounter.log(format!(
+                "  imp sting venom: 2d6({}) = {} poison",
+                poison_dmg, poison_dmg
+            ));
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: poison_dmg,
+                damage_type: DamageType::Poison,
+            }));
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Poisoned,
+                timer: ConditionTimer::Rounds(3),
+            }));
+        }
+        effects
+    }
+}
+pub static IMP_STING: LazyLock<ImpSting> = LazyLock::new(|| ImpSting {});
+
 /// Wraps another action and runs it `count` times for one Action-slot
 /// expenditure. Reach / LOS / targeting schema are inherited from the
 /// sub-attack so creatures can declare e.g. `Multiattack { sub: &SLAM, count: 2 }`

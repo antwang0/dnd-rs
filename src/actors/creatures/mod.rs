@@ -1,6 +1,7 @@
 pub mod clerics;
 pub mod fighters;
 pub mod goblins;
+pub mod imps;
 pub mod ogres;
 pub mod skeletons;
 pub mod slimes;

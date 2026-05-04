@@ -1,5 +1,6 @@
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
 use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+use crate::actors::creatures::imps::IMP_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
 use crate::actors::creatures::slimes::SLIME_TEMPLATE;
@@ -1007,6 +1008,7 @@ impl EncounterInstance {
             &GOBLIN_TEMPLATE,
             &OGRE_TEMPLATE,
             &WOLF_TEMPLATE,
+            &IMP_TEMPLATE,
         ]
     }
 
@@ -3105,6 +3107,65 @@ mod tests {
         .apply(&mut e);
         // 6 / 2 = 3 lost.
         assert_eq!(e.actors[&id].hitpoints(), max.saturating_sub(3));
+    }
+
+    #[test]
+    fn imp_is_immune_to_fire_and_poison() {
+        use crate::actors::creatures::imps::IMP_TEMPLATE;
+        use crate::engine::side_effects::DealDamage;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&IMP_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 100,
+            damage_type: DamageType::Fire,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max, "fire should deal 0 to imp");
+        DealDamage {
+            actor_id: id,
+            amount: 100,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max, "poison should deal 0 to imp");
+    }
+
+    #[test]
+    fn imp_is_tiny() {
+        use crate::actors::creatures::imps::IMP_TEMPLATE;
+        use crate::engine::types::Size;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&IMP_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert_eq!(e.actors[&id].size(), Size::Tiny);
+    }
+
+    #[test]
+    fn imp_sting_validates_in_melee() {
+        use crate::actions::monster_attacks::IMP_STING;
+        use crate::actors::creatures::imps::IMP_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let imp = e
+            .instantiate_creature(&IMP_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        let aei = ActionExecutionInfo::new(
+            &*IMP_STING,
+            imp,
+            Some(vec![target]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e), "imp sting should validate in melee");
     }
 
     #[test]
