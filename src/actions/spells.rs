@@ -479,6 +479,8 @@ impl Action for FireBolt {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::attack::{AttackParams, resolve_attack};
+
         let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
             return Vec::new();
         };
@@ -486,52 +488,19 @@ impl Action for FireBolt {
             return Vec::new();
         };
         let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
-        let buff = caster.attack_bonus_buff();
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
-
-        let mode = encounter.compute_attack_mode(caster_id, target_id, false);
-        let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
-        let is_crit = raw_attack == 20;
-        let total = raw_attack + attack_bonus + buff;
-        let hit = is_crit || total >= target_ac;
-        let outcome = if is_crit {
-            "CRIT!"
-        } else if hit {
-            "hit"
-        } else {
-            "miss"
-        };
-        encounter.log(format!(
-            "  fire bolt: 1d20({}){:+} = {} vs AC {}{} \u{2014} {}",
-            raw_attack,
-            attack_bonus + buff,
-            total,
-            target_ac,
-            mode.log_suffix(),
-            outcome
-        ));
-        if !hit {
-            return Vec::new();
-        }
-        let dice = Dice::new(1, 10);
-        let raw = encounter.roll(&dice) as i32;
-        let crit_extra = if is_crit { encounter.roll(&dice) as i32 } else { 0 };
-        let dmg = (raw + crit_extra).max(0) as u32;
-        encounter.log(format!(
-            "  fire bolt: 1d10({}){} = {} fire damage{}",
-            raw,
-            if is_crit { format!("+1d10({})", crit_extra) } else { String::new() },
-            dmg,
-            if is_crit { " (crit)" } else { "" }
-        ));
-        vec![Box::new(DealDamage {
-            actor_id: target_id,
-            amount: dmg,
-            damage_type: DamageType::Fire,
-        })]
+        resolve_attack(
+            encounter,
+            AttackParams {
+                caster_id,
+                target_id,
+                action_name: self.name(),
+                attack_bonus,
+                damage_dice: Dice::new(1, 10),
+                damage_bonus: 0,
+                damage_type: DamageType::Fire,
+                is_melee: false,
+            },
+        )
     }
 }
 

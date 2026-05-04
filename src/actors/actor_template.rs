@@ -157,8 +157,6 @@ pub struct SpellSlotInfo {
 #[derive(Clone, PartialEq)]
 pub struct SpellSlotManager {
     ssi_by_lvl: Vec<SpellSlotInfo>,
-    warlock_ssi: SpellSlotInfo,
-    warlock_spell_slot_lvl: u32,
 }
 
 impl SpellSlotManager {
@@ -223,34 +221,6 @@ impl SpellSlotManager {
         self.ssi_by_lvl[i_usize].spell_slots += qty;
     }
 
-    pub fn warlock_spell_slots(&self) -> SpellSlotInfo {
-        self.warlock_ssi.clone()
-    }
-
-    pub fn warlock_spell_slot_lvl(&self) -> u32 {
-        self.warlock_spell_slot_lvl
-    }
-
-    pub fn upgrade_warlock_spell_slots(&mut self, lvls: u32) {
-        self.warlock_spell_slot_lvl += lvls;
-    }
-
-    pub fn consume_warlock_spell_slot(&mut self) -> bool {
-        if self.warlock_ssi.spell_slots == 0 {
-            return false;
-        }
-        self.warlock_ssi.spell_slots -= 1;
-        true
-    }
-
-    pub fn restore_warlock_spell_slots(&mut self) {
-        self.warlock_ssi.spell_slots = self.warlock_ssi.max_spell_slots;
-    }
-
-    pub fn increase_max_warlock_spell_slots(&mut self) {
-        self.warlock_ssi.max_spell_slots += 1;
-        self.warlock_ssi.spell_slots += 1;
-    }
 }
 
 #[derive(Clone)]
@@ -392,11 +362,6 @@ impl ActorInstance {
                         spell_slots: n,
                     })
                     .collect(),
-                warlock_ssi: SpellSlotInfo {
-                    max_spell_slots: 0,
-                    spell_slots: 0,
-                },
-                warlock_spell_slot_lvl: 0,
             },
             actions: ct.actions.clone(),
             glyph: ct.glyph,
@@ -876,18 +841,18 @@ impl ActorInstance {
         }
     }
 
-    /// 5e spell save DC: 8 + spellcasting ability modifier (we don't track
-    /// proficiency yet; once we do, add it here). Actions that force saves
-    /// call this on the caster to set their DC.
+    /// 5e spell save DC: 8 + proficiency bonus + spellcasting ability
+    /// modifier. Actions that force saves call this on the caster to set
+    /// their DC.
     pub fn spell_save_dc(&self, ability: AbilityScoreType) -> i32 {
-        8 + modifier_from_score(self.ability_score(ability))
+        8 + self.proficiency_bonus() + modifier_from_score(self.ability_score(ability))
     }
 
-    /// 5e spell attack modifier: spellcasting ability modifier (proficiency
-    /// folds in once tracked). Used by spells with attack rolls (Fire Bolt,
-    /// Eldritch Blast). Caller adds this to the d20.
+    /// 5e spell attack modifier: proficiency bonus + spellcasting ability
+    /// modifier. Used by spells with attack rolls (Fire Bolt, Eldritch
+    /// Blast). Caller adds this to the d20.
     pub fn spell_attack_modifier(&self, ability: AbilityScoreType) -> i32 {
-        modifier_from_score(self.ability_score(ability))
+        self.proficiency_bonus() + modifier_from_score(self.ability_score(ability))
     }
 
     /// Damage modifier for `dt`, or `None` if the actor takes normal
@@ -1054,11 +1019,24 @@ impl ActorInstance {
     }
 
     pub fn attack_bonus(&self) -> i32 {
-        // TODO: add proficiency bonus once it's tracked
-        modifier_from_score(self.strength)
+        modifier_from_score(self.strength) + self.proficiency_bonus()
     }
 
     pub fn damage_bonus(&self) -> i32 {
         modifier_from_score(self.strength)
+    }
+
+    /// 5e proficiency bonus by level: +2 at 1-4, +3 at 5-8, +4 at 9-12,
+    /// +5 at 13-16, +6 at 17+. Folded into attack bonuses, save DCs and
+    /// the spell-attack modifier so a level-5 caster's Fire Bolt gets the
+    /// canonical +1 jump.
+    pub fn proficiency_bonus(&self) -> i32 {
+        match self.level {
+            0..=4 => 2,
+            5..=8 => 3,
+            9..=12 => 4,
+            13..=16 => 5,
+            _ => 6,
+        }
     }
 }
