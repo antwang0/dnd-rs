@@ -351,6 +351,34 @@ pub fn render_sideinfo(
             Style::default().fg(Color::Yellow),
         )));
     }
+    // Show damage type modifiers (resistances / vulnerabilities / immunities)
+    // grouped by category so the player knows what to throw at this thing.
+    if !curr_actor.damage_mods().is_empty() {
+        use crate::engine::types::DamageMod;
+        let mut groups: [(DamageMod, &str, Vec<String>); 3] = [
+            (DamageMod::Resistant, "Resists", Vec::new()),
+            (DamageMod::Vulnerable, "Vulnerable", Vec::new()),
+            (DamageMod::Immune, "Immune", Vec::new()),
+        ];
+        // Sort by debug-formatted DamageType so ordering is deterministic.
+        let mut entries: Vec<_> = curr_actor.damage_mods().iter().collect();
+        entries.sort_by_key(|(dt, _)| format!("{:?}", dt));
+        for (dt, m) in entries {
+            let label = format!("{:?}", dt).to_lowercase();
+            if let Some(slot) = groups.iter_mut().find(|(g, _, _)| g == m) {
+                slot.2.push(label);
+            }
+        }
+        for (_, label, types) in &groups {
+            if types.is_empty() {
+                continue;
+            }
+            stats_lines.push(Line::from(Span::styled(
+                format!("{}: {}", label, types.join(", ")),
+                Style::default().fg(Color::Cyan),
+            )));
+        }
+    }
     frame.render_widget(
         Paragraph::new(stats_lines)
             .block(Block::default().borders(Borders::ALL).title("Resources")),

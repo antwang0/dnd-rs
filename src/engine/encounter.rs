@@ -3170,7 +3170,6 @@ mod tests {
 
     #[test]
     fn cure_wounds_heals_adjacent_ally() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::CURE_WOUNDS;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -3316,7 +3315,6 @@ mod tests {
 
     #[test]
     fn frightened_actor_cannot_move_closer_to_enemy() {
-        use crate::actions::action_template::Action;
         use crate::actions::default_actions::MOVE;
         use crate::conditions::{Condition, ConditionTimer};
         let mut e = ei_with_terrain(20, 20, &[]);
