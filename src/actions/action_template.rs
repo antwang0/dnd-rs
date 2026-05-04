@@ -56,6 +56,16 @@ pub trait Action {
         true
     }
 
+    /// Damage types this action *can* deal. Used by the AI to avoid
+    /// hammering immune targets with the wrong element (e.g. an Imp
+    /// Fire-Bolting another Imp). Empty default — non-damaging or
+    /// damage-shape-unknown actions just don't get the bonus / penalty.
+    /// Order is irrelevant; a rider attack with multiple damage types
+    /// (Imp sting → piercing + poison) lists both.
+    fn damage_types(&self) -> Vec<crate::engine::types::DamageType> {
+        Vec::new()
+    }
+
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,

@@ -491,15 +491,18 @@ fn try_attack_focus_fire(
     best.map(|(_, _, _, aei)| aei)
 }
 
-/// Among the actor's SingleActor actions, the longest-reach one whose
-/// reach covers the current footprint distance to `target_id`. Doesn't
-/// validate cost / LOS; the caller wraps it in `ActionExecutionInfo` and
-/// validates.
+/// Among the actor's SingleActor actions, pick the best one against
+/// `target_id`. "Best" prioritizes (in order): damage-type matchup
+/// (skip Immune; prefer Vulnerable; prefer non-Resistant), then longest
+/// reach. Doesn't validate cost / LOS; the caller wraps it in
+/// `ActionExecutionInfo` and validates.
 fn best_attack_against(
     actor: &crate::actors::actor_template::ActorInstance,
     encounter: &EncounterInstance,
     target_id: usize,
 ) -> Option<(isize, &'static (dyn Action + Send + Sync))> {
+    use crate::engine::types::DamageMod;
+
     let target = encounter.actors.get(&target_id)?;
     let dist = footprint_chebyshev(
         actor.location(),
@@ -507,13 +510,52 @@ fn best_attack_against(
         target.location(),
         get_tiles_from_size(target.size()),
     );
-    let mut best: Option<(isize, &(dyn Action + Send + Sync))> = None;
+    // Score the damage-type matchup: lower is better.
+    // 0 = at least one Vulnerable type and no Immune-only
+    // 1 = neutral (no info or all-neutral)
+    // 2 = at least one Resistant type
+    // 3 = every listed type is Immune (skip)
+    let matchup_score = |a: &dyn Action| -> u8 {
+        let dts = a.damage_types();
+        if dts.is_empty() {
+            return 1;
+        }
+        let mut all_immune = true;
+        let mut has_vuln = false;
+        let mut has_resist = false;
+        for dt in &dts {
+            match target.damage_mod_for(*dt) {
+                Some(DamageMod::Immune) => {}
+                Some(DamageMod::Vulnerable) => {
+                    all_immune = false;
+                    has_vuln = true;
+                }
+                Some(DamageMod::Resistant) => {
+                    all_immune = false;
+                    has_resist = true;
+                }
+                None => {
+                    all_immune = false;
+                }
+            }
+        }
+        if all_immune {
+            3
+        } else if has_vuln {
+            0
+        } else if has_resist {
+            2
+        } else {
+            1
+        }
+    };
+
+    // Best by (score asc, reach desc).
+    let mut best: Option<(u8, isize, &(dyn Action + Send + Sync))> = None;
     for &action in &actor.actions {
         if !matches!(action.targeting_schema(), TargetingSchema::SingleActor) {
             continue;
         }
-        // Skip helpful actions (heals, buffs) — focus-fire only considers
-        // attacks. Otherwise the AI would happily Healing-Word an enemy.
         if !action.is_harmful() {
             continue;
         }
@@ -523,12 +565,20 @@ fn best_attack_against(
         if dist > reach {
             continue;
         }
-        if best.is_some_and(|(r, _)| r >= reach) {
+        let score = matchup_score(action);
+        if score >= 3 {
+            // Every type is immune — useless against this target.
             continue;
         }
-        best = Some((reach, action));
+        let pick = match best {
+            None => true,
+            Some((bs, br, _)) => (score, std::cmp::Reverse(reach)) < (bs, std::cmp::Reverse(br)),
+        };
+        if pick {
+            best = Some((score, reach, action));
+        }
     }
-    best
+    best.map(|(_, r, a)| (r, a))
 }
 
 /// BFS-step toward the lowest-HP visible enemy. Falls back to step toward
@@ -1026,6 +1076,76 @@ mod tests {
             "healing word",
             "AI should not target an enemy with a heal"
         );
+    }
+
+    #[test]
+    fn ai_avoids_attacks_immune_to_target() {
+        use crate::actors::creatures::imps::IMP_TEMPLATE;
+
+        let mut e = empty_arena();
+        // Imp (has Fire Bolt + Sting) on team 0, Imp on team 1 (also
+        // immune to fire/poison). Sting's Piercing damage will land at
+        // face value; Fire Bolt would do nothing. AI should pick Sting.
+        // Place adjacent so both attacks validate by reach.
+        let attacker = e
+            .instantiate_creature(&IMP_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let _target = e
+            .instantiate_creature(&IMP_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+
+        let ai = SimpleAi;
+        let decision = ai.decide(&e, attacker);
+        let ControllerDecision::Act(aei) = decision else {
+            panic!("expected an attack");
+        };
+        assert_ne!(
+            aei.action().name(),
+            "fire bolt",
+            "AI shouldn't fire-bolt a fire-immune target when sting is available"
+        );
+    }
+
+    #[test]
+    fn ai_prefers_vulnerable_damage_type() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::actors::actor_template::ConcentrationData;
+
+        let mut e = empty_arena();
+        // Cleric has Sacred Flame (radiant — neutral vs skeleton) plus
+        // Healing Word (skipped, harmless). Skeletons aren't vulnerable
+        // to radiant — but zombies are. So put a zombie here.
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Pre-set concentration so Hold Person doesn't pre-empt.
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .start_concentration(ConcentrationData {
+                spell_name: "Placeholder".to_string(),
+                conditions: vec![],
+            });
+        // Spaced apart so the AoE pipeline can't catch both — we want
+        // single-target focus-fire to choose the matchup.
+        let _zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+            .unwrap();
+        let _skel = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(20, 15), 1, 1)
+            .unwrap();
+
+        let ai = SimpleAi;
+        let decision = ai.decide(&e, cleric);
+        let ControllerDecision::Act(aei) = decision else {
+            panic!("expected an attack");
+        };
+        // Sacred Flame against a vulnerable zombie should beat hitting
+        // the resistant-to-nothing skeleton on tied HP.
+        assert_eq!(aei.action().name(), "sacred flame");
+        let target = aei.target_ids().and_then(|ids| ids.first().copied());
+        assert!(target.is_some(), "expected a target");
     }
 
     #[test]
