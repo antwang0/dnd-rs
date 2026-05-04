@@ -3,6 +3,7 @@ use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
 use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
 use crate::actors::creatures::wolves::WOLF_TEMPLATE;
 use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
 use std::collections::HashMap;
@@ -1012,6 +1013,7 @@ impl EncounterInstance {
             &GOBLIN_TEMPLATE,
             &OGRE_TEMPLATE,
             &WOLF_TEMPLATE,
+            &WIZARD_TEMPLATE,
         ]
     }
 
@@ -3015,6 +3017,35 @@ mod tests {
             enemy_hp(&low),
             enemy_hp(&high)
         );
+    }
+
+    #[test]
+    fn wizard_has_correct_loadout() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Has 4 level-1 slots.
+        assert_eq!(
+            e.actors[&id]
+                .spell_slot_manager
+                .spell_slots(1)
+                .spell_slots,
+            4
+        );
+        assert!(e.actors[&id].can_consume_resource(Resource::SpellSlot(1)));
+        // Loadout includes fire bolt and magic missile.
+        let names: Vec<&str> = e.actors[&id]
+            .actions
+            .iter()
+            .map(|a| a.name())
+            .collect();
+        assert!(names.contains(&"fire bolt"));
+        assert!(names.contains(&"magic missile"));
+        assert!(names.contains(&"burning hands"));
     }
 
     #[test]
