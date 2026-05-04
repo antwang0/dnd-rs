@@ -296,6 +296,14 @@ pub fn render_sideinfo(
     let mut hp_spans: Vec<Span<'static>> = vec![Span::raw("HP: ")];
     hp_spans.extend(hp_bar_spans(hp, max_hp, 10));
     hp_spans.push(Span::raw(format!(" {}/{}", hp, max_hp)));
+    // Tack on temp-HP as a compact "(+N temp)" suffix when present —
+    // pretending it's part of the HP line keeps the panel narrow.
+    if curr_actor.temp_hp() > 0 {
+        hp_spans.push(Span::styled(
+            format!(" (+{} temp)", curr_actor.temp_hp()),
+            Style::default().fg(Color::LightCyan),
+        ));
+    }
 
     let mut stats_lines: Vec<Line<'static>> = vec![
         Line::from(hp_spans),
@@ -306,6 +314,40 @@ pub fn render_sideinfo(
             action_slots, bonus_slots
         ))),
     ];
+    // Dodge / Disengage are turn-scoped flags — surface them so the
+    // player can see they're spending their action on defense rather
+    // than offense.
+    let mut stance_tags: Vec<&str> = Vec::new();
+    if curr_actor.is_dodging() {
+        stance_tags.push("Dodging");
+    }
+    if curr_actor.is_disengaging() {
+        stance_tags.push("Disengaging");
+    }
+    if !stance_tags.is_empty() {
+        stats_lines.push(Line::from(Span::styled(
+            format!("Stance: {}", stance_tags.join(", ")),
+            Style::default().fg(Color::LightCyan),
+        )));
+    }
+    // Concentration target — the spell name is enough; full effect tree
+    // already lives in the log.
+    if let Some(conc) = curr_actor.concentration() {
+        stats_lines.push(Line::from(Span::styled(
+            format!("Concentrating: {}", conc.spell_name),
+            Style::default().fg(Color::LightMagenta),
+        )));
+    }
+    // Buff totals (Bless, etc.) — only show when nonzero so we don't
+    // clutter the panel for everyone else.
+    let atk_buff = curr_actor.attack_bonus_buff();
+    let save_buff = curr_actor.save_bonus_buff();
+    if atk_buff != 0 || save_buff != 0 {
+        stats_lines.push(Line::from(Span::styled(
+            format!("Buffs: atk{:+}  save{:+}", atk_buff, save_buff),
+            Style::default().fg(Color::LightGreen),
+        )));
+    }
     // Level/XP only shown for PCs (team 0) — monsters have stub values
     // (level=1, xp=0) that would clutter the panel without conveying info.
     if curr_actor.team() == 0 {
