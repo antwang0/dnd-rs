@@ -778,7 +778,15 @@ fn weapon_attack(
     let mode = encounter.compute_attack_mode(caster_id, target_id, is_melee);
     let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
     let is_crit = raw_attack == 20;
-    let attack_total = raw_attack + attack_bonus;
+    // Caster-side flat attack bonus from buffs like Bless. Resolved at
+    // roll time so a Bless that lands mid-multiattack still picks up
+    // the second swing correctly.
+    let buff = encounter
+        .actors
+        .get(&caster_id)
+        .map(|a| a.attack_bonus_buff())
+        .unwrap_or(0);
+    let attack_total = raw_attack + attack_bonus + buff;
     // Crits auto-hit regardless of AC. Otherwise compare normally.
     let hit = is_crit || attack_total >= target_ac;
     let outcome = if is_crit {

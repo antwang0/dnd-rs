@@ -341,6 +341,9 @@ impl EncounterInstance {
                     mode = mode.combine(RollMode::Advantage);
                 }
             }
+            if target.is_dodging() {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
         }
         mode
     }
@@ -367,6 +370,10 @@ impl EncounterInstance {
         {
             mode = mode.combine(RollMode::Disadvantage);
         }
+        // Dodge → advantage on DEX saves (5e).
+        if matches!(ability, AbilityScoreType::Dexterity) && actor.is_dodging() {
+            mode = mode.combine(RollMode::Advantage);
+        }
         mode
     }
 
@@ -388,7 +395,8 @@ impl EncounterInstance {
             return SaveOutcome::Fail;
         };
         let item_bonus = actor.item_save_bonus();
-        let modifier = modifier_from_score(actor.ability_score(ability)) + item_bonus;
+        let buff = actor.save_bonus_buff();
+        let modifier = modifier_from_score(actor.ability_score(ability)) + item_bonus + buff;
         let total = raw as i32 + modifier;
         let outcome = if total >= dc {
             SaveOutcome::Pass
@@ -621,7 +629,14 @@ impl EncounterInstance {
         use crate::engine::side_effects::Resource;
 
         let (mover_team, mover_size) = match self.actors.get(&mover_id) {
-            Some(a) => (a.team(), get_tiles_from_size(a.size())),
+            Some(a) => {
+                // 5e Disengage: opportunity attacks don't trigger off this
+                // actor's movement until the start of their next turn.
+                if a.is_disengaging() {
+                    return;
+                }
+                (a.team(), get_tiles_from_size(a.size()))
+            }
             None => return,
         };
 
@@ -2986,6 +3001,82 @@ mod tests {
             "scaled cr_target should produce more enemy HP: low={} high={}",
             enemy_hp(&low),
             enemy_hp(&high)
+        );
+    }
+
+    #[test]
+    fn dodge_grants_disadv_on_incoming_attacks() {
+        use crate::actions::default_actions::DODGE;
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        // Pop auto-prompt and queue Dodge for the target.
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*DODGE, target, None, None, None);
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&target].is_dodging());
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn dodge_clears_at_next_turn_start() {
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&id).unwrap().set_dodging(true);
+        // Turn-start reset clears the flag.
+        e.actors.get_mut(&id).unwrap().reset_for_new_round();
+        assert!(!e.actors[&id].is_dodging());
+    }
+
+    #[test]
+    fn dodge_falls_off_when_incapacitated() {
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&id).unwrap().set_dodging(true);
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Incapacitated, ConditionTimer::Permanent);
+        assert!(!e.actors[&id].is_dodging());
+    }
+
+    #[test]
+    fn disengage_suppresses_opportunity_attacks() {
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Mark the mover as disengaging — OAs should not fire.
+        e.actors.get_mut(&mover_id).unwrap().set_disengaging(true);
+
+        let move_effect = MoveActor {
+            actor_id: mover_id,
+            path: vec![Coordinate::new(15, 5)],
+        };
+        move_effect.apply(&mut e);
+        assert!(
+            e.actors[&reactor_id].can_consume_resource(Resource::Reaction),
+            "disengaging mover should not provoke OAs"
         );
     }
 

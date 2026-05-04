@@ -304,6 +304,23 @@ pub struct ActorInstance {
     /// the old wins. Cleared by long rest. Doesn't count toward
     /// `max_hitpoints`; pure damage soak.
     temp_hp: u32,
+    /// Set by the Dodge action; cleared at the start of the actor's next
+    /// turn. While true, attacks against this actor have disadvantage
+    /// (5e: Dodge action) and they have advantage on DEX saves. Falls
+    /// off automatically if they become Incapacitated or Stunned.
+    dodging: bool,
+    /// Set by the Disengage action; cleared at the start of the actor's
+    /// next turn. Suppresses opportunity attacks fired by other actors
+    /// when this actor leaves a threatened tile.
+    disengaging: bool,
+    /// Tally of attack-roll bonuses contributed by Bless-style buffs.
+    /// Read by `weapon_attack` / spell-attack helpers and added to the
+    /// d20 + modifier total. Cleared on long rest; concentration spells
+    /// drop it via their cleanup hook.
+    attack_bonus_buff: i32,
+    /// Same shape as `attack_bonus_buff` but applied to saving throws
+    /// (Bless, Resistance, etc.).
+    save_bonus_buff: i32,
 }
 
 impl ActorInstance {
@@ -372,6 +389,10 @@ impl ActorInstance {
             xp: 0,
             damage_modifiers: ct.damage_modifiers.clone(),
             temp_hp: 0,
+            dodging: false,
+            disengaging: false,
+            attack_bonus_buff: 0,
+            save_bonus_buff: 0,
         })
     }
 
@@ -444,6 +465,10 @@ impl ActorInstance {
         self.conditions.clear();
         self.concentration = None;
         self.temp_hp = 0;
+        self.dodging = false;
+        self.disengaging = false;
+        self.attack_bonus_buff = 0;
+        self.save_bonus_buff = 0;
     }
 
     pub fn cr(&self) -> f32 {
@@ -750,6 +775,51 @@ impl ActorInstance {
         self.bonus_action_slots = 1;
         self.reaction_slots = 1;
         // TODO: legendary actions
+
+        // Dodge / Disengage are "until the start of your next turn"
+        // effects. Clear them at turn-start so the action only buffs
+        // the next round of incoming events, not later rounds too.
+        self.dodging = false;
+        self.disengaging = false;
+    }
+
+    pub fn is_dodging(&self) -> bool {
+        // 5e: Dodge fails if you're Incapacitated or your speed is 0.
+        // We model the "speed 0" case implicitly via Stunned/Restrained
+        // (which set remaining_movement to 0) and check Incapacitated
+        // explicitly so the buff drops the moment the condition lands.
+        self.dodging
+            && !self.has_condition(Condition::Incapacitated)
+            && !self.has_condition(Condition::Stunned)
+            && !self.has_condition(Condition::Restrained)
+    }
+
+    pub fn set_dodging(&mut self, v: bool) {
+        self.dodging = v;
+    }
+
+    pub fn is_disengaging(&self) -> bool {
+        self.disengaging
+    }
+
+    pub fn set_disengaging(&mut self, v: bool) {
+        self.disengaging = v;
+    }
+
+    pub fn attack_bonus_buff(&self) -> i32 {
+        self.attack_bonus_buff
+    }
+
+    pub fn save_bonus_buff(&self) -> i32 {
+        self.save_bonus_buff
+    }
+
+    pub fn add_attack_bonus_buff(&mut self, delta: i32) {
+        self.attack_bonus_buff += delta;
+    }
+
+    pub fn add_save_bonus_buff(&mut self, delta: i32) {
+        self.save_bonus_buff += delta;
     }
 
     pub fn action_slots(&self) -> u32 {
