@@ -1111,9 +1111,9 @@ impl EncounterInstance {
         }
     }
 
-    /// End the actor's concentration (if any) and remove every condition
-    /// that concentration installed. Logs the drop and each cleared
-    /// condition. No-op if the actor isn't concentrating.
+    /// End the actor's concentration (if any) and roll back every
+    /// condition / buff that concentration installed. Logs the drop and
+    /// each cleared effect. No-op if the actor isn't concentrating.
     pub fn drop_concentration(&mut self, actor_id: usize) {
         let Some(actor) = self.actors.get_mut(&actor_id) else {
             return;
@@ -1134,6 +1134,19 @@ impl EncounterInstance {
             let target_name = target.name().to_string();
             if target.remove_condition(condition) {
                 self.log(format!("{} is no longer {}.", target_name, condition.name()));
+            }
+        }
+        // Negate any flat buffs the spell installed (Bless, etc.). The
+        // delta stored is the original adjustment; we subtract it to
+        // restore the actor's pre-spell stats.
+        for (target_id, delta) in data.attack_buffs {
+            if let Some(target) = self.actors.get_mut(&target_id) {
+                target.add_attack_bonus_buff(-delta);
+            }
+        }
+        for (target_id, delta) in data.save_buffs {
+            if let Some(target) = self.actors.get_mut(&target_id) {
+                target.add_save_bonus_buff(-delta);
             }
         }
     }
@@ -2401,10 +2414,10 @@ mod tests {
         e.actors
             .get_mut(&caster)
             .unwrap()
-            .start_concentration(ConcentrationData {
-                spell_name: "Hold Person".to_string(),
-                conditions: vec![(victim, Condition::Stunned)],
-            });
+            .start_concentration(ConcentrationData::with_conditions(
+                "Hold Person",
+                vec![(victim, Condition::Stunned)],
+            ));
 
         // Drop the caster to 0 HP — Downed should auto-drop concentration
         // and clear the Stunned on the victim.
@@ -2440,10 +2453,10 @@ mod tests {
         e.actors
             .get_mut(&caster)
             .unwrap()
-            .start_concentration(ConcentrationData {
-                spell_name: "Hold Person".to_string(),
-                conditions: vec![(victim, Condition::Stunned)],
-            });
+            .start_concentration(ConcentrationData::with_conditions(
+                "Hold Person",
+                vec![(victim, Condition::Stunned)],
+            ));
 
         // Hit with damage huge enough to make the DC unsavable. DC is
         // max(10, dmg/2). Zombie CON 16 → +3. d20+3 vs DC 100 always fails.
@@ -3001,6 +3014,140 @@ mod tests {
             "scaled cr_target should produce more enemy HP: low={} high={}",
             enemy_hp(&low),
             enemy_hp(&high)
+        );
+    }
+
+    #[test]
+    fn cure_wounds_heals_target() {
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Place the wounded ally adjacent (touch range).
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&ally].max_hitpoints();
+        e.actors.get_mut(&ally).unwrap().take_damage(max / 2);
+        let damaged = e.actors[&ally].hitpoints();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*CURE_WOUNDS, cleric, Some(vec![ally]), None, None);
+        assert!(aei.validate(&e), "cure wounds should validate at touch range");
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            e.actors[&ally].hitpoints() > damaged,
+            "ally should have been healed"
+        );
+    }
+
+    #[test]
+    fn cure_wounds_invalid_out_of_range() {
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(15, 15), 0, 1)
+            .unwrap();
+        let aei = ActionExecutionInfo::new(&*CURE_WOUNDS, cleric, Some(vec![ally]), None, None);
+        assert!(!aei.validate(&e), "cure wounds is touch range only");
+    }
+
+    #[test]
+    fn fire_bolt_can_hit_and_damage() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::FIRE_BOLT;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        // Cleric subbed in as caster — INT 10 means +0 attack mod, but
+        // d20 always has a hit chance. We loop until one lands or 200
+        // attempts (functionally certain the test passes).
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        let max = e.actors[&target].max_hitpoints();
+        for _ in 0..200 {
+            let target_vec = vec![target];
+            let effects =
+                FIRE_BOLT.side_effects(&mut e, caster, Some(&target_vec), None, None);
+            if effects.is_empty() {
+                continue;
+            }
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            assert!(
+                e.actors[&target].hitpoints() < max,
+                "fire bolt landed but no damage dealt"
+            );
+            return;
+        }
+        panic!("fire bolt never hit in 200 attempts");
+    }
+
+    #[test]
+    fn bless_buffs_attack_and_saves_then_drops_on_concentration_end() {
+        use crate::actions::spells::BLESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*BLESS, cleric, Some(vec![ally]), None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+
+        // Buffs should be installed.
+        assert_eq!(e.actors[&ally].attack_bonus_buff(), 2);
+        assert_eq!(e.actors[&ally].save_bonus_buff(), 2);
+        assert!(e.actors[&cleric].is_concentrating());
+
+        // Drop concentration — buffs should roll back to zero.
+        e.drop_concentration(cleric);
+        assert_eq!(e.actors[&ally].attack_bonus_buff(), 0);
+        assert_eq!(e.actors[&ally].save_bonus_buff(), 0);
+    }
+
+    #[test]
+    fn magic_missile_auto_hits() {
+        use crate::actions::spells::MAGIC_MISSILE;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+            .unwrap();
+        let max = e.actors[&target].max_hitpoints();
+        e.pop_prompt();
+        let aei =
+            ActionExecutionInfo::new(&*MAGIC_MISSILE, cleric, Some(vec![target]), None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            e.actors[&target].hitpoints() < max,
+            "magic missile should have damaged the target"
         );
     }
 

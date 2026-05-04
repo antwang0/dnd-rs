@@ -58,6 +58,25 @@ pub struct ConcentrationData {
     /// Conditions this concentration applied. On drop, each is removed
     /// from its target. `(target_id, condition)`.
     pub conditions: Vec<(usize, Condition)>,
+    /// Attack-roll buff deltas to roll back on drop. Each entry is the
+    /// signed amount that was added by the spell (often +2 for Bless);
+    /// cleanup negates the delta. Same shape as `save_buffs`.
+    pub attack_buffs: Vec<(usize, i32)>,
+    pub save_buffs: Vec<(usize, i32)>,
+}
+
+impl ConcentrationData {
+    /// Build with empty buff vecs — convenience for spells that only
+    /// install conditions or that piggyback on concentration purely
+    /// for the duration timer.
+    pub fn with_conditions(spell_name: impl Into<String>, conditions: Vec<(usize, Condition)>) -> Self {
+        Self {
+            spell_name: spell_name.into(),
+            conditions,
+            attack_buffs: Vec::new(),
+            save_buffs: Vec::new(),
+        }
+    }
 }
 
 /// What `heal` did. Mirrors `DamageOutcome` for the inverse direction.
@@ -862,6 +881,13 @@ impl ActorInstance {
     /// call this on the caster to set their DC.
     pub fn spell_save_dc(&self, ability: AbilityScoreType) -> i32 {
         8 + modifier_from_score(self.ability_score(ability))
+    }
+
+    /// 5e spell attack modifier: spellcasting ability modifier (proficiency
+    /// folds in once tracked). Used by spells with attack rolls (Fire Bolt,
+    /// Eldritch Blast). Caller adds this to the d20.
+    pub fn spell_attack_modifier(&self, ability: AbilityScoreType) -> i32 {
+        modifier_from_score(self.ability_score(ability))
     }
 
     /// Damage modifier for `dt`, or `None` if the actor takes normal

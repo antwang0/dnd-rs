@@ -816,10 +816,7 @@ mod tests {
         e.actors
             .get_mut(&cleric)
             .unwrap()
-            .start_concentration(ConcentrationData {
-                spell_name: "Placeholder".to_string(),
-                conditions: vec![],
-            });
+            .start_concentration(ConcentrationData::with_conditions("Placeholder", vec![]));
 
         let ai = SimpleAi;
         let decision = ai.decide(&e, cleric);
@@ -857,10 +854,7 @@ mod tests {
         e.actors
             .get_mut(&cleric)
             .unwrap()
-            .start_concentration(ConcentrationData {
-                spell_name: "Placeholder".to_string(),
-                conditions: vec![],
-            });
+            .start_concentration(ConcentrationData::with_conditions("Placeholder", vec![]));
 
         let ai = SimpleAi;
         let decision = ai.decide(&e, cleric);
@@ -948,10 +942,7 @@ mod tests {
         e.actors
             .get_mut(&cleric)
             .unwrap()
-            .start_concentration(ConcentrationData {
-                spell_name: "Bless".to_string(),
-                conditions: vec![],
-            });
+            .start_concentration(ConcentrationData::with_conditions("Bless", vec![]));
 
         let ai = SimpleAi;
         let decision = ai.decide(&e, cleric);
