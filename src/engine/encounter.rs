@@ -3108,6 +3108,91 @@ mod tests {
     }
 
     #[test]
+    fn cure_wounds_heals_adjacent_ally() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(6, 5), 0, 1)
+            .unwrap();
+        // Wound the ally.
+        let max = e.actors[&ally].max_hitpoints();
+        e.actors.get_mut(&ally).unwrap().take_damage(max - 1);
+        let pre = e.actors[&ally].hitpoints();
+
+        let aei = ActionExecutionInfo::new(
+            &*CURE_WOUNDS,
+            cleric,
+            Some(vec![ally]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e), "cure wounds should validate adjacent");
+        let effects = aei.execute(&mut e);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert!(e.actors[&ally].hitpoints() > pre, "ally should have healed");
+        // Costs Action and a level-1 slot.
+        assert!(
+            !e.actors[&cleric].can_consume_resource(Resource::Action),
+            "action should be spent"
+        );
+    }
+
+    #[test]
+    fn cure_wounds_invalid_at_range() {
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let far_ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(15, 5), 0, 1)
+            .unwrap();
+        let aei = ActionExecutionInfo::new(
+            &*CURE_WOUNDS,
+            cleric,
+            Some(vec![far_ally]),
+            None,
+            None,
+        );
+        assert!(!aei.validate(&e), "cure wounds requires touch range");
+    }
+
+    #[test]
+    fn fire_bolt_validates_in_range_and_los() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::FIRE_BOLT;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+            .unwrap();
+        // Fire Bolt is INT-based; zombies have INT 3, so attacks will
+        // mostly miss — but validate should still succeed.
+        let aei = ActionExecutionInfo::new(
+            &*FIRE_BOLT,
+            caster,
+            Some(vec![target]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e), "fire bolt should validate at range with LOS");
+        assert_eq!(FIRE_BOLT.reach_tiles(), Some(48));
+        assert!(FIRE_BOLT.requires_los());
+    }
+
+    #[test]
     fn restrained_zeros_movement_and_grants_attacker_advantage() {
         use crate::conditions::{Condition, ConditionTimer};
         let mut e = ei_with_terrain(10, 10, &[]);
