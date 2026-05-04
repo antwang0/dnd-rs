@@ -61,7 +61,36 @@ impl Action for Move {
         };
         // path_cost_to verifies destination footprint AND walkable path
         // within remaining movement budget.
-        encounter.path_cost_to(caster_id, coord).is_some()
+        if encounter.path_cost_to(caster_id, coord).is_none() {
+            return false;
+        }
+        // Frightened: can't willingly move closer to any enemy. We don't
+        // track per-source fear yet, so any enemy is a "source." A move
+        // that strictly decreases the gap to any enemy is forbidden.
+        use crate::conditions::Condition;
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return true;
+        };
+        if !actor.has_condition(Condition::Frightened) {
+            return true;
+        }
+        let my_size = get_tiles_from_size(actor.size());
+        let my_loc = actor.location();
+        let my_team = actor.team();
+        for (other_id, other) in encounter.actors.iter() {
+            if *other_id == caster_id || other.team() == my_team || !other.is_combat_active() {
+                continue;
+            }
+            let o_loc = other.location();
+            let o_size = get_tiles_from_size(other.size());
+            let cur = footprint_chebyshev(my_loc, my_size, o_loc, o_size);
+            let after = footprint_chebyshev(coord, my_size, o_loc, o_size);
+            if after < cur {
+                return false;
+            }
+        }
+        true
     }
 
     fn side_effects(

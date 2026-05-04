@@ -701,7 +701,10 @@ impl ActorInstance {
     }
 
     pub fn remaining_movement(&self) -> f32 {
-        if self.has_condition(Condition::Prone) || self.has_condition(Condition::Stunned) {
+        if self.has_condition(Condition::Prone)
+            || self.has_condition(Condition::Stunned)
+            || self.has_condition(Condition::Restrained)
+        {
             return 0.0;
         }
         self.movement
