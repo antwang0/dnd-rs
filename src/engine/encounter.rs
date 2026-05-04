@@ -294,10 +294,11 @@ impl EncounterInstance {
 
     /// Compute the attack-roll mode given attacker / target conditions.
     /// 5e clauses we model today:
-    /// - Attacker Prone → disadvantage on all attacks.
-    /// - Attacker Poisoned → disadvantage.
+    /// - Attacker Prone / Poisoned / Frightened / Restrained / Blinded →
+    ///   disadvantage on all attacks.
     /// - Target Prone → melee attacks have advantage, ranged have disadvantage.
-    /// - Target Stunned → advantage on attacks vs them.
+    /// - Target Stunned / Restrained / Blinded / Incapacitated → advantage
+    ///   on attacks vs them.
     ///
     /// Multiple sources of the same direction don't stack; opposing
     /// sources cancel via `RollMode::combine`.
@@ -310,11 +311,16 @@ impl EncounterInstance {
         use crate::conditions::Condition;
         let mut mode = RollMode::Normal;
         if let Some(attacker) = self.actors.get(&attacker_id) {
-            if attacker.has_condition(Condition::Prone) {
-                mode = mode.combine(RollMode::Disadvantage);
-            }
-            if attacker.has_condition(Condition::Poisoned) {
-                mode = mode.combine(RollMode::Disadvantage);
+            for c in [
+                Condition::Prone,
+                Condition::Poisoned,
+                Condition::Frightened,
+                Condition::Restrained,
+                Condition::Blinded,
+            ] {
+                if attacker.has_condition(c) {
+                    mode = mode.combine(RollMode::Disadvantage);
+                }
             }
         }
         if let Some(target) = self.actors.get(&target_id) {
@@ -325,25 +331,39 @@ impl EncounterInstance {
                     RollMode::Disadvantage
                 });
             }
-            if target.has_condition(Condition::Stunned) {
-                mode = mode.combine(RollMode::Advantage);
+            for c in [
+                Condition::Stunned,
+                Condition::Restrained,
+                Condition::Blinded,
+                Condition::Incapacitated,
+            ] {
+                if target.has_condition(c) {
+                    mode = mode.combine(RollMode::Advantage);
+                }
             }
         }
         mode
     }
 
-    /// Compute the save-roll mode for an actor's ability save. Today
-    /// `Poisoned` imposes disadvantage on all saves derived from ability
-    /// checks (we conflate save-vs-check until we model that distinction).
+    /// Compute the save-roll mode for an actor's ability save.
+    /// - `Poisoned` imposes disadvantage on all ability-check saves.
+    /// - `Restrained` imposes disadvantage on DEX saves specifically.
     pub fn compute_save_mode(
         &self,
         actor_id: usize,
-        _ability: crate::engine::types::AbilityScoreType,
+        ability: crate::engine::types::AbilityScoreType,
     ) -> RollMode {
         use crate::conditions::Condition;
+        use crate::engine::types::AbilityScoreType;
         let mut mode = RollMode::Normal;
-        if let Some(actor) = self.actors.get(&actor_id)
-            && actor.has_condition(Condition::Poisoned)
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return mode;
+        };
+        if actor.has_condition(Condition::Poisoned) {
+            mode = mode.combine(RollMode::Disadvantage);
+        }
+        if matches!(ability, AbilityScoreType::Dexterity)
+            && actor.has_condition(Condition::Restrained)
         {
             mode = mode.combine(RollMode::Disadvantage);
         }
@@ -2967,6 +2987,284 @@ mod tests {
             enemy_hp(&low),
             enemy_hp(&high)
         );
+    }
+
+    #[test]
+    fn restrained_target_grants_advantage_and_disadv_on_attacks() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Restrained, ConditionTimer::Permanent);
+        // Target restrained → advantage to the attacker.
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage
+        );
+
+        // Make the attacker also restrained — adv (target) cancels disadv (attacker).
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Restrained, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Normal
+        );
+    }
+
+    #[test]
+    fn restrained_zeros_movement() {
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&id].remaining_movement() > 0.0);
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Restrained, ConditionTimer::Permanent);
+        assert_eq!(e.actors[&id].remaining_movement(), 0.0);
+    }
+
+    #[test]
+    fn restrained_imposes_disadv_on_dex_save_only() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Restrained, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_save_mode(id, AbilityScoreType::Dexterity),
+            RollMode::Disadvantage
+        );
+        assert_eq!(
+            e.compute_save_mode(id, AbilityScoreType::Strength),
+            RollMode::Normal
+        );
+    }
+
+    #[test]
+    fn blinded_target_grants_advantage_and_disadv_on_attacks() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage
+        );
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Permanent);
+        // adv (target) + disadv (attacker) → cancel.
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Normal
+        );
+    }
+
+    #[test]
+    fn frightened_attacker_has_disadv() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Frightened, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn incapacitated_blocks_actions_but_allows_movement() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Incapacitated, ConditionTimer::Permanent);
+        assert!(!e.actors[&id].can_consume_resource(Resource::Action));
+        assert!(!e.actors[&id].can_consume_resource(Resource::BonusAction));
+        assert!(!e.actors[&id].can_consume_resource(Resource::Reaction));
+        // Movement still works.
+        assert!(e.actors[&id].remaining_movement() > 0.0);
+    }
+
+    #[test]
+    fn resistance_halves_damage() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::DealDamage;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        // Skeleton has no resistance to slashing — full damage applies.
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Slashing,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max - 4);
+    }
+
+    #[test]
+    fn vulnerability_doubles_damage() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::DealDamage;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        // 4 bludgeoning -> doubled to 8.
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max.saturating_sub(8));
+    }
+
+    #[test]
+    fn immunity_zeros_damage() {
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::engine::side_effects::DealDamage;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        // Zombies are immune to poison.
+        DealDamage {
+            actor_id: id,
+            amount: 50,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max);
+    }
+
+    #[test]
+    fn slime_resists_piercing() {
+        use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+        use crate::engine::side_effects::DealDamage;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SLIME_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 6,
+            damage_type: DamageType::Piercing,
+        }
+        .apply(&mut e);
+        // Resistance halves: 6 -> 3.
+        assert_eq!(e.actors[&id].hitpoints(), max.saturating_sub(3));
+    }
+
+    #[test]
+    fn temp_hp_soaks_damage_first() {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        let actor = e.actors.get_mut(&id).unwrap();
+        assert!(actor.grant_temp_hp(5));
+
+        // 3 damage to 5 temp HP — only the temp pool drops.
+        actor.take_damage(3);
+        assert_eq!(actor.temp_hp(), 2);
+        assert_eq!(actor.hitpoints(), max);
+
+        // 5 more damage spills past temp into HP.
+        actor.take_damage(5);
+        assert_eq!(actor.temp_hp(), 0);
+        assert_eq!(actor.hitpoints(), max - 3);
+    }
+
+    #[test]
+    fn temp_hp_does_not_stack_replaces_if_larger() {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        assert!(actor.grant_temp_hp(5));
+        // Smaller pool — no replacement.
+        assert!(!actor.grant_temp_hp(3));
+        assert_eq!(actor.temp_hp(), 5);
+        // Larger pool — replaces.
+        assert!(actor.grant_temp_hp(8));
+        assert_eq!(actor.temp_hp(), 8);
+    }
+
+    #[test]
+    fn long_rest_clears_temp_hp() {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&id).unwrap().grant_temp_hp(10);
+        assert_eq!(e.actors[&id].temp_hp(), 10);
+        e.long_rest();
+        assert_eq!(e.actors[&id].temp_hp(), 0);
     }
 
     #[test]
