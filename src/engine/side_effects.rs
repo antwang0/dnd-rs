@@ -129,6 +129,8 @@ pub struct DealDamage {
 
 impl ApplicableSideEffect for DealDamage {
     fn apply(&self, ei: &mut EncounterInstance) {
+        use crate::engine::types::DamageModifier;
+
         let Some(actor) = ei.get_actor(self.actor_id) else {
             ei.log(format!(
                 "DealDamage: actor {} missing, ignoring",
@@ -137,7 +139,35 @@ impl ApplicableSideEffect for DealDamage {
             return;
         };
         let name = actor.name().to_string();
-        let outcome = actor.take_damage(self.amount);
+        // Apply per-creature damage modifier (resistance / immunity /
+        // vulnerability) before HP is touched. Logging the adjustment
+        // makes it obvious why a fireball did half / no damage.
+        let modifier = actor.damage_modifier(self.damage_type);
+        let final_amount = match modifier {
+            Some(m) => m.apply(self.amount),
+            None => self.amount,
+        };
+        if let Some(m) = modifier {
+            let label = match m {
+                DamageModifier::Resistance => "resists",
+                DamageModifier::Immunity => "is immune to",
+                DamageModifier::Vulnerability => "is vulnerable to",
+            };
+            ei.log(format!(
+                "  {} {} {:?} ({} -> {})",
+                name, label, self.damage_type, self.amount, final_amount
+            ));
+        }
+        if final_amount == 0 && matches!(modifier, Some(DamageModifier::Immunity)) {
+            // No further effects — immunity short-circuits everything
+            // (no concentration save, no transition to dying).
+            return;
+        }
+
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let outcome = actor.take_damage(final_amount);
         let was_concentrating = actor.is_concentrating();
         // actor borrow ends here.
 
@@ -155,7 +185,9 @@ impl ApplicableSideEffect for DealDamage {
             }
             DamageOutcome::Reduced if was_concentrating => {
                 // 5e: take damage while concentrating → CON save vs DC max(10, dmg/2).
-                let dc = ((self.amount / 2) as i32).max(10);
+                // Use the post-modifier amount: a resisted hit is half
+                // damage and the save DC follows the actually-felt damage.
+                let dc = ((final_amount / 2) as i32).max(10);
                 let save = ei.roll_save(
                     self.actor_id,
                     crate::engine::types::AbilityScoreType::Constitution,

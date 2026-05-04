@@ -1,5 +1,6 @@
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::{Dice, DiceExpr, Roller};
+use crate::engine::types::DamageType;
 
 /// Lifecycle state of an actor's hit points. Replaces the previous
 /// `dying: bool` + `stable: bool` pair so the four meaningful states are
@@ -77,7 +78,7 @@ use crate::items::item_template::{Item, ItemBonuses};
 use crate::{
     actions::action_template::Action,
     engine::{
-        types::{AbilityScoreType, Language, Size, Skill, SpecialSense},
+        types::{AbilityScoreType, DamageModifier, Language, Size, Skill, SpecialSense},
         util::modifier_from_score,
     },
 };
@@ -120,6 +121,12 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Per-damage-type modifiers (resistance / immunity / vulnerability).
+    /// Empty for creatures that take damage normally. Skeletons should
+    /// be vulnerable to Bludgeoning; zombies immune to Poison; demons
+    /// resistant to Fire, etc. Looked up by `damage_modifier` on the
+    /// instance.
+    pub damage_modifiers: HashMap<DamageType, DamageModifier>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -287,6 +294,16 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    /// Per-damage-type modifier table copied from the creature template.
+    /// Mutable on the instance so future buffs / curses can flip a
+    /// creature's resistance profile mid-fight (Bless, Protection from
+    /// Energy, etc.) without rebuilding from the template.
+    damage_modifiers: HashMap<DamageType, DamageModifier>,
+    /// Temporary hit points (5e). Absorbed first by `take_damage` and
+    /// don't stack — a new pool replaces the old if larger, otherwise
+    /// the old wins. Cleared by long rest. Doesn't count toward
+    /// `max_hitpoints`; pure damage soak.
+    temp_hp: u32,
 }
 
 impl ActorInstance {
@@ -353,6 +370,8 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            damage_modifiers: ct.damage_modifiers.clone(),
+            temp_hp: 0,
         })
     }
 
@@ -414,15 +433,17 @@ impl ActorInstance {
         out
     }
 
-    /// Restore full HP, all spell slots, clear non-permanent conditions
-    /// and concentration. 5e long rest semantics — at the multi-encounter
-    /// game-loop boundary, this is what "rest between fights" means.
+    /// Restore full HP, all spell slots, clear non-permanent conditions,
+    /// concentration and any temp HP. 5e long rest semantics — at the
+    /// multi-encounter game-loop boundary, this is what "rest between
+    /// fights" means.
     pub fn long_rest(&mut self) {
         self.hp_state = HpState::Active;
         self.hitpoints = self.max_hitpoints();
         self.spell_slot_manager.restore_spell_slots();
         self.conditions.clear();
         self.concentration = None;
+        self.temp_hp = 0;
     }
 
     pub fn cr(&self) -> f32 {
@@ -764,7 +785,54 @@ impl ActorInstance {
         8 + modifier_from_score(self.ability_score(ability))
     }
 
+    /// Damage modifier for `dt`, or `None` if the actor takes normal
+    /// damage of this type. Read-only; populated from the creature
+    /// template at spawn.
+    pub fn damage_modifier(&self, dt: DamageType) -> Option<DamageModifier> {
+        self.damage_modifiers.get(&dt).copied()
+    }
+
+    /// Apply 5e damage rules to a raw amount: vulnerability doubles,
+    /// resistance halves, immunity zeroes. Returns the post-modifier
+    /// value so callers can decide whether to log a "no effect" line.
+    pub fn modified_damage(&self, raw: u32, dt: DamageType) -> u32 {
+        match self.damage_modifier(dt) {
+            Some(m) => m.apply(raw),
+            None => raw,
+        }
+    }
+
+    pub fn temp_hp(&self) -> u32 {
+        self.temp_hp
+    }
+
+    /// Grant temp HP. 5e: temp HP doesn't stack — use the new pool only
+    /// if it's larger than the current pool. Returns whether the new
+    /// pool replaced the old one.
+    pub fn grant_temp_hp(&mut self, amount: u32) -> bool {
+        if amount > self.temp_hp {
+            self.temp_hp = amount;
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {
+        // Temp HP only matters for Active actors — 5e: Dying/Stable
+        // creatures don't carry temp HP through unconsciousness, and
+        // damage to them goes straight to death saves, not the pool.
+        let amount = if matches!(self.hp_state, HpState::Active) {
+            if self.temp_hp >= amount {
+                self.temp_hp -= amount;
+                return DamageOutcome::Reduced;
+            }
+            let leftover = amount - self.temp_hp;
+            self.temp_hp = 0;
+            leftover
+        } else {
+            amount
+        };
         match self.hp_state {
             HpState::Stable => {
                 // Stable creature takes damage: dying state restarts fresh

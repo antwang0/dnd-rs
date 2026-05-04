@@ -50,6 +50,33 @@ pub enum DamageType {
     Thunder,
 }
 
+/// 5e damage modifier categories for a creature against a damage type.
+/// Resistance halves incoming damage, immunity nullifies it, vulnerability
+/// doubles it. A creature can declare any subset across damage types via
+/// `CreatureTemplate.damage_modifiers`. Stacking rules (5e):
+/// - Immunity wins over everything else.
+/// - Resistance and vulnerability of the same type cancel (we follow this
+///   by simply not allowing both at once on the same template).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DamageModifier {
+    Resistance,
+    Immunity,
+    Vulnerability,
+}
+
+impl DamageModifier {
+    /// Apply this modifier to a raw damage value. Resistance halves (round
+    /// down, min 0). Immunity zeroes. Vulnerability doubles. Halving uses
+    /// integer division — 1 damage with resistance becomes 0.
+    pub fn apply(self, raw: u32) -> u32 {
+        match self {
+            DamageModifier::Resistance => raw / 2,
+            DamageModifier::Immunity => 0,
+            DamageModifier::Vulnerability => raw.saturating_mul(2),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Size {
     Tiny,
