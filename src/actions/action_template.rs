@@ -56,6 +56,15 @@ pub trait Action {
         true
     }
 
+    /// True for actions whose effect is to restore HP (Heal side-effect)
+    /// on a target. Distinguished from `is_harmful: false` — Help and
+    /// Dodge are also non-harmful but are buffs, not heals. The AI's
+    /// support-heal pipeline keys on this so it doesn't pick "help"
+    /// over "healing word" when an ally is wounded.
+    fn is_heal(&self) -> bool {
+        false
+    }
+
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,

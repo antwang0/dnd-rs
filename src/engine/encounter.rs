@@ -327,10 +327,12 @@ impl EncounterInstance {
             if attacker.has_condition(Condition::Invisible) {
                 mode = mode.combine(RollMode::Advantage);
             }
-            // Dodge bookkeeping marker — attackers against this defender
-            // have disadvantage; we encode "attacker is dodging" as a
-            // self-applied condition, but that's a defender-side effect,
-            // handled below.
+            // Help action: someone Helped this attacker — advantage on
+            // their next attack. Consumption happens at the call site
+            // (`weapon_attack`) since `compute_attack_mode` is read-only.
+            if attacker.has_condition(Condition::Helped) {
+                mode = mode.combine(RollMode::Advantage);
+            }
         }
         if let Some(target) = self.actors.get(&target_id) {
             if target.has_condition(Condition::Prone) {
@@ -354,6 +356,10 @@ impl EncounterInstance {
             }
             // Invisible targets impose disadvantage on attackers.
             if target.has_condition(Condition::Invisible) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+            // Dodge: defender's stance imposes disadvantage on attackers.
+            if target.has_condition(Condition::Dodging) {
                 mode = mode.combine(RollMode::Disadvantage);
             }
         }
@@ -394,6 +400,12 @@ impl EncounterInstance {
             && actor.has_condition(Condition::Restrained)
         {
             mode = mode.combine(RollMode::Disadvantage);
+        }
+        // Dodge — advantage on DEX saves while dodging.
+        if matches!(ability, AbilityScoreType::Dexterity)
+            && actor.has_condition(Condition::Dodging)
+        {
+            mode = mode.combine(RollMode::Advantage);
         }
         mode
     }
@@ -646,12 +658,21 @@ impl EncounterInstance {
         to: Coordinate,
     ) {
         use crate::actions::action_template::{MELEE_REACH, TargetingSchema};
+        use crate::conditions::Condition;
         use crate::engine::side_effects::Resource;
 
-        let (mover_team, mover_size) = match self.actors.get(&mover_id) {
-            Some(a) => (a.team(), get_tiles_from_size(a.size())),
+        let (mover_team, mover_size, disengaging) = match self.actors.get(&mover_id) {
+            Some(a) => (
+                a.team(),
+                get_tiles_from_size(a.size()),
+                a.has_condition(Condition::Disengaging),
+            ),
             None => return,
         };
+        // Disengage shields the mover from OAs for the rest of the turn.
+        if disengaging {
+            return;
+        }
 
         // Snapshot reactor candidates up-front — the loop body will mutate
         // self, which would conflict with holding an iterator into self.actors.
@@ -3015,6 +3036,129 @@ mod tests {
             enemy_hp(&low),
             enemy_hp(&high)
         );
+    }
+
+    #[test]
+    fn dodge_imposes_disadvantage_and_grants_dex_save_advantage() {
+        use crate::actions::default_actions::DODGE;
+        use crate::engine::dice::RollMode;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let dodger = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+
+        // Pop auto-prompt and queue dodge.
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*DODGE, dodger, None, None, None);
+        // Inject dodger into the active slot. Easiest: just call the
+        // dodge effect directly to set the condition.
+        e.push_action(aei);
+        e.process_stack();
+
+        // After dodge, attacker has disadvantage; dodger has advantage on DEX saves.
+        assert_eq!(
+            e.compute_attack_mode(attacker, dodger, true),
+            RollMode::Disadvantage
+        );
+        assert_eq!(
+            e.compute_save_mode(dodger, AbilityScoreType::Dexterity),
+            RollMode::Advantage
+        );
+    }
+
+    #[test]
+    fn disengage_suppresses_opportunity_attack() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+
+        // Mark mover as Disengaging — OAs should not fire.
+        e.actors
+            .get_mut(&mover)
+            .unwrap()
+            .add_condition(Condition::Disengaging, ConditionTimer::Rounds(1));
+
+        MoveActor {
+            actor_id: mover,
+            path: vec![Coordinate::new(15, 5)],
+        }
+        .apply(&mut e);
+
+        // Reactor's Reaction slot should still be intact.
+        assert!(
+            e.actors[&reactor].can_consume_resource(Resource::Reaction),
+            "disengaging mover should not provoke OA"
+        );
+    }
+
+    #[test]
+    fn help_action_grants_helped_condition_to_target() {
+        use crate::actions::default_actions::HELP;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let helper = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*HELP, helper, Some(vec![ally]), None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&ally].has_condition(Condition::Helped));
+    }
+
+    #[test]
+    fn help_rejects_self_target_and_enemy() {
+        use crate::actions::default_actions::HELP;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let helper = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        let self_aei = ActionExecutionInfo::new(&*HELP, helper, Some(vec![helper]), None, None);
+        assert!(!self_aei.validate(&e), "help self should reject");
+        let enemy_aei =
+            ActionExecutionInfo::new(&*HELP, helper, Some(vec![enemy]), None, None);
+        assert!(!enemy_aei.validate(&e), "help enemy should reject");
+    }
+
+    #[test]
+    fn helped_condition_consumed_after_first_attack() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::SLAM;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Helped, ConditionTimer::Rounds(1));
+        // Run the attack; the condition should be removed.
+        let target_vec = vec![target];
+        let _ = SLAM.side_effects(&mut e, attacker, Some(&target_vec), None, None);
+        assert!(!e.actors[&attacker].has_condition(Condition::Helped));
     }
 
     #[test]

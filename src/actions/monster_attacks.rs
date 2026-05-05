@@ -775,7 +775,16 @@ fn weapon_attack(
     damage_type: DamageType,
     is_melee: bool,
 ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+    use crate::conditions::Condition;
     let mode = encounter.compute_attack_mode(caster_id, target_id, is_melee);
+    // Help action's "advantage on next attack" — consume the marker
+    // exactly once, on the first attack the helped actor makes. The
+    // condition is removed silently (no log spam between turns).
+    if let Some(actor) = encounter.actors.get_mut(&caster_id)
+        && actor.has_condition(Condition::Helped)
+    {
+        actor.remove_condition(Condition::Helped);
+    }
     let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
     let is_crit = raw_attack == 20;
     let attack_total = raw_attack + attack_bonus;

@@ -48,6 +48,18 @@ pub enum Condition {
     /// without a source-tracker the AI just skips harming charmed targets
     /// of its own making.
     Charmed,
+    /// "Dodging" — defensive stance from the Dodge action. Attackers
+    /// against this actor have disadvantage; the actor has advantage on
+    /// DEX saves. Lasts one round (timer ticks on round-wrap).
+    Dodging,
+    /// "Disengaging" — your movement this turn doesn't trigger opportunity
+    /// attacks. Lasts one round; consumed on next round-wrap.
+    Disengaging,
+    /// "Helped" — the next attack the actor makes has advantage. The
+    /// engine consumes the condition on the first attack made (ad-hoc;
+    /// the consumer is `compute_attack_mode`-adjacent: see
+    /// `weapon_attack` for the consume hook).
+    Helped,
 }
 
 impl Condition {
@@ -64,6 +76,9 @@ impl Condition {
             Condition::Invisible => "invisible",
             Condition::Grappled => "grappled",
             Condition::Charmed => "charmed",
+            Condition::Dodging => "dodging",
+            Condition::Disengaging => "disengaging",
+            Condition::Helped => "helped",
         }
     }
 }
