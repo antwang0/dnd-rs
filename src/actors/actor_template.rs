@@ -642,11 +642,28 @@ impl ActorInstance {
     }
 
     /// Add a condition with the given timer. If the condition was already
-    /// present, the timer is replaced (longer-lasting application overrides
-    /// shorter — but for now we just take the new value either way; revisit
-    /// when stacking semantics matter). Returns true if newly added.
+    /// present, the longer-lasting timer wins: `Permanent` always beats
+    /// `Rounds(_)`; among rounds, the larger count is kept. Returns true
+    /// if the condition was newly added (not previously present).
     pub fn add_condition(&mut self, c: Condition, timer: ConditionTimer) -> bool {
-        self.conditions.insert(c, timer).is_none()
+        match self.conditions.get(&c).copied() {
+            None => {
+                self.conditions.insert(c, timer);
+                true
+            }
+            Some(existing) => {
+                let kept = match (existing, timer) {
+                    (ConditionTimer::Permanent, _) | (_, ConditionTimer::Permanent) => {
+                        ConditionTimer::Permanent
+                    }
+                    (ConditionTimer::Rounds(a), ConditionTimer::Rounds(b)) => {
+                        ConditionTimer::Rounds(a.max(b))
+                    }
+                };
+                self.conditions.insert(c, kept);
+                false
+            }
+        }
     }
 
     /// Remove a condition. Returns true if the condition was present.
@@ -663,23 +680,17 @@ impl ActorInstance {
     /// are untouched. The engine calls this on every round-end.
     pub fn tick_condition_timers(&mut self) -> Vec<Condition> {
         let mut expired = Vec::new();
-        let snapshot: Vec<(Condition, ConditionTimer)> = self
-            .conditions
-            .iter()
-            .map(|(c, t)| (*c, *t))
-            .collect();
-        for (c, timer) in snapshot {
-            match timer {
-                ConditionTimer::Permanent => {}
-                ConditionTimer::Rounds(0) | ConditionTimer::Rounds(1) => {
-                    self.conditions.remove(&c);
-                    expired.push(c);
-                }
-                ConditionTimer::Rounds(n) => {
-                    self.conditions.insert(c, ConditionTimer::Rounds(n - 1));
-                }
+        self.conditions.retain(|c, timer| match *timer {
+            ConditionTimer::Permanent => true,
+            ConditionTimer::Rounds(0) | ConditionTimer::Rounds(1) => {
+                expired.push(*c);
+                false
             }
-        }
+            ConditionTimer::Rounds(n) => {
+                *timer = ConditionTimer::Rounds(n - 1);
+                true
+            }
+        });
         expired
     }
 

@@ -177,6 +177,70 @@ impl OutcomeTracker {
     }
 }
 
+/// Conditions on the attacker that contribute a single advantage /
+/// disadvantage source. Returned as a tiny vec (≤ a few entries) so the
+/// caller folds them through `RollMode::combine`.
+fn attacker_mode_contrib(attacker: &ActorInstance) -> Vec<RollMode> {
+    use crate::conditions::Condition;
+    let mut out = Vec::new();
+    // Disadvantage clauses.
+    for c in [
+        Condition::Prone,
+        Condition::Poisoned,
+        Condition::Blinded,
+        Condition::Frightened,
+        Condition::Restrained,
+    ] {
+        if attacker.has_condition(c) {
+            out.push(RollMode::Disadvantage);
+        }
+    }
+    // Advantage clauses.
+    if attacker.has_condition(Condition::Invisible) {
+        out.push(RollMode::Advantage);
+    }
+    // Help action: someone Helped this attacker — advantage on their next
+    // attack. Consumption happens at the call site (`weapon_attack`)
+    // since `compute_attack_mode` is read-only.
+    if attacker.has_condition(Condition::Helped) {
+        out.push(RollMode::Advantage);
+    }
+    out
+}
+
+/// Conditions on the defender that contribute a single advantage /
+/// disadvantage source from the attacker's POV. `is_melee` matters only
+/// for Prone (melee = adv, ranged = dis).
+fn target_mode_contrib(target: &ActorInstance, is_melee: bool) -> Vec<RollMode> {
+    use crate::conditions::Condition;
+    let mut out = Vec::new();
+    if target.has_condition(Condition::Prone) {
+        out.push(if is_melee {
+            RollMode::Advantage
+        } else {
+            RollMode::Disadvantage
+        });
+    }
+    // Defender effectively can't react — attacker has advantage. 5e RAW.
+    for c in [
+        Condition::Stunned,
+        Condition::Unconscious,
+        Condition::Restrained,
+        Condition::Blinded,
+    ] {
+        if target.has_condition(c) {
+            out.push(RollMode::Advantage);
+        }
+    }
+    // Defender harder to see / brace against.
+    for c in [Condition::Invisible, Condition::Dodging] {
+        if target.has_condition(c) {
+            out.push(RollMode::Disadvantage);
+        }
+    }
+    out
+}
+
 /// Authoritative state for one combat encounter. Most fields are kept
 /// private; access goes through methods so engine invariants (actor map
 /// stays in sync with actor locations, initiative queue stays in sync with
@@ -293,74 +357,25 @@ impl EncounterInstance {
     }
 
     /// Compute the attack-roll mode given attacker / target conditions.
-    /// 5e clauses we model today:
-    /// - Attacker Prone → disadvantage on all attacks.
-    /// - Attacker Poisoned → disadvantage.
-    /// - Target Prone → melee attacks have advantage, ranged have disadvantage.
-    /// - Target Stunned → advantage on attacks vs them.
-    ///
-    /// Multiple sources of the same direction don't stack; opposing
-    /// sources cancel via `RollMode::combine`.
+    /// All same-direction sources collapse to a single Advantage /
+    /// Disadvantage; opposing sources cancel via `RollMode::combine`.
+    /// See `attacker_mode_contrib` / `target_mode_contrib` for the
+    /// per-side mapping of conditions to modes.
     pub fn compute_attack_mode(
         &self,
         attacker_id: usize,
         target_id: usize,
         is_melee: bool,
     ) -> RollMode {
-        use crate::conditions::Condition;
         let mut mode = RollMode::Normal;
         if let Some(attacker) = self.actors.get(&attacker_id) {
-            if attacker.has_condition(Condition::Prone) {
-                mode = mode.combine(RollMode::Disadvantage);
-            }
-            if attacker.has_condition(Condition::Poisoned) {
-                mode = mode.combine(RollMode::Disadvantage);
-            }
-            // Blinded/Frightened/Restrained → disadvantage on attacks.
-            if attacker.has_condition(Condition::Blinded)
-                || attacker.has_condition(Condition::Frightened)
-                || attacker.has_condition(Condition::Restrained)
-            {
-                mode = mode.combine(RollMode::Disadvantage);
-            }
-            // Invisible attackers strike from concealment → advantage.
-            if attacker.has_condition(Condition::Invisible) {
-                mode = mode.combine(RollMode::Advantage);
-            }
-            // Help action: someone Helped this attacker — advantage on
-            // their next attack. Consumption happens at the call site
-            // (`weapon_attack`) since `compute_attack_mode` is read-only.
-            if attacker.has_condition(Condition::Helped) {
-                mode = mode.combine(RollMode::Advantage);
+            for m in attacker_mode_contrib(attacker) {
+                mode = mode.combine(m);
             }
         }
         if let Some(target) = self.actors.get(&target_id) {
-            if target.has_condition(Condition::Prone) {
-                mode = mode.combine(if is_melee {
-                    RollMode::Advantage
-                } else {
-                    RollMode::Disadvantage
-                });
-            }
-            // Auto-advantage clauses: attacker can essentially see the
-            // defender, and the defender can't react. 5e RAW.
-            if target.has_condition(Condition::Stunned)
-                || target.has_condition(Condition::Unconscious)
-                || target.has_condition(Condition::Restrained)
-            {
-                mode = mode.combine(RollMode::Advantage);
-            }
-            // Blinded targets are easier to hit.
-            if target.has_condition(Condition::Blinded) {
-                mode = mode.combine(RollMode::Advantage);
-            }
-            // Invisible targets impose disadvantage on attackers.
-            if target.has_condition(Condition::Invisible) {
-                mode = mode.combine(RollMode::Disadvantage);
-            }
-            // Dodge: defender's stance imposes disadvantage on attackers.
-            if target.has_condition(Condition::Dodging) {
-                mode = mode.combine(RollMode::Disadvantage);
+            for m in target_mode_contrib(target, is_melee) {
+                mode = mode.combine(m);
             }
         }
         mode
@@ -3558,18 +3573,15 @@ mod tests {
 
     #[test]
     fn damage_resistance_halves_damage() {
-        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
         use crate::engine::types::DamageType;
         let mut e = ei_with_terrain(10, 10, &[]);
         let id = e
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        // Manually paint resistance on the zombie (simulates a buffed actor).
-        // Use a side-effect-free way: spawn with a monkey-patched template
-        // would be simpler — but we can't here. So test via the DamageMod
-        // directly on a test fixture via a Slime (immune to acid as a sanity
-        // proxy already covered by immunity test).
-        // Instead, assert the math via the actor method directly:
+        // Verify the math directly through `modify_incoming_damage` —
+        // exercising every (resistance, vulnerability, immunity) branch
+        // requires a more elaborate template than vanilla zombie, but the
+        // logic itself is purely arithmetic on the actor's sets.
         let actor = e.actors.get(&id).unwrap();
         let dmg = actor.modify_incoming_damage(7, DamageType::Poison);
         assert_eq!(dmg.amount, 0, "poison immunity should zero damage");
