@@ -53,6 +53,14 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 4b. Bless — if not concentrating and a wounded ally is in range,
+        //     pre-buff them. Lower priority than Hold Person (lockdown is
+        //     more swingy than +1d4) but higher than the standard attack
+        //     so a fresh cleric opens with Bless on round one.
+        if let Some(aei) = try_bless(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 5. AoE — point that catches 2+ enemies, no friendly fire.
         if let Some(aei) = try_attack_aoe(encounter, actor_id) {
             return ControllerDecision::Act(aei);
@@ -79,6 +87,38 @@ impl Controller for SimpleAi {
         // 9. Nothing useful. End the turn.
         skip_or_await(encounter, actor_id)
     }
+}
+
+/// Cast Bless on a combat-active ally if we have it, aren't already
+/// concentrating, and there's an ally in reach who isn't already Blessed.
+/// Picks the lowest-id eligible ally (deterministic). Self-targets as a
+/// last resort — a Bless on the caster still helps their own attacks.
+fn try_bless(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() {
+        return None;
+    }
+    let bless = actor.actions.iter().find(|a| a.name() == "bless").copied()?;
+    let my_team = actor.team();
+    for tid in encounter.sorted_actor_ids() {
+        let Some(target) = encounter.actors.get(&tid) else {
+            continue;
+        };
+        if target.team() != my_team
+            || !target.is_combat_active()
+            || target.has_condition(Condition::Blessed)
+        {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(bless, actor_id, Some(vec![tid]), None, None);
+        if aei.validate(encounter) {
+            return Some(aei);
+        }
+    }
+    None
 }
 
 /// Self-Dodge if affordable. Defensive last-resort — if nothing else hit
@@ -1046,6 +1086,28 @@ mod tests {
             "healing word",
             "AI should not target an enemy with a heal"
         );
+    }
+
+    #[test]
+    fn ai_dodges_when_no_targets_in_reach() {
+        // Actor with only melee scimitar, no enemies anywhere → fall
+        // through to dodge instead of skip. (Step-toward fails because no
+        // enemy exists; dodge is the next-best last-resort.)
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = empty_arena();
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // No enemies on the field — every attack/move tactic should bail.
+        let ai = SimpleAi;
+        let decision = ai.decide(&e, id);
+        let ControllerDecision::Act(aei) = decision else {
+            panic!("expected an action");
+        };
+        // Either dodge (preferred fallback) or skip would be valid; assert
+        // dodge specifically since the new fallback should fire first.
+        assert_eq!(aei.action().name(), "dodge");
     }
 
     #[test]
