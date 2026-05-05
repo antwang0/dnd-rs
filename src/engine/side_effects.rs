@@ -1,4 +1,6 @@
-use crate::actors::actor_template::{ConcentrationData, DamageOutcome, HealOutcome};
+use crate::actors::actor_template::{
+    ConcentrationData, DamageModKind, DamageOutcome, HealOutcome,
+};
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::triggers::TriggerEvent;
@@ -136,8 +138,32 @@ impl ApplicableSideEffect for DealDamage {
             ));
             return;
         };
+        // Resolve resist/immune/vulnerable up-front so concentration DC and
+        // log line both reflect the post-filter amount.
+        let modified = actor.modify_incoming_damage(self.amount, self.damage_type);
         let name = actor.name().to_string();
-        let outcome = actor.take_damage(self.amount);
+        match modified.kind {
+            DamageModKind::Immune => {
+                ei.log(format!(
+                    "  {} is immune to {:?} damage.",
+                    name, self.damage_type
+                ));
+                return;
+            }
+            DamageModKind::Resisted => ei.log(format!(
+                "  {} resists {:?} ({} → {}).",
+                name, self.damage_type, self.amount, modified.amount
+            )),
+            DamageModKind::Vulnerable => ei.log(format!(
+                "  {} is vulnerable to {:?} ({} → {}).",
+                name, self.damage_type, self.amount, modified.amount
+            )),
+            DamageModKind::Normal => {}
+        }
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let outcome = actor.take_damage(modified.amount);
         let was_concentrating = actor.is_concentrating();
         // actor borrow ends here.
 
@@ -155,7 +181,7 @@ impl ApplicableSideEffect for DealDamage {
             }
             DamageOutcome::Reduced if was_concentrating => {
                 // 5e: take damage while concentrating → CON save vs DC max(10, dmg/2).
-                let dc = ((self.amount / 2) as i32).max(10);
+                let dc = ((modified.amount / 2) as i32).max(10);
                 let save = ei.roll_save(
                     self.actor_id,
                     crate::engine::types::AbilityScoreType::Constitution,
@@ -237,6 +263,13 @@ impl ApplicableSideEffect for ApplyCondition {
             return;
         };
         let name = actor.name().to_string();
+        if actor.is_immune_to_condition(self.condition) {
+            ei.log(format!(
+                "{} is immune to {}.",
+                name, self.condition.name()
+            ));
+            return;
+        }
         if actor.add_condition(self.condition, self.timer) {
             let suffix = match self.timer {
                 ConditionTimer::Permanent => String::new(),

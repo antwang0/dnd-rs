@@ -1,7 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::LONGBOW;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{Language, Size, SpecialSense};
+use crate::conditions::Condition;
+use crate::engine::types::{DamageType, Language, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -33,5 +34,11 @@ pub static SKELETON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
+        // Undead skeleton: brittle bones are vulnerable to bludgeoning;
+        // immune to poison; can't be poisoned.
+        damage_resistances: HashSet::new(),
+        damage_immunities: HashSet::from([DamageType::Poison]),
+        damage_vulnerabilities: HashSet::from([DamageType::Bludgeoning]),
+        condition_immunities: HashSet::from([Condition::Poisoned]),
     }
 });

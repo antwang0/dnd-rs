@@ -59,6 +59,23 @@ pub struct ConcentrationData {
     pub conditions: Vec<(usize, Condition)>,
 }
 
+/// How damage was filtered by an actor's resistances / immunities /
+/// vulnerabilities. `DealDamage` reads `kind` for log flavor and applies
+/// `amount` as the post-filter HP delta.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DamageMod {
+    pub amount: u32,
+    pub kind: DamageModKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DamageModKind {
+    Normal,
+    Resisted,
+    Vulnerable,
+    Immune,
+}
+
 /// What `heal` did. Mirrors `DamageOutcome` for the inverse direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HealOutcome {
@@ -77,7 +94,7 @@ use crate::items::item_template::{Item, ItemBonuses};
 use crate::{
     actions::action_template::Action,
     engine::{
-        types::{AbilityScoreType, Language, Size, Skill, SpecialSense},
+        types::{AbilityScoreType, DamageType, Language, Size, Skill, SpecialSense},
         util::modifier_from_score,
     },
 };
@@ -120,6 +137,19 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Damage types the creature takes half damage from. 5e: rounded down,
+    /// minimum 0. Stacks with vulnerability (cancel) but not with itself
+    /// (multiple sources of "resistance to fire" don't make it 1/4).
+    pub damage_resistances: HashSet<DamageType>,
+    /// Damage types the creature ignores entirely. Takes precedence over
+    /// resistance and vulnerability — immune always wins.
+    pub damage_immunities: HashSet<DamageType>,
+    /// Damage types that double damage taken. Cancelled by an equal
+    /// resistance, fully overruled by an immunity.
+    pub damage_vulnerabilities: HashSet<DamageType>,
+    /// Conditions the creature is immune to. `ApplyCondition` against an
+    /// immune target is a no-op. Used heavily on undead (poison, etc.).
+    pub condition_immunities: HashSet<Condition>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -287,6 +317,15 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    /// Temporary HP buffer (5e). Damage subtracts from temp HP first;
+    /// a heal does NOT replenish temp HP (only `gain_temp_hp` does).
+    /// Multiple temp-HP sources don't stack — the larger replaces the
+    /// smaller; equal values keep the existing buffer.
+    temp_hp: u32,
+    damage_resistances: HashSet<DamageType>,
+    damage_immunities: HashSet<DamageType>,
+    damage_vulnerabilities: HashSet<DamageType>,
+    condition_immunities: HashSet<Condition>,
 }
 
 impl ActorInstance {
@@ -353,11 +392,85 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            temp_hp: 0,
+            damage_resistances: ct.damage_resistances.clone(),
+            damage_immunities: ct.damage_immunities.clone(),
+            damage_vulnerabilities: ct.damage_vulnerabilities.clone(),
+            condition_immunities: ct.condition_immunities.clone(),
         })
     }
 
     pub fn rolls_death_saves(&self) -> bool {
         self.rolls_death_saves
+    }
+
+    pub fn damage_resistances(&self) -> &HashSet<DamageType> {
+        &self.damage_resistances
+    }
+
+    pub fn damage_immunities(&self) -> &HashSet<DamageType> {
+        &self.damage_immunities
+    }
+
+    pub fn damage_vulnerabilities(&self) -> &HashSet<DamageType> {
+        &self.damage_vulnerabilities
+    }
+
+    pub fn condition_immunities(&self) -> &HashSet<Condition> {
+        &self.condition_immunities
+    }
+
+    /// True if `condition` would be ignored on this actor (5e: condition
+    /// immunity). Callers should bail before logging the application.
+    pub fn is_immune_to_condition(&self, c: Condition) -> bool {
+        self.condition_immunities.contains(&c)
+    }
+
+    /// Resolve raw incoming damage of `dt` to the modified amount this
+    /// actor would actually take. Order: immunity (→ 0) > resistance
+    /// (half, round down) and vulnerability (double); a creature with
+    /// both resistance and vulnerability takes the raw amount (5e canon).
+    pub fn modify_incoming_damage(&self, raw: u32, dt: DamageType) -> DamageMod {
+        if self.damage_immunities.contains(&dt) {
+            return DamageMod {
+                amount: 0,
+                kind: DamageModKind::Immune,
+            };
+        }
+        let resists = self.damage_resistances.contains(&dt);
+        let vulnerable = self.damage_vulnerabilities.contains(&dt);
+        match (resists, vulnerable) {
+            (true, true) => DamageMod {
+                amount: raw,
+                kind: DamageModKind::Normal,
+            },
+            (true, false) => DamageMod {
+                amount: raw / 2,
+                kind: DamageModKind::Resisted,
+            },
+            (false, true) => DamageMod {
+                amount: raw.saturating_mul(2),
+                kind: DamageModKind::Vulnerable,
+            },
+            (false, false) => DamageMod {
+                amount: raw,
+                kind: DamageModKind::Normal,
+            },
+        }
+    }
+
+    pub fn temp_hp(&self) -> u32 {
+        self.temp_hp
+    }
+
+    /// Grant temporary HP. 5e: a new pool only takes hold if it's larger
+    /// than what's already there — no stacking. Returns the value now in
+    /// effect (existing or newly granted, whichever wins).
+    pub fn gain_temp_hp(&mut self, amount: u32) -> u32 {
+        if amount > self.temp_hp {
+            self.temp_hp = amount;
+        }
+        self.temp_hp
     }
 
     /// Sum every carried item's `ItemBonuses` into one struct. Stat
@@ -788,7 +901,16 @@ impl ActorInstance {
             }
             HpState::Dead => DamageOutcome::DyingFailure, // already gone; no-op
             HpState::Active => {
-                self.hitpoints = self.hitpoints.saturating_sub(amount);
+                // Temp HP absorbs first; whatever remains hits real HP.
+                let after_temp = if self.temp_hp >= amount {
+                    self.temp_hp -= amount;
+                    0
+                } else {
+                    let remaining = amount - self.temp_hp;
+                    self.temp_hp = 0;
+                    remaining
+                };
+                self.hitpoints = self.hitpoints.saturating_sub(after_temp);
                 if self.hitpoints == 0 {
                     if self.rolls_death_saves {
                         self.hp_state = HpState::Dying {
