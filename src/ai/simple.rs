@@ -69,8 +69,32 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 8. Nothing useful. End the turn.
+        // 8. Last-ditch: dodge so attacks against us this round are at
+        //    disadvantage. Only fires when nothing else worked, so we don't
+        //    Dodge instead of attacking (which would always be a tempo loss).
+        if let Some(aei) = try_dodge(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 9. Nothing useful. End the turn.
         skip_or_await(encounter, actor_id)
+    }
+}
+
+/// Self-Dodge if affordable. Defensive last-resort — if nothing else hit
+/// in the priority pipeline, hardening for the next round beats wasting
+/// the Action slot on Skip.
+fn try_dodge(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let dodge = actor.actions.iter().find(|a| a.name() == "dodge").copied()?;
+    let aei = ActionExecutionInfo::new(dodge, actor_id, None, None, None);
+    if aei.validate(encounter) {
+        Some(aei)
+    } else {
+        None
     }
 }
 
@@ -112,8 +136,7 @@ fn try_hold_person(
         .copied()?;
     let my_team = actor.team();
 
-    let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
-    ids.sort_unstable();
+    let ids = encounter.sorted_actor_ids();
 
     let mut best: Option<(u32, ActionExecutionInfo)> = None;
     for target_id in ids {
@@ -287,8 +310,7 @@ fn try_support_heal(
     }
 
     // Sort actor ids for deterministic tiebreak.
-    let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
-    ids.sort_unstable();
+    let ids = encounter.sorted_actor_ids();
 
     // (priority, hp, aei): lower priority value = more urgent.
     // 0 = dying, 1 = wounded combat-active.
@@ -371,8 +393,7 @@ fn try_attack_aoe(
     }
 
     // Iterate enemies in id order for deterministic tie-break.
-    let mut anchor_ids: Vec<usize> = encounter.actors.keys().copied().collect();
-    anchor_ids.sort_unstable();
+    let anchor_ids = encounter.sorted_actor_ids();
 
     let mut best: Option<(usize, usize, ActionExecutionInfo)> = None; // (enemy_hits, anchor_id, aei)
     for anchor_id in &anchor_ids {
@@ -449,8 +470,7 @@ fn try_attack_focus_fire(
     // Iterate actors by sorted id for determinism — HashMap iteration
     // order changes between process runs and would make the AI's
     // tiebreakers nondeterministic given the same seed.
-    let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
-    ids.sort_unstable();
+    let ids = encounter.sorted_actor_ids();
 
     // Sort key: (mode_pri, target_hp, -reach). Lower wins:
     //   - mode_pri (advantage=0, normal=1, disadvantage=2): fish for
@@ -547,8 +567,7 @@ fn try_step_toward_lowest_hp(
         .copied()?;
     // Sort by id to break HP ties deterministically (HashMap iteration is
     // non-deterministic across processes).
-    let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
-    ids.sort_unstable();
+    let ids = encounter.sorted_actor_ids();
     let target_id = ids
         .into_iter()
         .filter_map(|id| {

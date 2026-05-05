@@ -234,8 +234,7 @@ impl Action for SacredBurst {
         // Snapshot affected ids in actor-id order for deterministic save
         // sequencing — order matters because the roller is shared and each
         // save consumes a d20.
-        let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
-        ids.sort_unstable();
+        let ids = encounter.sorted_actor_ids();
 
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         for target_id in ids {

@@ -28,7 +28,7 @@ impl Resource {
             Resource::BonusAction => "out of bonus actions".to_string(),
             Resource::Reaction => "no reaction available".to_string(),
             Resource::LegendaryAction => "out of legendary actions".to_string(),
-            Resource::Movement(_) => "out of movement".to_string(),
+            Resource::Movement(amt) => format!("not enough movement ({:.1}ft needed)", amt),
             Resource::SpellSlot(lvl) => format!("no level-{} spell slot", lvl),
         }
     }
