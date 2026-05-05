@@ -826,10 +826,16 @@ mod tests {
         let ControllerDecision::Act(aei) = decision else {
             panic!("expected an action");
         };
-        assert_eq!(
-            aei.action().name(),
-            "sacred burst",
-            "two-enemy cluster should pull AoE over single-target"
+        let action = aei.action();
+        // The cluster is two enemies; the AI should pick a Burst-schema
+        // attack. Don't pin to a specific spell — multiple AoEs may apply.
+        assert!(
+            matches!(
+                action.targeting_schema(),
+                crate::actions::action_template::TargetingSchema::Burst { .. }
+            ),
+            "two-enemy cluster should pull AoE over single-target, got {}",
+            action.name()
         );
     }
 

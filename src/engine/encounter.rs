@@ -3039,6 +3039,112 @@ mod tests {
     }
 
     #[test]
+    fn cure_wounds_heals_adjacent_ally() {
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        // Wound the ally so heal isn't AlreadyFull.
+        let max = e.actors[&ally].max_hitpoints();
+        e.actors.get_mut(&ally).unwrap().take_damage(max - 1);
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*CURE_WOUNDS, cleric, Some(vec![ally]), None, None);
+        assert!(aei.validate(&e), "cure wounds in melee reach");
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&ally].hitpoints() > 1, "ally should have healed");
+    }
+
+    #[test]
+    fn cure_wounds_rejects_far_target() {
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let far_ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(10, 10), 0, 1)
+            .unwrap();
+        let aei =
+            ActionExecutionInfo::new(&*CURE_WOUNDS, cleric, Some(vec![far_ally]), None, None);
+        assert!(!aei.validate(&e), "out-of-reach cure wounds should reject");
+    }
+
+    #[test]
+    fn magic_missile_deals_force_damage_no_attack_roll() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::MAGIC_MISSILE;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+            .unwrap();
+        let max = e.actors[&target].max_hitpoints();
+
+        let target_vec = vec![target];
+        let effects = MAGIC_MISSILE.side_effects(&mut e, cleric, Some(&target_vec), None, None);
+        // 3 darts queue 3 DealDamage effects unconditionally.
+        assert_eq!(effects.len(), 3);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        // Min damage 3*(1+1)=6, max 3*(4+1)=15. Always lands.
+        let lost = max - e.actors.get(&target).map(|a| a.hitpoints()).unwrap_or(0);
+        assert!(
+            (6..=15).contains(&lost),
+            "expected 6..=15 force damage, got {}",
+            lost
+        );
+    }
+
+    #[test]
+    fn burning_hands_hits_radius_2_excluding_caster() {
+        use crate::actions::spells::BURNING_HANDS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let close = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+            .unwrap();
+        let far = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(15, 15), 1, 1)
+            .unwrap();
+        let cleric_max = e.actors[&cleric].max_hitpoints();
+        let close_max = e.actors[&close].max_hitpoints();
+        let far_max = e.actors[&far].max_hitpoints();
+        e.pop_prompt();
+        // Burst point near the close zombie.
+        let aei = ActionExecutionInfo::new(
+            &*BURNING_HANDS,
+            cleric,
+            None,
+            Some(vec![Coordinate::new(7, 2)]),
+            None,
+        );
+        assert!(aei.validate(&e), "burning hands within reach + LOS");
+        e.push_action(aei);
+        e.process_stack();
+        // Caster is exempt; far zombie out of radius; close zombie hit.
+        assert_eq!(e.actors[&cleric].hitpoints(), cleric_max);
+        assert_eq!(
+            e.actors.get(&far).map(|a| a.hitpoints()).unwrap_or(0),
+            far_max
+        );
+        assert!(e.actors[&close].hitpoints() < close_max);
+    }
+
+    #[test]
     fn dodge_imposes_disadvantage_and_grants_dex_save_advantage() {
         use crate::actions::default_actions::DODGE;
         use crate::engine::dice::RollMode;
