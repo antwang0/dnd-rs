@@ -3,6 +3,7 @@ use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
 use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
 use crate::actors::creatures::wolves::WOLF_TEMPLATE;
 use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
 use std::collections::HashMap;
@@ -1048,6 +1049,7 @@ impl EncounterInstance {
             &GOBLIN_TEMPLATE,
             &OGRE_TEMPLATE,
             &WOLF_TEMPLATE,
+            &WIZARD_TEMPLATE,
         ]
     }
 
@@ -3037,6 +3039,61 @@ mod tests {
             "scaled cr_target should produce more enemy HP: low={} high={}",
             enemy_hp(&low),
             enemy_hp(&high)
+        );
+    }
+
+    #[test]
+    fn magic_missile_auto_hits() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::MAGIC_MISSILE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        let pre = e.actors[&target].hitpoints();
+        let target_vec = vec![target];
+        let effects = MAGIC_MISSILE.side_effects(&mut e, wizard, Some(&target_vec), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        // Three darts of 1d4+1 each → 6..=15 force damage. Auto-hits: HP must drop.
+        assert!(
+            e.actors[&target].hitpoints() < pre,
+            "magic missile must always land"
+        );
+    }
+
+    #[test]
+    fn bless_grants_blessed_condition_and_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::BLESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        let target_vec = vec![ally];
+        let effects = BLESS.side_effects(&mut e, cleric, Some(&target_vec), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&ally].has_condition(Condition::Blessed),
+            "Bless should apply Blessed to the ally"
+        );
+        assert!(
+            e.actors[&cleric].is_concentrating(),
+            "caster should be concentrating on Bless"
         );
     }
 
