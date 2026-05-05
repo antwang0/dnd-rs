@@ -2532,6 +2532,42 @@ mod tests {
     }
 
     #[test]
+    fn add_condition_longer_timer_wins_over_shorter() {
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        actor.add_condition(Condition::Stunned, ConditionTimer::Rounds(2));
+        actor.add_condition(Condition::Stunned, ConditionTimer::Rounds(5));
+        let timer = actor.conditions().get(&Condition::Stunned).copied().unwrap();
+        assert_eq!(timer, ConditionTimer::Rounds(5));
+        // Re-adding a shorter timer should not shrink it.
+        actor.add_condition(Condition::Stunned, ConditionTimer::Rounds(1));
+        let timer = actor.conditions().get(&Condition::Stunned).copied().unwrap();
+        assert_eq!(timer, ConditionTimer::Rounds(5));
+    }
+
+    #[test]
+    fn add_condition_permanent_beats_rounds() {
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        actor.add_condition(Condition::Stunned, ConditionTimer::Rounds(2));
+        actor.add_condition(Condition::Stunned, ConditionTimer::Permanent);
+        let timer = actor.conditions().get(&Condition::Stunned).copied().unwrap();
+        assert_eq!(timer, ConditionTimer::Permanent);
+        // And once Permanent, a Rounds(_) doesn't downgrade it.
+        actor.add_condition(Condition::Stunned, ConditionTimer::Rounds(99));
+        let timer = actor.conditions().get(&Condition::Stunned).copied().unwrap();
+        assert_eq!(timer, ConditionTimer::Permanent);
+    }
+
+    #[test]
     fn rounds_timer_decrements_on_round_wrap() {
         use crate::conditions::{Condition, ConditionTimer};
         let mut e = ei_with_terrain(15, 15, &[]);
