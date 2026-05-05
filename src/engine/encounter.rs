@@ -652,7 +652,8 @@ impl EncounterInstance {
     /// Iterate enemy actors with a Reaction slot and a melee attack; for each
     /// whose reach covered `mover` at `from` but no longer covers them at
     /// `to`, run the attack against the mover and consume the reaction.
-    /// Stops early if the mover is downed mid-loop.
+    /// Stops early if the mover is downed mid-loop. If the mover has the
+    /// `Disengaging` condition, no OAs fire.
     fn dispatch_opportunity_attacks(
         &mut self,
         mover_id: usize,
@@ -660,12 +661,20 @@ impl EncounterInstance {
         to: Coordinate,
     ) {
         use crate::actions::action_template::{MELEE_REACH, TargetingSchema};
+        use crate::conditions::Condition;
         use crate::engine::side_effects::Resource;
 
-        let (mover_team, mover_size) = match self.actors.get(&mover_id) {
-            Some(a) => (a.team(), get_tiles_from_size(a.size())),
+        let (mover_team, mover_size, disengaging) = match self.actors.get(&mover_id) {
+            Some(a) => (
+                a.team(),
+                get_tiles_from_size(a.size()),
+                a.has_condition(Condition::Disengaging),
+            ),
             None => return,
         };
+        if disengaging {
+            return;
+        }
 
         // Snapshot reactor candidates up-front — the loop body will mutate
         // self, which would conflict with holding an iterator into self.actors.
@@ -3028,6 +3037,61 @@ mod tests {
             "scaled cr_target should produce more enemy HP: low={} high={}",
             enemy_hp(&low),
             enemy_hp(&high)
+        );
+    }
+
+    #[test]
+    fn disengage_suppresses_opportunity_attacks() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Mark the mover as Disengaging (the action would do this).
+        e.actors
+            .get_mut(&mover_id)
+            .unwrap()
+            .add_condition(Condition::Disengaging, ConditionTimer::Rounds(1));
+
+        MoveActor {
+            actor_id: mover_id,
+            path: vec![Coordinate::new(15, 5)],
+        }
+        .apply(&mut e);
+
+        // Reactor should still have their reaction — Disengaging neuters
+        // the OA dispatcher.
+        assert!(
+            e.actors[&reactor_id].can_consume_resource(Resource::Reaction),
+            "Disengaging mover should not eat the reactor's reaction"
+        );
+    }
+
+    #[test]
+    fn help_then_attack_is_at_advantage() {
+        use crate::conditions::Condition;
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Helped, crate::conditions::ConditionTimer::Rounds(1));
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage,
+            "Helped attacker should swing with advantage"
         );
     }
 

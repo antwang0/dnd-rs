@@ -56,6 +56,14 @@ pub trait Action {
         true
     }
 
+    /// True when this action restores HP (Healing Word, Cure Wounds,
+    /// drink-potion, etc.). The AI's heal-priority pipeline filters by
+    /// this, so non-damaging buffs (Help, Bless) don't get treated as
+    /// substitutes for actual healing. Defaults false; healers override.
+    fn is_healing(&self) -> bool {
+        false
+    }
+
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
