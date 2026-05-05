@@ -326,6 +326,13 @@ pub struct ActorInstance {
     damage_immunities: HashSet<DamageType>,
     damage_vulnerabilities: HashSet<DamageType>,
     condition_immunities: HashSet<Condition>,
+    /// Class features that recharge on a long rest. Stored as a name set
+    /// — entries are present *only* when the feature has been used.
+    /// `try_use_feature` adds the entry; `long_rest` clears the set.
+    /// Keying off a tag string (rather than a hard-coded enum) keeps new
+    /// once-per-rest abilities pluggable from action code without
+    /// touching the actor data structure.
+    spent_features: HashSet<&'static str>,
 }
 
 impl ActorInstance {
@@ -397,6 +404,7 @@ impl ActorInstance {
             damage_immunities: ct.damage_immunities.clone(),
             damage_vulnerabilities: ct.damage_vulnerabilities.clone(),
             condition_immunities: ct.condition_immunities.clone(),
+            spent_features: HashSet::new(),
         })
     }
 
@@ -461,6 +469,17 @@ impl ActorInstance {
 
     pub fn temp_hp(&self) -> u32 {
         self.temp_hp
+    }
+
+    /// True if `tag` has not been used since the last long rest. Used by
+    /// once-per-rest class-feature actions to gate their `validate`.
+    pub fn feature_available(&self, tag: &str) -> bool {
+        !self.spent_features.contains(tag)
+    }
+
+    /// Mark `tag` as used. Idempotent. Reset on long rest.
+    pub fn spend_feature(&mut self, tag: &'static str) {
+        self.spent_features.insert(tag);
     }
 
     /// Grant temporary HP. 5e: a new pool only takes hold if it's larger
@@ -536,6 +555,8 @@ impl ActorInstance {
         self.spell_slot_manager.restore_spell_slots();
         self.conditions.clear();
         self.concentration = None;
+        self.temp_hp = 0;
+        self.spent_features.clear();
     }
 
     pub fn cr(&self) -> f32 {

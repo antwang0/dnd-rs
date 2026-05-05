@@ -3039,6 +3039,76 @@ mod tests {
     }
 
     #[test]
+    fn second_wind_heals_self_and_consumes_feature() {
+        use crate::actions::class_features::{SECOND_WIND, SECOND_WIND_TAG};
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        e.actors.get_mut(&id).unwrap().take_damage(max - 1);
+        assert_eq!(e.actors[&id].hitpoints(), 1);
+        assert!(e.actors[&id].feature_available(SECOND_WIND_TAG));
+
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*SECOND_WIND, id, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(e.actors[&id].hitpoints() > 1, "second wind should heal");
+        assert!(!e.actors[&id].feature_available(SECOND_WIND_TAG));
+
+        // Second invocation should reject (feature spent).
+        let aei2 = ActionExecutionInfo::new(&*SECOND_WIND, id, None, None, None);
+        assert!(!aei2.validate(&e), "second wind should be unavailable now");
+    }
+
+    #[test]
+    fn long_rest_restores_class_features() {
+        use crate::actions::class_features::SECOND_WIND_TAG;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&id).unwrap().spend_feature(SECOND_WIND_TAG);
+        assert!(!e.actors[&id].feature_available(SECOND_WIND_TAG));
+        e.long_rest();
+        assert!(e.actors[&id].feature_available(SECOND_WIND_TAG));
+    }
+
+    #[test]
+    fn action_surge_grants_extra_action_and_consumes_feature() {
+        use crate::actions::class_features::{ACTION_SURGE, ACTION_SURGE_TAG};
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Burn the actor's normal action so the test sees the surge land.
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .consume_resource(Resource::Action);
+        assert!(!e.actors[&id].can_consume_resource(Resource::Action));
+
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*ACTION_SURGE, id, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(
+            e.actors[&id].can_consume_resource(Resource::Action),
+            "action surge should restore Action slot"
+        );
+        assert!(!e.actors[&id].feature_available(ACTION_SURGE_TAG));
+    }
+
+    #[test]
     fn cure_wounds_heals_adjacent_ally() {
         use crate::actions::spells::CURE_WOUNDS;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;

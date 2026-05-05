@@ -1,3 +1,4 @@
+use crate::actions::class_features::{ACTION_SURGE, SECOND_WIND};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::SCIMITAR;
 use crate::actors::actor_template::CreatureTemplate;
@@ -17,6 +18,8 @@ use std::sync::LazyLock;
 pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*SCIMITAR);
+    actions.push(&*SECOND_WIND);
+    actions.push(&*ACTION_SURGE);
     CreatureTemplate {
         name: "Fighter",
         glyph: 'F',
