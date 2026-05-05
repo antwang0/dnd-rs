@@ -686,30 +686,40 @@ impl ActorInstance {
         }
     }
 
+    /// True when the actor is denied action / bonus / reaction slots by
+    /// any condition (5e: Stunned, Incapacitated, Unconscious, Paralyzed).
+    /// Prone does NOT block — it's a movement-only debuff.
+    pub fn is_action_blocked(&self) -> bool {
+        self.has_condition(Condition::Stunned)
+            || self.has_condition(Condition::Incapacitated)
+            || self.has_condition(Condition::Unconscious)
+    }
+
     pub fn can_consume_resource(&self, resource: Resource) -> bool {
-        // Stunned actors lose their entire action economy. Prone is NOT
-        // checked here for Movement: stand-up itself pays in Movement, so
-        // blocking the resource here would create a catch-22. Move-the-
-        // action is still blocked because `remaining_movement()` returns 0
-        // when Prone, which makes `path_cost_to` find no path.
-        let stunned = self.has_condition(Condition::Stunned);
+        // Action-blocking conditions (Stunned/Incapacitated/Unconscious)
+        // wipe the action economy. Prone is NOT checked here for Movement:
+        // stand-up itself pays in Movement, so blocking the resource here
+        // would create a catch-22. Move-the-action is still blocked
+        // because `remaining_movement()` returns 0 when Prone, which makes
+        // `path_cost_to` find no path.
+        let blocked = self.is_action_blocked();
         match resource {
             Resource::Movement(amt) => {
-                if stunned {
+                if blocked {
                     return false;
                 }
                 amt <= self.movement
             }
             Resource::SpellSlot(spell_lvl) => {
-                if stunned {
+                if blocked {
                     return false;
                 }
                 self.spell_slot_manager.spell_slots(spell_lvl).spell_slots >= 1
             }
-            Resource::Action => !stunned && self.action_slots >= 1,
-            Resource::BonusAction => !stunned && self.bonus_action_slots >= 1,
-            Resource::Reaction => !stunned && self.reaction_slots >= 1,
-            Resource::LegendaryAction => !stunned && self.legendary_action_slots >= 1,
+            Resource::Action => !blocked && self.action_slots >= 1,
+            Resource::BonusAction => !blocked && self.bonus_action_slots >= 1,
+            Resource::Reaction => !blocked && self.reaction_slots >= 1,
+            Resource::LegendaryAction => !blocked && self.legendary_action_slots >= 1,
         }
     }
 
@@ -793,7 +803,15 @@ impl ActorInstance {
     }
 
     pub fn remaining_movement(&self) -> f32 {
-        if self.has_condition(Condition::Prone) || self.has_condition(Condition::Stunned) {
+        // Conditions that zero a creature's movement. Prone is "speed 0
+        // until you stand"; Restrained / Grappled hold the actor in place;
+        // Stunned / Unconscious lose their action economy and movement.
+        if self.has_condition(Condition::Prone)
+            || self.has_condition(Condition::Stunned)
+            || self.has_condition(Condition::Unconscious)
+            || self.has_condition(Condition::Restrained)
+            || self.has_condition(Condition::Grappled)
+        {
             return 0.0;
         }
         self.movement
