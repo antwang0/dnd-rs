@@ -3032,6 +3032,72 @@ mod tests {
     }
 
     #[test]
+    fn damage_immunity_zeros_damage() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let pre = e.actors[&id].hitpoints();
+        // Skeletons are immune to poison.
+        DealDamage {
+            actor_id: id,
+            amount: 50,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), pre, "poison should be ignored");
+    }
+
+    #[test]
+    fn damage_vulnerability_doubles() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let pre = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 3,
+            damage_type: DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        // Vulnerable: 3 -> 6.
+        assert_eq!(
+            pre - e.actors[&id].hitpoints(),
+            6,
+            "skeleton should take double bludgeoning damage"
+        );
+    }
+
+    #[test]
+    fn damage_resistance_halves() {
+        use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SLIME_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let pre = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Acid,
+        }
+        .apply(&mut e);
+        assert_eq!(pre - e.actors[&id].hitpoints(), 2, "slime resists acid (4 → 2)");
+    }
+
+    #[test]
     fn with_pcs_preserves_team0_and_adds_enemies() {
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
 

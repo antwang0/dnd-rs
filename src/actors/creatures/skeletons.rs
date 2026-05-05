@@ -1,13 +1,13 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::LONGBOW;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{Language, Size, SpecialSense};
+use crate::engine::types::{DamageType, Language, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// 5e-flavored skeleton archer. Lower HP than a zombie but DEX-based ranged
-/// attack — pressure-tests the longbow + LOS path. Stats trimmed compared to
-/// MM since we only use a subset of fields.
+/// attack — pressure-tests the longbow + LOS path. Vulnerable to bludgeoning
+/// (brittle bones); immune to poison and exhaustion (undead).
 pub static SKELETON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*LONGBOW);
@@ -33,5 +33,8 @@ pub static SKELETON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
+        damage_resistances: HashSet::new(),
+        damage_immunities: HashSet::from([DamageType::Poison]),
+        damage_vulnerabilities: HashSet::from([DamageType::Bludgeoning]),
     }
 });
