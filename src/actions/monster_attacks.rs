@@ -760,10 +760,17 @@ pub static ZOMBIE_MULTISLAM: LazyLock<Multiattack> = LazyLock::new(|| Multiattac
 /// auto-hits regardless of AC and rolls the damage dice twice — the
 /// modifier is added once. 5e RAW.
 ///
+/// **Bless**: an attacker with the `Blessed` condition adds +1d4 to the
+/// attack roll (numeric, not roll-mode). Independent of advantage.
+///
+/// **Help**: an attacker with the `Helped` condition gets advantage (via
+/// `compute_attack_mode`); we consume the marker here so it's strictly
+/// a one-shot buff regardless of hit / miss.
+///
 /// Returns the side-effect vec (empty on miss). Centralizes the pattern
 /// so every weapon-style attack logs in the same shape.
 #[allow(clippy::too_many_arguments)]
-fn weapon_attack(
+pub(crate) fn weapon_attack(
     encounter: &mut EncounterInstance,
     caster_id: usize,
     target_id: usize,
@@ -775,10 +782,25 @@ fn weapon_attack(
     damage_type: DamageType,
     is_melee: bool,
 ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+    use crate::conditions::Condition;
+
     let mode = encounter.compute_attack_mode(caster_id, target_id, is_melee);
     let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
     let is_crit = raw_attack == 20;
-    let attack_total = raw_attack + attack_bonus;
+
+    // Bless: +1d4 to the attack roll. Sample as a numeric bonus, not as a
+    // mode shift. Rolled inside the helper so the log message reflects it.
+    let bless_bonus = if encounter
+        .actors
+        .get(&caster_id)
+        .is_some_and(|a| a.has_condition(Condition::Blessed))
+    {
+        encounter.roll(&Dice::new(1, 4)) as i32
+    } else {
+        0
+    };
+
+    let attack_total = raw_attack + attack_bonus + bless_bonus;
     // Crits auto-hit regardless of AC. Otherwise compare normally.
     let hit = is_crit || attack_total >= target_ac;
     let outcome = if is_crit {
@@ -788,16 +810,27 @@ fn weapon_attack(
     } else {
         "miss"
     };
+    let bless_suffix = if bless_bonus > 0 {
+        format!(" +bless({})", bless_bonus)
+    } else {
+        String::new()
+    };
     encounter.log(format!(
-        "  {}: 1d20({}){:+} = {} vs AC {}{} \u{2014} {}",
+        "  {}: 1d20({}){:+}{} = {} vs AC {}{} \u{2014} {}",
         action_name,
         raw_attack,
         attack_bonus,
+        bless_suffix,
         attack_total,
         target_ac,
         mode.log_suffix(),
         outcome,
     ));
+    // Help is a one-shot buff: consume it whether the attack hit or missed,
+    // so a Helped → swing-and-miss doesn't carry into the next attack.
+    if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+        actor.remove_condition(Condition::Helped);
+    }
     if !hit {
         return Vec::new();
     }
