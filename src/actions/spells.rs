@@ -7,7 +7,7 @@ use crate::{
         action_overrides::ActionOverride,
         dice::Dice,
         encounter::EncounterInstance,
-        side_effects::{ApplicableSideEffect, DealDamage, Heal, Resource},
+        side_effects::{ApplicableSideEffect, DealDamage, GainTempHp, Heal, Resource},
         types::{AbilityScoreType, Coordinate, DamageType},
         util::modifier_from_score,
     },
@@ -613,3 +613,61 @@ impl Action for BurningHands {
 }
 
 pub static BURNING_HANDS: LazyLock<BurningHands> = LazyLock::new(|| BurningHands {});
+
+/// False Life — self-buff cantrip. Grants the caster 1d4+4 temporary HP.
+/// Action cost, no spell slot, no save, no target. Demonstrates the
+/// temp-HP buffer absorbing damage (since temp HP is a separate pool from
+/// regular HP).
+pub struct FalseLife {}
+
+impl Action for FalseLife {
+    fn name(&self) -> &str {
+        "false life"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fl"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // Modeled as a cantrip — Action only, no slot.
+        vec![Resource::Action]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let raw = encounter.roll(&Dice::new(1, 4));
+        let amount = raw + 4;
+        encounter.log(format!(
+            "  false life: 1d4({})+4 = {} temp HP",
+            raw, amount
+        ));
+        vec![Box::new(GainTempHp {
+            actor_id: caster_id,
+            amount,
+        })]
+    }
+}
+
+pub static FALSE_LIFE: LazyLock<FalseLife> = LazyLock::new(|| FalseLife {});

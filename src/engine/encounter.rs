@@ -3054,6 +3054,29 @@ mod tests {
     }
 
     #[test]
+    fn false_life_grants_temp_hp_and_absorbs_damage() {
+        use crate::actions::spells::FALSE_LIFE;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&cleric].max_hitpoints();
+        assert_eq!(e.actors[&cleric].temp_hp(), 0);
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*FALSE_LIFE, cleric, None, None, None);
+        e.push_action(aei);
+        e.process_stack();
+        // Granted 1d4+4 temp HP — must be ≥ 5.
+        let granted = e.actors[&cleric].temp_hp();
+        assert!(granted >= 5, "expected ≥ 5 temp HP, got {}", granted);
+        // Apply damage less than the temp HP — main HP stays full.
+        e.actors.get_mut(&cleric).unwrap().take_damage(3);
+        assert_eq!(e.actors[&cleric].hitpoints(), max);
+        assert_eq!(e.actors[&cleric].temp_hp(), granted - 3);
+    }
+
+    #[test]
     fn second_wind_heals_self_and_consumes_feature() {
         use crate::actions::class_features::{SECOND_WIND, SECOND_WIND_TAG};
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;

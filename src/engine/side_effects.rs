@@ -222,6 +222,33 @@ impl ApplicableSideEffect for Heal {
     }
 }
 
+/// Grant temporary HP. 5e: temp HP doesn't stack — the larger pool
+/// replaces the smaller (or, if equal, keeps the existing). Logs a
+/// "gains N temp HP" line on success. Caster-side intent (e.g. an
+/// Inspiring-style buff): the action queues this for each ally.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct GainTempHp {
+    pub actor_id: usize,
+    pub amount: u32,
+}
+
+impl ApplicableSideEffect for GainTempHp {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        let before = actor.temp_hp();
+        let after = actor.gain_temp_hp(self.amount);
+        if after > before {
+            ei.log(format!(
+                "{} gains {} temp HP (now {}).",
+                name, self.amount, after
+            ));
+        }
+    }
+}
+
 /// Install concentration on an actor. If they were already concentrating
 /// on something else, the prior concentration is dropped first (its
 /// applied conditions cleared). Use this from concentration spells'
