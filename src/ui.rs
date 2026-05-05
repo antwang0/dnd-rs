@@ -296,6 +296,15 @@ pub fn render_sideinfo(
     let mut hp_spans: Vec<Span<'static>> = vec![Span::raw("HP: ")];
     hp_spans.extend(hp_bar_spans(hp, max_hp, 10));
     hp_spans.push(Span::raw(format!(" {}/{}", hp, max_hp)));
+    // Temp HP is a separate damage buffer; surface it inline so the
+    // player can see how much soak they have before HP starts dropping.
+    let temp_hp = curr_actor.temp_hp();
+    if temp_hp > 0 {
+        hp_spans.push(Span::styled(
+            format!(" (+{} temp)", temp_hp),
+            Style::default().fg(Color::Cyan),
+        ));
+    }
 
     let mut stats_lines: Vec<Line<'static>> = vec![
         Line::from(hp_spans),
