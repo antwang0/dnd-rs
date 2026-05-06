@@ -69,23 +69,19 @@ impl Action for Longbow {
         };
         let dex = caster.ability_score(crate::engine::types::AbilityScoreType::Dexterity);
         // Bows use DEX for both attack and damage in 5e (finesse / ranged).
-        let attack_bonus = modifier_from_score(dex);
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
-
+        let dex_mod = modifier_from_score(dex);
         weapon_attack(
             encounter,
             caster_id,
             target_id,
-            self.name(),
-            attack_bonus,
-            target_ac,
-            Dice::new(1, 8),
-            modifier_from_score(dex),
-            DamageType::Piercing,
-            false, // ranged
+            WeaponAttackSpec {
+                action_name: self.name(),
+                attack_bonus: dex_mod,
+                damage_dice: Dice::new(1, 8),
+                damage_bonus: dex_mod,
+                damage_type: DamageType::Piercing,
+                is_melee: false,
+            },
         )
     }
 }
@@ -140,22 +136,18 @@ impl Action for Slam {
             caster.ability_score(crate::engine::types::AbilityScoreType::Strength),
         );
         let attack_bonus = caster.attack_bonus();
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
-
         weapon_attack(
             encounter,
             caster_id,
             target_id,
-            self.name(),
-            attack_bonus,
-            target_ac,
-            Dice::new(2, 6),
-            str_mod,
-            DamageType::Bludgeoning,
-            true, // melee
+            WeaponAttackSpec {
+                action_name: self.name(),
+                attack_bonus,
+                damage_dice: Dice::new(2, 6),
+                damage_bonus: str_mod,
+                damage_type: DamageType::Bludgeoning,
+                is_melee: true,
+            },
         )
     }
 }
@@ -215,22 +207,18 @@ impl Action for TripAttack {
             caster.ability_score(AbilityScoreType::Strength),
         );
         let attack_bonus = caster.attack_bonus();
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
-
         let mut effects = weapon_attack(
             encounter,
             caster_id,
             target_id,
-            self.name(),
-            attack_bonus,
-            target_ac,
-            Dice::new(1, 6),
-            str_mod,
-            DamageType::Bludgeoning,
-            true, // melee
+            WeaponAttackSpec {
+                action_name: self.name(),
+                attack_bonus,
+                damage_dice: Dice::new(1, 6),
+                damage_bonus: str_mod,
+                damage_type: DamageType::Bludgeoning,
+                is_melee: true,
+            },
         );
         // weapon_attack returns empty Vec on miss — only roll the save if
         // damage was queued (the attack landed).
@@ -312,12 +300,6 @@ impl Action for AcidSpit {
         let dex_mod = modifier_from_score(
             caster.ability_score(AbilityScoreType::Dexterity),
         );
-        let attack_bonus = dex_mod;
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
-
         // Primary attack — reuse weapon_attack so logging matches other
         // attacks. weapon_attack returns Vec containing the primary
         // DealDamage on hit, empty on miss.
@@ -325,13 +307,14 @@ impl Action for AcidSpit {
             encounter,
             caster_id,
             target_id,
-            self.name(),
-            attack_bonus,
-            target_ac,
-            Dice::new(1, 6),
-            0, // no DEX-to-damage rider; keep splash potential as the perk
-            DamageType::Acid,
-            false, // ranged
+            WeaponAttackSpec {
+                action_name: self.name(),
+                attack_bonus: dex_mod,
+                damage_dice: Dice::new(1, 6),
+                damage_bonus: 0, // no DEX-to-damage rider; splash is the perk
+                damage_type: DamageType::Acid,
+                is_melee: false,
+            },
         );
         if effects.is_empty() {
             return effects;
@@ -435,21 +418,18 @@ impl Action for Scimitar {
             caster.ability_score(crate::engine::types::AbilityScoreType::Strength),
         );
         let attack_bonus = caster.attack_bonus();
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
         weapon_attack(
             encounter,
             caster_id,
             target_id,
-            self.name(),
-            attack_bonus,
-            target_ac,
-            Dice::new(1, 6),
-            str_mod,
-            DamageType::Slashing,
-            true,
+            WeaponAttackSpec {
+                action_name: self.name(),
+                attack_bonus,
+                damage_dice: Dice::new(1, 6),
+                damage_bonus: str_mod,
+                damage_type: DamageType::Slashing,
+                is_melee: true,
+            },
         )
     }
 }
@@ -505,21 +485,18 @@ impl Action for Shortbow {
         let dex_mod = modifier_from_score(
             caster.ability_score(crate::engine::types::AbilityScoreType::Dexterity),
         );
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
         weapon_attack(
             encounter,
             caster_id,
             target_id,
-            self.name(),
-            dex_mod,
-            target_ac,
-            Dice::new(1, 4),
-            dex_mod,
-            DamageType::Piercing,
-            false,
+            WeaponAttackSpec {
+                action_name: self.name(),
+                attack_bonus: dex_mod,
+                damage_dice: Dice::new(1, 4),
+                damage_bonus: dex_mod,
+                damage_type: DamageType::Piercing,
+                is_melee: false,
+            },
         )
     }
 }
@@ -572,23 +549,20 @@ impl Action for Greatclub {
             caster.ability_score(crate::engine::types::AbilityScoreType::Strength),
         );
         let attack_bonus = caster.attack_bonus();
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
         // is_melee = true even at reach 2 — polearms are still melee
         // attacks for the prone-target advantage clause.
         weapon_attack(
             encounter,
             caster_id,
             target_id,
-            self.name(),
-            attack_bonus,
-            target_ac,
-            Dice::new(1, 10),
-            str_mod,
-            DamageType::Bludgeoning,
-            true,
+            WeaponAttackSpec {
+                action_name: self.name(),
+                attack_bonus,
+                damage_dice: Dice::new(1, 10),
+                damage_bonus: str_mod,
+                damage_type: DamageType::Bludgeoning,
+                is_melee: true,
+            },
         )
     }
 }
@@ -642,21 +616,18 @@ impl Action for WolfBite {
         };
         let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
         let attack_bonus = caster.attack_bonus();
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
         let mut effects = weapon_attack(
             encounter,
             caster_id,
             target_id,
-            self.name(),
-            attack_bonus,
-            target_ac,
-            Dice::new(1, 4),
-            str_mod,
-            DamageType::Piercing,
-            true,
+            WeaponAttackSpec {
+                action_name: self.name(),
+                attack_bonus,
+                damage_dice: Dice::new(1, 4),
+                damage_bonus: str_mod,
+                damage_type: DamageType::Piercing,
+                is_melee: true,
+            },
         );
         if effects.is_empty() {
             return effects;
@@ -800,22 +771,18 @@ impl Action for FireBolt {
         let dex_mod = modifier_from_score(
             caster.ability_score(crate::engine::types::AbilityScoreType::Dexterity),
         );
-        let Some(target_ac) =
-            encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
         weapon_attack(
             encounter,
             caster_id,
             target_id,
-            self.name(),
-            dex_mod,
-            target_ac,
-            Dice::new(1, 10),
-            0,
-            DamageType::Fire,
-            false,
+            WeaponAttackSpec {
+                action_name: self.name(),
+                attack_bonus: dex_mod,
+                damage_dice: Dice::new(1, 10),
+                damage_bonus: 0,
+                damage_type: DamageType::Fire,
+                is_melee: false,
+            },
         )
     }
 }
@@ -914,9 +881,21 @@ impl Action for FrightfulPresence {
 pub static FRIGHTFUL_PRESENCE: LazyLock<FrightfulPresence> =
     LazyLock::new(|| FrightfulPresence {});
 
-/// Roll a d20 attack against `target_ac`, log the breakdown, and on a hit
-/// roll `damage_dice + damage_bonus` of `damage_type` against `target_id`.
-/// `is_melee` drives Prone-target advantage / ranged disadvantage clauses.
+/// All knobs `weapon_attack` needs beyond the encounter / caster / target
+/// trio. Callers fill out one of these per attack flavor (slam, scimitar,
+/// fire bolt) and the helper handles the d20-vs-AC dance, Bless folding,
+/// crit dice, and damage-type tagged log lines uniformly.
+pub(crate) struct WeaponAttackSpec<'a> {
+    pub action_name: &'a str,
+    pub attack_bonus: i32,
+    pub damage_dice: Dice,
+    pub damage_bonus: i32,
+    pub damage_type: DamageType,
+    pub is_melee: bool,
+}
+
+/// Roll a d20 attack against the target's AC, log the breakdown, and on
+/// a hit roll damage of the given type against the target.
 ///
 /// **Critical hits**: a final d20 of 20 (after advantage / disadvantage)
 /// auto-hits regardless of AC and rolls the damage dice twice — the
@@ -924,24 +903,24 @@ pub static FRIGHTFUL_PRESENCE: LazyLock<FrightfulPresence> =
 ///
 /// Returns the side-effect vec (empty on miss). Centralizes the pattern
 /// so every weapon-style attack logs in the same shape.
-#[allow(clippy::too_many_arguments)]
-fn weapon_attack(
+pub(crate) fn weapon_attack(
     encounter: &mut EncounterInstance,
     caster_id: usize,
     target_id: usize,
-    action_name: &str,
-    attack_bonus: i32,
-    target_ac: i32,
-    damage_dice: Dice,
-    damage_bonus: i32,
-    damage_type: DamageType,
-    is_melee: bool,
+    spec: WeaponAttackSpec<'_>,
 ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-    let mode = encounter.compute_attack_mode(caster_id, target_id, is_melee);
+    let Some(target_ac) = encounter
+        .actors
+        .get(&target_id)
+        .map(|a| a.armor_class() as i32)
+    else {
+        return Vec::new();
+    };
+    let mode = encounter.compute_attack_mode(caster_id, target_id, spec.is_melee);
     let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
     let bless_bonus = encounter.bless_attack_bonus(caster_id);
     let is_crit = raw_attack == 20;
-    let attack_total = raw_attack + attack_bonus + bless_bonus;
+    let attack_total = raw_attack + spec.attack_bonus + bless_bonus;
     // Crits auto-hit regardless of AC. Otherwise compare normally.
     let hit = is_crit || attack_total >= target_ac;
     let outcome = if is_crit {
@@ -958,9 +937,9 @@ fn weapon_attack(
     };
     encounter.log(format!(
         "  {}: 1d20({}){:+}{} = {} vs AC {}{} \u{2014} {}",
-        action_name,
+        spec.action_name,
         raw_attack,
-        attack_bonus,
+        spec.attack_bonus,
         bless_suffix,
         attack_total,
         target_ac,
@@ -970,34 +949,39 @@ fn weapon_attack(
     if !hit {
         return Vec::new();
     }
-    let raw_damage = encounter.roll(&damage_dice) as i32;
+    let raw_damage = encounter.roll(&spec.damage_dice) as i32;
     let crit_extra = if is_crit {
-        encounter.roll(&damage_dice) as i32
+        encounter.roll(&spec.damage_dice) as i32
     } else {
         0
     };
-    let damage = (raw_damage + crit_extra + damage_bonus).max(0) as u32;
+    let damage = (raw_damage + crit_extra + spec.damage_bonus).max(0) as u32;
     if is_crit {
         encounter.log(format!(
             "  {}: {}({})+{}({}){:+} = {} {:?} damage (crit)",
-            action_name,
-            damage_dice,
+            spec.action_name,
+            spec.damage_dice,
             raw_damage,
-            damage_dice,
+            spec.damage_dice,
             crit_extra,
-            damage_bonus,
+            spec.damage_bonus,
             damage,
-            damage_type,
+            spec.damage_type,
         ));
     } else {
         encounter.log(format!(
             "  {}: {}({}){:+} = {} {:?} damage",
-            action_name, damage_dice, raw_damage, damage_bonus, damage, damage_type,
+            spec.action_name,
+            spec.damage_dice,
+            raw_damage,
+            spec.damage_bonus,
+            damage,
+            spec.damage_type,
         ));
     }
     vec![Box::new(DealDamage {
         actor_id: target_id,
         amount: damage,
-        damage_type,
+        damage_type: spec.damage_type,
     })]
 }
