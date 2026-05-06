@@ -1,3 +1,4 @@
+use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
 use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
@@ -1064,6 +1065,7 @@ impl EncounterInstance {
             &ORC_TEMPLATE,
             &WOLF_TEMPLATE,
             &WIZARD_TEMPLATE,
+            &BANDIT_TEMPLATE,
         ]
     }
 

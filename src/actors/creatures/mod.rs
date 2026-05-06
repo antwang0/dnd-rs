@@ -1,3 +1,4 @@
+pub mod bandits;
 pub mod clerics;
 pub mod fighters;
 pub mod goblins;
