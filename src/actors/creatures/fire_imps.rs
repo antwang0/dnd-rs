@@ -18,7 +18,6 @@ pub static FIRE_IMP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     CreatureTemplate {
         name: "Fire Imp",
         glyph: 'I',
-        n_instances: 0,
         ac: 13,
         hitpoints: "2d6+2".parse().unwrap(),
         speed: 20.,

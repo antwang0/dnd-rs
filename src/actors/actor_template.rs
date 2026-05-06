@@ -92,7 +92,6 @@ pub struct CreatureTemplate {
     /// instances on the same team look identical on the map; the side
     /// panel and log disambiguate via the instance-numbered name.
     pub glyph: char,
-    pub n_instances: usize,
     pub ac: u32,
     pub hitpoints: DiceExpr,
     pub speed: f32,

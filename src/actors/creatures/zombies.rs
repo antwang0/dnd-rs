@@ -15,7 +15,6 @@ pub static ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     CreatureTemplate {
         name: "Zombie",
         glyph: 'Z',
-        n_instances: 0,
         ac: 8,
         hitpoints: "2d8+6".parse().unwrap(),
         speed: 20.,
