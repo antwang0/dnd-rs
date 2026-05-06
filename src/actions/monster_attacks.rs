@@ -752,6 +752,168 @@ pub static ZOMBIE_MULTISLAM: LazyLock<Multiattack> = LazyLock::new(|| Multiattac
     count: 2,
 });
 
+/// Fire Bolt — DEX-based ranged 1d10 fire attack. Cantrip-style (no spell
+/// slot consumed). The fire imp's signature ranged option; chews through
+/// flammable parties but bounces off fire-resistant ones.
+pub struct FireBolt {}
+
+impl Action for FireBolt {
+    fn name(&self) -> &str {
+        "fire bolt"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fb", "bolt"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dex_mod = modifier_from_score(
+            caster.ability_score(crate::engine::types::AbilityScoreType::Dexterity),
+        );
+        let Some(target_ac) =
+            encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+        weapon_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            dex_mod,
+            target_ac,
+            Dice::new(1, 10),
+            0,
+            DamageType::Fire,
+            false,
+        )
+    }
+}
+pub static FIRE_BOLT: LazyLock<FireBolt> = LazyLock::new(|| FireBolt {});
+
+/// Frightful Presence — bonus action; every enemy within 6 tiles must
+/// pass a WIS save vs DC 11 or become Frightened for 3 rounds. The imp's
+/// signature pressure tool; spreads disadvantage on attacks across the
+/// front line. Already-frightened actors don't re-roll. The save is
+/// rolled once per affected actor, in actor-id order for determinism.
+pub struct FrightfulPresence {}
+
+impl Action for FrightfulPresence {
+    fn name(&self) -> &str {
+        "frightful presence"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fp", "fright"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn requires_los(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::ApplyCondition;
+        use crate::engine::types::AbilityScoreType;
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        const RADIUS: isize = 6;
+        const DC: i32 = 11;
+
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let my_team = caster.team();
+        let my_loc = caster.location();
+        let my_size = get_tiles_from_size(caster.size());
+
+        let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
+        ids.sort_unstable();
+
+        let mut effects: Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> =
+            Vec::new();
+        for tid in ids {
+            let Some(target) = encounter.actors.get(&tid) else {
+                continue;
+            };
+            if tid == caster_id || target.team() == my_team || !target.is_combat_active() {
+                continue;
+            }
+            if target.has_condition(Condition::Frightened) {
+                continue;
+            }
+            let dist = footprint_chebyshev(
+                my_loc,
+                my_size,
+                target.location(),
+                get_tiles_from_size(target.size()),
+            );
+            if dist > RADIUS {
+                continue;
+            }
+            let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, DC);
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Frightened,
+                timer: ConditionTimer::Rounds(3),
+            }));
+        }
+        effects
+    }
+}
+pub static FRIGHTFUL_PRESENCE: LazyLock<FrightfulPresence> =
+    LazyLock::new(|| FrightfulPresence {});
+
 /// Roll a d20 attack against `target_ac`, log the breakdown, and on a hit
 /// roll `damage_dice + damage_bonus` of `damage_type` against `target_id`.
 /// `is_melee` drives Prone-target advantage / ranged disadvantage clauses.

@@ -1,4 +1,5 @@
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+use crate::actors::creatures::fire_imps::FIRE_IMP_TEMPLATE;
 use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
@@ -1015,6 +1016,7 @@ impl EncounterInstance {
             &GOBLIN_TEMPLATE,
             &OGRE_TEMPLATE,
             &WOLF_TEMPLATE,
+            &FIRE_IMP_TEMPLATE,
         ]
     }
 
