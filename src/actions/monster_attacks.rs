@@ -594,6 +594,72 @@ impl Action for Greatclub {
 }
 pub static GREATCLUB: LazyLock<Greatclub> = LazyLock::new(|| Greatclub {});
 
+/// Greataxe — STR-based 1d12 slashing martial weapon. Heaviest single-die
+/// melee weapon (max-roll 12 vs greatclub's 10), distinguishing the orc's
+/// raw burst potential from the ogre's reach + multiplier.
+pub struct Greataxe {}
+
+impl Action for Greataxe {
+    fn name(&self) -> &str {
+        "greataxe"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["axe", "ga"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let str_mod = modifier_from_score(
+            caster.ability_score(crate::engine::types::AbilityScoreType::Strength),
+        );
+        let attack_bonus = caster.attack_bonus();
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+        weapon_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            attack_bonus,
+            target_ac,
+            Dice::new(1, 12),
+            str_mod,
+            DamageType::Slashing,
+            true,
+        )
+    }
+}
+pub static GREATAXE: LazyLock<Greataxe> = LazyLock::new(|| Greataxe {});
+
 /// Wolf bite — built-in trip rider on every successful hit. STR-based
 /// 1d4 piercing; on hit forces a STR save vs DC 11, fail = Prone. Fuses
 /// the TripAttack rider pattern into a single creature-canonical action.
