@@ -50,6 +50,43 @@ pub enum DamageType {
     Thunder,
 }
 
+/// How an actor's body responds to a given damage type. Resistance halves
+/// damage (rounded down), Vulnerability doubles it, Immunity zeros it.
+/// Default for unlisted types is Normal. Multiple sources don't stack
+/// per 5e RAW — there's only one reaction per type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DamageReaction {
+    Normal,
+    Resistant,
+    Vulnerable,
+    Immune,
+}
+
+impl DamageReaction {
+    /// Apply this reaction to a raw damage amount. Resistance halves
+    /// (5e: rounded down, with a 1-damage floor only when raw was nonzero
+    /// — RAW actually allows resisting to 0, so we honor that).
+    pub fn apply(self, raw: u32) -> u32 {
+        match self {
+            DamageReaction::Normal => raw,
+            DamageReaction::Resistant => raw / 2,
+            DamageReaction::Vulnerable => raw.saturating_mul(2),
+            DamageReaction::Immune => 0,
+        }
+    }
+
+    /// Short tag for log lines ("(resisted)" / "(vulnerable)" / "(immune)").
+    /// Empty string for Normal so the common case stays terse.
+    pub fn log_tag(self) -> &'static str {
+        match self {
+            DamageReaction::Normal => "",
+            DamageReaction::Resistant => " (resisted)",
+            DamageReaction::Vulnerable => " (vulnerable)",
+            DamageReaction::Immune => " (immune)",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Size {
     Tiny,

@@ -72,7 +72,7 @@ pub enum HealOutcome {
     NoOp,
 }
 use crate::engine::side_effects::Resource;
-use crate::engine::types::Coordinate;
+use crate::engine::types::{Coordinate, DamageReaction, DamageType};
 use crate::items::item_template::{Item, ItemBonuses};
 use crate::{
     actions::action_template::Action,
@@ -120,6 +120,13 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Per-damage-type R/I/V table. Damage types not listed default to
+    /// `Normal`. Only one reaction per type — Resistance + Resistance
+    /// doesn't compound to "double resistance" (5e RAW). For undead-style
+    /// "resistant to bludgeoning/piercing/slashing from non-magical
+    /// attacks", we approximate as plain Resistance until magical-attack
+    /// tagging exists.
+    pub damage_reactions: HashMap<DamageType, DamageReaction>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -287,6 +294,10 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    /// Mirrored from `CreatureTemplate.damage_reactions`. `damage_reaction`
+    /// reads from this; `DealDamage::apply` consults that to scale damage
+    /// before subtracting it from HP.
+    damage_reactions: HashMap<DamageType, DamageReaction>,
 }
 
 impl ActorInstance {
@@ -353,7 +364,18 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            damage_reactions: ct.damage_reactions.clone(),
         })
+    }
+
+    /// Reaction for a specific damage type, defaulting to Normal when no
+    /// entry exists. The DealDamage side-effect applies this to scale the
+    /// raw amount before subtracting from HP.
+    pub fn damage_reaction(&self, damage_type: DamageType) -> DamageReaction {
+        self.damage_reactions
+            .get(&damage_type)
+            .copied()
+            .unwrap_or(DamageReaction::Normal)
     }
 
     pub fn rolls_death_saves(&self) -> bool {
