@@ -136,8 +136,28 @@ impl ApplicableSideEffect for DealDamage {
             ));
             return;
         };
+        // 5e: resistance halves, vulnerability doubles, immunity zeroes.
+        // Applied before taking damage so the dying-actor branch and
+        // concentration-DC math see the post-mitigation number.
+        let adjusted = actor.adjusted_damage(self.amount, self.damage_type);
         let name = actor.name().to_string();
-        let outcome = actor.take_damage(self.amount);
+        if adjusted != self.amount {
+            let label = if actor.is_immune_to(self.damage_type) {
+                "immune"
+            } else if actor.is_resistant_to(self.damage_type) {
+                "resistant"
+            } else {
+                "vulnerable"
+            };
+            ei.log(format!(
+                "  {} is {} to {:?}: {} -> {}",
+                name, label, self.damage_type, self.amount, adjusted
+            ));
+        }
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let outcome = actor.take_damage(adjusted);
         let was_concentrating = actor.is_concentrating();
         // actor borrow ends here.
 
@@ -155,7 +175,7 @@ impl ApplicableSideEffect for DealDamage {
             }
             DamageOutcome::Reduced if was_concentrating => {
                 // 5e: take damage while concentrating → CON save vs DC max(10, dmg/2).
-                let dc = ((self.amount / 2) as i32).max(10);
+                let dc = ((adjusted / 2) as i32).max(10);
                 let save = ei.roll_save(
                     self.actor_id,
                     crate::engine::types::AbilityScoreType::Constitution,

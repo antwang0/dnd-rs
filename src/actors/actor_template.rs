@@ -1,5 +1,6 @@
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::{Dice, DiceExpr, Roller};
+use crate::engine::types::DamageType;
 
 /// Lifecycle state of an actor's hit points. Replaces the previous
 /// `dying: bool` + `stable: bool` pair so the four meaningful states are
@@ -120,6 +121,19 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Damage types this creature takes half damage from. 5e: a "Resistance
+    /// to fire" creature takes 5 fire damage from a 10-fire hit. Stack
+    /// behavior is RAW — only one resistance applies at a time. Empty for
+    /// most creatures.
+    pub resistances: HashSet<DamageType>,
+    /// Damage types this creature takes double damage from. Inverse of
+    /// resistance; e.g. skeletons are vulnerable to bludgeoning (their
+    /// bones shatter).
+    pub vulnerabilities: HashSet<DamageType>,
+    /// Damage types that deal 0 damage. e.g. skeletons take no poison
+    /// damage; slimes ignore acid. Immunity overrides resistance and
+    /// vulnerability.
+    pub immunities: HashSet<DamageType>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -278,6 +292,12 @@ pub struct ActorInstance {
     /// 0-HP transition: true = enter Dying and roll saves; false = enter
     /// Dead immediately.
     rolls_death_saves: bool,
+    /// See `CreatureTemplate.resistances`. Cloned at instantiation; an
+    /// equip / spell could mutate this at runtime, but no current effect
+    /// does so.
+    resistances: HashSet<DamageType>,
+    vulnerabilities: HashSet<DamageType>,
+    immunities: HashSet<DamageType>,
     /// Character level. Starts at 1; the multi-encounter loop's long-rest
     /// hook bumps this on hitting an XP threshold. Today only PCs (team
     /// 0) accumulate XP and level up — monsters keep level 1 and skip
@@ -351,6 +371,9 @@ impl ActorInstance {
             conditions: HashMap::new(),
             concentration: None,
             rolls_death_saves: ct.rolls_death_saves,
+            resistances: ct.resistances.clone(),
+            vulnerabilities: ct.vulnerabilities.clone(),
+            immunities: ct.immunities.clone(),
             level: 1,
             xp: 0,
         })
@@ -762,6 +785,35 @@ impl ActorInstance {
     /// call this on the caster to set their DC.
     pub fn spell_save_dc(&self, ability: AbilityScoreType) -> i32 {
         8 + modifier_from_score(self.ability_score(ability))
+    }
+
+    pub fn is_resistant_to(&self, dt: DamageType) -> bool {
+        self.resistances.contains(&dt)
+    }
+
+    pub fn is_vulnerable_to(&self, dt: DamageType) -> bool {
+        self.vulnerabilities.contains(&dt)
+    }
+
+    pub fn is_immune_to(&self, dt: DamageType) -> bool {
+        self.immunities.contains(&dt)
+    }
+
+    /// Apply 5e resistance / vulnerability / immunity scaling. Immunity
+    /// short-circuits to 0; resistance halves (round down); vulnerability
+    /// doubles. RAW: at most one of resistance / vulnerability applies, but
+    /// since they're stored in disjoint sets that invariant is implicit.
+    pub fn adjusted_damage(&self, amount: u32, dt: DamageType) -> u32 {
+        if self.is_immune_to(dt) {
+            return 0;
+        }
+        if self.is_resistant_to(dt) {
+            return amount / 2;
+        }
+        if self.is_vulnerable_to(dt) {
+            return amount.saturating_mul(2);
+        }
+        amount
     }
 
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {

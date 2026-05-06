@@ -2894,6 +2894,64 @@ mod tests {
     }
 
     #[test]
+    fn skeleton_takes_double_damage_from_bludgeoning() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: crate::engine::types::DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        // Vulnerability doubles 4 → 8.
+        assert_eq!(e.actors[&id].hitpoints(), max - 8);
+    }
+
+    #[test]
+    fn skeleton_takes_no_poison_damage() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 100,
+            damage_type: crate::engine::types::DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max, "immune actor takes 0 damage");
+    }
+
+    #[test]
+    fn zombie_takes_half_necrotic_damage() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 6,
+            damage_type: crate::engine::types::DamageType::Necrotic,
+        }
+        .apply(&mut e);
+        // Resistance: 6 → 3.
+        assert_eq!(e.actors[&id].hitpoints(), max - 3);
+    }
+
+    #[test]
     fn enemy_death_drops_carried_items() {
         use crate::items::item_template::CLOAK_OF_RESISTANCE;
 
