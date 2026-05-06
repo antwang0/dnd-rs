@@ -298,6 +298,10 @@ pub struct ActorInstance {
     resistances: HashSet<DamageType>,
     vulnerabilities: HashSet<DamageType>,
     immunities: HashSet<DamageType>,
+    /// 5e temporary hit points. Damage drains temp HP before regular HP.
+    /// Doesn't stack: a new grant replaces existing temp HP only if larger
+    /// (see `gain_temp_hp`). Cleared on long rest.
+    temp_hp: u32,
     /// Character level. Starts at 1; the multi-encounter loop's long-rest
     /// hook bumps this on hitting an XP threshold. Today only PCs (team
     /// 0) accumulate XP and level up — monsters keep level 1 and skip
@@ -374,6 +378,7 @@ impl ActorInstance {
             resistances: ct.resistances.clone(),
             vulnerabilities: ct.vulnerabilities.clone(),
             immunities: ct.immunities.clone(),
+            temp_hp: 0,
             level: 1,
             xp: 0,
         })
@@ -443,6 +448,7 @@ impl ActorInstance {
     pub fn long_rest(&mut self) {
         self.hp_state = HpState::Active;
         self.hitpoints = self.max_hitpoints();
+        self.temp_hp = 0;
         self.spell_slot_manager.restore_spell_slots();
         self.conditions.clear();
         self.concentration = None;
@@ -816,7 +822,33 @@ impl ActorInstance {
         amount
     }
 
+    pub fn temp_hp(&self) -> u32 {
+        self.temp_hp
+    }
+
+    /// 5e temporary HP doesn't stack; the new grant replaces the old one
+    /// only if it's higher. Returns the new temp HP value.
+    pub fn gain_temp_hp(&mut self, amount: u32) -> u32 {
+        if amount > self.temp_hp {
+            self.temp_hp = amount;
+        }
+        self.temp_hp
+    }
+
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {
+        // Temp HP soaks damage first (5e). Active actors drain temp HP
+        // before HP; dying / dead don't have temp HP (it would be cleared
+        // on those transitions).
+        let amount = if matches!(self.hp_state, HpState::Active) && self.temp_hp > 0 {
+            let absorbed = self.temp_hp.min(amount);
+            self.temp_hp -= absorbed;
+            amount - absorbed
+        } else {
+            amount
+        };
+        if amount == 0 && matches!(self.hp_state, HpState::Active) {
+            return DamageOutcome::Reduced;
+        }
         match self.hp_state {
             HpState::Stable => {
                 // Stable creature takes damage: dying state restarts fresh
@@ -842,6 +874,7 @@ impl ActorInstance {
             HpState::Active => {
                 self.hitpoints = self.hitpoints.saturating_sub(amount);
                 if self.hitpoints == 0 {
+                    self.temp_hp = 0;
                     if self.rolls_death_saves {
                         self.hp_state = HpState::Dying {
                             successes: 0,

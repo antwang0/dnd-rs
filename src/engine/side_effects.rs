@@ -216,6 +216,32 @@ impl ApplicableSideEffect for Heal {
     }
 }
 
+/// Grant `amount` temporary HP. 5e: doesn't stack — the bigger of the
+/// existing pool and the new grant wins. No-op if `amount` is 0 or the
+/// actor is missing.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct GainTempHp {
+    pub actor_id: usize,
+    pub amount: u32,
+}
+
+impl ApplicableSideEffect for GainTempHp {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        if self.amount == 0 {
+            return;
+        }
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        let before = actor.temp_hp();
+        let after = actor.gain_temp_hp(self.amount);
+        if after > before {
+            ei.log(format!("{} gains {} temp HP.", name, after));
+        }
+    }
+}
+
 /// Install concentration on an actor. If they were already concentrating
 /// on something else, the prior concentration is dropped first (its
 /// applied conditions cleared). Use this from concentration spells'

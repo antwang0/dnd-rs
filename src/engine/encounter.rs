@@ -2894,6 +2894,62 @@ mod tests {
     }
 
     #[test]
+    fn temp_hp_absorbs_damage_first() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage, GainTempHp};
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        GainTempHp { actor_id: id, amount: 5 }.apply(&mut e);
+        assert_eq!(e.actors[&id].temp_hp(), 5);
+        DealDamage {
+            actor_id: id,
+            amount: 3,
+            damage_type: crate::engine::types::DamageType::Force,
+        }
+        .apply(&mut e);
+        // Temp absorbs 3, regular HP unchanged.
+        assert_eq!(e.actors[&id].temp_hp(), 2);
+        assert_eq!(e.actors[&id].hitpoints(), max);
+    }
+
+    #[test]
+    fn temp_hp_overflow_drains_to_regular_hp() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage, GainTempHp};
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        GainTempHp { actor_id: id, amount: 4 }.apply(&mut e);
+        DealDamage {
+            actor_id: id,
+            amount: 7,
+            damage_type: crate::engine::types::DamageType::Force,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].temp_hp(), 0);
+        assert_eq!(e.actors[&id].hitpoints(), max - 3);
+    }
+
+    #[test]
+    fn temp_hp_does_not_stack_takes_max() {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        actor.gain_temp_hp(5);
+        actor.gain_temp_hp(3);
+        assert_eq!(actor.temp_hp(), 5, "smaller grant doesn't replace");
+        actor.gain_temp_hp(8);
+        assert_eq!(actor.temp_hp(), 8, "larger grant replaces");
+    }
+
+    #[test]
     fn skeleton_takes_double_damage_from_bludgeoning() {
         use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
         use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
