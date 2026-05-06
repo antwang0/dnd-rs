@@ -3,6 +3,7 @@ use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
 use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
 use crate::actors::creatures::wolves::WOLF_TEMPLATE;
 use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
 use std::collections::HashMap;
@@ -1033,6 +1034,7 @@ impl EncounterInstance {
             &GOBLIN_TEMPLATE,
             &OGRE_TEMPLATE,
             &WOLF_TEMPLATE,
+            &WIZARD_TEMPLATE,
         ]
     }
 
@@ -3059,6 +3061,80 @@ mod tests {
         assert!(after.level() > pre_level, "should have leveled up");
         assert!(after.max_hitpoints() > pre_max, "max HP should have grown");
         assert_eq!(after.hitpoints(), after.max_hitpoints(), "long rest tops up HP");
+    }
+
+    #[test]
+    fn magic_missile_deals_damage_without_attack_roll() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::MAGIC_MISSILE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        let max = e.actors[&target].max_hitpoints();
+        let target_vec = vec![target];
+        let effects =
+            MAGIC_MISSILE.side_effects(&mut e, caster, Some(&target_vec), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        // Min damage 3+3=6, max 12+3=15. Always nonzero.
+        assert!(e.actors[&target].hitpoints() < max);
+        assert!(max - e.actors[&target].hitpoints() >= 6);
+    }
+
+    #[test]
+    fn cure_wounds_heals_target() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let pc = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 6), 0, 1)
+            .unwrap();
+        // Down the PC to half HP.
+        let max = e.actors[&pc].max_hitpoints();
+        e.actors.get_mut(&pc).unwrap().take_damage(max / 2);
+        let before = e.actors[&pc].hitpoints();
+        let target_vec = vec![pc];
+        let effects =
+            CURE_WOUNDS.side_effects(&mut e, cleric, Some(&target_vec), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&pc].hitpoints() > before,
+            "cure wounds should heal"
+        );
+    }
+
+    #[test]
+    fn false_life_grants_temp_hp() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::FALSE_LIFE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        assert_eq!(e.actors[&wiz].temp_hp(), 0);
+        let effects = FALSE_LIFE.side_effects(&mut e, wiz, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        // 1d4+4 → at least 5 temp HP.
+        assert!(e.actors[&wiz].temp_hp() >= 5);
     }
 
     #[test]

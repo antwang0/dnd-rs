@@ -356,3 +356,197 @@ impl Action for HoldPerson {
 }
 
 pub static HOLD_PERSON: LazyLock<HoldPerson> = LazyLock::new(|| HoldPerson {});
+
+/// Magic Missile — level-1 wizard spell. Auto-hits a single target (no
+/// attack roll, no save) for 3d4+3 force damage. 5e RAW fires 3 darts at
+/// 1d4+1 each but they all hit one target so the math collapses to
+/// 3d4+3. Range 120ft (we cap at 24 tiles for our smaller maps).
+pub struct MagicMissile {}
+
+impl Action for MagicMissile {
+    fn name(&self) -> &str {
+        "magic missile"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mm", "missile"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        // 3 darts × 1d4+1 each. Each dart rolls separately so resistance /
+        // immunity (per-instance) applies to each dart's damage in turn.
+        // We collapse them into one damage event for simplicity since
+        // damage is summed before resistance scaling anyway in our model.
+        let raw = encounter.roll(&Dice::new(3, 4));
+        let amount = raw + 3;
+        encounter.log(format!(
+            "  magic missile: 3d4({}){:+} = {} force (auto-hit)",
+            raw, 3, amount
+        ));
+        vec![Box::new(crate::engine::side_effects::DealDamage {
+            actor_id: target_id,
+            amount,
+            damage_type: DamageType::Force,
+        })]
+    }
+}
+
+pub static MAGIC_MISSILE: LazyLock<MagicMissile> = LazyLock::new(|| MagicMissile {});
+
+/// Cure Wounds — level-1 cleric / paladin / druid spell. Touch range,
+/// heals target for 1d8 + caster's WIS modifier. Larger heal than
+/// Healing Word at the cost of melee range and full Action.
+pub struct CureWounds {}
+
+impl Action for CureWounds {
+    fn name(&self) -> &str {
+        "cure wounds"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cure", "cw"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::Heal;
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let wis_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
+        let raw = encounter.roll(&Dice::new(1, 8)) as i32;
+        let amount = (raw + wis_mod).max(1) as u32;
+        encounter.log(format!(
+            "  cure wounds: 1d8({}){:+} = {} HP",
+            raw, wis_mod, amount
+        ));
+        vec![Box::new(Heal {
+            actor_id: target_id,
+            amount,
+        })]
+    }
+}
+
+pub static CURE_WOUNDS: LazyLock<CureWounds> = LazyLock::new(|| CureWounds {});
+
+/// False Life — level-1 wizard spell. Self-target; gain 1d4+4 temp HP.
+/// No save / no attack roll — pure defensive buff. Showcases the temp HP
+/// system and the GainTempHp side effect.
+pub struct FalseLife {}
+
+impl Action for FalseLife {
+    fn name(&self) -> &str {
+        "false life"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fl", "life"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::GainTempHp;
+        let raw = encounter.roll(&Dice::new(1, 4));
+        let amount = raw + 4;
+        encounter.log(format!(
+            "  false life: 1d4({}){:+} = {} temp HP",
+            raw, 4, amount
+        ));
+        vec![Box::new(GainTempHp {
+            actor_id: caster_id,
+            amount,
+        })]
+    }
+}
+
+pub static FALSE_LIFE: LazyLock<FalseLife> = LazyLock::new(|| FalseLife {});
