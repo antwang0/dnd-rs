@@ -3283,6 +3283,45 @@ mod tests {
     }
 
     #[test]
+    fn immune_damage_does_not_trigger_concentration_save() {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let caster = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let victim = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&victim)
+            .unwrap()
+            .add_condition(Condition::Stunned, ConditionTimer::Rounds(10));
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .start_concentration(ConcentrationData {
+                spell_name: "Hold Person".to_string(),
+                conditions: vec![(victim, Condition::Stunned)],
+            });
+        // Skeleton is immune to poison — damage should resolve to 0 and
+        // not trigger a concentration save.
+        DealDamage {
+            actor_id: caster,
+            amount: 50,
+            damage_type: crate::engine::types::DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert!(
+            e.actors[&caster].is_concentrating(),
+            "immunity should skip the concentration save"
+        );
+    }
+
+    #[test]
     fn skeleton_takes_double_damage_from_bludgeoning() {
         use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
         use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
