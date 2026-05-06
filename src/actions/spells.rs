@@ -529,3 +529,92 @@ impl Action for FalseLife {
 }
 
 pub static FALSE_LIFE: LazyLock<FalseLife> = LazyLock::new(|| FalseLife {});
+
+/// Burning Hands — level-1 evocation, 15ft cone (3 tiles deep, 3 wide
+/// at the rim) of fire from the caster. We approximate the 5e cone by
+/// targeting a point and treating it as a small (radius-1) burst within
+/// melee reach. Every actor inside takes 3d6 fire on a failed DEX save,
+/// half on success. Distinct from Sacred Burst by damage type, save DC
+/// scaling (CHA-based for sorcerer-style; we use INT here since Burning
+/// Hands is the prototypical wizard cone), and being a *leveled* spell
+/// instead of a cantrip.
+pub struct BurningHands {}
+
+impl Action for BurningHands {
+    fn name(&self) -> &str {
+        "burning hands"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bh", "burn"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 1 }
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(2)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let radius: isize = match self.targeting_schema() {
+            TargetingSchema::Burst { radius } => radius,
+            _ => return Vec::new(),
+        };
+
+        let raw = encounter.roll(&Dice::new(3, 6));
+        encounter.log(format!("  burning hands: 3d6({}) = {} fire area", raw, raw));
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for target_id in encounter.actors_in_burst(point, radius) {
+            // Caster is exempt from their own cone (origin point is the
+            // caster's hands; they aren't inside the affected zone).
+            if target_id == caster_id {
+                continue;
+            }
+            let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, dc);
+            let dmg = if save.passed() { raw / 2 } else { raw };
+            if dmg == 0 {
+                continue;
+            }
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: dmg,
+                damage_type: DamageType::Fire,
+            }));
+        }
+        effects
+    }
+}
+
+pub static BURNING_HANDS: LazyLock<BurningHands> = LazyLock::new(|| BurningHands {});
