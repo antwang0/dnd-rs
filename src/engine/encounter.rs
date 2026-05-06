@@ -342,6 +342,15 @@ impl EncounterInstance {
             if target.has_condition(Condition::Invisible) {
                 mode = mode.combine(RollMode::Disadvantage);
             }
+            // 5e Dodge: attacks against a dodging target have disadvantage,
+            // unless the target is incapacitated or has speed 0 (Dodge does
+            // nothing in those states). We approximate the latter via the
+            // remaining_movement check at use time, but since dodge is set
+            // before movement is consumed it's equivalent to "is this turn
+            // capable of moving."
+            if target.is_dodging() {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
         }
         mode
     }
@@ -380,6 +389,10 @@ impl EncounterInstance {
             )
         {
             mode = mode.combine(RollMode::Disadvantage);
+        }
+        // 5e Dodge: advantage on DEX saves until your next turn.
+        if actor.is_dodging() && matches!(ability, AbilityScoreType::Dexterity) {
+            mode = mode.combine(RollMode::Advantage);
         }
         mode
     }
@@ -634,10 +647,19 @@ impl EncounterInstance {
         use crate::actions::action_template::{MELEE_REACH, TargetingSchema};
         use crate::engine::side_effects::Resource;
 
-        let (mover_team, mover_size) = match self.actors.get(&mover_id) {
-            Some(a) => (a.team(), get_tiles_from_size(a.size())),
+        let (mover_team, mover_size, disengaging) = match self.actors.get(&mover_id) {
+            Some(a) => (
+                a.team(),
+                get_tiles_from_size(a.size()),
+                a.is_disengaging(),
+            ),
             None => return,
         };
+        // 5e Disengage: movement doesn't trigger OAs for the rest of the
+        // turn. Bail before scanning candidates so the log stays quiet.
+        if disengaging {
+            return;
+        }
 
         // Snapshot reactor candidates up-front — the loop body will mutate
         // self, which would conflict with holding an iterator into self.actors.
@@ -3037,6 +3059,64 @@ mod tests {
         assert!(after.level() > pre_level, "should have leveled up");
         assert!(after.max_hitpoints() > pre_max, "max HP should have grown");
         assert_eq!(after.hitpoints(), after.max_hitpoints(), "long rest tops up HP");
+    }
+
+    #[test]
+    fn dodge_imposes_disadvantage_and_clears_on_next_turn() {
+        use crate::actions::default_actions::DODGE;
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let dodger = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        // Set dodger active and dodge.
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*DODGE, dodger, None, None, None);
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&dodger].is_dodging());
+        assert_eq!(
+            e.compute_attack_mode(attacker, dodger, true),
+            RollMode::Disadvantage
+        );
+        // Next reset clears it.
+        e.actors.get_mut(&dodger).unwrap().reset_for_new_round();
+        assert!(!e.actors[&dodger].is_dodging());
+    }
+
+    #[test]
+    fn disengage_suppresses_opportunity_attack() {
+        use crate::actions::default_actions::DISENGAGE;
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Disengage on the mover.
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*DISENGAGE, mover_id, None, None, None);
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&mover_id].is_disengaging());
+
+        // Walk past the reactor; OA should not fire.
+        let move_effect = MoveActor {
+            actor_id: mover_id,
+            path: vec![Coordinate::new(15, 5)],
+        };
+        move_effect.apply(&mut e);
+        assert!(
+            e.actors[&reactor_id].can_consume_resource(Resource::Reaction),
+            "reactor's reaction should still be intact (mover disengaged)"
+        );
     }
 
     #[test]

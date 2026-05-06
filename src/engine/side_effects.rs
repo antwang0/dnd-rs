@@ -321,3 +321,45 @@ impl ApplicableSideEffect for SkipTurn {
         ei.skip_turn();
     }
 }
+
+/// Mark the actor as Dodging until their next turn. Logs the toggle.
+/// Idempotent — calling on an already-dodging actor is a no-op.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct StartDodging {
+    pub actor_id: usize,
+}
+
+impl ApplicableSideEffect for StartDodging {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        if actor.is_dodging() {
+            return;
+        }
+        actor.set_dodging(true);
+        let name = actor.name().to_string();
+        ei.log(format!("{} takes the Dodge action.", name));
+    }
+}
+
+/// Mark the actor as Disengaging — their next move won't provoke OAs.
+/// Idempotent.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct StartDisengaging {
+    pub actor_id: usize,
+}
+
+impl ApplicableSideEffect for StartDisengaging {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        if actor.is_disengaging() {
+            return;
+        }
+        actor.set_disengaging(true);
+        let name = actor.name().to_string();
+        ei.log(format!("{} disengages.", name));
+    }
+}

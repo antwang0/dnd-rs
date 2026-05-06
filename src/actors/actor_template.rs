@@ -302,6 +302,14 @@ pub struct ActorInstance {
     /// Doesn't stack: a new grant replaces existing temp HP only if larger
     /// (see `gain_temp_hp`). Cleared on long rest.
     temp_hp: u32,
+    /// 5e Dodge action: attacks against this actor have disadvantage and
+    /// they make DEX saves with advantage, until the start of their next
+    /// turn. `reset_for_new_round` clears this on the actor's own turn.
+    dodging: bool,
+    /// 5e Disengage action: this actor's movement doesn't provoke
+    /// opportunity attacks for the rest of the turn. Cleared on the next
+    /// `reset_for_new_round`.
+    disengaging: bool,
     /// Character level. Starts at 1; the multi-encounter loop's long-rest
     /// hook bumps this on hitting an XP threshold. Today only PCs (team
     /// 0) accumulate XP and level up — monsters keep level 1 and skip
@@ -379,6 +387,8 @@ impl ActorInstance {
             vulnerabilities: ct.vulnerabilities.clone(),
             immunities: ct.immunities.clone(),
             temp_hp: 0,
+            dodging: false,
+            disengaging: false,
             level: 1,
             xp: 0,
         })
@@ -756,7 +766,28 @@ impl ActorInstance {
         self.action_slots = 1;
         self.bonus_action_slots = 1;
         self.reaction_slots = 1;
+        // Dodge / Disengage are turn-scoped: they clear at the start of
+        // this actor's next turn (5e RAW). We zero them here so the buff
+        // / OA suppression only lasts one round.
+        self.dodging = false;
+        self.disengaging = false;
         // TODO: legendary actions
+    }
+
+    pub fn is_dodging(&self) -> bool {
+        self.dodging
+    }
+
+    pub fn set_dodging(&mut self, on: bool) {
+        self.dodging = on;
+    }
+
+    pub fn is_disengaging(&self) -> bool {
+        self.disengaging
+    }
+
+    pub fn set_disengaging(&mut self, on: bool) {
+        self.disengaging = on;
     }
 
     pub fn action_slots(&self) -> u32 {

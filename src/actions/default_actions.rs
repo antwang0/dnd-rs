@@ -240,5 +240,102 @@ impl Action for StandUp {
 
 pub static STAND_UP: LazyLock<StandUp> = LazyLock::new(|| StandUp {});
 
+/// 5e Dodge: spend an Action to impose disadvantage on attacks against
+/// you and gain advantage on DEX saves until your next turn. Wears off
+/// automatically on the actor's next `reset_for_new_round`.
+pub struct Dodge {}
+
+impl Action for Dodge {
+    fn name(&self) -> &str {
+        "dodge"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dodge", "dg"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        vec![Box::new(crate::engine::side_effects::StartDodging {
+            actor_id: caster_id,
+        })]
+    }
+}
+
+pub static DODGE: LazyLock<Dodge> = LazyLock::new(|| Dodge {});
+
+/// 5e Disengage: spend an Action so your movement this turn doesn't
+/// provoke opportunity attacks. The flag clears on your next turn.
+pub struct Disengage {}
+
+impl Action for Disengage {
+    fn name(&self) -> &str {
+        "disengage"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dis", "de"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        vec![Box::new(crate::engine::side_effects::StartDisengaging {
+            actor_id: caster_id,
+        })]
+    }
+}
+
+pub static DISENGAGE: LazyLock<Disengage> = LazyLock::new(|| Disengage {});
+
 pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> =
-    LazyLock::new(|| vec![&*MOVE, &*DASH, &*SKIP, &*STAND_UP]);
+    LazyLock::new(|| vec![&*MOVE, &*DASH, &*SKIP, &*STAND_UP, &*DODGE, &*DISENGAGE]);
