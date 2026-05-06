@@ -316,6 +316,9 @@ impl EncounterInstance {
             if attacker.has_condition(Condition::Poisoned) {
                 mode = mode.combine(RollMode::Disadvantage);
             }
+            if attacker.has_condition(Condition::Frightened) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
         }
         if let Some(target) = self.actors.get(&target_id) {
             if target.has_condition(Condition::Prone) {
@@ -342,10 +345,13 @@ impl EncounterInstance {
     ) -> RollMode {
         use crate::conditions::Condition;
         let mut mode = RollMode::Normal;
-        if let Some(actor) = self.actors.get(&actor_id)
-            && actor.has_condition(Condition::Poisoned)
-        {
-            mode = mode.combine(RollMode::Disadvantage);
+        if let Some(actor) = self.actors.get(&actor_id) {
+            if actor.has_condition(Condition::Poisoned) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+            if actor.has_condition(Condition::Frightened) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
         }
         mode
     }
@@ -353,41 +359,73 @@ impl EncounterInstance {
     /// Roll a saving throw for `actor_id` against `dc` using `ability`.
     /// Auto-applies advantage / disadvantage based on the actor's
     /// conditions (see `compute_save_mode`). Missing actor auto-fails.
+    /// Blessed actors get a fresh +1d4 added to the total per RAW.
     pub fn roll_save(
         &mut self,
         actor_id: usize,
         ability: crate::engine::types::AbilityScoreType,
         dc: i32,
     ) -> crate::engine::saves::SaveOutcome {
+        use crate::conditions::Condition;
         use crate::engine::saves::SaveOutcome;
         use crate::engine::util::modifier_from_score;
 
         let mode = self.compute_save_mode(actor_id, ability);
         let raw = self.roll_d20_with_mode(mode);
+        let blessed = self
+            .actors
+            .get(&actor_id)
+            .is_some_and(|a| a.has_condition(Condition::Blessed));
+        let bless_roll = if blessed {
+            self.roll(&Dice::new(1, 4)) as i32
+        } else {
+            0
+        };
         let Some(actor) = self.actors.get(&actor_id) else {
             return SaveOutcome::Fail;
         };
         let item_bonus = actor.item_save_bonus();
         let modifier = modifier_from_score(actor.ability_score(ability)) + item_bonus;
-        let total = raw as i32 + modifier;
+        let total = raw as i32 + modifier + bless_roll;
         let outcome = if total >= dc {
             SaveOutcome::Pass
         } else {
             SaveOutcome::Fail
         };
         let name = actor.name().to_string();
+        let bless_suffix = if blessed {
+            format!(" +1d4({})", bless_roll)
+        } else {
+            String::new()
+        };
         self.log(format!(
-            "  {} {:?} save: 1d20({}){:+} = {} vs DC {}{} \u{2014} {}",
+            "  {} {:?} save: 1d20({}){:+}{} = {} vs DC {}{} \u{2014} {}",
             name,
             ability,
             raw,
             modifier,
+            bless_suffix,
             total,
             dc,
             mode.log_suffix(),
             if outcome.passed() { "pass" } else { "fail" }
         ));
         outcome
+    }
+
+    /// Pre-roll the +1d4 attack bonus an attacker gets while Blessed.
+    /// Returns 0 if the attacker isn't Blessed (or is missing). The
+    /// weapon_attack helper folds this into the attack-roll log line.
+    pub fn bless_attack_bonus(&mut self, attacker_id: usize) -> i32 {
+        use crate::conditions::Condition;
+        let blessed = self
+            .actors
+            .get(&attacker_id)
+            .is_some_and(|a| a.has_condition(Condition::Blessed));
+        if !blessed {
+            return 0;
+        }
+        self.roll(&Dice::new(1, 4)) as i32
     }
 
     /// Direct mutable handle to the encounter's general-purpose RNG. Used

@@ -20,6 +20,17 @@ pub enum Condition {
     /// Disadvantage on attack rolls and ability checks. Marker only today
     /// (no advantage/disadvantage system yet).
     Poisoned,
+    /// 5e: disadvantage on ability checks and attack rolls while the
+    /// source of fear is in line of sight; cannot willingly move closer
+    /// to the source. We don't track the fear source today, so we apply
+    /// the attack-disadvantage clause unconditionally and skip the
+    /// movement clause.
+    Frightened,
+    /// 5e Bless target: +1d4 to attack rolls and saving throws. Each
+    /// invocation rolls the d4 fresh — no pre-rolled bonus carried on
+    /// the actor. The engine reads this flag in weapon_attack and
+    /// roll_save.
+    Blessed,
 }
 
 impl Condition {
@@ -28,6 +39,8 @@ impl Condition {
             Condition::Prone => "prone",
             Condition::Stunned => "stunned",
             Condition::Poisoned => "poisoned",
+            Condition::Frightened => "frightened",
+            Condition::Blessed => "blessed",
         }
     }
 }
