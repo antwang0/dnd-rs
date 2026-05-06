@@ -69,7 +69,13 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 8. Nothing useful. End the turn.
+        // 8. We have an Action but no offensive option — Dodge is strictly
+        //    better than Skip (imposes disadvantage on incoming attacks).
+        if let Some(aei) = try_dodge(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 9. Nothing useful. End the turn.
         skip_or_await(encounter, actor_id)
     }
 }
@@ -87,6 +93,23 @@ fn try_stand_up(
     }
     let stand = actor.actions.iter().find(|a| a.name() == "stand").copied()?;
     let aei = ActionExecutionInfo::new(stand, actor_id, None, None, None);
+    if aei.validate(encounter) {
+        Some(aei)
+    } else {
+        None
+    }
+}
+
+/// Dodge if the actor still has an Action available and reached this
+/// step in the pipeline (i.e. nothing else worked). Validates the action
+/// before returning so a stunned / actionless actor falls through.
+fn try_dodge(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let dodge = actor.actions.iter().find(|a| a.name() == "dodge").copied()?;
+    let aei = ActionExecutionInfo::new(dodge, actor_id, None, None, None);
     if aei.validate(encounter) {
         Some(aei)
     } else {

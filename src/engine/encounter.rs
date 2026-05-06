@@ -746,6 +746,33 @@ impl EncounterInstance {
         }
     }
 
+    /// Sorted ids of every combat-active actor whose footprint lies
+    /// within `radius` (footprint-Chebyshev gap) of `point`. Used by
+    /// AoE / burst actions to find their hit list. Sorted by id so save
+    /// rolls happen in deterministic order — the encounter roller is
+    /// shared, and HashMap iteration order would otherwise leak through
+    /// individual saves.
+    pub fn actors_in_burst(&self, point: Coordinate, radius: isize) -> Vec<usize> {
+        let mut ids: Vec<usize> = self
+            .actors
+            .iter()
+            .filter_map(|(id, a)| {
+                if !a.is_combat_active() {
+                    return None;
+                }
+                let dist = footprint_chebyshev(
+                    a.location(),
+                    get_tiles_from_size(a.size()),
+                    point,
+                    1,
+                );
+                if dist <= radius { Some(*id) } else { None }
+            })
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
     /// Min footprint-Chebyshev gap from `actor_id`'s body to a single
     /// tile `point`. Used by Burst-targeted actions whose "reach" is the
     /// max distance from the caster's footprint to the burst origin.

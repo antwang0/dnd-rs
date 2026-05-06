@@ -174,18 +174,12 @@ impl Action for ReadFireballScroll {
         let damage = encounter.roll(&Dice::new(6, 6));
         encounter.log(format!("  scroll of fireball: 6d6 = {} damage", damage));
 
-        // Find every actor whose footprint sits inside the blast radius.
+        // Find every combat-active actor whose footprint sits inside the
+        // blast radius (helper handles the sort + dist filter).
         const BLAST_RADIUS: isize = 4;
         let dc: i32 = 15;
-        let actor_ids: Vec<usize> = encounter.actors.keys().copied().collect();
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for id in actor_ids {
-            let Some(dist) = encounter.footprint_distance_to_point(id, center) else {
-                continue;
-            };
-            if dist > BLAST_RADIUS {
-                continue;
-            }
+        for id in encounter.actors_in_burst(center, BLAST_RADIUS) {
             use crate::engine::saves::SaveOutcome;
             use crate::engine::types::AbilityScoreType;
             let outcome = encounter.roll_save(id, AbilityScoreType::Dexterity, dc);
