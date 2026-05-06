@@ -332,6 +332,9 @@ impl EncounterInstance {
             if target.has_condition(Condition::Stunned) {
                 mode = mode.combine(RollMode::Advantage);
             }
+            if target.has_condition(Condition::Dodging) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
         }
         mode
     }
@@ -342,9 +345,10 @@ impl EncounterInstance {
     pub fn compute_save_mode(
         &self,
         actor_id: usize,
-        _ability: crate::engine::types::AbilityScoreType,
+        ability: crate::engine::types::AbilityScoreType,
     ) -> RollMode {
         use crate::conditions::Condition;
+        use crate::engine::types::AbilityScoreType;
         let mut mode = RollMode::Normal;
         if let Some(actor) = self.actors.get(&actor_id) {
             if actor.has_condition(Condition::Poisoned) {
@@ -352,6 +356,10 @@ impl EncounterInstance {
             }
             if actor.has_condition(Condition::Frightened) {
                 mode = mode.combine(RollMode::Disadvantage);
+            }
+            // Dodging grants advantage on DEX saves only (5e RAW).
+            if actor.has_condition(Condition::Dodging) && ability == AbilityScoreType::Dexterity {
+                mode = mode.combine(RollMode::Advantage);
             }
         }
         mode
@@ -639,10 +647,18 @@ impl EncounterInstance {
         use crate::actions::action_template::{MELEE_REACH, TargetingSchema};
         use crate::engine::side_effects::Resource;
 
-        let (mover_team, mover_size) = match self.actors.get(&mover_id) {
-            Some(a) => (a.team(), get_tiles_from_size(a.size())),
+        let (mover_team, mover_size, mover_disengaging) = match self.actors.get(&mover_id) {
+            Some(a) => (
+                a.team(),
+                get_tiles_from_size(a.size()),
+                a.is_disengaging(),
+            ),
             None => return,
         };
+        // Disengaging actor is invisible to OAs until their next turn.
+        if mover_disengaging {
+            return;
+        }
 
         // Snapshot reactor candidates up-front — the loop body will mutate
         // self, which would conflict with holding an iterator into self.actors.
@@ -3230,6 +3246,86 @@ mod tests {
             !e.actors[&ally].has_condition(Condition::Blessed),
             "Blessed condition should clear when concentration drops"
         );
+    }
+
+    #[test]
+    fn dodge_imposes_disadvantage_on_attacks_against_dodger() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Dodging, ConditionTimer::Rounds(1));
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn dodge_grants_advantage_on_dex_save() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Dodging, ConditionTimer::Rounds(1));
+        assert_eq!(
+            e.compute_save_mode(id, AbilityScoreType::Dexterity),
+            RollMode::Advantage
+        );
+        // Non-DEX save unaffected.
+        assert_eq!(
+            e.compute_save_mode(id, AbilityScoreType::Strength),
+            RollMode::Normal
+        );
+    }
+
+    #[test]
+    fn disengage_suppresses_opportunity_attack() {
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Mark mover as disengaging — OA dispatcher should ignore them.
+        e.actors.get_mut(&mover_id).unwrap().set_disengaging(true);
+        let move_effect = MoveActor {
+            actor_id: mover_id,
+            path: vec![Coordinate::new(15, 5)],
+        };
+        move_effect.apply(&mut e);
+        assert!(
+            e.actors[&reactor_id].can_consume_resource(Resource::Reaction),
+            "reactor should NOT have spent reaction against a disengaging mover"
+        );
+    }
+
+    #[test]
+    fn reset_for_new_round_clears_disengaging() {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&id).unwrap().set_disengaging(true);
+        e.actors.get_mut(&id).unwrap().reset_for_new_round();
+        assert!(!e.actors[&id].is_disengaging());
     }
 
     #[test]

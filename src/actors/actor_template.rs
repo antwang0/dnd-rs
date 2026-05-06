@@ -298,6 +298,11 @@ pub struct ActorInstance {
     /// reads from this; `DealDamage::apply` consults that to scale damage
     /// before subtracting it from HP.
     damage_reactions: HashMap<DamageType, DamageReaction>,
+    /// True for the rest of the turn after taking the Disengage action.
+    /// Reset by `reset_for_new_round`. The OA dispatcher reads this and
+    /// skips firing reactions on `ActorLeaving` events sourced by a
+    /// disengaging actor.
+    disengaging: bool,
 }
 
 impl ActorInstance {
@@ -365,7 +370,16 @@ impl ActorInstance {
             level: 1,
             xp: 0,
             damage_reactions: ct.damage_reactions.clone(),
+            disengaging: false,
         })
+    }
+
+    pub fn is_disengaging(&self) -> bool {
+        self.disengaging
+    }
+
+    pub fn set_disengaging(&mut self, value: bool) {
+        self.disengaging = value;
     }
 
     /// Reaction for a specific damage type, defaulting to Normal when no
@@ -741,6 +755,9 @@ impl ActorInstance {
         self.action_slots = 1;
         self.bonus_action_slots = 1;
         self.reaction_slots = 1;
+        // Disengage protection lasts only until the actor's next turn
+        // begins; clear it here so a new round starts threatened again.
+        self.disengaging = false;
         // TODO: legendary actions
     }
 

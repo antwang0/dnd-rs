@@ -31,6 +31,11 @@ pub enum Condition {
     /// the actor. The engine reads this flag in weapon_attack and
     /// roll_save.
     Blessed,
+    /// Took the Dodge action this turn: attack rolls vs you have
+    /// disadvantage and you have advantage on DEX saves. Lasts until
+    /// the start of your next turn — modeled as `Rounds(1)` so it
+    /// expires on the next round-end before you go again.
+    Dodging,
 }
 
 impl Condition {
@@ -41,6 +46,7 @@ impl Condition {
             Condition::Poisoned => "poisoned",
             Condition::Frightened => "frightened",
             Condition::Blessed => "blessed",
+            Condition::Dodging => "dodging",
         }
     }
 }
