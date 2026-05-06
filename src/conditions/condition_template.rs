@@ -20,6 +20,31 @@ pub enum Condition {
     /// Disadvantage on attack rolls and ability checks. Marker only today
     /// (no advantage/disadvantage system yet).
     Poisoned,
+    /// Attack rolls against you have advantage; your attack rolls have
+    /// disadvantage; auto-fail any check requiring sight. Modeled here as
+    /// the attack mode adjustments only — sight checks aren't a thing yet.
+    Blinded,
+    /// Disadvantage on ability checks and attack rolls while you can see
+    /// the source of your fear. We don't track "source of fear" so we
+    /// always apply the disadvantage.
+    Frightened,
+    /// Speed = 0; attacks against you have advantage; your attacks have
+    /// disadvantage; disadvantage on DEX saves. The speed/0 clause is
+    /// shared with `Prone` via `remaining_movement`.
+    Restrained,
+    /// Cannot take Actions, Bonus Actions, or Reactions. Same action-
+    /// economy block as Stunned, but doesn't impose attack-mode penalties
+    /// or zero movement.
+    Incapacitated,
+    /// Cannot be seen without special senses. Attack rolls against you
+    /// have disadvantage; your attack rolls have advantage. Wears off when
+    /// you attack or cast a spell, but we don't auto-clear yet.
+    Invisible,
+    /// 0 HP, prone, can't move/speak. Attacks within 5ft auto-crit, all
+    /// auto-fail STR/DEX saves. Set when an actor enters Dying — we don't
+    /// auto-add it today; reserved for explicit application by future
+    /// effects (e.g. Sleep spell).
+    Unconscious,
 }
 
 impl Condition {
@@ -28,6 +53,12 @@ impl Condition {
             Condition::Prone => "prone",
             Condition::Stunned => "stunned",
             Condition::Poisoned => "poisoned",
+            Condition::Blinded => "blinded",
+            Condition::Frightened => "frightened",
+            Condition::Restrained => "restrained",
+            Condition::Incapacitated => "incapacitated",
+            Condition::Invisible => "invisible",
+            Condition::Unconscious => "unconscious",
         }
     }
 }
