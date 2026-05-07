@@ -1,6 +1,8 @@
+use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
 use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+use crate::actors::creatures::orcs::ORC_TEMPLATE;
 use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
 use crate::actors::creatures::slimes::SLIME_TEMPLATE;
 use crate::actors::creatures::wolves::WOLF_TEMPLATE;
@@ -1061,6 +1063,8 @@ impl EncounterInstance {
             &GOBLIN_TEMPLATE,
             &OGRE_TEMPLATE,
             &WOLF_TEMPLATE,
+            &ORC_TEMPLATE,
+            &BANDIT_TEMPLATE,
         ]
     }
 
@@ -1299,9 +1303,75 @@ impl EncounterInstance {
     }
 
     /// True once at most one team has living actors. Encounters with zero
-    /// living actors also count as complete (mutual destruction).
+    /// living actors also count as complete (mutual destruction). Also
+    /// fires on stalemate — no living actor can engage any enemy via
+    /// melee path or ranged LOS, so the fight has nowhere to go.
     pub fn is_complete(&self) -> bool {
-        self.living_teams().len() <= 1
+        self.living_teams().len() <= 1 || self.is_stalemate()
+    }
+
+    /// True if no combat-active actor on any team can reach (via BFS) or
+    /// shoot (via line-of-sight + a ranged attack) any enemy. Used to
+    /// terminate fights where terrain has split the parties into
+    /// permanently disconnected pockets — otherwise the AI loops
+    /// skipping forever.
+    pub fn is_stalemate(&self) -> bool {
+        let combatants: Vec<(usize, usize)> = self
+            .actors
+            .iter()
+            .filter(|(_, a)| a.is_combat_active())
+            .map(|(id, a)| (*id, a.team()))
+            .collect();
+        if combatants.len() <= 1 {
+            return false;
+        }
+        for (id, team) in &combatants {
+            for (other_id, other_team) in &combatants {
+                if team == other_team || id == other_id {
+                    continue;
+                }
+                if self.can_engage(*id, *other_id) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// True if `attacker` has *some* tactical option against `target` —
+    /// either there's a BFS path between their footprints (melee can
+    /// eventually close in) or `attacker` has a ranged attack with LOS
+    /// to `target`. Stalemate detection short-circuits as soon as one
+    /// such option exists.
+    fn can_engage(&self, attacker_id: usize, target_id: usize) -> bool {
+        use crate::actions::action_template::{MELEE_REACH, TargetingSchema};
+        // BFS step is movement-budget-independent; if it returns Some,
+        // there's a path eventually (over multiple turns if needed).
+        if self.step_toward_actor(attacker_id, target_id).is_some() {
+            return true;
+        }
+        // Already in melee → step_toward returns None but engagement is
+        // possible (we just stand and swing).
+        if let Some(dist) = self.footprint_distance(attacker_id, target_id)
+            && dist <= MELEE_REACH
+        {
+            return true;
+        }
+        // Ranged: any single-actor attack with reach > MELEE_REACH that
+        // covers the current distance and has LOS counts.
+        let Some(attacker) = self.actors.get(&attacker_id) else {
+            return false;
+        };
+        let Some(dist) = self.footprint_distance(attacker_id, target_id) else {
+            return false;
+        };
+        if !self.actor_has_line_of_sight(attacker_id, target_id) {
+            return false;
+        }
+        attacker.actions.iter().any(|a| {
+            matches!(a.targeting_schema(), TargetingSchema::SingleActor)
+                && a.reach_tiles().is_some_and(|r| r > MELEE_REACH && dist <= r)
+        })
     }
 
     /// `Some(team_id)` if exactly one team is left standing; `None` if the

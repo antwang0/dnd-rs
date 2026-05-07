@@ -517,6 +517,12 @@ fn best_attack_against(
         if !action.is_harmful() {
             continue;
         }
+        // Skip hostile control actions (Shove, etc.) that don't whittle
+        // enemy HP — focus-fire is for damage, and the AI doesn't combo
+        // shove-then-swing today.
+        if !action.deals_damage() {
+            continue;
+        }
         let Some(reach) = action.reach_tiles() else {
             continue;
         };

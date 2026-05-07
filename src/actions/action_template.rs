@@ -49,10 +49,18 @@ pub trait Action {
         false
     }
 
-    /// True for damaging / hostile actions (default). Buffing or healing
-    /// actions override to false so the AI's focus-fire pipeline doesn't
-    /// accidentally pick them as enemy attacks.
+    /// True for hostile actions targeting enemies (default). Buffing or
+    /// healing actions override to false so the AI's support pipeline
+    /// excludes them from heal-target consideration.
     fn is_harmful(&self) -> bool {
+        true
+    }
+
+    /// True if this action's primary effect is HP loss on the target
+    /// (default). Hostile control actions like Shove return false so
+    /// the AI's focus-fire pipeline doesn't pick them over attacks that
+    /// actually whittle down enemy HP.
+    fn deals_damage(&self) -> bool {
         true
     }
 

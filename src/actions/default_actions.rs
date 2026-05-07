@@ -375,6 +375,14 @@ impl Action for Shove {
         Some(crate::actions::action_template::MELEE_REACH)
     }
 
+    fn deals_damage(&self) -> bool {
+        // Shove only applies Prone; the AI shouldn't pick it as a focus-
+        // fire attack since it doesn't model the shove-then-swing combo.
+        // is_harmful stays true so support_heal still excludes it from
+        // the heal pool.
+        false
+    }
+
     fn cost(
         &self,
         _encounter: &EncounterInstance,
