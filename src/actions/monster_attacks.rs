@@ -61,34 +61,16 @@ impl Action for Longbow {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
-            return Vec::new();
-        };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
         // Bows use DEX for both attack and damage in 5e (finesse / ranged).
-        let attack_bonus =
-            caster.ability_attack_bonus(crate::engine::types::AbilityScoreType::Dexterity);
-        let dex_mod = modifier_from_score(
-            caster.ability_score(crate::engine::types::AbilityScoreType::Dexterity),
-        );
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
-
-        weapon_attack(
+        simple_weapon_attack(
             encounter,
             caster_id,
-            target_id,
+            target_ids,
             self.name(),
-            attack_bonus,
-            target_ac,
+            crate::engine::types::AbilityScoreType::Dexterity,
             Dice::new(1, 8),
-            dex_mod,
             DamageType::Piercing,
-            false, // ranged
+            false,
         )
     }
 }
@@ -133,32 +115,15 @@ impl Action for Slam {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
-            return Vec::new();
-        };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let str_mod = modifier_from_score(
-            caster.ability_score(crate::engine::types::AbilityScoreType::Strength),
-        );
-        let attack_bonus = caster.attack_bonus();
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
-
-        weapon_attack(
+        simple_weapon_attack(
             encounter,
             caster_id,
-            target_id,
+            target_ids,
             self.name(),
-            attack_bonus,
-            target_ac,
+            crate::engine::types::AbilityScoreType::Strength,
             Dice::new(2, 6),
-            str_mod,
             DamageType::Bludgeoning,
-            true, // melee
+            true,
         )
     }
 }
@@ -208,38 +173,23 @@ impl Action for TripAttack {
         use crate::engine::side_effects::ApplyCondition;
         use crate::engine::types::AbilityScoreType;
 
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
-            return Vec::new();
-        };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let str_mod = modifier_from_score(
-            caster.ability_score(AbilityScoreType::Strength),
-        );
-        let attack_bonus = caster.attack_bonus();
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
-
-        let mut effects = weapon_attack(
+        let target_id = target_ids.and_then(|ids| ids.first().copied());
+        let mut effects = simple_weapon_attack(
             encounter,
             caster_id,
-            target_id,
+            target_ids,
             self.name(),
-            attack_bonus,
-            target_ac,
+            AbilityScoreType::Strength,
             Dice::new(1, 6),
-            str_mod,
             DamageType::Bludgeoning,
-            true, // melee
+            true,
         );
-        // weapon_attack returns empty Vec on miss — only roll the save if
-        // damage was queued (the attack landed).
+        // simple_weapon_attack returns empty Vec on miss — only roll
+        // the save if damage was queued (the attack landed).
         if effects.is_empty() {
             return effects;
         }
+        let Some(target_id) = target_id else { return effects };
         let save = encounter.roll_save(target_id, AbilityScoreType::Strength, 13);
         if !save.passed() {
             effects.push(Box::new(ApplyCondition {
@@ -425,29 +375,13 @@ impl Action for Scimitar {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
-            return Vec::new();
-        };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let str_mod = modifier_from_score(
-            caster.ability_score(crate::engine::types::AbilityScoreType::Strength),
-        );
-        let attack_bonus = caster.attack_bonus();
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
-        weapon_attack(
+        simple_weapon_attack(
             encounter,
             caster_id,
-            target_id,
+            target_ids,
             self.name(),
-            attack_bonus,
-            target_ac,
+            crate::engine::types::AbilityScoreType::Strength,
             Dice::new(1, 6),
-            str_mod,
             DamageType::Slashing,
             true,
         )
@@ -496,30 +430,13 @@ impl Action for Shortbow {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
-            return Vec::new();
-        };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let dex_mod = modifier_from_score(
-            caster.ability_score(crate::engine::types::AbilityScoreType::Dexterity),
-        );
-        let attack_bonus =
-            caster.ability_attack_bonus(crate::engine::types::AbilityScoreType::Dexterity);
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
-        weapon_attack(
+        simple_weapon_attack(
             encounter,
             caster_id,
-            target_id,
+            target_ids,
             self.name(),
-            attack_bonus,
-            target_ac,
+            crate::engine::types::AbilityScoreType::Dexterity,
             Dice::new(1, 4),
-            dex_mod,
             DamageType::Piercing,
             false,
         )
@@ -564,31 +481,15 @@ impl Action for Greatclub {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
-            return Vec::new();
-        };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let str_mod = modifier_from_score(
-            caster.ability_score(crate::engine::types::AbilityScoreType::Strength),
-        );
-        let attack_bonus = caster.attack_bonus();
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
         // is_melee = true even at reach 2 — polearms are still melee
         // attacks for the prone-target advantage clause.
-        weapon_attack(
+        simple_weapon_attack(
             encounter,
             caster_id,
-            target_id,
+            target_ids,
             self.name(),
-            attack_bonus,
-            target_ac,
+            crate::engine::types::AbilityScoreType::Strength,
             Dice::new(1, 10),
-            str_mod,
             DamageType::Bludgeoning,
             true,
         )
@@ -632,29 +533,13 @@ impl Action for Greataxe {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
-            return Vec::new();
-        };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let str_mod = modifier_from_score(
-            caster.ability_score(crate::engine::types::AbilityScoreType::Strength),
-        );
-        let attack_bonus = caster.attack_bonus();
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
-        weapon_attack(
+        simple_weapon_attack(
             encounter,
             caster_id,
-            target_id,
+            target_ids,
             self.name(),
-            attack_bonus,
-            target_ac,
+            crate::engine::types::AbilityScoreType::Strength,
             Dice::new(1, 12),
-            str_mod,
             DamageType::Slashing,
             true,
         )
@@ -701,30 +586,13 @@ impl Action for HeavyCrossbow {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
-            return Vec::new();
-        };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let dex_mod = modifier_from_score(
-            caster.ability_score(crate::engine::types::AbilityScoreType::Dexterity),
-        );
-        let attack_bonus =
-            caster.ability_attack_bonus(crate::engine::types::AbilityScoreType::Dexterity);
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
-        weapon_attack(
+        simple_weapon_attack(
             encounter,
             caster_id,
-            target_id,
+            target_ids,
             self.name(),
-            attack_bonus,
-            target_ac,
+            crate::engine::types::AbilityScoreType::Dexterity,
             Dice::new(1, 10),
-            dex_mod,
             DamageType::Piercing,
             false,
         )
@@ -772,33 +640,21 @@ impl Action for WolfBite {
         use crate::engine::side_effects::ApplyCondition;
         use crate::engine::types::AbilityScoreType;
 
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
-            return Vec::new();
-        };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
-        let attack_bonus = caster.attack_bonus();
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
-            return Vec::new();
-        };
-        let mut effects = weapon_attack(
+        let target_id = target_ids.and_then(|ids| ids.first().copied());
+        let mut effects = simple_weapon_attack(
             encounter,
             caster_id,
-            target_id,
+            target_ids,
             self.name(),
-            attack_bonus,
-            target_ac,
+            AbilityScoreType::Strength,
             Dice::new(1, 4),
-            str_mod,
             DamageType::Piercing,
             true,
         );
         if effects.is_empty() {
             return effects;
         }
+        let Some(target_id) = target_id else { return effects };
         let save = encounter.roll_save(target_id, AbilityScoreType::Strength, 11);
         if !save.passed() {
             effects.push(Box::new(ApplyCondition {
@@ -896,6 +752,46 @@ pub static ZOMBIE_MULTISLAM: LazyLock<Multiattack> = LazyLock::new(|| Multiattac
     sub_attack: &*SLAM,
     count: 2,
 });
+
+/// Common scaffolding for ability-based weapon attacks: extracts target +
+/// caster, computes the attack/damage modifiers from `ability` (also
+/// applies proficiency for the attack roll), then defers to
+/// `weapon_attack`. Returns an empty vec if any prerequisite is missing
+/// (target / caster gone) or the attack misses.
+pub(crate) fn simple_weapon_attack(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    target_ids: Option<&Vec<usize>>,
+    action_name: &str,
+    ability: crate::engine::types::AbilityScoreType,
+    damage_dice: Dice,
+    damage_type: DamageType,
+    is_melee: bool,
+) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+    let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        return Vec::new();
+    };
+    let Some(caster) = encounter.actors.get(&caster_id) else {
+        return Vec::new();
+    };
+    let ability_mod = modifier_from_score(caster.ability_score(ability));
+    let attack_bonus = caster.ability_attack_bonus(ability);
+    let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32) else {
+        return Vec::new();
+    };
+    weapon_attack(
+        encounter,
+        caster_id,
+        target_id,
+        action_name,
+        attack_bonus,
+        target_ac,
+        damage_dice,
+        ability_mod,
+        damage_type,
+        is_melee,
+    )
+}
 
 /// Roll a d20 attack against `target_ac`, log the breakdown, and on a hit
 /// roll `damage_dice + damage_bonus` of `damage_type` against `target_id`.
