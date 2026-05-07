@@ -1,5 +1,6 @@
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::{Dice, DiceExpr, Roller};
+use crate::engine::types::DamageType;
 
 /// Lifecycle state of an actor's hit points. Replaces the previous
 /// `dying: bool` + `stable: bool` pair so the four meaningful states are
@@ -120,6 +121,18 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Damage types this creature takes 0 damage from (full immunity).
+    /// 5e: zombies aren't immune to anything by default; an iron golem
+    /// is immune to poison. Defaults empty.
+    pub damage_immunities: HashSet<DamageType>,
+    /// Damage types this creature takes half damage from. 5e: skeletons
+    /// resist piercing/bludgeoning from non-magical weapons; we collapse
+    /// the magical-weapon clause for now.
+    pub damage_resistances: HashSet<DamageType>,
+    /// Damage types this creature takes double damage from. 5e: zombies
+    /// don't have any RAW; trolls are vulnerable to fire & acid (in
+    /// some settings) — a useful hook for new monster designs.
+    pub damage_vulnerabilities: HashSet<DamageType>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -287,6 +300,9 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    damage_immunities: HashSet<DamageType>,
+    damage_resistances: HashSet<DamageType>,
+    damage_vulnerabilities: HashSet<DamageType>,
 }
 
 impl ActorInstance {
@@ -353,6 +369,9 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            damage_immunities: ct.damage_immunities.clone(),
+            damage_resistances: ct.damage_resistances.clone(),
+            damage_vulnerabilities: ct.damage_vulnerabilities.clone(),
         })
     }
 
@@ -786,6 +805,37 @@ impl ActorInstance {
     /// call this on the caster to set their DC.
     pub fn spell_save_dc(&self, ability: AbilityScoreType) -> i32 {
         8 + modifier_from_score(self.ability_score(ability))
+    }
+
+    /// Scale a raw damage value by this actor's immunities, resistances,
+    /// and vulnerabilities for `dt`. Immunity > resistance > vulnerability
+    /// (5e: an actor can't be both immune and vulnerable; we apply
+    /// immunity first which short-circuits). Returns the post-scaling
+    /// amount the engine should subtract.
+    pub fn scale_damage(&self, amount: u32, dt: DamageType) -> u32 {
+        if self.damage_immunities.contains(&dt) {
+            return 0;
+        }
+        let mut amt = amount;
+        if self.damage_resistances.contains(&dt) {
+            amt /= 2;
+        }
+        if self.damage_vulnerabilities.contains(&dt) {
+            amt = amt.saturating_mul(2);
+        }
+        amt
+    }
+
+    pub fn damage_immunities(&self) -> &HashSet<DamageType> {
+        &self.damage_immunities
+    }
+
+    pub fn damage_resistances(&self) -> &HashSet<DamageType> {
+        &self.damage_resistances
+    }
+
+    pub fn damage_vulnerabilities(&self) -> &HashSet<DamageType> {
+        &self.damage_vulnerabilities
     }
 
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {

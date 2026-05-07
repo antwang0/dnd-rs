@@ -3270,6 +3270,67 @@ mod tests {
     }
 
     #[test]
+    fn damage_scaling_applies_resistance() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        // Necrotic = resisted (50%) for zombies. 10 raw → 5 actual.
+        DealDamage {
+            actor_id: id,
+            amount: 10,
+            damage_type: DamageType::Necrotic,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max - 5);
+    }
+
+    #[test]
+    fn damage_scaling_applies_immunity() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        // Poison = immune for zombies. Damage should be entirely no-op'd.
+        DealDamage {
+            actor_id: id,
+            amount: 100,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max);
+        assert!(e.actors[&id].is_combat_active());
+    }
+
+    #[test]
+    fn damage_scaling_applies_vulnerability() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        // Radiant = vulnerable (200%) for zombies. 3 raw → 6 actual.
+        DealDamage {
+            actor_id: id,
+            amount: 3,
+            damage_type: DamageType::Radiant,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max.saturating_sub(6));
+    }
+
+    #[test]
     fn restrained_zeros_movement() {
         use crate::conditions::{Condition, ConditionTimer};
         let mut e = ei_with_terrain(15, 15, &[]);

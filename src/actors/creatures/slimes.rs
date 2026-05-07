@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::ACID_SPIT;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::Size;
+use crate::engine::types::{DamageType, Size};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -37,5 +37,10 @@ pub static SLIME_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
+        // Acid slime is immune to its own element. Resists piercing /
+        // slashing — blade just glances off the gel — but full bludgeoning.
+        damage_immunities: HashSet::from([DamageType::Acid]),
+        damage_resistances: HashSet::from([DamageType::Piercing, DamageType::Slashing]),
+        damage_vulnerabilities: HashSet::new(),
     }
 });

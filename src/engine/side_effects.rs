@@ -137,9 +137,37 @@ impl ApplicableSideEffect for DealDamage {
             return;
         };
         let name = actor.name().to_string();
-        let outcome = actor.take_damage(self.amount);
-        let was_concentrating = actor.is_concentrating();
-        // actor borrow ends here.
+        let raw = self.amount;
+        let scaled = actor.scale_damage(raw, self.damage_type);
+        // Log the scaling tag so the player can tell why damage shrank
+        // (or doubled). Only emit when scaling actually changed the value.
+        if scaled != raw {
+            let tag = if scaled == 0 {
+                "immune"
+            } else if scaled < raw {
+                "resisted"
+            } else {
+                "vulnerable"
+            };
+            ei.log(format!(
+                "  {} {} to {:?}: {} \u{2192} {}",
+                name, tag, self.damage_type, raw, scaled
+            ));
+        }
+        let outcome = if scaled == 0 {
+            DamageOutcome::Reduced
+        } else {
+            // Re-borrow because the immutable scale_damage handle is gone
+            // by the time we get here.
+            let Some(actor) = ei.get_actor(self.actor_id) else {
+                return;
+            };
+            actor.take_damage(scaled)
+        };
+        let was_concentrating = ei
+            .actors
+            .get(&self.actor_id)
+            .is_some_and(|a| a.is_concentrating());
 
         match outcome {
             DamageOutcome::Downed => {
@@ -153,9 +181,9 @@ impl ApplicableSideEffect for DealDamage {
                 // drop concentration before the actor is gone.
                 ei.drop_concentration(self.actor_id);
             }
-            DamageOutcome::Reduced if was_concentrating => {
+            DamageOutcome::Reduced if was_concentrating && scaled > 0 => {
                 // 5e: take damage while concentrating → CON save vs DC max(10, dmg/2).
-                let dc = ((self.amount / 2) as i32).max(10);
+                let dc = ((scaled / 2) as i32).max(10);
                 let save = ei.roll_save(
                     self.actor_id,
                     crate::engine::types::AbilityScoreType::Constitution,
