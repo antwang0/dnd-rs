@@ -3280,6 +3280,81 @@ mod tests {
     }
 
     #[test]
+    fn cure_wounds_heals_target_at_touch_range() {
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Touch-range — fighter must be adjacent. Place at (4,2): gap=0.
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&fighter].max_hitpoints();
+        e.actors.get_mut(&fighter).unwrap().take_damage(max - 1);
+        let before = e.actors[&fighter].hitpoints();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*CURE_WOUNDS, cleric, Some(vec![fighter]), None, None);
+        assert!(aei.validate(&e), "cure wounds in melee reach should validate");
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&fighter].hitpoints() > before, "heal should land");
+    }
+
+    #[test]
+    fn shield_of_faith_grants_ac_buff_via_concentration() {
+        use crate::actions::spells::SHIELD_OF_FAITH;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 1)
+            .unwrap();
+        let base_ac = e.actors[&ally].armor_class();
+        e.pop_prompt();
+        let aei =
+            ActionExecutionInfo::new(&*SHIELD_OF_FAITH, cleric, Some(vec![ally]), None, None);
+        assert!(aei.validate(&e), "shield of faith should validate");
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&ally].has_condition(Condition::ShieldOfFaith));
+        assert_eq!(e.actors[&ally].armor_class(), base_ac + 2);
+        assert!(e.actors[&cleric].is_concentrating());
+    }
+
+    #[test]
+    fn magic_missile_auto_hits_for_force_damage() {
+        use crate::actions::spells::MAGIC_MISSILE;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        let max = e.actors[&target].max_hitpoints();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*MAGIC_MISSILE, cleric, Some(vec![target]), None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        // Auto-hit — target's HP must be strictly less than max.
+        assert!(
+            !e.actors.contains_key(&target) || e.actors[&target].hitpoints() < max,
+            "magic missile is auto-hit; some damage must always land"
+        );
+    }
+
+    #[test]
     fn shove_invalid_against_two_sizes_larger() {
         use crate::actions::default_actions::SHOVE;
         use crate::actors::creatures::ogres::OGRE_TEMPLATE;
