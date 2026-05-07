@@ -293,11 +293,12 @@ impl EncounterInstance {
     }
 
     /// Compute the attack-roll mode given attacker / target conditions.
-    /// 5e clauses we model today:
-    /// - Attacker Prone → disadvantage on all attacks.
-    /// - Attacker Poisoned → disadvantage.
+    /// 5e clauses we model:
+    /// - Attacker Prone / Poisoned / Blinded / Frightened / Restrained → disadvantage.
+    /// - Attacker Hidden or Invisible → advantage.
     /// - Target Prone → melee attacks have advantage, ranged have disadvantage.
-    /// - Target Stunned → advantage on attacks vs them.
+    /// - Target Stunned / Paralyzed / Restrained / Blinded → advantage.
+    /// - Target Dodging or Invisible → disadvantage.
     ///
     /// Multiple sources of the same direction don't stack; opposing
     /// sources cancel via `RollMode::combine`.
@@ -310,11 +311,21 @@ impl EncounterInstance {
         use crate::conditions::Condition;
         let mut mode = RollMode::Normal;
         if let Some(attacker) = self.actors.get(&attacker_id) {
-            if attacker.has_condition(Condition::Prone) {
-                mode = mode.combine(RollMode::Disadvantage);
+            for c in [
+                Condition::Prone,
+                Condition::Poisoned,
+                Condition::Blinded,
+                Condition::Frightened,
+                Condition::Restrained,
+            ] {
+                if attacker.has_condition(c) {
+                    mode = mode.combine(RollMode::Disadvantage);
+                }
             }
-            if attacker.has_condition(Condition::Poisoned) {
-                mode = mode.combine(RollMode::Disadvantage);
+            if attacker.has_condition(Condition::Hidden)
+                || attacker.has_condition(Condition::Invisible)
+            {
+                mode = mode.combine(RollMode::Advantage);
             }
         }
         if let Some(target) = self.actors.get(&target_id) {
@@ -325,29 +336,77 @@ impl EncounterInstance {
                     RollMode::Disadvantage
                 });
             }
-            if target.has_condition(Condition::Stunned) {
+            for c in [
+                Condition::Stunned,
+                Condition::Paralyzed,
+                Condition::Restrained,
+                Condition::Blinded,
+            ] {
+                if target.has_condition(c) {
+                    mode = mode.combine(RollMode::Advantage);
+                }
+            }
+            if target.has_condition(Condition::Dodging)
+                || target.has_condition(Condition::Invisible)
+                || target.has_condition(Condition::Hidden)
+            {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+        }
+        mode
+    }
+
+    /// Compute the save-roll mode for an actor's ability save.
+    /// 5e clauses we model:
+    /// - Poisoned → disadvantage on saves derived from ability checks
+    ///   (we conflate save-vs-check until we model that distinction).
+    /// - Restrained → disadvantage on DEX saves specifically.
+    /// - Dodging → advantage on DEX saves while the buff holds.
+    pub fn compute_save_mode(
+        &self,
+        actor_id: usize,
+        ability: crate::engine::types::AbilityScoreType,
+    ) -> RollMode {
+        use crate::conditions::Condition;
+        use crate::engine::types::AbilityScoreType;
+        let mut mode = RollMode::Normal;
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return mode;
+        };
+        if actor.has_condition(Condition::Poisoned) {
+            mode = mode.combine(RollMode::Disadvantage);
+        }
+        if ability == AbilityScoreType::Dexterity {
+            if actor.has_condition(Condition::Restrained) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+            if actor.has_condition(Condition::Dodging) {
                 mode = mode.combine(RollMode::Advantage);
             }
         }
         mode
     }
 
-    /// Compute the save-roll mode for an actor's ability save. Today
-    /// `Poisoned` imposes disadvantage on all saves derived from ability
-    /// checks (we conflate save-vs-check until we model that distinction).
-    pub fn compute_save_mode(
+    /// True if the actor auto-fails saves of the given ability. Paralyzed
+    /// and Stunned auto-fail STR/DEX saves in 5e. Used by `roll_save` to
+    /// short-circuit before the d20 roll.
+    pub fn auto_fail_save(
         &self,
         actor_id: usize,
-        _ability: crate::engine::types::AbilityScoreType,
-    ) -> RollMode {
+        ability: crate::engine::types::AbilityScoreType,
+    ) -> bool {
         use crate::conditions::Condition;
-        let mut mode = RollMode::Normal;
-        if let Some(actor) = self.actors.get(&actor_id)
-            && actor.has_condition(Condition::Poisoned)
-        {
-            mode = mode.combine(RollMode::Disadvantage);
+        use crate::engine::types::AbilityScoreType;
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return false;
+        };
+        if !matches!(
+            ability,
+            AbilityScoreType::Strength | AbilityScoreType::Dexterity
+        ) {
+            return false;
         }
-        mode
+        actor.has_condition(Condition::Paralyzed) || actor.has_condition(Condition::Stunned)
     }
 
     /// Roll a saving throw for `actor_id` against `dc` using `ability`.
@@ -361,6 +420,21 @@ impl EncounterInstance {
     ) -> crate::engine::saves::SaveOutcome {
         use crate::engine::saves::SaveOutcome;
         use crate::engine::util::modifier_from_score;
+
+        // Paralyzed / Stunned auto-fail STR & DEX saves (5e). Log it so
+        // the player can see why the save tanked.
+        if self.auto_fail_save(actor_id, ability) {
+            let name = self
+                .actors
+                .get(&actor_id)
+                .map(|a| a.name().to_string())
+                .unwrap_or_default();
+            self.log(format!(
+                "  {} {:?} save: auto-fail (incapacitated)",
+                name, ability
+            ));
+            return SaveOutcome::Fail;
+        }
 
         let mode = self.compute_save_mode(actor_id, ability);
         let raw = self.roll_d20_with_mode(mode);
@@ -3010,5 +3084,203 @@ mod tests {
 
         let enemy_count = next.actors.values().filter(|a| a.team() != 0).count();
         assert!(enemy_count > 0, "expected enemies on teams 1+");
+    }
+
+    #[test]
+    fn attack_mode_blinded_attacker_disadvantage_target_advantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        // Blinded attacker — disadvantage; opposing target's blinded clause
+        // grants advantage, so attacker-only blindness leaves disadv.
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage
+        );
+        // Target Blinded too (both ends) → adv + disadv = Normal.
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Normal
+        );
+    }
+
+    #[test]
+    fn attack_mode_restrained_target_advantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Restrained, ConditionTimer::Rounds(3));
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage
+        );
+    }
+
+    #[test]
+    fn attack_mode_dodging_target_disadvantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Dodging, ConditionTimer::Rounds(1));
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn save_mode_dodging_dex_advantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Dodging, ConditionTimer::Rounds(1));
+        // Dodging grants advantage on DEX saves...
+        assert_eq!(
+            e.compute_save_mode(id, AbilityScoreType::Dexterity),
+            RollMode::Advantage
+        );
+        // ...but not on STR saves.
+        assert_eq!(
+            e.compute_save_mode(id, AbilityScoreType::Strength),
+            RollMode::Normal
+        );
+    }
+
+    #[test]
+    fn save_mode_restrained_dex_disadvantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Restrained, ConditionTimer::Rounds(3));
+        assert_eq!(
+            e.compute_save_mode(id, AbilityScoreType::Dexterity),
+            RollMode::Disadvantage
+        );
+        // STR save unaffected by Restrained.
+        assert_eq!(
+            e.compute_save_mode(id, AbilityScoreType::Strength),
+            RollMode::Normal
+        );
+    }
+
+    #[test]
+    fn paralyzed_auto_fails_str_dex_saves() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Paralyzed, ConditionTimer::Rounds(2));
+        // STR save against any DC fails outright.
+        assert!(!e.roll_save(id, AbilityScoreType::Strength, 1).passed());
+        assert!(!e.roll_save(id, AbilityScoreType::Dexterity, 1).passed());
+        // WIS save isn't auto-failed — DC 1 is below any rolled total.
+        assert!(e.roll_save(id, AbilityScoreType::Wisdom, 1).passed());
+    }
+
+    #[test]
+    fn paralyzed_blocks_action_economy() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Paralyzed, ConditionTimer::Rounds(2));
+        assert!(!e.actors[&id].can_consume_resource(Resource::Action));
+        assert!(!e.actors[&id].can_consume_resource(Resource::BonusAction));
+        assert!(!e.actors[&id].can_consume_resource(Resource::Reaction));
+        assert_eq!(e.actors[&id].remaining_movement(), 0.0);
+    }
+
+    #[test]
+    fn shield_of_faith_adds_two_ac() {
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base_ac = e.actors[&id].armor_class();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::ShieldOfFaith, ConditionTimer::Rounds(10));
+        assert_eq!(e.actors[&id].armor_class(), base_ac + 2);
+    }
+
+    #[test]
+    fn restrained_zeros_movement() {
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&id].remaining_movement() > 0.0);
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Restrained, ConditionTimer::Rounds(3));
+        assert_eq!(e.actors[&id].remaining_movement(), 0.0);
     }
 }
