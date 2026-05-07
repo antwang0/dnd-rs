@@ -800,11 +800,10 @@ impl ActorInstance {
         }
     }
 
-    /// 5e spell save DC: 8 + spellcasting ability modifier (we don't track
-    /// proficiency yet; once we do, add it here). Actions that force saves
-    /// call this on the caster to set their DC.
+    /// 5e spell save DC: 8 + proficiency + spellcasting ability modifier.
+    /// Actions that force saves call this on the caster to set their DC.
     pub fn spell_save_dc(&self, ability: AbilityScoreType) -> i32 {
-        8 + modifier_from_score(self.ability_score(ability))
+        8 + self.proficiency_bonus() as i32 + modifier_from_score(self.ability_score(ability))
     }
 
     /// Scale a raw damage value by this actor's immunities, resistances,
@@ -955,11 +954,39 @@ impl ActorInstance {
     }
 
     pub fn attack_bonus(&self) -> i32 {
-        // TODO: add proficiency bonus once it's tracked
-        modifier_from_score(self.strength)
+        self.ability_attack_bonus(AbilityScoreType::Strength)
+    }
+
+    /// Attack roll bonus for an arbitrary ability — ability mod plus
+    /// proficiency. DEX-based weapons (bows, crossbows, finesse) use
+    /// this with `Dexterity`; STR-based with `Strength`. Spell attacks
+    /// would use the caster's spellcasting ability the same way.
+    pub fn ability_attack_bonus(&self, ability: AbilityScoreType) -> i32 {
+        modifier_from_score(self.ability_score(ability)) + self.proficiency_bonus() as i32
     }
 
     pub fn damage_bonus(&self) -> i32 {
         modifier_from_score(self.strength)
+    }
+
+    /// 5e proficiency bonus by character level. Levels 1–4 → +2, 5–8 →
+    /// +3, 9–12 → +4, 13–16 → +5, 17+ → +6. Monsters use level=1 today
+    /// (we don't have a per-template proficiency override) so they get
+    /// +2 — matches MM CR ≤ 4.
+    pub fn proficiency_bonus(&self) -> u32 {
+        match self.level {
+            0..=4 => 2,
+            5..=8 => 3,
+            9..=12 => 4,
+            13..=16 => 5,
+            _ => 6,
+        }
+    }
+
+    /// 5e spell-attack and save-DC bonus to add on top of the base ability
+    /// modifier when proficiency applies (most casting checks). Same +2
+    /// to +6 ladder as `proficiency_bonus`.
+    pub fn proficiency_bonus_for_save(&self) -> u32 {
+        self.proficiency_bonus()
     }
 }

@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
-    CURE_WOUNDS, HEALING_WORD, HOLD_PERSON, SACRED_BURST, SACRED_FLAME, SHIELD_OF_FAITH,
+    BLESS, CURE_WOUNDS, HEALING_WORD, HOLD_PERSON, SACRED_BURST, SACRED_FLAME, SHIELD_OF_FAITH,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{Language, Size, SpecialSense};
@@ -18,6 +18,7 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*HOLD_PERSON);
     actions.push(&*CURE_WOUNDS);
     actions.push(&*SHIELD_OF_FAITH);
+    actions.push(&*BLESS);
     CreatureTemplate {
         name: "Cleric",
         glyph: 'C',

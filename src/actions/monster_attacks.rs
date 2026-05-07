@@ -67,9 +67,12 @@ impl Action for Longbow {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dex = caster.ability_score(crate::engine::types::AbilityScoreType::Dexterity);
         // Bows use DEX for both attack and damage in 5e (finesse / ranged).
-        let attack_bonus = modifier_from_score(dex);
+        let attack_bonus =
+            caster.ability_attack_bonus(crate::engine::types::AbilityScoreType::Dexterity);
+        let dex_mod = modifier_from_score(
+            caster.ability_score(crate::engine::types::AbilityScoreType::Dexterity),
+        );
         let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
         else {
             return Vec::new();
@@ -83,7 +86,7 @@ impl Action for Longbow {
             attack_bonus,
             target_ac,
             Dice::new(1, 8),
-            modifier_from_score(dex),
+            dex_mod,
             DamageType::Piercing,
             false, // ranged
         )
@@ -309,10 +312,7 @@ impl Action for AcidSpit {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dex_mod = modifier_from_score(
-            caster.ability_score(AbilityScoreType::Dexterity),
-        );
-        let attack_bonus = dex_mod;
+        let attack_bonus = caster.ability_attack_bonus(AbilityScoreType::Dexterity);
         let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
         else {
             return Vec::new();
@@ -505,6 +505,8 @@ impl Action for Shortbow {
         let dex_mod = modifier_from_score(
             caster.ability_score(crate::engine::types::AbilityScoreType::Dexterity),
         );
+        let attack_bonus =
+            caster.ability_attack_bonus(crate::engine::types::AbilityScoreType::Dexterity);
         let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
         else {
             return Vec::new();
@@ -514,7 +516,7 @@ impl Action for Shortbow {
             caster_id,
             target_id,
             self.name(),
-            dex_mod,
+            attack_bonus,
             target_ac,
             Dice::new(1, 4),
             dex_mod,
@@ -708,6 +710,8 @@ impl Action for HeavyCrossbow {
         let dex_mod = modifier_from_score(
             caster.ability_score(crate::engine::types::AbilityScoreType::Dexterity),
         );
+        let attack_bonus =
+            caster.ability_attack_bonus(crate::engine::types::AbilityScoreType::Dexterity);
         let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
         else {
             return Vec::new();
@@ -717,7 +721,7 @@ impl Action for HeavyCrossbow {
             caster_id,
             target_id,
             self.name(),
-            dex_mod,
+            attack_bonus,
             target_ac,
             Dice::new(1, 10),
             dex_mod,
@@ -842,13 +846,20 @@ impl Action for Multiattack {
 
     fn cost(
         &self,
-        _encounter: &EncounterInstance,
-        _caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action]
+        // Inherit the sub-attack's cost shape so a `Multiattack { sub:
+        // SHORTBOW }` correctly costs a BonusAction, not an Action. We
+        // filter out Movement (sub-attacks shouldn't charge per-swing).
+        self.sub_attack
+            .cost(encounter, caster_id, target_ids, target_locations, overrides)
+            .into_iter()
+            .filter(|r| !matches!(r, Resource::Movement(_)))
+            .collect()
     }
 
     fn side_effects(
@@ -909,10 +920,23 @@ fn weapon_attack(
     damage_type: DamageType,
     is_melee: bool,
 ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+    use crate::conditions::Condition;
+
     let mode = encounter.compute_attack_mode(caster_id, target_id, is_melee);
     let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
     let is_crit = raw_attack == 20;
-    let attack_total = raw_attack + attack_bonus;
+    // Bless rider — +1d4 to the attack roll while concentration holds
+    // on the attacker. Rolled here so the log reflects the breakdown.
+    let blessed = encounter
+        .actors
+        .get(&caster_id)
+        .is_some_and(|a| a.has_condition(Condition::Blessed));
+    let bless_extra = if blessed {
+        encounter.roll(&Dice::new(1, 4)) as i32
+    } else {
+        0
+    };
+    let attack_total = raw_attack + attack_bonus + bless_extra;
     // Crits auto-hit regardless of AC. Otherwise compare normally.
     let hit = is_crit || attack_total >= target_ac;
     let outcome = if is_crit {
@@ -922,11 +946,17 @@ fn weapon_attack(
     } else {
         "miss"
     };
+    let bless_suffix = if blessed {
+        format!(" + bless 1d4({})", bless_extra)
+    } else {
+        String::new()
+    };
     encounter.log(format!(
-        "  {}: 1d20({}){:+} = {} vs AC {}{} \u{2014} {}",
+        "  {}: 1d20({}){:+}{} = {} vs AC {}{} \u{2014} {}",
         action_name,
         raw_attack,
         attack_bonus,
+        bless_suffix,
         attack_total,
         target_ac,
         mode.log_suffix(),
