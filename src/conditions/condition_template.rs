@@ -41,6 +41,10 @@ pub enum Condition {
     /// have disadvantage and you have advantage on DEX saves. Granted by
     /// the Dodge action; cleared at the start of the actor's next turn.
     Dodging,
+    /// Movement this round doesn't provoke opportunity attacks. Set by
+    /// the Disengage action and consumed by the OA dispatcher; expires
+    /// on the next round wrap.
+    Disengaging,
     /// Self-buff from a successful Hide check: attacks against you have
     /// disadvantage; you have advantage on the next attack roll. Cleared
     /// by attacking, taking damage, or otherwise being detected.
@@ -72,6 +76,7 @@ impl Condition {
             Condition::Paralyzed => "paralyzed",
             Condition::Invisible => "invisible",
             Condition::Dodging => "dodging",
+            Condition::Disengaging => "disengaging",
             Condition::Hidden => "hidden",
             Condition::Helped => "helped",
             Condition::Blessed => "blessed",

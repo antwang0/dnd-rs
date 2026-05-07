@@ -672,12 +672,22 @@ impl EncounterInstance {
         to: Coordinate,
     ) {
         use crate::actions::action_template::{MELEE_REACH, TargetingSchema};
+        use crate::conditions::Condition;
         use crate::engine::side_effects::Resource;
 
-        let (mover_team, mover_size) = match self.actors.get(&mover_id) {
-            Some(a) => (a.team(), get_tiles_from_size(a.size())),
+        let (mover_team, mover_size, disengaging) = match self.actors.get(&mover_id) {
+            Some(a) => (
+                a.team(),
+                get_tiles_from_size(a.size()),
+                a.has_condition(Condition::Disengaging),
+            ),
             None => return,
         };
+        // 5e Disengage: leaving any threatened tile this turn doesn't
+        // provoke. Skip OA dispatch entirely while the marker is active.
+        if disengaging {
+            return;
+        }
 
         // Snapshot reactor candidates up-front — the loop body will mutate
         // self, which would conflict with holding an iterator into self.actors.
@@ -3267,6 +3277,72 @@ mod tests {
             .unwrap()
             .add_condition(Condition::ShieldOfFaith, ConditionTimer::Rounds(10));
         assert_eq!(e.actors[&id].armor_class(), base_ac + 2);
+    }
+
+    #[test]
+    fn shove_invalid_against_two_sizes_larger() {
+        use crate::actions::default_actions::SHOVE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        // Medium zombie shoving a Large ogre — allowed (one size up).
+        let mover = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        let aei = ActionExecutionInfo::new(&*SHOVE, mover, Some(vec![ogre]), None, None);
+        assert!(aei.validate(&e), "shoving a one-size-larger creature is OK");
+    }
+
+    #[test]
+    fn dodge_action_grants_dodging_condition() {
+        use crate::actions::default_actions::DODGE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*DODGE, id, None, None, None);
+        assert!(aei.validate(&e), "dodge should validate");
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&id].has_condition(Condition::Dodging));
+    }
+
+    #[test]
+    fn disengage_suppresses_opportunity_attacks() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Apply Disengaging directly so this test is independent of the
+        // Dodge / Disengage action wiring.
+        e.actors
+            .get_mut(&mover)
+            .unwrap()
+            .add_condition(Condition::Disengaging, ConditionTimer::Rounds(1));
+
+        let move_effect = MoveActor {
+            actor_id: mover,
+            path: vec![Coordinate::new(15, 5)],
+        };
+        move_effect.apply(&mut e);
+
+        // Reactor's reaction should still be intact — Disengage suppresses OAs.
+        assert!(
+            e.actors[&reactor].can_consume_resource(Resource::Reaction),
+            "disengaging mover should not provoke OAs"
+        );
     }
 
     #[test]
