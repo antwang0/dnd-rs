@@ -119,6 +119,46 @@ pub static SCROLL_OF_FIREBALL: Item = Item {
     on_use: Some(&crate::actions::item_actions::READ_FIREBALL_SCROLL),
 };
 
+pub static POTION_OF_GREATER_HEALING: Item = Item {
+    name: "Potion of Greater Healing",
+    glyph: 'P',
+    bonuses: ItemBonuses {
+        ac: 0,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: Some(&crate::actions::item_actions::DRINK_GREATER_HEALING_POTION),
+};
+
+pub static ANTITOXIN: Item = Item {
+    name: "Antitoxin",
+    glyph: 't',
+    bonuses: ItemBonuses {
+        ac: 0,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: Some(&crate::actions::item_actions::DRINK_ANTITOXIN),
+};
+
+/// Cloak of Protection — flat +1 to AC and +1 to all saves. Sister item
+/// to the Ring of Protection but stacking on save bonus instead of
+/// occupying the ring slot. Stacks with everything since slots aren't
+/// modeled.
+pub static CLOAK_OF_PROTECTION: Item = Item {
+    name: "Cloak of Protection",
+    glyph: 'C',
+    bonuses: ItemBonuses {
+        ac: 1,
+        max_hp: 0,
+        speed: 0,
+        save: 1,
+    },
+    on_use: None,
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites.
@@ -126,8 +166,11 @@ pub static LOOT_POOL: &[&Item] = &[
     &RING_OF_PROTECTION,
     &BOOTS_OF_STRIDING,
     &CLOAK_OF_RESISTANCE,
+    &CLOAK_OF_PROTECTION,
     &AMULET_OF_HEALTH,
     &POTION_OF_HEALING,
     &POTION_OF_HEALING,
+    &POTION_OF_GREATER_HEALING,
+    &ANTITOXIN,
     &SCROLL_OF_FIREBALL,
 ];

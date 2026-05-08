@@ -3178,6 +3178,54 @@ mod tests {
     }
 
     #[test]
+    fn antitoxin_clears_poisoned_and_consumes_item() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::DRINK_ANTITOXIN;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::items::item_template::ANTITOXIN;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&id).unwrap().pickup_item(&ANTITOXIN);
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Poisoned, ConditionTimer::Permanent);
+
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&DRINK_ANTITOXIN, id, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(!e.actors[&id].has_condition(Condition::Poisoned));
+        assert!(!e.actors[&id].has_item_named("Antitoxin"));
+    }
+
+    #[test]
+    fn greater_healing_potion_uses_bonus_action() {
+        use crate::actions::action_template::Action;
+        use crate::actions::item_actions::DRINK_GREATER_HEALING_POTION;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(2, 2),
+                0,
+                0,
+            )
+            .unwrap();
+        let costs = DRINK_GREATER_HEALING_POTION.cost(&e, id, None, None, None);
+        assert_eq!(costs.len(), 1);
+        assert!(matches!(costs[0], Resource::BonusAction));
+    }
+
+    #[test]
     fn disengage_suppresses_opportunity_attacks() {
         use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
 
