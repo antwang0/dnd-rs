@@ -35,5 +35,9 @@ pub static GOBLIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
+        // No special hide — vanilla creature with no resistances.
+        resistances: HashSet::new(),
+        immunities: HashSet::new(),
+        vulnerabilities: HashSet::new(),
     }
 });

@@ -3041,4 +3041,68 @@ mod tests {
         let enemy_count = next.actors.values().filter(|a| a.team() != 0).count();
         assert!(enemy_count > 0, "expected enemies on teams 1+");
     }
+
+    #[test]
+    fn zombie_resists_necrotic_and_takes_double_radiant() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+
+        // 10 necrotic → resisted to 5.
+        DealDamage {
+            actor_id: id,
+            amount: 10,
+            damage_type: DamageType::Necrotic,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max - 5);
+
+        // Heal back, then 4 radiant → vulnerable doubles to 8.
+        e.actors.get_mut(&id).unwrap().heal(100);
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Radiant,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max - 8);
+    }
+
+    #[test]
+    fn slime_immune_to_acid_takes_no_damage() {
+        use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SLIME_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 999,
+            damage_type: DamageType::Acid,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max, "slime should be acid-immune");
+    }
+
+    #[test]
+    fn shielded_condition_grants_two_ac() {
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base = e.actors[&id].armor_class();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Shielded, ConditionTimer::Permanent);
+        assert_eq!(e.actors[&id].armor_class(), base + 2);
+    }
 }

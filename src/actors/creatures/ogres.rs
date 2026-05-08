@@ -36,5 +36,9 @@ pub static OGRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
+        // Big, dumb, hardy. No flashy resistances.
+        resistances: HashSet::new(),
+        immunities: HashSet::new(),
+        vulnerabilities: HashSet::new(),
     }
 });

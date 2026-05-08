@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::LONGBOW;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{Language, Size, SpecialSense};
+use crate::engine::types::{DamageType, Language, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -33,5 +33,11 @@ pub static SKELETON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
+        // No flesh — piercing slips through bones, bludgeoning shatters
+        // them. Cold-blooded immunity to poison; radiant disrupts the
+        // animating necromancy.
+        resistances: HashSet::from([DamageType::Piercing]),
+        immunities: HashSet::from([DamageType::Poison]),
+        vulnerabilities: HashSet::from([DamageType::Bludgeoning]),
     }
 });
