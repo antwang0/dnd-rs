@@ -1136,8 +1136,9 @@ impl EncounterInstance {
 
     /// End the actor's concentration (if any) and remove every condition
     /// that concentration installed. Logs the drop and each cleared
-    /// condition. No-op if the actor isn't concentrating.
+    /// condition / buff. No-op if the actor isn't concentrating.
     pub fn drop_concentration(&mut self, actor_id: usize) {
+        use crate::actors::actor_template::ConcentrationBuff;
         let Some(actor) = self.actors.get_mut(&actor_id) else {
             return;
         };
@@ -1159,6 +1160,26 @@ impl EncounterInstance {
                 self.log(format!("{} is no longer {}.", target_name, condition.name()));
             }
         }
+        for (target_id, buff) in data.buffs {
+            let Some(target) = self.actors.get_mut(&target_id) else {
+                continue;
+            };
+            let target_name = target.name().to_string();
+            match buff {
+                ConcentrationBuff::Bless => {
+                    if target.bless_rounds() > 0 {
+                        target.drop_bless();
+                        self.log(format!("{}'s blessing fades.", target_name));
+                    }
+                }
+                ConcentrationBuff::ShieldOfFaith => {
+                    if target.shield_of_faith_rounds() > 0 {
+                        target.drop_shield_of_faith();
+                        self.log(format!("{}'s shield of faith fades.", target_name));
+                    }
+                }
+            }
+        }
     }
 
     /// Tick condition timers on every actor. `Rounds(n)` becomes
@@ -1176,11 +1197,15 @@ impl EncounterInstance {
             let name = actor.name().to_string();
             let expired = actor.tick_condition_timers();
             let bless_expired = actor.tick_bless();
+            let sof_expired = actor.tick_shield_of_faith();
             for c in expired {
                 self.log(format!("{} is no longer {}.", name, c.name()));
             }
             if bless_expired {
                 self.log(format!("{}'s blessing fades.", name));
+            }
+            if sof_expired {
+                self.log(format!("{}'s shield of faith fades.", name));
             }
         }
     }
@@ -2433,6 +2458,7 @@ mod tests {
             .start_concentration(ConcentrationData {
                 spell_name: "Hold Person".to_string(),
                 conditions: vec![(victim, Condition::Stunned)],
+                buffs: vec![],
             });
 
         // Drop the caster to 0 HP — Downed should auto-drop concentration
@@ -2472,6 +2498,7 @@ mod tests {
             .start_concentration(ConcentrationData {
                 spell_name: "Hold Person".to_string(),
                 conditions: vec![(victim, Condition::Stunned)],
+                buffs: vec![],
             });
 
         // Hit with damage huge enough to make the DC unsavable. DC is
@@ -3255,6 +3282,49 @@ mod tests {
             e.compute_attack_mode(attacker, target, true),
             RollMode::Advantage
         );
+    }
+
+    #[test]
+    fn shield_of_faith_grants_two_ac() {
+        use crate::actions::spells::SHIELD_OF_FAITH;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(4, 4), 0, 1)
+            .unwrap();
+        let base_ac = e.actors[&ally].armor_class();
+        let aei =
+            ActionExecutionInfo::new(&*SHIELD_OF_FAITH, cleric, Some(vec![ally]), None, None);
+        for eff in aei.execute(&mut e) {
+            eff.apply(&mut e);
+        }
+        assert_eq!(e.actors[&ally].armor_class(), base_ac + 2);
+    }
+
+    #[test]
+    fn dropping_concentration_clears_bless_buff() {
+        use crate::actions::spells::BLESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(4, 4), 0, 1)
+            .unwrap();
+        let aei = ActionExecutionInfo::new(&*BLESS, cleric, Some(vec![ally]), None, None);
+        for eff in aei.execute(&mut e) {
+            eff.apply(&mut e);
+        }
+        assert!(e.actors[&ally].is_blessed());
+        // Drop concentration (e.g. cast a new concentration spell).
+        e.drop_concentration(cleric);
+        assert!(!e.actors[&ally].is_blessed(), "bless should drop with concentration");
     }
 
     #[test]

@@ -826,6 +826,7 @@ mod tests {
             .start_concentration(ConcentrationData {
                 spell_name: "Placeholder".to_string(),
                 conditions: vec![],
+                buffs: vec![],
             });
 
         let ai = SimpleAi;
@@ -867,6 +868,7 @@ mod tests {
             .start_concentration(ConcentrationData {
                 spell_name: "Placeholder".to_string(),
                 conditions: vec![],
+                buffs: vec![],
             });
 
         let ai = SimpleAi;
@@ -958,6 +960,7 @@ mod tests {
             .start_concentration(ConcentrationData {
                 spell_name: "Bless".to_string(),
                 conditions: vec![],
+                buffs: vec![],
             });
 
         let ai = SimpleAi;

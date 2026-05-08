@@ -404,3 +404,24 @@ impl ApplicableSideEffect for ApplyBless {
         ei.log(format!("{} is blessed.", name));
     }
 }
+
+/// Apply Shield of Faith to a recipient: +2 AC for `rounds` rounds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ApplyShieldOfFaith {
+    pub actor_id: usize,
+    pub rounds: u32,
+}
+
+impl ApplicableSideEffect for ApplyShieldOfFaith {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        actor.apply_shield_of_faith(self.rounds);
+        ei.log(format!(
+            "{} is shielded by faith (+2 AC).",
+            name
+        ));
+    }
+}

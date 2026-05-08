@@ -349,6 +349,7 @@ impl Action for HoldPerson {
                 data: ConcentrationData {
                     spell_name: "Hold Person".to_string(),
                     conditions: vec![(target_id, Condition::Stunned)],
+                    buffs: Vec::new(),
                 },
             }),
         ]
@@ -356,3 +357,318 @@ impl Action for HoldPerson {
 }
 
 pub static HOLD_PERSON: LazyLock<HoldPerson> = LazyLock::new(|| HoldPerson {});
+
+/// Bless — level-1 cleric concentration spell. Pick a friendly target
+/// within 30ft (we use 12 tiles); they roll attacks and saves with a
+/// +1d4 boost (we proxy as full advantage). Lasts up to 10 rounds /
+/// concentration drops. Costs Action + level-1 spell slot.
+pub struct Bless {}
+
+impl Action for Bless {
+    fn name(&self) -> &str {
+        "bless"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bls"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(12)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Buff allies only. Targeting yourself is allowed (5e).
+        let Some(ally_id) = target_ids.and_then(|t| t.first().copied()) else {
+            return false;
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        let Some(ally) = encounter.actors.get(&ally_id) else {
+            return false;
+        };
+        ally.team() == caster.team() && ally.is_combat_active()
+    }
+
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actors::actor_template::{ConcentrationBuff, ConcentrationData};
+        use crate::engine::side_effects::{ApplyBless, StartConcentration};
+
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        // Tag the buff so drop_concentration zeroes the counter when
+        // the caster's concentration ends.
+        vec![
+            Box::new(ApplyBless {
+                actor_id: target_id,
+                rounds: 10,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData {
+                    spell_name: "Bless".to_string(),
+                    conditions: Vec::new(),
+                    buffs: vec![(target_id, ConcentrationBuff::Bless)],
+                },
+            }),
+        ]
+    }
+}
+
+pub static BLESS: LazyLock<Bless> = LazyLock::new(|| Bless {});
+
+/// Guiding Bolt — level-1 cleric attack spell. Ranged spell attack
+/// (+WIS-mod to hit) for 4d6 radiant; on hit the next attack against
+/// the target before the end of the caster's next turn has advantage.
+/// We proxy "next attack has advantage" by installing a HelpGrant
+/// against the target (one-shot, any ally consumes). Costs Action +
+/// level-1 spell slot.
+pub struct GuidingBolt {}
+
+impl Action for GuidingBolt {
+    fn name(&self) -> &str {
+        "guiding bolt"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["gb", "bolt"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120ft → 48 tiles. Big stick, but our maps cap at ~40 wide.
+        Some(48)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let wis_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+        // Spell attack roll (vs AC), not a save.
+        let mode = encounter.compute_attack_mode(caster_id, target_id, false);
+        let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
+        let is_crit = raw_attack == 20;
+        let total = raw_attack + wis_mod;
+        let hit = is_crit || total >= target_ac;
+        let outcome = if is_crit {
+            "CRIT!"
+        } else if hit {
+            "hit"
+        } else {
+            "miss"
+        };
+        encounter.log(format!(
+            "  guiding bolt: 1d20({}){:+} = {} vs AC {}{} \u{2014} {}",
+            raw_attack,
+            wis_mod,
+            total,
+            target_ac,
+            mode.log_suffix(),
+            outcome
+        ));
+        if !hit {
+            return Vec::new();
+        }
+        // 4d6 radiant on hit; double on crit (5e: spell-attack crit).
+        let raw = encounter.roll(&Dice::new(4, 6));
+        let extra = if is_crit {
+            encounter.roll(&Dice::new(4, 6))
+        } else {
+            0
+        };
+        let damage = raw + extra;
+        encounter.log(format!(
+            "  guiding bolt: 4d6 = {} radiant{}",
+            damage,
+            if is_crit { " (crit)" } else { "" }
+        ));
+        // 5e: "the next attack roll against this creature before the
+        // end of your next turn has advantage." We model this by
+        // installing a HelpGrant on the caster against the target —
+        // the caster's next swing on them rolls advantage. Anchoring
+        // to the caster (not "any ally") keeps the bookkeeping local
+        // and matches the typical solo-cleric scenario.
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: damage,
+            damage_type: DamageType::Radiant,
+        })];
+        effects.push(Box::new(crate::engine::side_effects::GrantHelp {
+            helper_id: caster_id,
+            recipient_id: caster_id,
+            against_id: target_id,
+        }));
+        effects
+    }
+}
+
+pub static GUIDING_BOLT: LazyLock<GuidingBolt> = LazyLock::new(|| GuidingBolt {});
+
+/// Shield of Faith — level-1 cleric concentration spell. Pick an ally
+/// within 60ft (24 tiles); they get +2 AC for up to 10 rounds /
+/// concentration drops. We model the +2 AC as a one-off Condition? No —
+/// AC bonuses don't fit the condition model. Instead, install a
+/// transient `shield_of_faith_rounds` counter on the target, mirroring
+/// the bless approach. Drop on concentration end.
+pub struct ShieldOfFaith {}
+
+impl Action for ShieldOfFaith {
+    fn name(&self) -> &str {
+        "shield of faith"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sof", "shield"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction, Resource::SpellSlot(1)]
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(ally_id) = target_ids.and_then(|t| t.first().copied()) else {
+            return false;
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        let Some(ally) = encounter.actors.get(&ally_id) else {
+            return false;
+        };
+        ally.team() == caster.team() && ally.is_combat_active()
+    }
+
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actors::actor_template::{ConcentrationBuff, ConcentrationData};
+        use crate::engine::side_effects::{ApplyShieldOfFaith, StartConcentration};
+
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        vec![
+            Box::new(ApplyShieldOfFaith {
+                actor_id: target_id,
+                rounds: 10,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData {
+                    spell_name: "Shield of Faith".to_string(),
+                    conditions: Vec::new(),
+                    buffs: vec![(target_id, ConcentrationBuff::ShieldOfFaith)],
+                },
+            }),
+        ]
+    }
+}
+
+pub static SHIELD_OF_FAITH: LazyLock<ShieldOfFaith> = LazyLock::new(|| ShieldOfFaith {});

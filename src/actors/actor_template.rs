@@ -57,6 +57,17 @@ pub struct ConcentrationData {
     /// Conditions this concentration applied. On drop, each is removed
     /// from its target. `(target_id, condition)`.
     pub conditions: Vec<(usize, Condition)>,
+    /// Non-condition buffs to clear on drop. Bless / Shield of Faith
+    /// don't fit the Condition enum, so we tag them by kind here.
+    pub buffs: Vec<(usize, ConcentrationBuff)>,
+}
+
+/// Buff tags installed by a concentration spell that need explicit
+/// cleanup when concentration drops.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConcentrationBuff {
+    Bless,
+    ShieldOfFaith,
 }
 
 /// What `heal` did. Mirrors `DamageOutcome` for the inverse direction.
@@ -310,6 +321,10 @@ pub struct ActorInstance {
     /// buffs. Decremented on round-end. While > 0, attacks and saves
     /// see Advantage in their mode-compute path.
     bless_rounds: u32,
+    /// Round counter for Shield of Faith. While > 0, this actor's AC
+    /// gets +2. Decremented on round-end; cleared when the caster's
+    /// concentration drops.
+    shield_of_faith_rounds: u32,
     /// Damage type modifiers (resistance, vulnerability, immunity).
     /// Looked up by `take_damage` and applied before HP delta. Empty
     /// for most monsters; populated for elementals, undead, etc.
@@ -405,6 +420,7 @@ impl ActorInstance {
             disengaging: false,
             help_grant: None,
             bless_rounds: 0,
+            shield_of_faith_rounds: 0,
             damage_modifiers: ct.damage_modifiers.clone(),
         })
     }
@@ -459,6 +475,10 @@ impl ActorInstance {
         self.bless_rounds = self.bless_rounds.max(rounds);
     }
 
+    pub fn drop_bless(&mut self) {
+        self.bless_rounds = 0;
+    }
+
     /// Tick the bless timer at round-end. Returns true on the round it
     /// expires so the engine can log the drop.
     pub fn tick_bless(&mut self) -> bool {
@@ -467,6 +487,27 @@ impl ActorInstance {
         }
         self.bless_rounds -= 1;
         self.bless_rounds == 0
+    }
+
+    pub fn shield_of_faith_rounds(&self) -> u32 {
+        self.shield_of_faith_rounds
+    }
+
+    pub fn apply_shield_of_faith(&mut self, rounds: u32) {
+        self.shield_of_faith_rounds = self.shield_of_faith_rounds.max(rounds);
+    }
+
+    pub fn drop_shield_of_faith(&mut self) {
+        self.shield_of_faith_rounds = 0;
+    }
+
+    /// Returns true on the round it expires.
+    pub fn tick_shield_of_faith(&mut self) -> bool {
+        if self.shield_of_faith_rounds == 0 {
+            return false;
+        }
+        self.shield_of_faith_rounds -= 1;
+        self.shield_of_faith_rounds == 0
     }
 
     pub fn damage_modifier(
@@ -543,6 +584,11 @@ impl ActorInstance {
         self.spell_slot_manager.restore_spell_slots();
         self.conditions.clear();
         self.concentration = None;
+        self.bless_rounds = 0;
+        self.shield_of_faith_rounds = 0;
+        self.help_grant = None;
+        self.dodging = false;
+        self.disengaging = false;
     }
 
     pub fn cr(&self) -> f32 {
@@ -784,7 +830,8 @@ impl ActorInstance {
 
     pub fn armor_class(&self) -> u32 {
         let bonus = self.total_item_bonuses().ac;
-        (self.base_ac as i32 + bonus).max(0) as u32
+        let shield = if self.shield_of_faith_rounds > 0 { 2 } else { 0 };
+        (self.base_ac as i32 + bonus + shield).max(0) as u32
     }
 
     pub fn hitpoints(&self) -> u32 {
