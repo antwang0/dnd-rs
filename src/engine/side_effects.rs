@@ -129,6 +129,7 @@ pub struct DealDamage {
 
 impl ApplicableSideEffect for DealDamage {
     fn apply(&self, ei: &mut EncounterInstance) {
+        use crate::actors::actor_template::DamageModifier;
         let Some(actor) = ei.get_actor(self.actor_id) else {
             ei.log(format!(
                 "DealDamage: actor {} missing, ignoring",
@@ -136,10 +137,37 @@ impl ApplicableSideEffect for DealDamage {
             ));
             return;
         };
+        // Apply per-damage-type resistance / vulnerability / immunity
+        // before the HP delta. Resistance halves (rounding down — 5e
+        // RAW), vulnerability doubles, immunity zeroes.
+        let modifier = actor.damage_modifier(self.damage_type);
+        let adjusted = match modifier {
+            Some(DamageModifier::Resistance) => self.amount / 2,
+            Some(DamageModifier::Vulnerability) => self.amount.saturating_mul(2),
+            Some(DamageModifier::Immunity) => 0,
+            None => self.amount,
+        };
         let name = actor.name().to_string();
-        let outcome = actor.take_damage(self.amount);
+        if let Some(m) = modifier {
+            let tag = match m {
+                DamageModifier::Resistance => "resists",
+                DamageModifier::Vulnerability => "is vulnerable to",
+                DamageModifier::Immunity => "is immune to",
+            };
+            ei.log(format!(
+                "  {} {} {:?} \u{2014} {} \u{2192} {}",
+                name, tag, self.damage_type, self.amount, adjusted
+            ));
+        }
+        // Re-borrow after the log() above (which immutably borrowed ei).
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let outcome = actor.take_damage(adjusted);
         let was_concentrating = actor.is_concentrating();
         // actor borrow ends here.
+        // Use the post-modifier amount for downstream concentration-DC math.
+        let dmg_for_conc = adjusted;
 
         match outcome {
             DamageOutcome::Downed => {
@@ -155,7 +183,7 @@ impl ApplicableSideEffect for DealDamage {
             }
             DamageOutcome::Reduced if was_concentrating => {
                 // 5e: take damage while concentrating → CON save vs DC max(10, dmg/2).
-                let dc = ((self.amount / 2) as i32).max(10);
+                let dc = ((dmg_for_conc / 2) as i32).max(10);
                 let save = ei.roll_save(
                     self.actor_id,
                     crate::engine::types::AbilityScoreType::Constitution,

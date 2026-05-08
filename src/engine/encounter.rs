@@ -293,11 +293,18 @@ impl EncounterInstance {
     }
 
     /// Compute the attack-roll mode given attacker / target conditions.
-    /// 5e clauses we model today:
-    /// - Attacker Prone → disadvantage on all attacks.
-    /// - Attacker Poisoned → disadvantage.
-    /// - Target Prone → melee attacks have advantage, ranged have disadvantage.
-    /// - Target Stunned → advantage on attacks vs them.
+    /// 5e clauses we model:
+    /// - Attacker Prone / Poisoned / Blinded / Frightened / Restrained →
+    ///   disadvantage on attacks.
+    /// - Attacker has Bless/temporary advantage (per-action, handled
+    ///   elsewhere) — this function only handles condition state.
+    /// - Target Prone → melee advantage / ranged disadvantage.
+    /// - Target Stunned / Restrained / Blinded / Unconscious → advantage
+    ///   on attacks against them.
+    /// - Target Invisible → disadvantage on attacks against them.
+    /// - Attacker Invisible → advantage on attacks they make.
+    /// - Attacker Dodging is *not* checked here — Dodge is per-target;
+    ///   `dodge_targets` flows into this via `target.is_dodging()`.
     ///
     /// Multiple sources of the same direction don't stack; opposing
     /// sources cancel via `RollMode::combine`.
@@ -310,11 +317,21 @@ impl EncounterInstance {
         use crate::conditions::Condition;
         let mut mode = RollMode::Normal;
         if let Some(attacker) = self.actors.get(&attacker_id) {
-            if attacker.has_condition(Condition::Prone) {
-                mode = mode.combine(RollMode::Disadvantage);
+            // Attacker disadvantage from conditions.
+            for c in [
+                Condition::Prone,
+                Condition::Poisoned,
+                Condition::Blinded,
+                Condition::Frightened,
+                Condition::Restrained,
+            ] {
+                if attacker.has_condition(c) {
+                    mode = mode.combine(RollMode::Disadvantage);
+                    break;
+                }
             }
-            if attacker.has_condition(Condition::Poisoned) {
-                mode = mode.combine(RollMode::Disadvantage);
+            if attacker.has_condition(Condition::Invisible) {
+                mode = mode.combine(RollMode::Advantage);
             }
         }
         if let Some(target) = self.actors.get(&target_id) {
@@ -325,27 +342,63 @@ impl EncounterInstance {
                     RollMode::Disadvantage
                 });
             }
-            if target.has_condition(Condition::Stunned) {
-                mode = mode.combine(RollMode::Advantage);
+            for c in [
+                Condition::Stunned,
+                Condition::Restrained,
+                Condition::Blinded,
+                Condition::Unconscious,
+            ] {
+                if target.has_condition(c) {
+                    mode = mode.combine(RollMode::Advantage);
+                    break;
+                }
+            }
+            if target.has_condition(Condition::Invisible) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+            // Dodging targets impose disadvantage on attacks vs them.
+            if target.is_dodging() {
+                mode = mode.combine(RollMode::Disadvantage);
             }
         }
         mode
     }
 
-    /// Compute the save-roll mode for an actor's ability save. Today
-    /// `Poisoned` imposes disadvantage on all saves derived from ability
-    /// checks (we conflate save-vs-check until we model that distinction).
+    /// Compute the save-roll mode for an actor's ability save.
+    /// 5e clauses we model:
+    /// - Poisoned → disadvantage on every save (we conflate save-vs-
+    ///   check until we model that distinction).
+    /// - Restrained → disadvantage on DEX saves specifically.
+    /// - Blinded → disadvantage on saves that depend on sight (we treat
+    ///   DEX saves vs targeted spells as sight-dependent for now).
+    /// - Bless (temporary advantage) is *not* a condition; it's tracked
+    ///   on the actor as a `bless_rounds` counter and folded in here.
     pub fn compute_save_mode(
         &self,
         actor_id: usize,
-        _ability: crate::engine::types::AbilityScoreType,
+        ability: crate::engine::types::AbilityScoreType,
     ) -> RollMode {
         use crate::conditions::Condition;
+        use crate::engine::types::AbilityScoreType;
         let mut mode = RollMode::Normal;
-        if let Some(actor) = self.actors.get(&actor_id)
-            && actor.has_condition(Condition::Poisoned)
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return mode;
+        };
+        if actor.has_condition(Condition::Poisoned) {
+            mode = mode.combine(RollMode::Disadvantage);
+        }
+        if matches!(ability, AbilityScoreType::Dexterity)
+            && (actor.has_condition(Condition::Restrained)
+                || actor.has_condition(Condition::Blinded))
         {
             mode = mode.combine(RollMode::Disadvantage);
+        }
+        if actor.is_blessed() {
+            // Bless grants advantage on attacks AND saves; the save side
+            // is wired here. The +1d4 to attacks is a separate mechanic
+            // we don't model — using full advantage as a proxy is louder
+            // but in the right direction.
+            mode = mode.combine(RollMode::Advantage);
         }
         mode
     }

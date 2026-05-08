@@ -1,8 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::LONGBOW;
-use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{Language, Size, SpecialSense};
-use std::collections::HashSet;
+use crate::actors::actor_template::{CreatureTemplate, DamageModifier};
+use crate::engine::types::{DamageType, Language, Size, SpecialSense};
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 /// 5e-flavored skeleton archer. Lower HP than a zombie but DEX-based ranged
@@ -33,5 +33,13 @@ pub static SKELETON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
+        // 5e MM: skeletons take half damage from piercing (arrows pass
+        // through bones), and are vulnerable to bludgeoning (smashing
+        // breaks brittle bones). Adds tactical reason to swap weapons.
+        damage_modifiers: HashMap::from([
+            (DamageType::Piercing, DamageModifier::Resistance),
+            (DamageType::Bludgeoning, DamageModifier::Vulnerability),
+            (DamageType::Poison, DamageModifier::Immunity),
+        ]),
     }
 });

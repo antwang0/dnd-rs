@@ -120,6 +120,10 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Per-damage-type resistance / vulnerability / immunity. Empty for
+    /// most creatures. Skeletons resist piercing & slashing, slimes
+    /// resist acid, fire elementals immunize fire, etc.
+    pub damage_modifiers: HashMap<crate::engine::types::DamageType, DamageModifier>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -287,6 +291,50 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    /// Set by the Dodge action; clears at the start of this actor's
+    /// next turn (`reset_for_new_round`). While true, attacks vs this
+    /// actor have disadvantage (per 5e). One-turn flag, not a condition,
+    /// because it only affects roll-mode against the dodger and doesn't
+    /// need rounds-counted timer semantics.
+    dodging: bool,
+    /// Set by the Disengage action; clears at the start of next turn.
+    /// While true, leaving threatened squares does not provoke
+    /// opportunity attacks. Read by `dispatch_opportunity_attacks`.
+    disengaging: bool,
+    /// Number of rounds the Help action grants advantage on the
+    /// helper-designated ally's next attack. Advantage applies to one
+    /// attack roll then `consume_help` clears it. Tracks the helper's
+    /// id for log clarity.
+    help_grant: Option<HelpGrant>,
+    /// Round counter for Bless / similar "advantage on attacks & saves"
+    /// buffs. Decremented on round-end. While > 0, attacks and saves
+    /// see Advantage in their mode-compute path.
+    bless_rounds: u32,
+    /// Damage type modifiers (resistance, vulnerability, immunity).
+    /// Looked up by `take_damage` and applied before HP delta. Empty
+    /// for most monsters; populated for elementals, undead, etc.
+    damage_modifiers: HashMap<crate::engine::types::DamageType, DamageModifier>,
+}
+
+/// One-turn promise of advantage from a Help action: when `recipient`
+/// next attacks `against`, the attack is rolled with advantage and the
+/// grant is consumed. Tracked on the recipient (one slot — re-helping
+/// overwrites). 5e RAW only requires the helper to be adjacent to the
+/// target at the time of helping; we don't re-validate that on
+/// consumption (snapshot-at-grant semantics).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HelpGrant {
+    pub helper_id: usize,
+    pub against: usize,
+}
+
+/// How an actor reacts to a given damage type. `Resistance` halves
+/// incoming, `Vulnerability` doubles, `Immunity` zeroes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DamageModifier {
+    Resistance,
+    Vulnerability,
+    Immunity,
 }
 
 impl ActorInstance {
@@ -353,7 +401,79 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            dodging: false,
+            disengaging: false,
+            help_grant: None,
+            bless_rounds: 0,
+            damage_modifiers: ct.damage_modifiers.clone(),
         })
+    }
+
+    pub fn is_dodging(&self) -> bool {
+        self.dodging
+    }
+
+    pub fn set_dodging(&mut self, val: bool) {
+        self.dodging = val;
+    }
+
+    pub fn is_disengaging(&self) -> bool {
+        self.disengaging
+    }
+
+    pub fn set_disengaging(&mut self, val: bool) {
+        self.disengaging = val;
+    }
+
+    pub fn help_grant(&self) -> Option<HelpGrant> {
+        self.help_grant
+    }
+
+    pub fn set_help_grant(&mut self, grant: Option<HelpGrant>) {
+        self.help_grant = grant;
+    }
+
+    /// Pop the help grant if it's pointed at `against`. Used by attack
+    /// resolution: a helped attack rolls with advantage exactly once.
+    pub fn consume_help_for(&mut self, against: usize) -> Option<HelpGrant> {
+        let grant = self.help_grant?;
+        if grant.against == against {
+            self.help_grant = None;
+            Some(grant)
+        } else {
+            None
+        }
+    }
+
+    pub fn is_blessed(&self) -> bool {
+        self.bless_rounds > 0
+    }
+
+    pub fn bless_rounds(&self) -> u32 {
+        self.bless_rounds
+    }
+
+    pub fn apply_bless(&mut self, rounds: u32) {
+        // 5e: Bless lasts up to 1 minute (10 rounds). Re-applying
+        // refreshes if longer.
+        self.bless_rounds = self.bless_rounds.max(rounds);
+    }
+
+    /// Tick the bless timer at round-end. Returns true on the round it
+    /// expires so the engine can log the drop.
+    pub fn tick_bless(&mut self) -> bool {
+        if self.bless_rounds == 0 {
+            return false;
+        }
+        self.bless_rounds -= 1;
+        self.bless_rounds == 0
+    }
+
+    pub fn damage_modifier(
+        &self,
+        dt: crate::engine::types::DamageType,
+    ) -> Option<DamageModifier> {
+        self.damage_modifiers.get(&dt).copied()
     }
 
     pub fn rolls_death_saves(&self) -> bool {
@@ -573,30 +693,40 @@ impl ActorInstance {
         }
     }
 
+    /// True if any of the actor's conditions removes the action economy
+    /// (Stunned, Incapacitated, Unconscious). Centralized so consumers
+    /// don't need to know which conditions are in that bucket.
+    pub fn action_economy_blocked(&self) -> bool {
+        self.conditions
+            .keys()
+            .any(|c| c.blocks_action_economy())
+    }
+
     pub fn can_consume_resource(&self, resource: Resource) -> bool {
-        // Stunned actors lose their entire action economy. Prone is NOT
-        // checked here for Movement: stand-up itself pays in Movement, so
-        // blocking the resource here would create a catch-22. Move-the-
-        // action is still blocked because `remaining_movement()` returns 0
-        // when Prone, which makes `path_cost_to` find no path.
-        let stunned = self.has_condition(Condition::Stunned);
+        // Stunned / Incapacitated / Unconscious all remove the action
+        // economy. Prone is NOT checked here for Movement: stand-up
+        // itself pays in Movement, so blocking the resource here would
+        // create a catch-22. Move-the-action is still blocked because
+        // `remaining_movement()` returns 0 when Prone, which makes
+        // `path_cost_to` find no path.
+        let blocked = self.action_economy_blocked();
         match resource {
             Resource::Movement(amt) => {
-                if stunned {
+                if blocked {
                     return false;
                 }
                 amt <= self.movement
             }
             Resource::SpellSlot(spell_lvl) => {
-                if stunned {
+                if blocked {
                     return false;
                 }
                 self.spell_slot_manager.spell_slots(spell_lvl).spell_slots >= 1
             }
-            Resource::Action => !stunned && self.action_slots >= 1,
-            Resource::BonusAction => !stunned && self.bonus_action_slots >= 1,
-            Resource::Reaction => !stunned && self.reaction_slots >= 1,
-            Resource::LegendaryAction => !stunned && self.legendary_action_slots >= 1,
+            Resource::Action => !blocked && self.action_slots >= 1,
+            Resource::BonusAction => !blocked && self.bonus_action_slots >= 1,
+            Resource::Reaction => !blocked && self.reaction_slots >= 1,
+            Resource::LegendaryAction => !blocked && self.legendary_action_slots >= 1,
         }
     }
 
@@ -680,7 +810,10 @@ impl ActorInstance {
     }
 
     pub fn remaining_movement(&self) -> f32 {
-        if self.has_condition(Condition::Prone) || self.has_condition(Condition::Stunned) {
+        if self.has_condition(Condition::Prone) {
+            return 0.0;
+        }
+        if self.conditions.keys().any(|c| c.zeroes_movement()) {
             return 0.0;
         }
         self.movement
@@ -720,6 +853,11 @@ impl ActorInstance {
         self.bonus_action_slots = 1;
         self.reaction_slots = 1;
         // TODO: legendary actions
+        // Per-turn flags clear at the start of this actor's next turn,
+        // matching 5e Dodge / Disengage durations ("until the start of
+        // your next turn").
+        self.dodging = false;
+        self.disengaging = false;
     }
 
     pub fn action_slots(&self) -> u32 {
