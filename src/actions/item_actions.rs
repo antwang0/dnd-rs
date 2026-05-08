@@ -13,6 +13,7 @@ use crate::{
 
 const POTION_OF_HEALING_NAME: &str = "Potion of Healing";
 const SCROLL_OF_FIREBALL_NAME: &str = "Scroll of Fireball";
+const SCROLL_OF_MAGIC_MISSILE_NAME: &str = "Scroll of Magic Missile";
 
 /// Drink a Potion of Healing. Self-targeted, costs an Action, heals
 /// 2d4+2 and removes one potion from inventory. The validate hook
@@ -204,3 +205,95 @@ impl Action for ReadFireballScroll {
 }
 
 pub static READ_FIREBALL_SCROLL: ReadFireballScroll = ReadFireballScroll {};
+
+/// Read a Scroll of Magic Missile: spend an Action to fire 3 darts at one
+/// enemy in line-of-sight (range 30 tiles). Each dart deals 1d4+1 force.
+/// Auto-hit, no save. The scroll is consumed regardless of outcome.
+pub struct ReadMagicMissileScroll {}
+
+impl Action for ReadMagicMissileScroll {
+    fn name(&self) -> &str {
+        "read magic missile scroll"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mm scroll", "missile scroll"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(30)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_item_named(SCROLL_OF_MAGIC_MISSILE_NAME))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let removed = encounter
+            .actors
+            .get_mut(&caster_id)
+            .is_some_and(|a| a.remove_item_by_name(SCROLL_OF_MAGIC_MISSILE_NAME));
+        if !removed {
+            return Vec::new();
+        }
+        let mut total = 0u32;
+        let mut rolls = [0u32; 3];
+        for r in rolls.iter_mut() {
+            *r = encounter.roll(&Dice::new(1, 4));
+            total = total.saturating_add(*r + 1);
+        }
+        encounter.log(format!(
+            "  scroll of magic missile: 3*(1d4+1) [{}, {}, {}] = {} force",
+            rolls[0] + 1,
+            rolls[1] + 1,
+            rolls[2] + 1,
+            total
+        ));
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: total,
+            damage_type: DamageType::Force,
+        })]
+    }
+}
+
+pub static READ_MAGIC_MISSILE_SCROLL: ReadMagicMissileScroll = ReadMagicMissileScroll {};
