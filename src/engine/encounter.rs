@@ -1,5 +1,6 @@
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
 use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+use crate::actors::creatures::mages::MAGE_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
 use crate::actors::creatures::slimes::SLIME_TEMPLATE;
@@ -1007,6 +1008,7 @@ impl EncounterInstance {
             &GOBLIN_TEMPLATE,
             &OGRE_TEMPLATE,
             &WOLF_TEMPLATE,
+            &MAGE_TEMPLATE,
         ]
     }
 
@@ -3089,6 +3091,86 @@ mod tests {
         }
         .apply(&mut e);
         assert_eq!(e.actors[&id].hitpoints(), max, "slime should be acid-immune");
+    }
+
+    #[test]
+    fn cure_wounds_revives_dying_pc() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // Cleric next to a dying fighter (1-tile gap = melee reach).
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&fighter].max_hitpoints();
+        e.actors.get_mut(&fighter).unwrap().take_damage(max);
+        assert!(e.actors[&fighter].is_dying());
+
+        e.pop_prompt();
+        let aei =
+            ActionExecutionInfo::new(&*CURE_WOUNDS, cleric, Some(vec![fighter]), None, None);
+        assert!(aei.validate(&e), "cure wounds should validate at melee reach");
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(
+            e.actors[&fighter].is_combat_active(),
+            "fighter should be back on their feet"
+        );
+    }
+
+    #[test]
+    fn bless_applies_blessed_condition_and_starts_concentration() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::spells::BLESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 2), 0, 1)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*BLESS, cleric, Some(vec![ally]), None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&ally].has_condition(Condition::Blessed));
+        assert!(e.actors[&cleric].is_concentrating());
+    }
+
+    #[test]
+    fn shield_of_faith_grants_ac_via_concentration() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::spells::SHIELD_OF_FAITH;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 2), 0, 1)
+            .unwrap();
+        let base_ac = e.actors[&ally].armor_class();
+        e.pop_prompt();
+        let aei =
+            ActionExecutionInfo::new(&*SHIELD_OF_FAITH, cleric, Some(vec![ally]), None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&ally].has_condition(Condition::Shielded));
+        assert_eq!(e.actors[&ally].armor_class(), base_ac + 2);
     }
 
     #[test]
