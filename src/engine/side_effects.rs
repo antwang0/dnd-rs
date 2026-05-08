@@ -303,3 +303,104 @@ impl ApplicableSideEffect for SkipTurn {
         ei.skip_turn();
     }
 }
+
+/// Toggle the actor's per-turn dodge flag. Set true by the Dodge
+/// action; cleared automatically in `reset_for_new_round`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SetDodging {
+    pub actor_id: usize,
+    pub dodging: bool,
+}
+
+impl ApplicableSideEffect for SetDodging {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        actor.set_dodging(self.dodging);
+        if self.dodging {
+            ei.log(format!("{} takes the Dodge action.", name));
+        }
+    }
+}
+
+/// Toggle the actor's per-turn disengage flag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SetDisengaging {
+    pub actor_id: usize,
+    pub disengaging: bool,
+}
+
+impl ApplicableSideEffect for SetDisengaging {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        actor.set_disengaging(self.disengaging);
+        if self.disengaging {
+            ei.log(format!("{} disengages — no OAs this turn.", name));
+        }
+    }
+}
+
+/// Grant a Help bonus on `recipient_id`'s next attack against
+/// `against_id`. Stored on the recipient via `set_help_grant`. Consumed
+/// by `weapon_attack` when the recipient swings at `against_id`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GrantHelp {
+    pub helper_id: usize,
+    pub recipient_id: usize,
+    pub against_id: usize,
+}
+
+impl ApplicableSideEffect for GrantHelp {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        use crate::actors::actor_template::HelpGrant;
+        let Some(recipient) = ei.get_actor(self.recipient_id) else {
+            return;
+        };
+        recipient.set_help_grant(Some(HelpGrant {
+            helper_id: self.helper_id,
+            against: self.against_id,
+        }));
+        let recipient_name = recipient.name().to_string();
+        let helper_name = ei
+            .actors
+            .get(&self.helper_id)
+            .map(|a| a.name().to_string())
+            .unwrap_or_default();
+        let against_name = ei
+            .actors
+            .get(&self.against_id)
+            .map(|a| a.name().to_string())
+            .unwrap_or_default();
+        ei.log(format!(
+            "{} helps {} — advantage on next attack vs {}.",
+            helper_name, recipient_name, against_name
+        ));
+    }
+}
+
+/// Apply a Bless buff to a recipient: they roll attacks and saves with
+/// advantage for `rounds` rounds. Today we collapse the +1d4 mechanic
+/// into full advantage — coarser but moves the dial in the right
+/// direction without modeling the per-die add. Concentration is
+/// installed by the spell's side_effects, not here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ApplyBless {
+    pub actor_id: usize,
+    pub rounds: u32,
+}
+
+impl ApplicableSideEffect for ApplyBless {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        actor.apply_bless(self.rounds);
+        ei.log(format!("{} is blessed.", name));
+    }
+}

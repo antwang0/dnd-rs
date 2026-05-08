@@ -653,10 +653,15 @@ impl EncounterInstance {
         use crate::actions::action_template::{MELEE_REACH, TargetingSchema};
         use crate::engine::side_effects::Resource;
 
-        let (mover_team, mover_size) = match self.actors.get(&mover_id) {
-            Some(a) => (a.team(), get_tiles_from_size(a.size())),
+        let (mover_team, mover_size, mover_disengaging) = match self.actors.get(&mover_id) {
+            Some(a) => (a.team(), get_tiles_from_size(a.size()), a.is_disengaging()),
             None => return,
         };
+        // 5e Disengage: your movement this turn doesn't provoke OAs.
+        // Skip the entire dispatch — no candidate, no log spam.
+        if mover_disengaging {
+            return;
+        }
 
         // Snapshot reactor candidates up-front — the loop body will mutate
         // self, which would conflict with holding an iterator into self.actors.
@@ -1159,6 +1164,8 @@ impl EncounterInstance {
     /// Tick condition timers on every actor. `Rounds(n)` becomes
     /// `Rounds(n-1)`; `Rounds(0|1)` removes the condition. Logs each
     /// expiration. Iterates by sorted id for deterministic ordering.
+    /// Also ticks bless duration; bless-expiration is logged separately
+    /// for clarity.
     fn round_end(&mut self) {
         let mut ids: Vec<usize> = self.actors.keys().copied().collect();
         ids.sort_unstable();
@@ -1168,8 +1175,12 @@ impl EncounterInstance {
             };
             let name = actor.name().to_string();
             let expired = actor.tick_condition_timers();
+            let bless_expired = actor.tick_bless();
             for c in expired {
                 self.log(format!("{} is no longer {}.", name, c.name()));
+            }
+            if bless_expired {
+                self.log(format!("{}'s blessing fades.", name));
             }
         }
     }
@@ -3063,5 +3074,228 @@ mod tests {
 
         let enemy_count = next.actors.values().filter(|a| a.team() != 0).count();
         assert!(enemy_count > 0, "expected enemies on teams 1+");
+    }
+
+    #[test]
+    fn dodge_imposes_disadvantage_on_attackers() {
+        use crate::actions::default_actions::DODGE;
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let dodger = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        // Dodger fires Dodge: side-effect installs the dodging flag.
+        let aei = ActionExecutionInfo::new(&*DODGE, dodger, None, None, None);
+        for eff in aei.execute(&mut e) {
+            eff.apply(&mut e);
+        }
+        assert!(e.actors[&dodger].is_dodging());
+        assert_eq!(
+            e.compute_attack_mode(attacker, dodger, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn dodge_clears_at_start_of_next_round() {
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&id).unwrap().set_dodging(true);
+        // reset_for_new_round clears the dodge / disengage flags.
+        e.actors.get_mut(&id).unwrap().reset_for_new_round();
+        assert!(!e.actors[&id].is_dodging());
+        // Sanity: condition map untouched.
+        assert!(!e.actors[&id].has_condition(Condition::Prone));
+    }
+
+    #[test]
+    fn disengage_skips_opportunity_attacks() {
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Set the mover's disengage flag manually (sidestep action plumbing).
+        e.actors.get_mut(&mover_id).unwrap().set_disengaging(true);
+
+        let move_effect = MoveActor {
+            actor_id: mover_id,
+            path: vec![Coordinate::new(15, 5)],
+        };
+        move_effect.apply(&mut e);
+
+        // Reactor's reaction should be intact — disengage shut OAs off.
+        assert!(
+            e.actors[&reactor_id].can_consume_resource(Resource::Reaction),
+            "disengage should suppress OAs"
+        );
+    }
+
+    #[test]
+    fn skeleton_resists_piercing_and_takes_vulnerable_bludgeoning() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // First skeleton: piercing — should halve.
+        let id1 = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max1 = e.actors[&id1].max_hitpoints();
+        DealDamage {
+            actor_id: id1,
+            amount: 8,
+            damage_type: DamageType::Piercing,
+        }
+        .apply(&mut e);
+        // 8 piercing → 4 actual.
+        assert_eq!(e.actors[&id1].hitpoints(), max1.saturating_sub(4));
+
+        // Second skeleton: bludgeoning — should double.
+        let id2 = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(4, 4), 0, 1)
+            .unwrap();
+        let max2 = e.actors[&id2].max_hitpoints();
+        DealDamage {
+            actor_id: id2,
+            amount: 3,
+            damage_type: DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        // 3 bludgeoning → 6 actual.
+        assert_eq!(e.actors[&id2].hitpoints(), max2.saturating_sub(6));
+    }
+
+    #[test]
+    fn zombie_immune_to_poison_takes_zero() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 50,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max, "immune → no HP lost");
+    }
+
+    #[test]
+    fn blinded_grants_advantage_and_imposes_disadvantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let blinded_attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&blinded_attacker)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Rounds(2));
+        // Blinded attacker → disadvantage, target blinded → advantage.
+        // Here only the attacker is blinded.
+        assert_eq!(
+            e.compute_attack_mode(blinded_attacker, target, true),
+            RollMode::Disadvantage
+        );
+        // Now blind the target instead.
+        e.actors
+            .get_mut(&blinded_attacker)
+            .unwrap()
+            .remove_condition(Condition::Blinded);
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Rounds(2));
+        assert_eq!(
+            e.compute_attack_mode(blinded_attacker, target, true),
+            RollMode::Advantage
+        );
+    }
+
+    #[test]
+    fn restrained_zeroes_movement_and_grants_attacker_advantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Restrained, ConditionTimer::Rounds(2));
+        assert_eq!(e.actors[&target].remaining_movement(), 0.0);
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage
+        );
+    }
+
+    #[test]
+    fn help_grants_advantage_on_one_attack() {
+        use crate::actors::actor_template::HelpGrant;
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let helper = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let recipient = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 4), 0, 1)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        // Manually install the grant: recipient's next attack vs enemy
+        // gets advantage.
+        e.actors.get_mut(&recipient).unwrap().set_help_grant(Some(HelpGrant {
+            helper_id: helper,
+            against: enemy,
+        }));
+        // Consume it — should pop and yield Some.
+        let popped = e
+            .actors
+            .get_mut(&recipient)
+            .unwrap()
+            .consume_help_for(enemy);
+        assert!(popped.is_some());
+        // Second consumption yields None (one-shot).
+        assert!(e
+            .actors
+            .get_mut(&recipient)
+            .unwrap()
+            .consume_help_for(enemy)
+            .is_none());
+        // Untargeted — base mode normal.
+        assert_eq!(
+            e.compute_attack_mode(recipient, enemy, true),
+            RollMode::Normal
+        );
     }
 }

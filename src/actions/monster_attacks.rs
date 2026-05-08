@@ -760,10 +760,14 @@ pub static ZOMBIE_MULTISLAM: LazyLock<Multiattack> = LazyLock::new(|| Multiattac
 /// auto-hits regardless of AC and rolls the damage dice twice — the
 /// modifier is added once. 5e RAW.
 ///
+/// **Help / Bless**: an active `HelpGrant` against this target, or an
+/// active Bless on the attacker, contributes advantage. The Help grant
+/// is consumed on this attack regardless of hit / miss (one-shot).
+///
 /// Returns the side-effect vec (empty on miss). Centralizes the pattern
 /// so every weapon-style attack logs in the same shape.
 #[allow(clippy::too_many_arguments)]
-fn weapon_attack(
+pub fn weapon_attack(
     encounter: &mut EncounterInstance,
     caster_id: usize,
     target_id: usize,
@@ -775,7 +779,29 @@ fn weapon_attack(
     damage_type: DamageType,
     is_melee: bool,
 ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-    let mode = encounter.compute_attack_mode(caster_id, target_id, is_melee);
+    let mut mode = encounter.compute_attack_mode(caster_id, target_id, is_melee);
+    // Help grant: if this attack is against the helper-designated target,
+    // the attack rolls with advantage and the grant is consumed. Pop it
+    // before rolling so the consumption is irrevocable (matches RAW —
+    // the Help applies to the next attack, hit or miss).
+    let help_consumed = encounter
+        .actors
+        .get_mut(&caster_id)
+        .and_then(|a| a.consume_help_for(target_id))
+        .is_some();
+    if help_consumed {
+        mode = mode.combine(crate::engine::dice::RollMode::Advantage);
+    }
+    // Bless: advantage on attacks (we proxy the +1d4 with advantage —
+    // see ApplyBless). Bless is a turn-counter, not a one-shot, so we
+    // don't consume it.
+    if encounter
+        .actors
+        .get(&caster_id)
+        .is_some_and(|a| a.is_blessed())
+    {
+        mode = mode.combine(crate::engine::dice::RollMode::Advantage);
+    }
     let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
     let is_crit = raw_attack == 20;
     let attack_total = raw_attack + attack_bonus;
