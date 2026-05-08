@@ -292,6 +292,50 @@ impl EncounterInstance {
         }
     }
 
+    /// Compute the attack mode with all per-attack riders folded in:
+    /// condition state, Dodge, Help (consumed if applicable), Bless.
+    /// Used by every weapon / spell attack so the rider stack stays in
+    /// one place. Returns the final mode for `roll_d20_with_mode`.
+    ///
+    /// `consume_help` controls whether a matching HelpGrant on the
+    /// attacker is *consumed* during this call (so it can't fire on a
+    /// later swing). All real attacks pass `true`; a peek-only caller
+    /// (e.g. AI heuristics estimating mode) would pass `false`.
+    pub fn attack_mode_with_riders(
+        &mut self,
+        attacker_id: usize,
+        target_id: usize,
+        is_melee: bool,
+        consume_help: bool,
+    ) -> RollMode {
+        let mut mode = self.compute_attack_mode(attacker_id, target_id, is_melee);
+        // Help: one-shot advantage if the attacker has a grant against
+        // this target. Pop it before the roll regardless of hit/miss so
+        // it can't double-fire on a follow-up.
+        let help_consumed = if consume_help {
+            self.actors
+                .get_mut(&attacker_id)
+                .and_then(|a| a.consume_help_for(target_id))
+                .is_some()
+        } else {
+            self.actors
+                .get(&attacker_id)
+                .and_then(|a| a.help_grant())
+                .is_some_and(|g| g.against == target_id)
+        };
+        if help_consumed {
+            mode = mode.combine(RollMode::Advantage);
+        }
+        if self
+            .actors
+            .get(&attacker_id)
+            .is_some_and(|a| a.is_blessed())
+        {
+            mode = mode.combine(RollMode::Advantage);
+        }
+        mode
+    }
+
     /// Compute the attack-roll mode given attacker / target conditions.
     /// 5e clauses we model:
     /// - Attacker Prone / Poisoned / Blinded / Frightened / Restrained →

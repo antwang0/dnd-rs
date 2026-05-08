@@ -69,8 +69,31 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 8. Nothing useful. End the turn.
+        // 8. Out of range and unable to close (boxed in / fully stunned):
+        //    fall back to Dodge so the standing-around turn at least
+        //    contributes some defense.
+        if let Some(aei) = try_dodge(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 9. Nothing useful. End the turn.
         skip_or_await(encounter, actor_id)
+    }
+}
+
+/// Last-resort defensive: Dodge when there's nothing better to do.
+/// Validates the standard Dodge action (Action cost, no targeting).
+fn try_dodge(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let dodge = actor.actions.iter().find(|a| a.name() == "dodge").copied()?;
+    let aei = ActionExecutionInfo::new(dodge, actor_id, None, None, None);
+    if aei.validate(encounter) {
+        Some(aei)
+    } else {
+        None
     }
 }
 

@@ -516,8 +516,9 @@ impl Action for GuidingBolt {
         else {
             return Vec::new();
         };
-        // Spell attack roll (vs AC), not a save.
-        let mode = encounter.compute_attack_mode(caster_id, target_id, false);
+        // Spell attack roll (vs AC), not a save. Riders (Help / Bless)
+        // fold in via the shared mode helper.
+        let mode = encounter.attack_mode_with_riders(caster_id, target_id, false, true);
         let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
         let is_crit = raw_attack == 20;
         let total = raw_attack + wis_mod;

@@ -77,30 +77,11 @@ impl Action for RogueShortsword {
             return Vec::new();
         };
 
-        // Resolve the attack via the shared weapon_attack helper, but
-        // capture the resulting mode separately so we know whether
-        // sneak-attack-by-advantage applies. We re-implement the attack
-        // roll here (instead of calling weapon_attack) so the sneak-
-        // attack rider can branch on the same d20 result we already
-        // rolled — composing two helpers would otherwise need either
-        // a return-mode signature or a second roll.
-        let mut mode = encounter.compute_attack_mode(caster_id, target_id, true);
-        // Help / Bless folded in same as weapon_attack.
-        let help_consumed = encounter
-            .actors
-            .get_mut(&caster_id)
-            .and_then(|a| a.consume_help_for(target_id))
-            .is_some();
-        if help_consumed {
-            mode = mode.combine(crate::engine::dice::RollMode::Advantage);
-        }
-        if encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_blessed())
-        {
-            mode = mode.combine(crate::engine::dice::RollMode::Advantage);
-        }
+        // Resolve the attack roll up-front so the sneak-attack rider
+        // can branch on the same d20 result. weapon_attack would re-
+        // roll inside; instead we use the engine's mode-with-riders
+        // helper and roll inline so we keep the mode visible.
+        let mode = encounter.attack_mode_with_riders(caster_id, target_id, true, true);
         let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
         let is_crit = raw_attack == 20;
         let total = raw_attack + attack_bonus;
