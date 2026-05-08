@@ -299,6 +299,10 @@ pub struct ActorInstance {
     resistances: HashSet<DamageType>,
     immunities: HashSet<DamageType>,
     vulnerabilities: HashSet<DamageType>,
+    /// True when the actor took the Disengage action this turn — moves
+    /// they make this turn don't provoke opportunity attacks. Cleared
+    /// on `reset_for_new_round`.
+    disengaging: bool,
 }
 
 impl ActorInstance {
@@ -368,7 +372,16 @@ impl ActorInstance {
             resistances: ct.resistances.clone(),
             immunities: ct.immunities.clone(),
             vulnerabilities: ct.vulnerabilities.clone(),
+            disengaging: false,
         })
+    }
+
+    pub fn is_disengaging(&self) -> bool {
+        self.disengaging
+    }
+
+    pub fn set_disengaging(&mut self, on: bool) {
+        self.disengaging = on;
     }
 
     /// Apply 5e resistance / immunity / vulnerability modifiers to a raw
@@ -799,6 +812,13 @@ impl ActorInstance {
         self.bonus_action_slots = 1;
         self.reaction_slots = 1;
         // TODO: legendary actions
+
+        // Per-turn modal flags clear at turn-start.
+        self.disengaging = false;
+        // Dodge is also a single-turn buff in 5e; the Dodging condition
+        // is applied with Rounds(1) so the round-end tick clears it for
+        // the dodger's *next* turn, but that's a single-actor world.
+        // Multi-actor: need a "self_until_next_turn" timer. Deferred.
     }
 
     pub fn action_slots(&self) -> u32 {

@@ -631,10 +631,14 @@ impl EncounterInstance {
         use crate::actions::action_template::{MELEE_REACH, TargetingSchema};
         use crate::engine::side_effects::Resource;
 
-        let (mover_team, mover_size) = match self.actors.get(&mover_id) {
-            Some(a) => (a.team(), get_tiles_from_size(a.size())),
+        let (mover_team, mover_size, mover_disengaging) = match self.actors.get(&mover_id) {
+            Some(a) => (a.team(), get_tiles_from_size(a.size()), a.is_disengaging()),
             None => return,
         };
+        // Disengage suppresses every OA for the rest of the mover's turn.
+        if mover_disengaging {
+            return;
+        }
 
         // Snapshot reactor candidates up-front — the loop body will mutate
         // self, which would conflict with holding an iterator into self.actors.
@@ -3171,6 +3175,60 @@ mod tests {
         e.process_stack();
         assert!(e.actors[&ally].has_condition(Condition::Shielded));
         assert_eq!(e.actors[&ally].armor_class(), base_ac + 2);
+    }
+
+    #[test]
+    fn disengage_suppresses_opportunity_attacks() {
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Set the mover as disengaging — flag normally comes from the
+        // Disengage action's SetDisengaging side-effect.
+        e.actors.get_mut(&mover_id).unwrap().set_disengaging(true);
+
+        // Move the mover well out of reach. Reactor should NOT fire.
+        let move_effect = MoveActor {
+            actor_id: mover_id,
+            path: vec![Coordinate::new(15, 5)],
+        };
+        move_effect.apply(&mut e);
+
+        assert!(
+            e.actors[&reactor_id].can_consume_resource(Resource::Reaction),
+            "disengaging mover should not provoke OA"
+        );
+    }
+
+    #[test]
+    fn dodge_grants_disadvantage_on_attacks_against_self() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::default_actions::DODGE;
+        use crate::conditions::Condition;
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let dodger = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*DODGE, dodger, None, None, None);
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(e.actors[&dodger].has_condition(Condition::Dodging));
+        assert_eq!(
+            e.compute_attack_mode(attacker, dodger, true),
+            RollMode::Disadvantage
+        );
     }
 
     #[test]

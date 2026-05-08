@@ -295,3 +295,19 @@ impl ApplicableSideEffect for SkipTurn {
         ei.skip_turn();
     }
 }
+
+/// Mark an actor as Disengaging for the rest of their turn — opportunity
+/// attacks against their movement won't fire. Cleared by
+/// `reset_for_new_round` at turn-start.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct SetDisengaging {
+    pub actor_id: usize,
+}
+
+impl ApplicableSideEffect for SetDisengaging {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        if let Some(actor) = ei.get_actor(self.actor_id) {
+            actor.set_disengaging(true);
+        }
+    }
+}
