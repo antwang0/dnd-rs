@@ -6,7 +6,7 @@ use crate::{
         action_overrides::ActionOverride,
         dice::Dice,
         encounter::EncounterInstance,
-        side_effects::{ApplicableSideEffect, DealDamage, Heal, Resource},
+        side_effects::{ApplicableSideEffect, Heal, Resource},
         types::{Coordinate, DamageType},
     },
 };
@@ -160,6 +160,9 @@ impl Action for ReadFireballScroll {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actions::action_template::resolve_burst_save_damage;
+        use crate::engine::types::AbilityScoreType;
+
         let Some(&center) = target_locations.and_then(|locs| locs.first()) else {
             return Vec::new();
         };
@@ -176,32 +179,18 @@ impl Action for ReadFireballScroll {
         let damage = encounter.roll(&Dice::new(6, 6));
         encounter.log(format!("  scroll of fireball: 6d6 = {} damage", damage));
 
-        // Find every actor whose footprint sits inside the blast radius.
         const BLAST_RADIUS: isize = 4;
-        let dc: i32 = 15;
-        let actor_ids: Vec<usize> = encounter.actors.keys().copied().collect();
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for id in actor_ids {
-            let Some(dist) = encounter.footprint_distance_to_point(id, center) else {
-                continue;
-            };
-            if dist > BLAST_RADIUS {
-                continue;
-            }
-            use crate::engine::saves::SaveOutcome;
-            use crate::engine::types::AbilityScoreType;
-            let outcome = encounter.roll_save(id, AbilityScoreType::Dexterity, dc);
-            let final_damage = match outcome {
-                SaveOutcome::Pass => damage / 2,
-                SaveOutcome::Fail => damage,
-            };
-            effects.push(Box::new(DealDamage {
-                actor_id: id,
-                amount: final_damage,
-                damage_type: DamageType::Fire,
-            }));
-        }
-        effects
+        const DC: i32 = 15;
+        resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            center,
+            BLAST_RADIUS,
+            AbilityScoreType::Dexterity,
+            DC,
+            damage,
+            DamageType::Fire,
+        )
     }
 }
 

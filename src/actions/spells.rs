@@ -206,7 +206,7 @@ impl Action for SacredBurst {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+        use crate::actions::action_template::resolve_burst_save_damage;
 
         let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
             return Vec::new();
@@ -220,51 +220,21 @@ impl Action for SacredBurst {
             _ => return Vec::new(),
         };
 
-        // Roll damage once for the whole burst (5e: shared damage roll).
         let raw = encounter.roll(&Dice::new(2, 6));
         encounter.log(format!(
             "  sacred burst: 2d6({}) = {} radiant area",
             raw, raw
         ));
-
-        // Snapshot affected ids in actor-id order for deterministic save
-        // sequencing — order matters because the roller is shared and each
-        // save consumes a d20.
-        let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
-        ids.sort_unstable();
-
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for target_id in ids {
-            let Some(target) = encounter.actors.get(&target_id) else {
-                continue;
-            };
-            // The caster is exempt — sacred-flavored AoE wouldn't burn its
-            // own caster. Inactive actors (dying/stable) also skip.
-            if target_id == caster_id || !target.is_combat_active() {
-                continue;
-            }
-            let dist = footprint_chebyshev(
-                target.location(),
-                get_tiles_from_size(target.size()),
-                point,
-                1,
-            );
-            if dist > radius {
-                continue;
-            }
-
-            let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, dc);
-            let dmg = if save.passed() { raw / 2 } else { raw };
-            if dmg == 0 {
-                continue;
-            }
-            effects.push(Box::new(DealDamage {
-                actor_id: target_id,
-                amount: dmg,
-                damage_type: DamageType::Radiant,
-            }));
-        }
-        effects
+        resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            radius,
+            AbilityScoreType::Dexterity,
+            dc,
+            raw,
+            DamageType::Radiant,
+        )
     }
 }
 
@@ -477,7 +447,7 @@ impl Action for BurningHands {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+        use crate::actions::action_template::resolve_burst_save_damage;
 
         let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
             return Vec::new();
@@ -490,43 +460,18 @@ impl Action for BurningHands {
             TargetingSchema::Burst { radius } => radius,
             _ => return Vec::new(),
         };
-
         let raw = encounter.roll(&Dice::new(3, 6));
         encounter.log(format!("  burning hands: 3d6 = {} fire area", raw));
-
-        let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
-        ids.sort_unstable();
-
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for target_id in ids {
-            let Some(target) = encounter.actors.get(&target_id) else {
-                continue;
-            };
-            // Caster doesn't catch their own flame; downed actors skip.
-            if target_id == caster_id || !target.is_combat_active() {
-                continue;
-            }
-            let dist = footprint_chebyshev(
-                target.location(),
-                get_tiles_from_size(target.size()),
-                point,
-                1,
-            );
-            if dist > radius {
-                continue;
-            }
-            let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, dc);
-            let dmg = if save.passed() { raw / 2 } else { raw };
-            if dmg == 0 {
-                continue;
-            }
-            effects.push(Box::new(DealDamage {
-                actor_id: target_id,
-                amount: dmg,
-                damage_type: DamageType::Fire,
-            }));
-        }
-        effects
+        resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            radius,
+            AbilityScoreType::Dexterity,
+            dc,
+            raw,
+            DamageType::Fire,
+        )
     }
 }
 

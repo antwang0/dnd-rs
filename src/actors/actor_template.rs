@@ -837,15 +837,20 @@ impl ActorInstance {
         if amount == 0 {
             return HealOutcome::AlreadyFull;
         }
+        // Use `max_hitpoints()` (folds in item bonuses like the Amulet of
+        // Health's +10) rather than the bare `base_hitpoints`, so an actor
+        // wearing HP-boost gear can actually be healed up to that boosted
+        // ceiling.
+        let max = self.max_hitpoints();
         match self.hp_state {
             HpState::Dead => HealOutcome::NoOp,
             HpState::Dying { .. } | HpState::Stable => {
                 self.hp_state = HpState::Active;
-                self.hitpoints = amount.min(self.base_hitpoints);
+                self.hitpoints = amount.min(max);
                 HealOutcome::Revived
             }
             HpState::Active => {
-                let new_hp = (self.hitpoints + amount).min(self.base_hitpoints);
+                let new_hp = self.hitpoints.saturating_add(amount).min(max);
                 if new_hp == self.hitpoints {
                     HealOutcome::AlreadyFull
                 } else {
