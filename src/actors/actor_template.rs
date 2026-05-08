@@ -325,6 +325,10 @@ pub struct ActorInstance {
     /// gets +2. Decremented on round-end; cleared when the caster's
     /// concentration drops.
     shield_of_faith_rounds: u32,
+    /// Once-per-turn flag for Rogue's Sneak Attack. Set when the rider
+    /// fires; cleared in `reset_for_new_round`. Other once-per-turn
+    /// abilities can land here once we have more than one.
+    sneak_attack_used: bool,
     /// Damage type modifiers (resistance, vulnerability, immunity).
     /// Looked up by `take_damage` and applied before HP delta. Empty
     /// for most monsters; populated for elementals, undead, etc.
@@ -421,8 +425,17 @@ impl ActorInstance {
             help_grant: None,
             bless_rounds: 0,
             shield_of_faith_rounds: 0,
+            sneak_attack_used: false,
             damage_modifiers: ct.damage_modifiers.clone(),
         })
+    }
+
+    pub fn sneak_attack_used(&self) -> bool {
+        self.sneak_attack_used
+    }
+
+    pub fn mark_sneak_attack_used(&mut self) {
+        self.sneak_attack_used = true;
     }
 
     pub fn is_dodging(&self) -> bool {
@@ -905,6 +918,8 @@ impl ActorInstance {
         // your next turn").
         self.dodging = false;
         self.disengaging = false;
+        // Sneak Attack: once per turn — recharged on the rogue's next turn.
+        self.sneak_attack_used = false;
     }
 
     pub fn action_slots(&self) -> u32 {

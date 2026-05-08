@@ -3285,6 +3285,110 @@ mod tests {
     }
 
     #[test]
+    fn rogue_sneak_attack_fires_with_ally_adjacent() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_attacks::ROGUE_SHORTSWORD;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // Rogue + ally next to target. Rogue swings; with the ally
+        // footprint-adjacent to the target, sneak attack should fire on
+        // the first hit. RNG: not deterministic, but we can scan logs
+        // across many attacks for a "sneak attack" line.
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        // Ally adjacent to target — provides flanking.
+        let _ally = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(4, 4),
+                0,
+                1,
+            )
+            .unwrap();
+        // Many tries: heal between to keep the target alive; reset
+        // sneak_attack_used between to simulate fresh turns.
+        let mut sneak_seen = false;
+        for _ in 0..200 {
+            let max = e.actors[&target].max_hitpoints();
+            e.actors.get_mut(&target).unwrap().heal(max);
+            e.actors.get_mut(&rogue).unwrap().reset_for_new_round();
+            let log_before = e.messages().len();
+            let target_vec = vec![target];
+            let effects = ROGUE_SHORTSWORD.side_effects(
+                &mut e,
+                rogue,
+                Some(&target_vec),
+                None,
+                None,
+            );
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            if e.messages()[log_before..]
+                .iter()
+                .any(|line| line.contains("sneak attack"))
+            {
+                sneak_seen = true;
+                break;
+            }
+        }
+        assert!(sneak_seen, "ally-adjacent sneak attack should fire on a hit");
+    }
+
+    #[test]
+    fn rogue_sneak_attack_fires_only_once_per_turn() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_attacks::ROGUE_SHORTSWORD;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        let _ally = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(4, 4),
+                0,
+                1,
+            )
+            .unwrap();
+        // Mark sneak-attack used; subsequent attacks must not log a
+        // sneak-attack line on the same turn.
+        e.actors.get_mut(&rogue).unwrap().mark_sneak_attack_used();
+        let log_before = e.messages().len();
+        // Heal target and try multiple swings — each should land on a
+        // valid hit but never trigger sneak.
+        for _ in 0..50 {
+            let max = e.actors[&target].max_hitpoints();
+            e.actors.get_mut(&target).unwrap().heal(max);
+            let target_vec = vec![target];
+            let effects = ROGUE_SHORTSWORD.side_effects(
+                &mut e,
+                rogue,
+                Some(&target_vec),
+                None,
+                None,
+            );
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+        }
+        let any_sneak = e.messages()[log_before..]
+            .iter()
+            .any(|line| line.contains("sneak attack"));
+        assert!(!any_sneak, "sneak attack should not fire while flag is set");
+    }
+
+    #[test]
     fn shield_of_faith_grants_two_ac() {
         use crate::actions::spells::SHIELD_OF_FAITH;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
