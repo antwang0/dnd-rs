@@ -778,6 +778,14 @@ fn weapon_attack(
     let mode = encounter.compute_attack_mode(caster_id, target_id, is_melee);
     let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
     let is_crit = raw_attack == 20;
+    // Bless / similar buffs add a flat to-hit bonus when active. Sourced
+    // from the caster's conditions so it composes with item bonuses.
+    let buff_attack = encounter
+        .actors
+        .get(&caster_id)
+        .map(|a| a.condition_attack_bonus())
+        .unwrap_or(0);
+    let attack_bonus = attack_bonus + buff_attack;
     let attack_total = raw_attack + attack_bonus;
     // Crits auto-hit regardless of AC. Otherwise compare normally.
     let hit = is_crit || attack_total >= target_ac;
