@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GREATCLUB;
-use crate::actors::actor_template::CreatureTemplate;
+use crate::actors::actor_template::{CreatureTemplate, DamageAdjustments};
 use crate::engine::types::{Language, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -36,5 +36,6 @@ pub static OGRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
+        damage_adjustments: DamageAdjustments::default(),
     }
 });

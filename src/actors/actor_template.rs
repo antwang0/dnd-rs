@@ -77,13 +77,45 @@ use crate::items::item_template::{Item, ItemBonuses};
 use crate::{
     actions::action_template::Action,
     engine::{
-        types::{AbilityScoreType, Language, Size, Skill, SpecialSense},
+        types::{AbilityScoreType, DamageType, Language, Size, Skill, SpecialSense},
         util::modifier_from_score,
     },
 };
 use std::collections::{HashMap, HashSet};
 
 use std::error::Error;
+
+/// 5e-style damage adjustment. Resistances halve incoming damage of a
+/// given type; immunities zero it; vulnerabilities double it. Resolution
+/// order matters (immunity beats vulnerability beats resistance) so we
+/// pick the most-specific outcome at the call site rather than naïvely
+/// stacking multipliers.
+#[derive(Debug, Default, Clone)]
+pub struct DamageAdjustments {
+    pub resistances: HashSet<DamageType>,
+    pub immunities: HashSet<DamageType>,
+    pub vulnerabilities: HashSet<DamageType>,
+}
+
+impl DamageAdjustments {
+    /// Apply this actor's resistances/immunities/vulnerabilities to a raw
+    /// damage amount. 5e resolution: immunity → 0; vulnerability without
+    /// immunity → doubled; resistance otherwise → halved (rounded down).
+    /// Multiple categories can't overlap on the same type in our model;
+    /// if they do, the order above wins.
+    pub fn apply(&self, dt: DamageType, amount: u32) -> u32 {
+        if self.immunities.contains(&dt) {
+            return 0;
+        }
+        if self.vulnerabilities.contains(&dt) {
+            return amount.saturating_mul(2);
+        }
+        if self.resistances.contains(&dt) {
+            return amount / 2;
+        }
+        amount
+    }
+}
 
 pub struct CreatureTemplate {
     pub name: &'static str,
@@ -120,6 +152,11 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Damage-type modifiers (resistances / immunities / vulnerabilities).
+    /// Empty by default — most templates list a few entries (skeletons
+    /// resist piercing, take double bludgeoning; zombies resist necrotic;
+    /// slimes are immune to acid; etc.).
+    pub damage_adjustments: DamageAdjustments,
 }
 
 #[derive(Clone, PartialEq)]
@@ -287,6 +324,10 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    /// Per-instance damage-type modifiers. Cloned from the template at
+    /// creation; future spell effects (e.g. Resistance / Protection from
+    /// Fire) can mutate this directly.
+    damage_adjustments: DamageAdjustments,
 }
 
 impl ActorInstance {
@@ -353,7 +394,16 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            damage_adjustments: ct.damage_adjustments.clone(),
         })
+    }
+
+    pub fn damage_adjustments(&self) -> &DamageAdjustments {
+        &self.damage_adjustments
+    }
+
+    pub fn damage_adjustments_mut(&mut self) -> &mut DamageAdjustments {
+        &mut self.damage_adjustments
     }
 
     pub fn rolls_death_saves(&self) -> bool {
@@ -891,5 +941,51 @@ impl ActorInstance {
 
     pub fn damage_bonus(&self) -> i32 {
         modifier_from_score(self.strength)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn damage_adjustments_resistance_halves() {
+        let adj = DamageAdjustments {
+            resistances: HashSet::from([DamageType::Fire]),
+            ..Default::default()
+        };
+        assert_eq!(adj.apply(DamageType::Fire, 10), 5);
+        assert_eq!(adj.apply(DamageType::Cold, 10), 10);
+    }
+
+    #[test]
+    fn damage_adjustments_immunity_zeros() {
+        let adj = DamageAdjustments {
+            immunities: HashSet::from([DamageType::Poison]),
+            ..Default::default()
+        };
+        assert_eq!(adj.apply(DamageType::Poison, 99), 0);
+    }
+
+    #[test]
+    fn damage_adjustments_vulnerability_doubles() {
+        let adj = DamageAdjustments {
+            vulnerabilities: HashSet::from([DamageType::Bludgeoning]),
+            ..Default::default()
+        };
+        assert_eq!(adj.apply(DamageType::Bludgeoning, 7), 14);
+    }
+
+    #[test]
+    fn damage_adjustments_immunity_beats_vulnerability() {
+        // Should never both be set in practice, but the resolver picks the
+        // most-specific outcome when they do (immunity > vulnerability >
+        // resistance).
+        let adj = DamageAdjustments {
+            immunities: HashSet::from([DamageType::Fire]),
+            vulnerabilities: HashSet::from([DamageType::Fire]),
+            ..Default::default()
+        };
+        assert_eq!(adj.apply(DamageType::Fire, 20), 0);
     }
 }
