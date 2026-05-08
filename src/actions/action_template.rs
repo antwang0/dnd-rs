@@ -17,6 +17,7 @@ use crate::engine::{
 /// Centralizes the pattern shared by Sacred Burst, Burning Hands, and the
 /// Fireball scroll — keeps save sequencing deterministic (sorted ids) and
 /// the caster-exempt + combat-active filters consistent.
+#[allow(clippy::too_many_arguments)]
 pub fn resolve_burst_save_damage(
     encounter: &mut EncounterInstance,
     caster_id: usize,
