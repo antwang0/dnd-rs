@@ -94,9 +94,10 @@ fn try_stand_up(
     }
 }
 
-/// Cast Hold Person on the toughest in-range enemy if we have it and
-/// aren't already concentrating. "Toughest" = highest current HP among
-/// not-already-stunned enemies (no point double-locking).
+/// Cast a concentration soft-lock (Hold Person → Stunned, Cause Fear →
+/// Frightened) on the toughest in-range enemy if we have one and aren't
+/// already concentrating. "Toughest" = highest current HP among targets
+/// who don't already have the matching condition (no double-lock).
 fn try_hold_person(
     encounter: &EncounterInstance,
     actor_id: usize,
@@ -105,17 +106,35 @@ fn try_hold_person(
     if actor.is_concentrating() {
         return None;
     }
-    let hold = actor
+    // (action, condition the action installs) so we can avoid retargeting
+    // someone already locked. Order = preference: hard lockdown beats
+    // soft. New entries land in priority order.
+    const SOFT_LOCKS: &[(&str, Condition)] = &[
+        ("hold person", Condition::Stunned),
+        ("cause fear", Condition::Frightened),
+    ];
+    let candidates: Vec<(&'static (dyn Action + Send + Sync), Condition)> = actor
         .actions
         .iter()
-        .find(|a| a.name() == "hold person")
-        .copied()?;
+        .filter_map(|a| {
+            SOFT_LOCKS
+                .iter()
+                .find(|(name, _)| a.name() == *name)
+                .map(|(_, cond)| (*a, *cond))
+        })
+        .collect();
+    if candidates.is_empty() {
+        return None;
+    }
     let my_team = actor.team();
 
     let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
     ids.sort_unstable();
 
-    let mut best: Option<(u32, ActionExecutionInfo)> = None;
+    // Search per (action, target) so we evaluate every soft-lock against
+    // every legal enemy. We pick toughest target and break ties by
+    // SOFT_LOCKS index (Hold Person beats Cause Fear when both validate).
+    let mut best: Option<(u32, usize, ActionExecutionInfo)> = None;
     for target_id in ids {
         let Some(target) = encounter.actors.get(&target_id) else {
             continue;
@@ -123,19 +142,28 @@ fn try_hold_person(
         if target_id == actor_id || target.team() == my_team || !target.is_combat_active() {
             continue;
         }
-        if target.has_condition(Condition::Stunned) {
-            continue;
-        }
-        let aei = ActionExecutionInfo::new(hold, actor_id, Some(vec![target_id]), None, None);
-        if !aei.validate(encounter) {
-            continue;
-        }
-        let hp = target.hitpoints();
-        if best.as_ref().is_none_or(|(best_hp, _)| hp > *best_hp) {
-            best = Some((hp, aei));
+        for (priority, (action, condition)) in candidates.iter().enumerate() {
+            if target.has_condition(*condition) {
+                continue;
+            }
+            let aei =
+                ActionExecutionInfo::new(*action, actor_id, Some(vec![target_id]), None, None);
+            if !aei.validate(encounter) {
+                continue;
+            }
+            let hp = target.hitpoints();
+            let pick = match &best {
+                None => true,
+                Some((best_hp, best_pri, _)) => {
+                    hp > *best_hp || (hp == *best_hp && priority < *best_pri)
+                }
+            };
+            if pick {
+                best = Some((hp, priority, aei));
+            }
         }
     }
-    best.map(|(_, aei)| aei)
+    best.map(|(_, _, aei)| aei)
 }
 
 /// Sort key for advantage-aware target selection — lower wins.
