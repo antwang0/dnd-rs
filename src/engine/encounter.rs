@@ -8881,4 +8881,227 @@ mod tests {
         .apply(&mut e);
         assert_eq!(e.actors[&id].hitpoints(), max - 5);
     }
+
+    #[test]
+    fn damage_immunity_zeroes_damage() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        // Zombies are immune to poison (set in template).
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 99,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(
+            e.actors[&id].hitpoints(),
+            before,
+            "poison-immune zombie should ignore damage"
+        );
+    }
+
+    #[test]
+    fn damage_resistance_halves_damage() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        // Slimes resist piercing (set in template).
+        let id = e
+            .instantiate_creature(&SLIME_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 8,
+            damage_type: DamageType::Piercing,
+        }
+        .apply(&mut e);
+        let after = e.actors[&id].hitpoints();
+        assert_eq!(before - after, 4, "slime should take half (4) of 8 piercing");
+    }
+
+    #[test]
+    fn damage_vulnerability_doubles_damage() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        // Skeletons are vulnerable to bludgeoning.
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 3,
+            damage_type: DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        let after = e.actors[&id].hitpoints();
+        assert_eq!(
+            before - after,
+            6,
+            "skeleton should take double (6) of 3 bludgeoning"
+        );
+    }
+
+    #[test]
+    fn stunned_save_auto_fails_str_dex() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Stunned, ConditionTimer::Permanent);
+
+        // STR / DEX saves auto-fail; CON saves still roll.
+        assert!(!e
+            .roll_save(id, AbilityScoreType::Strength, 1)
+            .passed());
+        assert!(!e
+            .roll_save(id, AbilityScoreType::Dexterity, 1)
+            .passed());
+        // CON 1 is below any plausible roll — passes.
+        assert!(e
+            .roll_save(id, AbilityScoreType::Constitution, 1)
+            .passed());
+    }
+
+    #[test]
+    fn cure_wounds_revives_dying_ally() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::actor_template::HpState;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Adjacent dying fighter (touch range).
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&fighter].max_hitpoints();
+        e.actors.get_mut(&fighter).unwrap().take_damage(max);
+        assert!(matches!(
+            e.actors[&fighter].hp_state(),
+            HpState::Dying { .. }
+        ));
+
+        let target_vec = vec![fighter];
+        let effects =
+            CURE_WOUNDS.side_effects(&mut e, cleric, Some(&target_vec), None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert!(
+            matches!(e.actors[&fighter].hp_state(), HpState::Active),
+            "fighter should be revived to Active"
+        );
+        assert!(e.actors[&fighter].hitpoints() > 0);
+    }
+
+    #[test]
+    fn magic_missile_emits_three_force_damage_effects() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::MAGIC_MISSILE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        let target_vec = vec![target];
+        let effects =
+            MAGIC_MISSILE.side_effects(&mut e, caster, Some(&target_vec), None, None);
+        // Three darts.
+        assert_eq!(effects.len(), 3);
+        // Each is force damage.
+        let before = e.actors[&target].hitpoints();
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        let after = e.actors[&target].hitpoints();
+        assert!(
+            before > after,
+            "magic missile should always deal damage (auto-hit)"
+        );
+        // Verify type by looking at the log lines.
+        assert!(
+            e.messages().iter().any(|m| m.contains("force")),
+            "magic missile log should mention force damage"
+        );
+        let _ = DamageType::Force;
+    }
+
+    #[test]
+    fn web_restrains_target_on_failed_save() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::WEB;
+        use crate::actors::creatures::spiders::SPIDER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let spider = e
+            .instantiate_creature(&SPIDER_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 2), 0, 0)
+            .unwrap();
+        // Hit fighter with web until they fail the save (DC 12 vs DEX +1).
+        let target_vec = vec![fighter];
+        for _ in 0..50 {
+            let effects = WEB.side_effects(&mut e, spider, Some(&target_vec), None, None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            if e.actors[&fighter].has_condition(Condition::Restrained) {
+                return;
+            }
+        }
+        panic!("50 web casts and never landed Restrained — save logic broken?");
+    }
+
+    #[test]
+    fn ranged_attack_in_melee_imposes_disadvantage() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let shooter = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Adjacent zombie (different team) — counts as a melee threat.
+        let _zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Far target — the actual one we'd shoot at.
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(15, 5), 1, 1)
+            .unwrap();
+
+        let mode = e.compute_attack_mode(shooter, target, false);
+        assert_eq!(mode, RollMode::Disadvantage);
+    }
 }

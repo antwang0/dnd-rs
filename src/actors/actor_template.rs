@@ -1271,6 +1271,37 @@ impl ActorInstance {
         self.damage_immunities.contains(&ty)
     }
 
+    /// Apply this creature's resistance / immunity / vulnerability to
+    /// `amount` of `dt` damage. Order: immunity (zeroes out) > vulnerability
+    /// (doubles) > resistance (halves, rounded down). Returning the
+    /// adjusted amount lets callers log the original / final pair if they
+    /// care; today only `DealDamage` reads this.
+    pub fn apply_damage_modifiers(&self, amount: u32, dt: DamageType) -> u32 {
+        if self.damage_immunities.contains(&dt) {
+            return 0;
+        }
+        let mut adj = amount;
+        if self.damage_vulnerabilities.contains(&dt) {
+            adj = adj.saturating_mul(2);
+        }
+        if self.damage_resistances.contains(&dt) {
+            adj /= 2;
+        }
+        adj
+    }
+
+    pub fn is_immune_to(&self, dt: DamageType) -> bool {
+        self.damage_immunities.contains(&dt)
+    }
+
+    pub fn is_resistant_to(&self, dt: DamageType) -> bool {
+        self.damage_resistances.contains(&dt)
+    }
+
+    pub fn is_vulnerable_to(&self, dt: DamageType) -> bool {
+        self.damage_vulnerabilities.contains(&dt)
+    }
+
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {
         // Temp HP only matters for Active actors — 5e: Dying/Stable
         // creatures don't carry temp HP through unconsciousness, and

@@ -13,6 +13,75 @@ use crate::{
     },
 };
 
+/// Resolve a spell attack roll vs `target_id`'s AC. Logs the breakdown,
+/// rolls damage on hit (with crit-doubled dice on a nat-20), returns the
+/// queued `DealDamage` (or nothing on a miss). Centralized so single-target
+/// damaging spells (Guiding Bolt, Inflict Wounds, future spells) don't
+/// each re-implement attack-roll + crit + log glue.
+#[allow(clippy::too_many_arguments)]
+fn spell_attack(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    target_id: usize,
+    action_name: &str,
+    attack_bonus: i32,
+    damage_dice: Dice,
+    damage_type: DamageType,
+    is_melee: bool,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let target_ac = encounter
+        .actors
+        .get(&target_id)
+        .map(|a| a.armor_class() as i32)
+        .unwrap_or(10);
+    let mode = encounter.compute_attack_mode(caster_id, target_id, is_melee);
+    let raw = encounter.roll_d20_with_mode(mode) as i32;
+    let total = raw + attack_bonus;
+    let is_crit = raw == 20;
+    let hit = is_crit || total >= target_ac;
+    let outcome = if is_crit {
+        "CRIT!"
+    } else if hit {
+        "hit"
+    } else {
+        "miss"
+    };
+    encounter.log(format!(
+        "  {}: 1d20({}){:+} = {} vs AC {}{} \u{2014} {}",
+        action_name,
+        raw,
+        attack_bonus,
+        total,
+        target_ac,
+        mode.log_suffix(),
+        outcome,
+    ));
+    if !hit {
+        return Vec::new();
+    }
+    let dmg = encounter.roll(&damage_dice);
+    let crit_extra = if is_crit { encounter.roll(&damage_dice) } else { 0 };
+    let total_dmg = dmg + crit_extra;
+    encounter.log(format!(
+        "  {}: {}({}) = {} {:?}{}",
+        action_name,
+        damage_dice,
+        dmg,
+        total_dmg,
+        damage_type,
+        if is_crit {
+            format!(" (+{} crit)", crit_extra)
+        } else {
+            String::new()
+        }
+    ));
+    vec![Box::new(DealDamage {
+        actor_id: target_id,
+        amount: total_dmg,
+        damage_type,
+    })]
+}
+
 /// Sacred Flame — cleric cantrip. Range 60ft (24 tiles), DEX save vs the
 /// caster's WIS-based spell save DC. On fail: 1d8 radiant. On success:
 /// nothing (cantrips don't half-on-save). No spell slot consumed.
