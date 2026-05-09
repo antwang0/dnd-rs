@@ -1498,9 +1498,31 @@ impl EncounterInstance {
     /// Also ticks bless duration; bless-expiration is logged separately
     /// for clarity.
     fn round_end(&mut self) {
+        use crate::conditions::Condition;
+        use crate::engine::dice::Dice;
         let mut ids: Vec<usize> = self.actors.keys().copied().collect();
         ids.sort_unstable();
         for id in ids {
+            // Burning DOT: 1d4 fire at end-of-round per the Burning
+            // condition. Apply before timer-tick so the damage lands on
+            // the round the burning expires too — symmetrical with most
+            // tabletop DOT timing.
+            if self
+                .actors
+                .get(&id)
+                .is_some_and(|a| a.has_condition(Condition::Burning))
+            {
+                let dmg = self.roll(&Dice::new(1, 4));
+                let name = self.actors.get(&id).map(|a| a.name().to_string()).unwrap_or_default();
+                self.log(format!("  {} burns: 1d4({}) fire", name, dmg));
+                let de = crate::engine::side_effects::DealDamage {
+                    actor_id: id,
+                    amount: dmg,
+                    damage_type: crate::engine::types::DamageType::Fire,
+                };
+                use crate::engine::side_effects::ApplicableSideEffect;
+                de.apply(self);
+            }
             let Some(actor) = self.actors.get_mut(&id) else {
                 continue;
             };
@@ -1518,6 +1540,7 @@ impl EncounterInstance {
                 self.log(format!("{}'s shield of faith fades.", name));
             }
         }
+        self.cleanup_dead_actors();
     }
 
     pub fn set_actor_map(
@@ -3369,6 +3392,380 @@ mod tests {
     }
 
     #[test]
+    fn burning_condition_deals_dot_at_round_end() {
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let burner = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&burner)
+            .unwrap()
+            .add_condition(Condition::Burning, ConditionTimer::Rounds(5));
+        let before = e.actors[&burner].hitpoints();
+        // Two skips = one round wrap → round_end fires once → 1d4 fire damage.
+        e.skip_turn();
+        e.skip_turn();
+        let after = e.actors.get(&burner).map(|a| a.hitpoints()).unwrap_or(0);
+        assert!(
+            after < before,
+            "burning condition should DOT (was {} → {})",
+            before,
+            after
+        );
+    }
+
+    #[test]
+    fn blessed_attack_bonus_is_positive() {
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e.actors[&id].attack_bonus();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Blessed, ConditionTimer::Rounds(3));
+        let blessed = e.actors[&id].attack_bonus();
+        assert!(
+            blessed > baseline,
+            "Bless should bump attack_bonus ({} → {})",
+            baseline,
+            blessed
+        );
+    }
+
+    #[test]
+    fn proficiency_bonus_scales_with_level() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Level 1: +2 proficiency.
+        assert_eq!(e.actors[&id].proficiency_bonus(), 2);
+        // Award enough XP to bump several levels and rest.
+        e.actors.get_mut(&id).unwrap().award_xp(100_000);
+        e.long_rest();
+        // Should now be at level 5+ → +3 minimum.
+        let lvl = e.actors[&id].level();
+        let prof = e.actors[&id].proficiency_bonus();
+        assert!(lvl >= 5);
+        assert!(prof >= 3, "expected prof ≥ 3 at level {}", lvl);
+    }
+
+    #[test]
+    fn fighter_pc_save_uses_proficiency_for_strength() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let e = ei_with_terrain(10, 10, &[]);
+        // Just verify that the template marks STR as proficient.
+        let f = ActorInstance::from_creature_template(
+            &FIGHTER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(1),
+            0,
+        )
+        .unwrap();
+        assert!(f.is_save_proficient(crate::engine::types::AbilityScoreType::Strength));
+        assert!(f.is_save_proficient(crate::engine::types::AbilityScoreType::Constitution));
+        assert!(!f.is_save_proficient(crate::engine::types::AbilityScoreType::Charisma));
+        let _ = e;
+    }
+
+    #[test]
+    fn cure_wounds_heals_adjacent_ally_and_consumes_slot() {
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let healer = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Adjacent ally for the touch range. 2x2 footprint at (5,5) and (7,5)
+        // gives gap = 0 (touching).
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(7, 5), 0, 1)
+            .unwrap();
+        // Drop ally to 1 HP.
+        let max = e.actors[&ally].max_hitpoints();
+        e.actors.get_mut(&ally).unwrap().take_damage(max - 1);
+        let slots_before = e
+            .actors
+            .get(&healer)
+            .unwrap()
+            .spell_slot_manager
+            .spell_slots(1)
+            .spell_slots;
+
+        e.pop_prompt();
+        let aei =
+            ActionExecutionInfo::new(&*CURE_WOUNDS, healer, Some(vec![ally]), None, None);
+        assert!(aei.validate(&e), "cure wounds should validate on adj ally");
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(e.actors[&ally].hitpoints() > 1);
+        let slots_after = e
+            .actors
+            .get(&healer)
+            .unwrap()
+            .spell_slot_manager
+            .spell_slots(1)
+            .spell_slots;
+        assert_eq!(slots_after, slots_before - 1, "level-1 slot consumed");
+        // No SpellSlot resource left if the healer started with 3 — irrelevant
+        // here, but make sure Resource enum still serializes.
+        let _ = Resource::SpellSlot(1);
+    }
+
+    #[test]
+    fn magic_missile_auto_hits_and_consumes_slot() {
+        use crate::actions::spells::MAGIC_MISSILE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(10, 10),
+                1,
+                0,
+            )
+            .unwrap();
+        let target_max = e.actors[&target].max_hitpoints();
+
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*MAGIC_MISSILE,
+            wizard,
+            Some(vec![target]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e), "magic missile should validate within LOS+range");
+        e.push_action(aei);
+        e.process_stack();
+
+        // Magic Missile auto-hits — target must have lost HP.
+        assert!(
+            e.actors[&target].hitpoints() < target_max,
+            "magic missile should always damage"
+        );
+    }
+
+    #[test]
+    fn bless_applies_blessed_condition_and_starts_concentration() {
+        use crate::actions::spells::BLESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let caster = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(7, 5), 0, 1)
+            .unwrap();
+
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*BLESS, caster, Some(vec![ally]), None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(e.actors[&ally].has_condition(Condition::Blessed));
+        assert!(e.actors[&caster].is_concentrating());
+    }
+
+    #[test]
+    fn dodge_grants_disadvantage_on_attacks_against_actor() {
+        use crate::actions::default_actions::DODGE;
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let dodger = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*DODGE, dodger, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(e.actors[&dodger].is_dodging());
+        assert_eq!(
+            e.compute_attack_mode(attacker, dodger, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn disengage_skips_opportunity_attack() {
+        use crate::actions::default_actions::DISENGAGE;
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Pop any prompt and queue Disengage on the mover.
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*DISENGAGE, mover, None, None, None);
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&mover].is_disengaging());
+
+        // Now run the OA-triggering move. With disengage active, no OA fires.
+        let move_effect = MoveActor {
+            actor_id: mover,
+            path: vec![Coordinate::new(15, 5)],
+        };
+        move_effect.apply(&mut e);
+        assert!(
+            e.actors[&reactor].can_consume_resource(Resource::Reaction),
+            "reactor should not have spent their reaction — mover disengaged"
+        );
+    }
+
+    #[test]
+    fn help_grants_advantage_to_target_attack() {
+        use crate::actions::default_actions::HELP;
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let helper = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*HELP, helper, Some(vec![target]), None, None);
+        assert!(aei.validate(&e), "help should validate on adjacent ally");
+        e.push_action(aei);
+        e.process_stack();
+        assert_eq!(e.actors[&target].helped_by(), Some(helper));
+
+        // The helped-by buff should give the helped target advantage on
+        // its next attack against an enemy.
+        assert_eq!(
+            e.compute_attack_mode(target, enemy, true),
+            RollMode::Advantage
+        );
+        // After consume_help, the buff is gone.
+        e.consume_help(target);
+        assert_eq!(e.actors[&target].helped_by(), None);
+    }
+
+    #[test]
+    fn zombie_takes_double_radiant_damage() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Use a small damage value (3 → 6 doubled) so zombies on the
+        // minimum HP roll (8 HP) still don't drop below 1.
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 3,
+            damage_type: crate::engine::types::DamageType::Radiant,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), before - 6);
+    }
+
+    #[test]
+    fn zombie_immune_to_poison() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 100,
+            damage_type: crate::engine::types::DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), before, "immune blocks all damage");
+    }
+
+    #[test]
+    fn zombie_resists_necrotic() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: crate::engine::types::DamageType::Necrotic,
+        }
+        .apply(&mut e);
+        // 4 / 2 = 2 damage applied.
+        assert_eq!(e.actors[&id].hitpoints(), before - 2);
+    }
+
+    #[test]
+    fn temp_hp_absorbs_damage_before_hp() {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        let max = actor.max_hitpoints();
+        actor.grant_temp_hp(5);
+        assert_eq!(actor.temp_hp(), 5);
+        // 3 damage burns part of the temp pool; real HP intact.
+        actor.take_damage(3);
+        assert_eq!(actor.temp_hp(), 2);
+        assert_eq!(actor.hitpoints(), max);
+        // 5 damage burns the rest plus 3 to real HP.
+        actor.take_damage(5);
+        assert_eq!(actor.temp_hp(), 0);
+        assert_eq!(actor.hitpoints(), max - 3);
+    }
+
+    #[test]
+    fn temp_hp_does_not_stack_unless_larger() {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        actor.grant_temp_hp(5);
+        // Smaller application leaves the pool alone.
+        assert!(!actor.grant_temp_hp(3));
+        assert_eq!(actor.temp_hp(), 5);
+        // Larger application replaces.
+        assert!(actor.grant_temp_hp(8));
+        assert_eq!(actor.temp_hp(), 8);
+    }
+
+    #[test]
     fn heal_active_actor_restores_hp() {
         let mut e = ei_with_terrain(10, 10, &[]);
         let id = e
@@ -3470,6 +3867,76 @@ mod tests {
             actor.spell_slot_manager.spell_slots(1).max_spell_slots
         );
         assert!(!actor.has_condition(Condition::Poisoned));
+    }
+
+    #[test]
+    fn integration_disengage_dodge_round_trip() {
+        // End-to-end: disengage, then dodge — both flags set after each
+        // process_stack pass; both clear at next reset_for_new_round.
+        use crate::actions::default_actions::{DISENGAGE, DODGE};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*DISENGAGE, id, None, None, None);
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&id].is_disengaging());
+
+        // Reset (next round) — both flags should clear.
+        e.actors.get_mut(&id).unwrap().reset_for_new_round();
+        assert!(!e.actors[&id].is_disengaging());
+        assert!(!e.actors[&id].is_dodging());
+
+        // Now dodge — flag set, disengage stays clear.
+        let aei = ActionExecutionInfo::new(&*DODGE, id, None, None, None);
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&id].is_dodging());
+        assert!(!e.actors[&id].is_disengaging());
+    }
+
+    #[test]
+    fn shield_grants_ac_bonus() {
+        use crate::items::item_template::SHIELD;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base = e.actors[&id].armor_class();
+        e.actors.get_mut(&id).unwrap().pickup_item(&SHIELD);
+        assert_eq!(e.actors[&id].armor_class(), base + 2);
+    }
+
+    #[test]
+    fn drink_greater_healing_potion_heals_more_than_basic() {
+        use crate::actions::item_actions::DRINK_GREATER_HEALING_POTION;
+        use crate::items::item_template::POTION_OF_GREATER_HEALING;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(2, 2),
+                0,
+                0,
+            )
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        let max = actor.max_hitpoints();
+        actor.take_damage(max - 1);
+        actor.pickup_item(&POTION_OF_GREATER_HEALING);
+        assert_eq!(e.actors[&id].hitpoints(), 1);
+
+        let aei =
+            ActionExecutionInfo::new(&DRINK_GREATER_HEALING_POTION, id, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        // Greater healing is 4d4+4 (min 8, avg 14, max 20). Basic is 2d4+2.
+        assert!(e.actors[&id].hitpoints() >= 9, "expected at least 8 HP healed");
+        assert!(e.actors[&id].items().is_empty(), "potion should be consumed");
     }
 
     #[test]

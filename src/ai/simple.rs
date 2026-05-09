@@ -66,6 +66,14 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 5. Bless a different ally if we have it and aren't already
+        //    concentrating. Skip if the only ally in range is ourselves —
+        //    self-buffs are usually a worse use of an action than
+        //    pressing offense.
+        if let Some(aei) = try_bless(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 5. AoE — point that catches 2+ enemies, no friendly fire.
         if let Some(aei) = try_attack_aoe(encounter, actor_id) {
             return ControllerDecision::Act(aei);
