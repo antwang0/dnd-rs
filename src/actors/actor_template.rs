@@ -77,7 +77,7 @@ use crate::items::item_template::{Item, ItemBonuses};
 use crate::{
     actions::action_template::Action,
     engine::{
-        types::{AbilityScoreType, Language, Size, Skill, SpecialSense},
+        types::{AbilityScoreType, DamageType, Language, Size, Skill, SpecialSense},
         util::modifier_from_score,
     },
 };
@@ -120,6 +120,12 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Damage types this creature takes half damage from.
+    pub damage_resistances: HashSet<DamageType>,
+    /// Damage types this creature ignores entirely (0 damage).
+    pub damage_immunities: HashSet<DamageType>,
+    /// Damage types this creature takes double damage from.
+    pub damage_vulnerabilities: HashSet<DamageType>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -287,6 +293,14 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    /// Damage types taken at half. Mirrored from the template at spawn
+    /// (see `from_creature_template`). Static for now — items / spells
+    /// that grant resistance can mutate this set later.
+    damage_resistances: HashSet<DamageType>,
+    /// Damage types absorbed entirely (0 damage applied).
+    damage_immunities: HashSet<DamageType>,
+    /// Damage types taken at double.
+    damage_vulnerabilities: HashSet<DamageType>,
 }
 
 impl ActorInstance {
@@ -353,7 +367,42 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            damage_resistances: ct.damage_resistances.clone(),
+            damage_immunities: ct.damage_immunities.clone(),
+            damage_vulnerabilities: ct.damage_vulnerabilities.clone(),
         })
+    }
+
+    /// Resolve `amount` of `damage_type` against the actor's defenses,
+    /// returning the post-mitigation damage. Order: immunity → 0;
+    /// resistance → ÷2 (rounded down per 5e); vulnerability → ×2.
+    /// 5e: "If a creature has both resistance and vulnerability, the
+    /// vulnerability is applied first, then resistance" — but since both
+    /// shouldn't co-apply on the same type, we treat them as mutually
+    /// exclusive for clarity.
+    pub fn effective_damage(&self, amount: u32, damage_type: DamageType) -> u32 {
+        if self.damage_immunities.contains(&damage_type) {
+            return 0;
+        }
+        if self.damage_vulnerabilities.contains(&damage_type) {
+            return amount.saturating_mul(2);
+        }
+        if self.damage_resistances.contains(&damage_type) {
+            return amount / 2;
+        }
+        amount
+    }
+
+    pub fn damage_resistances(&self) -> &HashSet<DamageType> {
+        &self.damage_resistances
+    }
+
+    pub fn damage_immunities(&self) -> &HashSet<DamageType> {
+        &self.damage_immunities
+    }
+
+    pub fn damage_vulnerabilities(&self) -> &HashSet<DamageType> {
+        &self.damage_vulnerabilities
     }
 
     pub fn rolls_death_saves(&self) -> bool {
@@ -887,5 +936,52 @@ impl ActorInstance {
 
     pub fn damage_bonus(&self) -> i32 {
         modifier_from_score(self.strength)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    use crate::engine::dice::FastRandRoller;
+    use crate::engine::types::DamageType;
+
+    fn make(
+        ct: &'static CreatureTemplate,
+    ) -> ActorInstance {
+        ActorInstance::from_creature_template(
+            ct,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(1),
+            0,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn poison_immunity_zeroes_damage() {
+        let z = make(&ZOMBIE_TEMPLATE);
+        assert_eq!(z.effective_damage(10, DamageType::Poison), 0);
+        assert_eq!(z.effective_damage(10, DamageType::Slashing), 10);
+    }
+
+    #[test]
+    fn skeleton_doubles_bludgeoning() {
+        let s = make(&SKELETON_TEMPLATE);
+        assert_eq!(s.effective_damage(7, DamageType::Bludgeoning), 14);
+        // Poison still immune.
+        assert_eq!(s.effective_damage(99, DamageType::Poison), 0);
+        // Other damage passes through.
+        assert_eq!(s.effective_damage(7, DamageType::Slashing), 7);
+    }
+
+    #[test]
+    fn resistance_halves_round_down() {
+        use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+        let s = make(&SLIME_TEMPLATE);
+        assert_eq!(s.effective_damage(7, DamageType::Acid), 3);
+        assert_eq!(s.effective_damage(0, DamageType::Acid), 0);
     }
 }
