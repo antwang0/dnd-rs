@@ -53,6 +53,11 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 4b. Cause Fear — debuff toughest enemy if available.
+        if let Some(aei) = try_cause_fear(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 5. AoE — point that catches 2+ enemies, no friendly fire.
         if let Some(aei) = try_attack_aoe(encounter, actor_id) {
             return ControllerDecision::Act(aei);
@@ -127,6 +132,53 @@ fn try_hold_person(
             continue;
         }
         let aei = ActionExecutionInfo::new(hold, actor_id, Some(vec![target_id]), None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        let hp = target.hitpoints();
+        if best.as_ref().is_none_or(|(best_hp, _)| hp > *best_hp) {
+            best = Some((hp, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
+}
+
+/// Cast Cause Fear on the toughest in-range enemy if we have it and
+/// aren't concentrating yet. Skips already-Frightened targets so the
+/// AI doesn't waste a slot reapplying the same debuff. Mirrors
+/// `try_hold_person`'s "highest current HP wins" target picker — the
+/// AI tries to disable the threat that would cost the most to chip
+/// down with damage.
+fn try_cause_fear(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() {
+        return None;
+    }
+    let cf = actor
+        .actions
+        .iter()
+        .find(|a| a.name() == "cause fear")
+        .copied()?;
+    let my_team = actor.team();
+
+    let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
+    ids.sort_unstable();
+
+    let mut best: Option<(u32, ActionExecutionInfo)> = None;
+    for target_id in ids {
+        let Some(target) = encounter.actors.get(&target_id) else {
+            continue;
+        };
+        if target_id == actor_id || target.team() == my_team || !target.is_combat_active() {
+            continue;
+        }
+        if target.has_condition(Condition::Frightened) {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(cf, actor_id, Some(vec![target_id]), None, None);
         if !aei.validate(encounter) {
             continue;
         }

@@ -777,12 +777,26 @@ pub(crate) fn weapon_attack(
     damage_type: DamageType,
     is_melee: bool,
 ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+    use crate::conditions::Condition;
     let mode = encounter.compute_attack_mode(caster_id, target_id, is_melee);
     let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
-    let is_crit = raw_attack == 20;
+    let mut is_crit = raw_attack == 20;
     let attack_total = raw_attack + attack_bonus;
     // Crits auto-hit regardless of AC. Otherwise compare normally.
-    let hit = is_crit || attack_total >= target_ac;
+    let mut hit = is_crit || attack_total >= target_ac;
+    // 5e Paralyzed (we approximate with Stunned): any melee hit within
+    // 5ft is a critical hit. We treat reach 1 as "within 5ft" and let
+    // longer-reach polearm attacks skip the auto-crit (matches RAW).
+    if hit
+        && is_melee
+        && encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| a.has_condition(Condition::Stunned))
+    {
+        is_crit = true;
+        hit = true;
+    }
     let outcome = if is_crit {
         "CRIT!"
     } else if hit {
