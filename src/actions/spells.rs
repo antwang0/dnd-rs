@@ -39,6 +39,10 @@ impl Action for SacredFlame {
         true
     }
 
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Radiant]
+    }
+
     fn cost(
         &self,
         _encounter: &EncounterInstance,
@@ -188,6 +192,10 @@ impl Action for SacredBurst {
 
     fn requires_los(&self) -> bool {
         true
+    }
+
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Radiant]
     }
 
     fn cost(

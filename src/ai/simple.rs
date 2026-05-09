@@ -600,6 +600,8 @@ fn best_attack_against(
     encounter: &EncounterInstance,
     target_id: usize,
 ) -> Option<(isize, &'static (dyn Action + Send + Sync))> {
+    use crate::engine::types::DamageMod;
+
     let target = encounter.actors.get(&target_id)?;
     let dist = footprint_chebyshev(
         actor.location(),
@@ -607,13 +609,52 @@ fn best_attack_against(
         target.location(),
         get_tiles_from_size(target.size()),
     );
-    let mut best: Option<(isize, &(dyn Action + Send + Sync))> = None;
+    // Score the damage-type matchup: lower is better.
+    // 0 = at least one Vulnerable type and no Immune-only
+    // 1 = neutral (no info or all-neutral)
+    // 2 = at least one Resistant type
+    // 3 = every listed type is Immune (skip)
+    let matchup_score = |a: &dyn Action| -> u8 {
+        let dts = a.damage_types();
+        if dts.is_empty() {
+            return 1;
+        }
+        let mut all_immune = true;
+        let mut has_vuln = false;
+        let mut has_resist = false;
+        for dt in &dts {
+            match target.damage_mod_for(*dt) {
+                Some(DamageMod::Immune) => {}
+                Some(DamageMod::Vulnerable) => {
+                    all_immune = false;
+                    has_vuln = true;
+                }
+                Some(DamageMod::Resistant) => {
+                    all_immune = false;
+                    has_resist = true;
+                }
+                None => {
+                    all_immune = false;
+                }
+            }
+        }
+        if all_immune {
+            3
+        } else if has_vuln {
+            0
+        } else if has_resist {
+            2
+        } else {
+            1
+        }
+    };
+
+    // Best by (score asc, reach desc).
+    let mut best: Option<(u8, isize, &(dyn Action + Send + Sync))> = None;
     for &action in &actor.actions {
         if !matches!(action.targeting_schema(), TargetingSchema::SingleActor) {
             continue;
         }
-        // Skip helpful actions (heals, buffs) — focus-fire only considers
-        // attacks. Otherwise the AI would happily Healing-Word an enemy.
         if !action.is_harmful() {
             continue;
         }
@@ -629,7 +670,9 @@ fn best_attack_against(
         if dist > reach {
             continue;
         }
-        if best.is_some_and(|(r, _)| r >= reach) {
+        let score = matchup_score(action);
+        if score >= 3 {
+            // Every type is immune — useless against this target.
             continue;
         }
         // Affordability gate: can't pay → keep looking for a cheaper
@@ -642,7 +685,7 @@ fn best_attack_against(
         }
         best = Some((reach, action));
     }
-    best
+    best.map(|(_, r, a)| (r, a))
 }
 
 /// BFS-step toward the lowest-HP visible enemy. Falls back to step toward

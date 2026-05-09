@@ -205,6 +205,10 @@ impl Action for TripAttack {
         Some(MELEE_REACH)
     }
 
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+
     fn cost(
         &self,
         _encounter: &EncounterInstance,
@@ -287,6 +291,10 @@ impl Action for AcidSpit {
 
     fn requires_los(&self) -> bool {
         true
+    }
+
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Acid]
     }
 
     fn cost(
@@ -411,6 +419,9 @@ impl Action for Scimitar {
     fn reach_tiles(&self) -> Option<isize> {
         Some(MELEE_REACH)
     }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Slashing]
+    }
     fn cost(
         &self,
         _e: &EncounterInstance,
@@ -466,6 +477,9 @@ impl Action for Shortbow {
     fn requires_los(&self) -> bool {
         true
     }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
     fn cost(
         &self,
         _e: &EncounterInstance,
@@ -516,6 +530,9 @@ impl Action for Greatclub {
     }
     fn reach_tiles(&self) -> Option<isize> {
         Some(2)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
     }
     fn cost(
         &self,
@@ -671,6 +688,9 @@ impl Action for WolfBite {
     }
     fn reach_tiles(&self) -> Option<isize> {
         Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
     }
     fn cost(
         &self,
@@ -839,6 +859,10 @@ impl Action for Multiattack {
 
     fn requires_los(&self) -> bool {
         self.sub_attack.requires_los()
+    }
+
+    fn damage_types(&self) -> Vec<DamageType> {
+        self.sub_attack.damage_types()
     }
 
     fn cost(
