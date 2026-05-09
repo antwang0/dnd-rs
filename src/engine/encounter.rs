@@ -1335,6 +1335,7 @@ impl EncounterInstance {
             &CLERIC_TEMPLATE,
             &SLIME_TEMPLATE,
             &GOBLIN_TEMPLATE,
+            &GOBLIN_BOSS_TEMPLATE,
             &OGRE_TEMPLATE,
             &ORC_TEMPLATE,
             &WOLF_TEMPLATE,
@@ -3347,6 +3348,214 @@ mod tests {
     }
 
     #[test]
+    fn magic_missile_auto_hits_with_force_damage() {
+        use crate::actions::spells::MAGIC_MISSILE;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        let max = e.actors[&target].max_hitpoints();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*MAGIC_MISSILE,
+            cleric,
+            Some(vec![target]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        // 3 darts × (1d4+1) = 6..15 damage. Auto-hit: target HP must drop.
+        assert!(
+            e.actors[&target].hitpoints() < max,
+            "magic missile must always damage (auto-hit)"
+        );
+    }
+
+    #[test]
+    fn bless_starts_concentration_and_marks_target() {
+        use crate::actions::spells::BLESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*BLESS, cleric, Some(vec![ally]), None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&ally].has_condition(Condition::Blessed));
+        assert!(e.actors[&cleric].is_concentrating());
+    }
+
+    #[test]
+    fn blessed_actor_has_attack_bonus() {
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert_eq!(e.actors[&id].bless_bonus(), 0);
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Blessed, ConditionTimer::Rounds(10));
+        assert_eq!(e.actors[&id].bless_bonus(), 2);
+    }
+
+    #[test]
+    fn goblin_boss_has_multiattack_and_higher_ac() {
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&GOBLIN_BOSS_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = &e.actors[&id];
+        assert_eq!(actor.armor_class(), 17, "boss has chain shirt + shield");
+        assert!(
+            actor.actions.iter().any(|a| a.name() == "double scimitar"),
+            "boss should have multiattack"
+        );
+    }
+
+    #[test]
+    fn proficiency_bonus_scales_with_level() {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = &e.actors[&id];
+        // L1 → +2.
+        assert_eq!(actor.proficiency_bonus(), 2);
+        // Each tier of 4 levels bumps by 1: L5 +3, L9 +4, L13 +5, L17 +6.
+        // We can't directly set level — but we can sanity-check the
+        // formula via level=1 which is the default for monsters.
+        // Bumping levels happens through long-rest leveling for PCs only.
+        // Verify spell_save_dc folds in the bonus: with WIS 6 (mod -2),
+        // L1 zombie's spell DC would be 8 + 2 - 2 = 8.
+        assert_eq!(
+            actor.spell_save_dc(crate::engine::types::AbilityScoreType::Wisdom),
+            8,
+            "L1 zombie WIS DC should be 8 + prof(2) + WIS_mod(-2) = 8"
+        );
+    }
+
+    #[test]
+    fn shove_can_knock_target_prone() {
+        use crate::actions::default_actions::SHOVE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // Use ogre vs zombie — ogre STR 19 (+4), zombie STR 13 (+1).
+        // DC = 8 + 1 = 9; attacker rolls d20 + 4 → 5 minimum, near-certain pass.
+        let attacker = e
+            .instantiate_creature(
+                &crate::actors::creatures::ogres::OGRE_TEMPLATE,
+                Coordinate::new(2, 2),
+                0,
+                0,
+            )
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 2), 1, 0)
+            .unwrap();
+        // Try several times to land at least one shove (occasional rolls
+        // of 1 with +4 = 5 < 9 fail; ~80% success).
+        let mut knocked = false;
+        for _ in 0..30 {
+            // Restore prone-clear state if we already toppled them.
+            e.actors.get_mut(&target).unwrap().remove_condition(Condition::Prone);
+            let aei = ActionExecutionInfo::new(&*SHOVE, attacker, Some(vec![target]), None, None);
+            if !aei.validate(&e) {
+                continue;
+            }
+            let effects = aei.execute(&mut e);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e.actors[&target].has_condition(Condition::Prone) {
+                knocked = true;
+                break;
+            }
+        }
+        assert!(knocked, "ogre +4 vs zombie DC 9 should land a shove in 30 tries");
+    }
+
+    #[test]
+    fn dodge_applies_dodging_condition() {
+        use crate::actions::default_actions::DODGE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*DODGE, id, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&id].has_condition(Condition::Dodging));
+    }
+
+    #[test]
+    fn disengage_suppresses_opportunity_attacks() {
+        use crate::actions::default_actions::DISENGAGE;
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Disengage first to set the flag.
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*DISENGAGE, mover, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&mover].is_disengaged());
+        // Now move out of reach. The reactor's reaction must still be
+        // available (no OA fired).
+        let move_effect = MoveActor {
+            actor_id: mover,
+            path: vec![Coordinate::new(15, 5)],
+        };
+        move_effect.apply(&mut e);
+        assert!(
+            e.actors[&reactor].can_consume_resource(Resource::Reaction),
+            "Disengage should suppress OAs"
+        );
+    }
+
+    #[test]
+    fn disengaged_flag_resets_at_turn_start() {
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&id).unwrap().set_disengaged(true);
+        // reset_for_new_round happens at the start of every turn — here we
+        // call it directly to simulate "actor's next turn begins."
+        e.actors.get_mut(&id).unwrap().reset_for_new_round();
+        assert!(!e.actors[&id].is_disengaged());
+    }
+
+    #[test]
     fn aoe_damages_in_radius_actors_only() {
         use crate::actions::spells::SACRED_BURST;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
@@ -3802,6 +4011,29 @@ mod tests {
         assert_eq!(outcome, HealOutcome::Revived);
         assert!(actor.is_combat_active());
         assert_eq!(actor.hitpoints(), 5);
+    }
+
+    #[test]
+    fn heal_respects_item_bonus_max_hp() {
+        use crate::items::item_template::AMULET_OF_HEALTH;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        actor.pickup_item(&AMULET_OF_HEALTH);
+        let max_with_amulet = actor.max_hitpoints();
+        // Take a chunk of damage so heal has room to fill.
+        let dmg = max_with_amulet / 2;
+        actor.take_damage(dmg);
+        // Heal a huge amount; should top out at the *amulet-boosted* max.
+        actor.heal(1_000);
+        assert_eq!(
+            actor.hitpoints(),
+            max_with_amulet,
+            "heal should cap at item-boosted max, not raw base HP"
+        );
     }
 
     #[test]

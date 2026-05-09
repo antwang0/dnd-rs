@@ -210,6 +210,13 @@ impl ApplicableSideEffect for DealDamage {
             ));
         }
 
+        if let Some(tag) = modifier_tag {
+            ei.log(format!(
+                "  {} {} {:?} ({} -> {})",
+                name, tag, self.damage_type, raw, final_damage
+            ));
+        }
+
         match outcome {
             DamageOutcome::Downed => {
                 ei.log(format!("{} falls unconscious.", name));

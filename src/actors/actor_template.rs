@@ -1442,6 +1442,15 @@ impl ActorInstance {
         }
     }
 
+    /// 5e proficiency bonus, derived from level. The official table:
+    /// L1-4 → +2, L5-8 → +3, L9-12 → +4, L13-16 → +5, L17-20 → +6.
+    /// Closed form: ((level - 1) / 4) + 2. Monsters use the same curve
+    /// (levels stuck at 1 → +2 across the board, which matches the MM's
+    /// CR-derived proficiency for low-CR creatures).
+    pub fn proficiency_bonus(&self) -> i32 {
+        ((self.level.saturating_sub(1)) / 4 + 2) as i32
+    }
+
     pub fn attack_bonus(&self) -> i32 {
         modifier_from_score(self.strength) + self.proficiency_bonus()
     }

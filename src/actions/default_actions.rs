@@ -1,5 +1,5 @@
 use crate::{
-    actions::action_template::TargetingSchema,
+    actions::action_template::{MELEE_REACH, TargetingSchema},
     engine::{side_effects::GiveResource, types::Coordinate},
 };
 use std::{collections::HashSet, sync::LazyLock};

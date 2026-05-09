@@ -393,6 +393,33 @@ pub fn render_sideinfo(
             Style::default().fg(Color::Yellow),
         )));
     }
+    // Damage modifier callout — only render if the creature has any. Most
+    // PCs have nothing here, so the line stays hidden in the common case.
+    let immunities = curr_actor.immunities();
+    let resistances = curr_actor.resistances();
+    let vulnerabilities = curr_actor.vulnerabilities();
+    if !immunities.is_empty() || !resistances.is_empty() || !vulnerabilities.is_empty() {
+        let fmt = |set: &std::collections::HashSet<crate::engine::types::DamageType>| {
+            let mut names: Vec<String> =
+                set.iter().map(|d| format!("{:?}", d)).collect();
+            names.sort_unstable();
+            names.join(",")
+        };
+        let mut parts: Vec<String> = Vec::new();
+        if !immunities.is_empty() {
+            parts.push(format!("Imm:{}", fmt(immunities)));
+        }
+        if !resistances.is_empty() {
+            parts.push(format!("Res:{}", fmt(resistances)));
+        }
+        if !vulnerabilities.is_empty() {
+            parts.push(format!("Vul:{}", fmt(vulnerabilities)));
+        }
+        stats_lines.push(Line::from(Span::styled(
+            parts.join(" "),
+            Style::default().fg(Color::Cyan),
+        )));
+    }
     if !curr_actor.conditions().is_empty() {
         // Format each condition with its remaining duration when timed.
         // Sort alphabetically so HashMap iteration order doesn't leak.
