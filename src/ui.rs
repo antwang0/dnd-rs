@@ -249,9 +249,10 @@ pub fn render_sideinfo(
             initiative_lines.push(Line::from(spans));
         }
     }
+    let init_title = format!("Initiative — Round {}", encounter.round());
     frame.render_widget(
         Paragraph::new(initiative_lines)
-            .block(Block::default().borders(Borders::ALL).title("Initiative")),
+            .block(Block::default().borders(Borders::ALL).title(init_title)),
         area_split[0],
     );
 
@@ -328,6 +329,15 @@ pub fn render_sideinfo(
         stats_lines.push(Line::from(Span::styled(
             format!("Items: {}", names.join(", ")),
             Style::default().fg(Color::Yellow),
+        )));
+    }
+    if let Some(conc) = curr_actor.concentration() {
+        // 5e: every actor concentrates on at most one spell. Surface it
+        // here so the player can plan around the "drop concentration"
+        // rule (taking another concentration action would replace it).
+        stats_lines.push(Line::from(Span::styled(
+            format!("Concentrating on: {}", conc.spell_name),
+            Style::default().fg(Color::Cyan),
         )));
     }
     if !curr_actor.conditions().is_empty() {

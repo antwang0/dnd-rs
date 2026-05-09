@@ -189,6 +189,12 @@ pub struct EncounterInstance {
     initialized: bool,
     pub width: usize,
     pub height: usize,
+    /// 1-indexed encounter round counter. Bumped each time the initiative
+    /// queue wraps back to the first actor (see `advance_initiative`).
+    /// Surfaced to the UI so the player can see "round 5" in the side
+    /// panel and so future round-aware effects (e.g. Bless ending after
+    /// N rounds) can read the absolute round.
+    round: u32,
     terrain: Vec<TerrainInfo>,
     actor_id_next: usize,
     actor_map: Vec<Option<usize>>,
@@ -1028,6 +1034,7 @@ impl EncounterInstance {
             initialized: false,
             width: terrain_params.width,
             height: terrain_params.height,
+            round: 1,
             terrain: generate_terrain(terrain_params, &mut rng),
             actor_id_next: 0,
             actor_map: vec![None; terrain_params.width * terrain_params.height],
@@ -1151,7 +1158,14 @@ impl EncounterInstance {
         let wrapped = self.initiative_tracker.advance();
         if wrapped {
             self.round_end();
+            self.round = self.round.saturating_add(1);
         }
+    }
+
+    /// Current 1-indexed round number. Incremented each time the
+    /// initiative queue wraps to the first actor.
+    pub fn round(&self) -> u32 {
+        self.round
     }
 
     /// End the actor's concentration (if any) and remove every condition
@@ -2680,6 +2694,26 @@ mod tests {
         let aei_far =
             ActionExecutionInfo::new(&*CURE_WOUNDS, cleric, Some(vec![far]), None, None);
         assert!(!aei_far.validate(&e), "far ally outside touch range should reject");
+    }
+
+    #[test]
+    fn round_counter_increments_on_initiative_wrap() {
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let _a = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let _b = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        // Round starts at 1.
+        assert_eq!(e.round(), 1);
+        // Two skips = one full cycle = one wrap → round goes 1 → 2.
+        e.skip_turn();
+        e.skip_turn();
+        assert_eq!(e.round(), 2);
+        e.skip_turn();
+        e.skip_turn();
+        assert_eq!(e.round(), 3);
     }
 
     #[test]
