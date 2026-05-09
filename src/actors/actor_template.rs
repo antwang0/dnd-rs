@@ -1,5 +1,6 @@
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::{Dice, DiceExpr, Roller};
+use crate::engine::types::DamageType;
 
 /// Lifecycle state of an actor's hit points. Replaces the previous
 /// `dying: bool` + `stable: bool` pair so the four meaningful states are
@@ -120,6 +121,15 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Damage types this creature resists (half damage taken). 5e
+    /// example: skeletons resist piercing.
+    pub damage_resistances: HashSet<DamageType>,
+    /// Damage types this creature is immune to (zero damage taken).
+    /// 5e example: zombies are immune to poison.
+    pub damage_immunities: HashSet<DamageType>,
+    /// Damage types this creature is vulnerable to (double damage taken).
+    /// 5e example: skeletons are vulnerable to bludgeoning.
+    pub damage_vulnerabilities: HashSet<DamageType>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -260,6 +270,13 @@ pub struct ActorInstance {
     pub actions: Vec<&'static (dyn Action + Send + Sync)>,
     /// Map glyph copied from the template. Static across an actor's life.
     glyph: char,
+    /// Damage types this actor resists (half damage). Cloned from the
+    /// creature template at spawn; future buffs/debuffs can mutate.
+    damage_resistances: HashSet<DamageType>,
+    /// Damage types this actor takes 0 damage from.
+    damage_immunities: HashSet<DamageType>,
+    /// Damage types this actor takes double damage from.
+    damage_vulnerabilities: HashSet<DamageType>,
     /// Lifecycle state. Driven by `take_damage` (damage transitions
     /// `Active -> Dying`, hits on `Dying`/`Stable` add failures) and
     /// `apply_death_save` (rolls move within `Dying` and into `Stable`,
@@ -347,6 +364,9 @@ impl ActorInstance {
             },
             actions: ct.actions.clone(),
             glyph: ct.glyph,
+            damage_resistances: ct.damage_resistances.clone(),
+            damage_immunities: ct.damage_immunities.clone(),
+            damage_vulnerabilities: ct.damage_vulnerabilities.clone(),
             hp_state: HpState::Active,
             conditions: HashMap::new(),
             concentration: None,
@@ -773,6 +793,41 @@ impl ActorInstance {
     /// call this on the caster to set their DC.
     pub fn spell_save_dc(&self, ability: AbilityScoreType) -> i32 {
         8 + modifier_from_score(self.ability_score(ability))
+    }
+
+    pub fn is_immune_to(&self, dt: DamageType) -> bool {
+        self.damage_immunities.contains(&dt)
+    }
+
+    pub fn resists(&self, dt: DamageType) -> bool {
+        self.damage_resistances.contains(&dt)
+    }
+
+    pub fn vulnerable_to(&self, dt: DamageType) -> bool {
+        self.damage_vulnerabilities.contains(&dt)
+    }
+
+    /// Apply 5e damage-type modifiers: immunity → 0, resistance → halved
+    /// (round down), vulnerability → doubled. Resistance and vulnerability
+    /// cancel (RAW: "if a creature is both, the two effects neutralize").
+    /// Returns `(final_amount, label_or_empty)` where the label describes
+    /// the modifier for logging.
+    pub fn apply_damage_modifiers(
+        &self,
+        amount: u32,
+        dt: DamageType,
+    ) -> (u32, &'static str) {
+        if self.is_immune_to(dt) {
+            return (0, "immune");
+        }
+        let resists = self.resists(dt);
+        let vulnerable = self.vulnerable_to(dt);
+        match (resists, vulnerable) {
+            (true, true) => (amount, ""),
+            (true, false) => (amount / 2, "resisted"),
+            (false, true) => (amount.saturating_mul(2), "vulnerable"),
+            (false, false) => (amount, ""),
+        }
     }
 
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {

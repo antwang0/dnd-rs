@@ -137,7 +137,21 @@ impl ApplicableSideEffect for DealDamage {
             return;
         };
         let name = actor.name().to_string();
-        let outcome = actor.take_damage(self.amount);
+        // Resistance / immunity / vulnerability gate the actual damage
+        // applied. Log when a modifier kicks in so the player understands
+        // why a 12-damage swing only chipped 6 HP.
+        let (final_amount, modifier_label) =
+            actor.apply_damage_modifiers(self.amount, self.damage_type);
+        if !modifier_label.is_empty() {
+            ei.log(format!(
+                "  {} {} {:?}: {} \u{2192} {} damage",
+                name, modifier_label, self.damage_type, self.amount, final_amount
+            ));
+        }
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let outcome = actor.take_damage(final_amount);
         let was_concentrating = actor.is_concentrating();
         // actor borrow ends here.
 
@@ -155,7 +169,7 @@ impl ApplicableSideEffect for DealDamage {
             }
             DamageOutcome::Reduced if was_concentrating => {
                 // 5e: take damage while concentrating → CON save vs DC max(10, dmg/2).
-                let dc = ((self.amount / 2) as i32).max(10);
+                let dc = ((final_amount / 2) as i32).max(10);
                 let save = ei.roll_save(
                     self.actor_id,
                     crate::engine::types::AbilityScoreType::Constitution,
