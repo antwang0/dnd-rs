@@ -1,0 +1,40 @@
+use crate::actions::class_attacks::ROGUE_SHORTSWORD;
+use crate::actions::default_actions::DEFAULT_ACTIONS;
+use crate::actors::actor_template::CreatureTemplate;
+use crate::engine::types::{Language, Size};
+use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
+
+/// Rogue PC template. Light armor (AC 14: leather + DEX), modest HP,
+/// DEX-primary. The headline mechanic is **Sneak Attack** — the
+/// shortsword (finesse, DEX-based 1d6) deals an extra 1d6 once per turn
+/// when the rogue has advantage OR an ally is adjacent to the target.
+/// `rolls_death_saves: true` (PC) so it enters the dying state at 0 HP.
+pub static ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&*ROGUE_SHORTSWORD);
+    CreatureTemplate {
+        name: "Rogue",
+        glyph: 'R',
+        n_instances: 0,
+        ac: 14,
+        hitpoints: "3d8+3".parse().unwrap(),
+        speed: 30.,
+        strength: 10,
+        intelligence: 12,
+        dexterity: 16, // primary
+        wisdom: 12,
+        constitution: 12,
+        charisma: 10,
+        skills: HashSet::new(),
+        items: Vec::new(),
+        senses: HashSet::new(),
+        languages: HashSet::from([Language::Common, Language::ThievesCant]),
+        cr: 1.0,
+        size: Size::Medium,
+        actions,
+        spell_slots_by_level: Vec::new(),
+        rolls_death_saves: true,
+        damage_modifiers: HashMap::new(),
+    }
+});

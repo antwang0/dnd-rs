@@ -95,6 +95,36 @@ pub static AMULET_OF_HEALTH: Item = Item {
     on_use: None,
 };
 
+/// Headband of Insight — minor caster-flavor trinket. +1 save bonus,
+/// no AC or speed. Distinct loot tier from Cloak of Resistance (which
+/// gives +2) so the loot pool has stratified strength.
+pub static HEADBAND_OF_INSIGHT: Item = Item {
+    name: "Headband of Insight",
+    glyph: 'h',
+    bonuses: ItemBonuses {
+        ac: 0,
+        max_hp: 0,
+        speed: 0,
+        save: 1,
+    },
+    on_use: None,
+};
+
+/// Bracers of Defense — light AC bump. Cheaper loot than Ring of
+/// Protection (which gives +1 AC and +1 save), giving the LOOT_POOL
+/// a clearer common / uncommon ladder.
+pub static BRACERS_OF_DEFENSE: Item = Item {
+    name: "Bracers of Defense",
+    glyph: 'B',
+    bonuses: ItemBonuses {
+        ac: 1,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: None,
+};
+
 pub static POTION_OF_HEALING: Item = Item {
     name: "Potion of Healing",
     glyph: 'p',
@@ -127,6 +157,11 @@ pub static LOOT_POOL: &[&Item] = &[
     &BOOTS_OF_STRIDING,
     &CLOAK_OF_RESISTANCE,
     &AMULET_OF_HEALTH,
+    &HEADBAND_OF_INSIGHT,
+    &BRACERS_OF_DEFENSE,
+    // Healing potions sit at higher weight — they're consumables and
+    // expected to outpace passive trinkets across a dungeon.
+    &POTION_OF_HEALING,
     &POTION_OF_HEALING,
     &POTION_OF_HEALING,
     &SCROLL_OF_FIREBALL,

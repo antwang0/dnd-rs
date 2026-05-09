@@ -174,6 +174,8 @@ impl ApplicableSideEffect for DealDamage {
         let outcome = actor.take_damage(final_amount);
         let was_concentrating = actor.is_concentrating();
         // actor borrow ends here.
+        // Use the post-modifier amount for downstream concentration-DC math.
+        let dmg_for_conc = adjusted;
 
         match outcome {
             DamageOutcome::Downed => {

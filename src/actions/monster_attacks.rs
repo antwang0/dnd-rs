@@ -759,7 +759,7 @@ pub static ZOMBIE_MULTISLAM: LazyLock<Multiattack> = LazyLock::new(|| Multiattac
 /// around so this file's many `weapon_attack(...)` call-sites stay
 /// untouched while the implementation moves to a shared engine module.
 #[allow(clippy::too_many_arguments)]
-fn weapon_attack(
+pub fn weapon_attack(
     encounter: &mut EncounterInstance,
     caster_id: usize,
     target_id: usize,

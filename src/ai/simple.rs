@@ -339,11 +339,18 @@ fn try_support_heal(
     let my_team = actor.team();
 
     // Helpful actions only — `is_harmful=false` guards against ever
-    // picking an attack here. SingleActor schema so we can pick a target.
+    // picking an attack here. SingleActor schema so we can pick a
+    // target. Exclude Help: it's helpful but doesn't heal — it grants
+    // an attack-advantage rider that's pointless when an ally is
+    // bleeding out and wants HP back.
     let heal_actions: Vec<&'static (dyn Action + Send + Sync)> = actor
         .actions
         .iter()
-        .filter(|a| !a.is_harmful() && matches!(a.targeting_schema(), TargetingSchema::SingleActor))
+        .filter(|a| {
+            !a.is_harmful()
+                && matches!(a.targeting_schema(), TargetingSchema::SingleActor)
+                && a.name() != "help"
+        })
         .copied()
         .collect();
     if heal_actions.is_empty() {

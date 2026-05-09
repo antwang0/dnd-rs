@@ -296,6 +296,50 @@ impl EncounterInstance {
         }
     }
 
+    /// Compute the attack mode with all per-attack riders folded in:
+    /// condition state, Dodge, Help (consumed if applicable), Bless.
+    /// Used by every weapon / spell attack so the rider stack stays in
+    /// one place. Returns the final mode for `roll_d20_with_mode`.
+    ///
+    /// `consume_help` controls whether a matching HelpGrant on the
+    /// attacker is *consumed* during this call (so it can't fire on a
+    /// later swing). All real attacks pass `true`; a peek-only caller
+    /// (e.g. AI heuristics estimating mode) would pass `false`.
+    pub fn attack_mode_with_riders(
+        &mut self,
+        attacker_id: usize,
+        target_id: usize,
+        is_melee: bool,
+        consume_help: bool,
+    ) -> RollMode {
+        let mut mode = self.compute_attack_mode(attacker_id, target_id, is_melee);
+        // Help: one-shot advantage if the attacker has a grant against
+        // this target. Pop it before the roll regardless of hit/miss so
+        // it can't double-fire on a follow-up.
+        let help_consumed = if consume_help {
+            self.actors
+                .get_mut(&attacker_id)
+                .and_then(|a| a.consume_help_for(target_id))
+                .is_some()
+        } else {
+            self.actors
+                .get(&attacker_id)
+                .and_then(|a| a.help_grant())
+                .is_some_and(|g| g.against == target_id)
+        };
+        if help_consumed {
+            mode = mode.combine(RollMode::Advantage);
+        }
+        if self
+            .actors
+            .get(&attacker_id)
+            .is_some_and(|a| a.is_blessed())
+        {
+            mode = mode.combine(RollMode::Advantage);
+        }
+        mode
+    }
+
     /// Compute the attack-roll mode given attacker / target conditions.
     /// 5e clauses we model today:
     /// - Attacker Prone / Poisoned / Frightened / Restrained / Blinded →
@@ -1246,6 +1290,7 @@ impl EncounterInstance {
     /// condition / buff that concentration installed. Logs the drop and
     /// each cleared effect. No-op if the actor isn't concentrating.
     pub fn drop_concentration(&mut self, actor_id: usize) {
+        use crate::actors::actor_template::ConcentrationBuff;
         let Some(actor) = self.actors.get_mut(&actor_id) else {
             return;
         };
@@ -1285,6 +1330,8 @@ impl EncounterInstance {
     /// Tick condition timers on every actor. `Rounds(n)` becomes
     /// `Rounds(n-1)`; `Rounds(0|1)` removes the condition. Logs each
     /// expiration. Iterates by sorted id for deterministic ordering.
+    /// Also ticks bless duration; bless-expiration is logged separately
+    /// for clarity.
     fn round_end(&mut self) {
         let mut ids: Vec<usize> = self.actors.keys().copied().collect();
         ids.sort_unstable();
@@ -1294,8 +1341,16 @@ impl EncounterInstance {
             };
             let name = actor.name().to_string();
             let expired = actor.tick_condition_timers();
+            let bless_expired = actor.tick_bless();
+            let sof_expired = actor.tick_shield_of_faith();
             for c in expired {
                 self.log(format!("{} is no longer {}.", name, c.name()));
+            }
+            if bless_expired {
+                self.log(format!("{}'s blessing fades.", name));
+            }
+            if sof_expired {
+                self.log(format!("{}'s shield of faith fades.", name));
             }
         }
     }
@@ -4916,6 +4971,376 @@ mod tests {
         assert!(
             !new_lines.iter().any(|s| s.contains("save")),
             "should not have rolled a save for already-frightened target"
+        );
+    }
+
+    #[test]
+    fn dodge_imposes_disadvantage_on_attackers() {
+        use crate::actions::default_actions::DODGE;
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let dodger = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        // Dodger fires Dodge: side-effect installs the dodging flag.
+        let aei = ActionExecutionInfo::new(&*DODGE, dodger, None, None, None);
+        for eff in aei.execute(&mut e) {
+            eff.apply(&mut e);
+        }
+        assert!(e.actors[&dodger].is_dodging());
+        assert_eq!(
+            e.compute_attack_mode(attacker, dodger, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn dodge_clears_at_start_of_next_round() {
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&id).unwrap().set_dodging(true);
+        // reset_for_new_round clears the dodge / disengage flags.
+        e.actors.get_mut(&id).unwrap().reset_for_new_round();
+        assert!(!e.actors[&id].is_dodging());
+        // Sanity: condition map untouched.
+        assert!(!e.actors[&id].has_condition(Condition::Prone));
+    }
+
+    #[test]
+    fn disengage_skips_opportunity_attacks() {
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Set the mover's disengage flag manually (sidestep action plumbing).
+        e.actors.get_mut(&mover_id).unwrap().set_disengaging(true);
+
+        let move_effect = MoveActor {
+            actor_id: mover_id,
+            path: vec![Coordinate::new(15, 5)],
+        };
+        move_effect.apply(&mut e);
+
+        // Reactor's reaction should be intact — disengage shut OAs off.
+        assert!(
+            e.actors[&reactor_id].can_consume_resource(Resource::Reaction),
+            "disengage should suppress OAs"
+        );
+    }
+
+    #[test]
+    fn skeleton_resists_piercing_and_takes_vulnerable_bludgeoning() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // First skeleton: piercing — should halve.
+        let id1 = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max1 = e.actors[&id1].max_hitpoints();
+        DealDamage {
+            actor_id: id1,
+            amount: 8,
+            damage_type: DamageType::Piercing,
+        }
+        .apply(&mut e);
+        // 8 piercing → 4 actual.
+        assert_eq!(e.actors[&id1].hitpoints(), max1.saturating_sub(4));
+
+        // Second skeleton: bludgeoning — should double.
+        let id2 = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(4, 4), 0, 1)
+            .unwrap();
+        let max2 = e.actors[&id2].max_hitpoints();
+        DealDamage {
+            actor_id: id2,
+            amount: 3,
+            damage_type: DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        // 3 bludgeoning → 6 actual.
+        assert_eq!(e.actors[&id2].hitpoints(), max2.saturating_sub(6));
+    }
+
+    #[test]
+    fn zombie_immune_to_poison_takes_zero() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 50,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max, "immune → no HP lost");
+    }
+
+    #[test]
+    fn blinded_grants_advantage_and_imposes_disadvantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let blinded_attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&blinded_attacker)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Rounds(2));
+        // Blinded attacker → disadvantage, target blinded → advantage.
+        // Here only the attacker is blinded.
+        assert_eq!(
+            e.compute_attack_mode(blinded_attacker, target, true),
+            RollMode::Disadvantage
+        );
+        // Now blind the target instead.
+        e.actors
+            .get_mut(&blinded_attacker)
+            .unwrap()
+            .remove_condition(Condition::Blinded);
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Rounds(2));
+        assert_eq!(
+            e.compute_attack_mode(blinded_attacker, target, true),
+            RollMode::Advantage
+        );
+    }
+
+    #[test]
+    fn restrained_zeroes_movement_and_grants_attacker_advantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Restrained, ConditionTimer::Rounds(2));
+        assert_eq!(e.actors[&target].remaining_movement(), 0.0);
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage
+        );
+    }
+
+    #[test]
+    fn rogue_sneak_attack_fires_with_ally_adjacent() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_attacks::ROGUE_SHORTSWORD;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // Rogue + ally next to target. Rogue swings; with the ally
+        // footprint-adjacent to the target, sneak attack should fire on
+        // the first hit. RNG: not deterministic, but we can scan logs
+        // across many attacks for a "sneak attack" line.
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        // Ally adjacent to target — provides flanking.
+        let _ally = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(4, 4),
+                0,
+                1,
+            )
+            .unwrap();
+        // Many tries: heal between to keep the target alive; reset
+        // sneak_attack_used between to simulate fresh turns.
+        let mut sneak_seen = false;
+        for _ in 0..200 {
+            let max = e.actors[&target].max_hitpoints();
+            e.actors.get_mut(&target).unwrap().heal(max);
+            e.actors.get_mut(&rogue).unwrap().reset_for_new_round();
+            let log_before = e.messages().len();
+            let target_vec = vec![target];
+            let effects = ROGUE_SHORTSWORD.side_effects(
+                &mut e,
+                rogue,
+                Some(&target_vec),
+                None,
+                None,
+            );
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            if e.messages()[log_before..]
+                .iter()
+                .any(|line| line.contains("sneak attack"))
+            {
+                sneak_seen = true;
+                break;
+            }
+        }
+        assert!(sneak_seen, "ally-adjacent sneak attack should fire on a hit");
+    }
+
+    #[test]
+    fn rogue_sneak_attack_fires_only_once_per_turn() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_attacks::ROGUE_SHORTSWORD;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        let _ally = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(4, 4),
+                0,
+                1,
+            )
+            .unwrap();
+        // Mark sneak-attack used; subsequent attacks must not log a
+        // sneak-attack line on the same turn.
+        e.actors.get_mut(&rogue).unwrap().mark_sneak_attack_used();
+        let log_before = e.messages().len();
+        // Heal target and try multiple swings — each should land on a
+        // valid hit but never trigger sneak.
+        for _ in 0..50 {
+            let max = e.actors[&target].max_hitpoints();
+            e.actors.get_mut(&target).unwrap().heal(max);
+            let target_vec = vec![target];
+            let effects = ROGUE_SHORTSWORD.side_effects(
+                &mut e,
+                rogue,
+                Some(&target_vec),
+                None,
+                None,
+            );
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+        }
+        let any_sneak = e.messages()[log_before..]
+            .iter()
+            .any(|line| line.contains("sneak attack"));
+        assert!(!any_sneak, "sneak attack should not fire while flag is set");
+    }
+
+    #[test]
+    fn shield_of_faith_grants_two_ac() {
+        use crate::actions::spells::SHIELD_OF_FAITH;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(4, 4), 0, 1)
+            .unwrap();
+        let base_ac = e.actors[&ally].armor_class();
+        let aei =
+            ActionExecutionInfo::new(&*SHIELD_OF_FAITH, cleric, Some(vec![ally]), None, None);
+        for eff in aei.execute(&mut e) {
+            eff.apply(&mut e);
+        }
+        assert_eq!(e.actors[&ally].armor_class(), base_ac + 2);
+    }
+
+    #[test]
+    fn dropping_concentration_clears_bless_buff() {
+        use crate::actions::spells::BLESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(4, 4), 0, 1)
+            .unwrap();
+        let aei = ActionExecutionInfo::new(&*BLESS, cleric, Some(vec![ally]), None, None);
+        for eff in aei.execute(&mut e) {
+            eff.apply(&mut e);
+        }
+        assert!(e.actors[&ally].is_blessed());
+        // Drop concentration (e.g. cast a new concentration spell).
+        e.drop_concentration(cleric);
+        assert!(!e.actors[&ally].is_blessed(), "bless should drop with concentration");
+    }
+
+    #[test]
+    fn help_grants_advantage_on_one_attack() {
+        use crate::actors::actor_template::HelpGrant;
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let helper = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let recipient = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 4), 0, 1)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        // Manually install the grant: recipient's next attack vs enemy
+        // gets advantage.
+        e.actors.get_mut(&recipient).unwrap().set_help_grant(Some(HelpGrant {
+            helper_id: helper,
+            against: enemy,
+        }));
+        // Consume it — should pop and yield Some.
+        let popped = e
+            .actors
+            .get_mut(&recipient)
+            .unwrap()
+            .consume_help_for(enemy);
+        assert!(popped.is_some());
+        // Second consumption yields None (one-shot).
+        assert!(e
+            .actors
+            .get_mut(&recipient)
+            .unwrap()
+            .consume_help_for(enemy)
+            .is_none());
+        // Untargeted — base mode normal.
+        assert_eq!(
+            e.compute_attack_mode(recipient, enemy, true),
+            RollMode::Normal
         );
     }
 }
