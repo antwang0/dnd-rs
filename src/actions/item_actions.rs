@@ -38,6 +38,10 @@ impl Action for DrinkHealingPotion {
         false
     }
 
+    fn heals(&self) -> bool {
+        true
+    }
+
     fn cost(
         &self,
         _encounter: &EncounterInstance,

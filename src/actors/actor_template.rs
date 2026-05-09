@@ -528,6 +528,16 @@ impl ActorInstance {
         self.level
     }
 
+    /// 5e proficiency bonus, derived from level. Used by save and attack
+    /// roll modifiers when the actor is proficient in the relevant ability.
+    pub fn proficiency_bonus(&self) -> i32 {
+        crate::engine::util::proficiency_bonus_from_level(self.level)
+    }
+
+    pub fn is_save_proficient(&self, ability: AbilityScoreType) -> bool {
+        self.proficient_saves.contains(&ability)
+    }
+
     pub fn xp(&self) -> u32 {
         self.xp
     }
@@ -598,8 +608,60 @@ impl ActorInstance {
     /// present, the timer is replaced (longer-lasting application overrides
     /// shorter — but for now we just take the new value either way; revisit
     /// when stacking semantics matter). Returns true if newly added.
+    /// Returns false (and does nothing) if the actor is immune to the
+    /// condition via `condition_immunities`.
     pub fn add_condition(&mut self, c: Condition, timer: ConditionTimer) -> bool {
+        if self.condition_immunities.contains(&c) {
+            return false;
+        }
         self.conditions.insert(c, timer).is_none()
+    }
+
+    pub fn is_immune_to_condition(&self, c: Condition) -> bool {
+        self.condition_immunities.contains(&c)
+    }
+
+    pub fn temp_hitpoints(&self) -> u32 {
+        self.temp_hitpoints
+    }
+
+    /// Add temp HP. 5e: temp HP doesn't stack — the higher value wins.
+    /// Returns true if temp HP changed (e.g. because the new value was
+    /// higher than the existing pool).
+    pub fn grant_temp_hp(&mut self, amount: u32) -> bool {
+        if amount > self.temp_hitpoints {
+            self.temp_hitpoints = amount;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Apply resistance / vulnerability / immunity to a raw damage roll.
+    /// Order: immunity (zero) > vulnerability (×2) > resistance (½).
+    /// `DamageResistant` condition further halves on top — stacks with
+    /// damage-type resistance for half-of-half = quarter damage when both
+    /// apply; matches the "general damage reduction" intent of effects
+    /// like Stoneskin.
+    pub fn effective_damage(
+        &self,
+        amount: u32,
+        damage_type: crate::engine::types::DamageType,
+    ) -> u32 {
+        if self.immunities.contains(&damage_type) {
+            return 0;
+        }
+        let mut amt = amount;
+        if self.vulnerabilities.contains(&damage_type) {
+            amt = amt.saturating_mul(2);
+        }
+        if self.resistances.contains(&damage_type) {
+            amt /= 2;
+        }
+        if self.has_condition(Condition::DamageResistant) {
+            amt /= 2;
+        }
+        amt
     }
 
     /// Remove a condition. Returns true if the condition was present.
@@ -786,6 +848,26 @@ impl ActorInstance {
     /// inventory details.
     pub fn item_save_bonus(&self) -> i32 {
         self.total_item_bonuses().save
+    }
+
+    /// Flat bonus from buff conditions (e.g. Bless contributes +2 average,
+    /// modeled as a flat bonus for simplicity rather than a separate die
+    /// roll). Saves and attacks pull from the same set today, so the two
+    /// public accessors share an internal sum.
+    fn buff_flat_bonus(&self) -> i32 {
+        let mut bonus = 0;
+        if self.has_condition(Condition::Blessed) {
+            bonus += 2;
+        }
+        bonus
+    }
+
+    pub fn condition_save_bonus(&self) -> i32 {
+        self.buff_flat_bonus()
+    }
+
+    pub fn condition_attack_bonus(&self) -> i32 {
+        self.buff_flat_bonus()
     }
 
     pub fn remaining_movement(&self) -> f32 {
@@ -1066,7 +1148,16 @@ impl ActorInstance {
             }
             HpState::Dead => DamageOutcome::DyingFailure, // already gone; no-op
             HpState::Active => {
-                self.hitpoints = self.hitpoints.saturating_sub(amount);
+                // Drain temporary HP first; remainder hits real HP.
+                let remaining = if self.temp_hitpoints >= amount {
+                    self.temp_hitpoints -= amount;
+                    0
+                } else {
+                    let r = amount - self.temp_hitpoints;
+                    self.temp_hitpoints = 0;
+                    r
+                };
+                self.hitpoints = self.hitpoints.saturating_sub(remaining);
                 if self.hitpoints == 0 {
                     self.temp_hp = 0;
                     if self.rolls_death_saves {

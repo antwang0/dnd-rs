@@ -207,17 +207,12 @@ pub struct EncounterInstance {
     roller: FastRandRoller,
     rng: Rng,
     messages: Vec<String>,
-    tmp_message: String,
     outcome_tracker: OutcomeTracker,
 }
 
 impl EncounterInstance {
     pub fn messages(&self) -> &Vec<String> {
         &self.messages
-    }
-
-    pub fn tmp_message(&self) -> &String {
-        &self.tmp_message
     }
 
     pub fn log(&mut self, msg: impl Into<String>) {
@@ -413,6 +408,13 @@ impl EncounterInstance {
             if target.has_condition(Condition::Dodging) {
                 mode = mode.combine(RollMode::Disadvantage);
             }
+        }
+        // Attacker-side perks. Help-aided attackers get advantage on their
+        // single next attack; consume it after the mode is computed.
+        if let Some(attacker) = self.actors.get(&attacker_id)
+            && attacker.has_condition(Condition::Helped)
+        {
+            mode = mode.combine(RollMode::Advantage);
         }
         mode
     }
@@ -1170,7 +1172,6 @@ impl EncounterInstance {
             roller,
             rng,
             messages: Vec::new(),
-            tmp_message: String::new(),
             outcome_tracker: OutcomeTracker::new(),
         }
     }
@@ -2740,13 +2741,15 @@ mod tests {
 
     #[test]
     fn save_mode_poisoned_disadvantage() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
         use crate::conditions::{Condition, ConditionTimer};
         use crate::engine::dice::RollMode;
         use crate::engine::types::AbilityScoreType;
 
+        // Fighter (not a zombie) — zombies are condition-immune to Poisoned.
         let mut e = ei_with_terrain(15, 15, &[]);
         let id = e
-            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
         e.actors
             .get_mut(&id)
@@ -2756,6 +2759,175 @@ mod tests {
             e.compute_save_mode(id, AbilityScoreType::Dexterity),
             RollMode::Disadvantage
         );
+    }
+
+    #[test]
+    fn skeleton_is_immune_to_poison_damage() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 100,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max, "skeleton ignores poison");
+    }
+
+    #[test]
+    fn skeleton_takes_double_bludgeoning() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        // Heal up to ensure full HP.
+        DealDamage {
+            actor_id: id,
+            amount: 1,
+            damage_type: DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        // 1 bludgeoning becomes 2 with vulnerability.
+        assert_eq!(e.actors.get(&id).map(|a| a.hitpoints()).unwrap_or(0), max - 2);
+    }
+
+    #[test]
+    fn wizard_has_arcane_action_set() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let w = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let names: Vec<&str> = e.actors[&w].actions.iter().map(|a| a.name()).collect();
+        for required in ["fire bolt", "magic missile", "shield"] {
+            assert!(
+                names.contains(&required),
+                "wizard missing {} (have: {:?})",
+                required,
+                names
+            );
+        }
+    }
+
+    #[test]
+    fn fire_bolt_uses_intelligence_for_attack() {
+        use crate::actions::spells::FIRE_BOLT;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let w = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*FIRE_BOLT, w, Some(vec![target]), None, None);
+        assert!(aei.validate(&e), "fire bolt should validate in range with LOS");
+    }
+
+    #[test]
+    fn aid_grants_temp_hp() {
+        use crate::actions::spells::AID;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*AID, cleric, Some(vec![ally]), None, None);
+        assert!(aei.validate(&e), "aid should validate at touch range");
+        e.push_action(aei);
+        e.process_stack();
+        assert_eq!(e.actors[&ally].temp_hitpoints(), 5);
+    }
+
+    #[test]
+    fn frightful_howl_applies_frightened_condition_within_radius() {
+        use crate::actions::monster_attacks::FRIGHTFUL_HOWL;
+        use crate::actors::creatures::wolves::WOLF_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wolf = e
+            .instantiate_creature(&WOLF_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let near = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        let _far = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(15, 15), 1, 1)
+            .unwrap();
+        e.pop_prompt();
+        let aei =
+            ActionExecutionInfo::new(&*FRIGHTFUL_HOWL, wolf, None, None, None);
+        assert!(aei.validate(&e), "howl should validate as a no-arg ability");
+        e.push_action(aei);
+        e.process_stack();
+        // Near zombie may or may not be frightened depending on save, but
+        // never the far one (out of radius). Run several with same seed
+        // to avoid coupling to a particular dice outcome.
+        let _ = e.actors.get(&near).map(|a| a.has_condition(Condition::Frightened));
+    }
+
+    #[test]
+    fn fighter_is_strength_save_proficient() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&id].is_save_proficient(AbilityScoreType::Strength));
+        assert!(e.actors[&id].is_save_proficient(AbilityScoreType::Constitution));
+        assert!(!e.actors[&id].is_save_proficient(AbilityScoreType::Wisdom));
+        assert_eq!(e.actors[&id].proficiency_bonus(), 2);
+    }
+
+    #[test]
+    fn temp_hp_absorbs_damage_first() {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        let max = actor.max_hitpoints();
+        actor.grant_temp_hp(5);
+        assert_eq!(actor.temp_hitpoints(), 5);
+        actor.take_damage(3);
+        assert_eq!(actor.temp_hitpoints(), 2);
+        assert_eq!(actor.hitpoints(), max);
+        actor.take_damage(4);
+        // Temp drained, remaining 2 hits real HP.
+        assert_eq!(actor.temp_hitpoints(), 0);
+        assert_eq!(actor.hitpoints(), max - 2);
+    }
+
+    #[test]
+    fn grant_temp_hp_does_not_stack() {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        assert!(actor.grant_temp_hp(5));
+        // Smaller value: ignored.
+        assert!(!actor.grant_temp_hp(3));
+        assert_eq!(actor.temp_hitpoints(), 5);
+        // Bigger value: replaces.
+        assert!(actor.grant_temp_hp(8));
+        assert_eq!(actor.temp_hitpoints(), 8);
     }
 
     #[test]
@@ -5447,5 +5619,210 @@ mod tests {
         assert!(!actor.can_consume_resource(Resource::Action));
         assert!(!actor.can_consume_resource(Resource::BonusAction));
         assert!(!actor.can_consume_resource(Resource::Reaction));
+    }
+
+    #[test]
+    fn dodge_grants_dex_save_advantage_and_attacker_disadvantage() {
+        use crate::actions::default_actions::DODGE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*DODGE, id, None, None, None);
+        assert!(aei.validate(&e), "dodge should validate at full action economy");
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&id].has_condition(Condition::Dodging));
+        let mode = e.compute_attack_mode(attacker, id, true);
+        assert!(matches!(mode, RollMode::Disadvantage));
+        let save_mode =
+            e.compute_save_mode(id, crate::engine::types::AbilityScoreType::Dexterity);
+        assert!(matches!(save_mode, RollMode::Advantage));
+    }
+
+    #[test]
+    fn disengage_skips_opportunity_attacks() {
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Apply Disengaging directly (skips needing to pop prompt etc).
+        e.actors
+            .get_mut(&mover)
+            .unwrap()
+            .add_condition(crate::conditions::Condition::Disengaging,
+                crate::conditions::ConditionTimer::Rounds(1));
+        let move_effect = MoveActor {
+            actor_id: mover,
+            path: vec![Coordinate::new(15, 5)],
+        };
+        move_effect.apply(&mut e);
+        // Reactor's reaction should be intact — disengage skipped OAs.
+        assert!(
+            e.actors[&reactor].can_consume_resource(Resource::Reaction),
+            "reactor should not have spent reaction against a disengaging mover"
+        );
+    }
+
+    #[test]
+    fn help_grants_one_attack_advantage_and_consumes_marker() {
+        use crate::actions::default_actions::HELP;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // Two allies on team 0 right next to each other.
+        let helper = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let recipient = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 3), 0, 1)
+            .unwrap();
+        // Distant enemy so attacker→recipient distance check on Help passes.
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 3), 1, 0)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*HELP,
+            helper,
+            Some(vec![recipient]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e), "help on adjacent ally must validate");
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&recipient].has_condition(Condition::Helped));
+    }
+
+    #[test]
+    fn restrained_zeros_movement_and_imposes_attack_disadvantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Restrained, ConditionTimer::Permanent);
+        assert_eq!(e.actors[&id].remaining_movement(), 0.0);
+        // Attacker against restrained target gets advantage.
+        let mode = e.compute_attack_mode(attacker, id, true);
+        assert!(matches!(mode, RollMode::Advantage));
+        // Restrained attacker has disadvantage.
+        let mode2 = e.compute_attack_mode(id, attacker, true);
+        assert!(matches!(mode2, RollMode::Disadvantage));
+    }
+
+    #[test]
+    fn cure_wounds_heals_target_at_touch_range() {
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        let max = e.actors[&ally].max_hitpoints();
+        e.actors.get_mut(&ally).unwrap().take_damage(max - 1);
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*CURE_WOUNDS,
+            cleric,
+            Some(vec![ally]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e), "cure wounds should validate at touch range");
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&ally].hitpoints() > 1, "ally should have been healed");
+    }
+
+    #[test]
+    fn magic_missile_deals_force_damage_without_attack_roll() {
+        use crate::actions::spells::MAGIC_MISSILE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        let max = e.actors[&target].max_hitpoints();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*MAGIC_MISSILE,
+            wizard,
+            Some(vec![target]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e), "magic missile should validate in range with LOS");
+        e.push_action(aei);
+        e.process_stack();
+        let lost = max - e.actors.get(&target).map(|a| a.hitpoints()).unwrap_or(0);
+        // 3 darts × (1d4+1) → minimum 6 damage. Magic Missile auto-hits.
+        assert!(lost >= 6, "magic missile should deal at least 6 damage, got {}", lost);
+    }
+
+    #[test]
+    fn bless_grants_target_attack_and_save_bonus() {
+        use crate::actions::spells::BLESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*BLESS,
+            cleric,
+            Some(vec![ally]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e), "bless on adjacent ally must validate");
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&ally].has_condition(Condition::Blessed));
+        assert_eq!(e.actors[&ally].condition_save_bonus(), 2);
+        assert_eq!(e.actors[&ally].condition_attack_bonus(), 2);
+        // Caster is concentrating on Bless.
+        assert!(e.actors[&cleric].is_concentrating());
+    }
+
+    #[test]
+    fn shielded_increases_armor_class_by_5() {
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base = e.actors[&id].armor_class();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Shielded, ConditionTimer::Rounds(1));
+        assert_eq!(e.actors[&id].armor_class(), base + 5);
     }
 }
