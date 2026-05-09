@@ -742,6 +742,24 @@ impl EncounterInstance {
             }
     }
 
+    /// Stamp `actor_id` (or `None` to clear) into every tile of the size's
+    /// `width × width` footprint anchored at `origin`. Out-of-bounds offsets
+    /// no-op (set_actor_id_at silently rejects them).
+    fn write_footprint(
+        &mut self,
+        actor_id: Option<usize>,
+        origin: Coordinate,
+        size: Size,
+    ) {
+        let width = get_tiles_from_size(size);
+        for x_off in 0..width {
+            for y_off in 0..width {
+                let offset = Coordinate::new(x_off as isize, y_off as isize);
+                self.set_actor_id_at(actor_id, origin + offset);
+            }
+        }
+    }
+
     pub fn terrain_at(&self, coord: Coordinate) -> Option<&TerrainInfo> {
         let idx = self.idx(coord).ok()?;
         self.terrain.get(idx)
@@ -1507,26 +1525,14 @@ impl EncounterInstance {
         actor_id: usize,
         coord: Coordinate,
     ) -> Result<(), Box<dyn Error>> {
-        if let Some(actor) = self.actors.get(&actor_id) {
-            let actor_width = get_tiles_from_size(actor.size());
-
-            let coord_old = actor.location();
-            for x_off in 0..actor_width {
-                for y_off in 0..actor_width {
-                    let offset = Coordinate::new(x_off as isize, y_off as isize);
-                    self.set_actor_id_at(None, coord_old + offset);
-                }
-            }
-
-            for x_off in 0..actor_width {
-                for y_off in 0..actor_width {
-                    let offset = Coordinate::new(x_off as isize, y_off as isize);
-                    self.set_actor_id_at(Some(actor_id), coord + offset);
-                }
-            }
-            return Ok(());
-        }
-        Err("Actor not found".into())
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return Err("Actor not found".into());
+        };
+        let size = actor.size();
+        let coord_old = actor.location();
+        self.write_footprint(None, coord_old, size);
+        self.write_footprint(Some(actor_id), coord, size);
+        Ok(())
     }
 
     pub fn instantiate_creature(
@@ -1711,7 +1717,7 @@ impl EncounterInstance {
             return;
         };
         self.log(format!("{} dies.", actor.name()));
-        let actor_width = get_tiles_from_size(actor.size());
+        let size = actor.size();
         let loc = actor.location();
         let team = actor.team();
         let xp_award = actor.xp_value();
@@ -1721,12 +1727,7 @@ impl EncounterInstance {
         let carried: Vec<&'static crate::items::item_template::Item> =
             actor.items().to_vec();
         drop(actor);
-        for x_off in 0..actor_width {
-            for y_off in 0..actor_width {
-                let offset = Coordinate::new(x_off as isize, y_off as isize);
-                self.set_actor_id_at(None, loc + offset);
-            }
-        }
+        self.write_footprint(None, loc, size);
         self.initiative_tracker.remove_actor(id);
         for item in carried {
             self.drop_item(loc, item);
@@ -8174,5 +8175,243 @@ mod tests {
             .unwrap()
             .add_condition(Condition::Shielded, ConditionTimer::Permanent);
         assert_eq!(e.actors[&id].armor_class(), base + 2);
+    }
+
+    #[test]
+    fn resistance_halves_damage() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        // Zombies are resistant to necrotic.
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 10,
+            damage_type: DamageType::Necrotic,
+        }
+        .apply(&mut e);
+        // 10 necrotic against resistant target = 5 actual damage.
+        assert_eq!(e.actors[&id].hitpoints(), max - 5);
+    }
+
+    #[test]
+    fn vulnerability_doubles_damage() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        // Skeletons are vulnerable to bludgeoning.
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 3,
+            damage_type: DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        // 3 bludgeoning x2 = 6 actual damage. Saturating sub guards a
+        // 1-HP skeleton from underflow but we're starting at full.
+        let expected = max.saturating_sub(6);
+        assert_eq!(e.actors[&id].hitpoints(), expected);
+    }
+
+    #[test]
+    fn immunity_zeros_damage() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        // Slimes are immune to acid.
+        let id = e
+            .instantiate_creature(&SLIME_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 100,
+            damage_type: DamageType::Acid,
+        }
+        .apply(&mut e);
+        assert_eq!(
+            e.actors[&id].hitpoints(),
+            max,
+            "acid against an immune target should be a no-op"
+        );
+    }
+
+    #[test]
+    fn frightened_imposes_attack_disadvantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Frightened, ConditionTimer::Rounds(3));
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn blessed_grants_attack_and_save_advantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let me = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&me)
+            .unwrap()
+            .add_condition(Condition::Blessed, ConditionTimer::Rounds(10));
+        assert_eq!(
+            e.compute_attack_mode(me, target, true),
+            RollMode::Advantage
+        );
+        assert_eq!(
+            e.compute_save_mode(me, AbilityScoreType::Wisdom),
+            RollMode::Advantage
+        );
+    }
+
+    #[test]
+    fn bless_is_concentration_and_drops_blessed_when_dropped() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::spells::BLESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*BLESS, cleric, Some(vec![ally]), None, None);
+        assert!(aei.validate(&e), "bless on adjacent ally should validate");
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(e.actors[&cleric].is_concentrating());
+        assert!(e.actors[&ally].has_condition(Condition::Blessed));
+
+        // Drop the cleric's concentration — Blessed must be cleared.
+        e.drop_concentration(cleric);
+        assert!(!e.actors[&cleric].is_concentrating());
+        assert!(!e.actors[&ally].has_condition(Condition::Blessed));
+    }
+
+    #[test]
+    fn magic_missile_always_damages() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::spells::MAGIC_MISSILE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+            .unwrap();
+        let max = e.actors[&target].max_hitpoints();
+
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*MAGIC_MISSILE,
+            wiz,
+            Some(vec![target]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+
+        // 3 darts × (1d4+1) = min 6, max 15. Always nonzero.
+        let lost = max - e.actors[&target].hitpoints();
+        assert!(
+            (6..=15).contains(&lost),
+            "magic missile total {} outside 6..=15",
+            lost
+        );
+    }
+
+    #[test]
+    fn wizard_can_be_instantiated_and_has_slots() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Wizard ships with 3 level-1 slots.
+        assert_eq!(
+            e.actors[&id]
+                .spell_slot_manager
+                .spell_slots(1)
+                .spell_slots,
+            3
+        );
+        assert!(e.actors[&id].can_consume_resource(Resource::SpellSlot(1)));
+    }
+
+    #[test]
+    fn heals_flag_distinguishes_heal_from_buff() {
+        use crate::actions::action_template::Action;
+        use crate::actions::item_actions::DRINK_HEALING_POTION;
+        use crate::actions::spells::{BLESS, HEALING_WORD, SACRED_FLAME};
+
+        let heal: &dyn Action = &*HEALING_WORD;
+        let bless: &dyn Action = &*BLESS;
+        let attack: &dyn Action = &*SACRED_FLAME;
+        let potion: &dyn Action = &DRINK_HEALING_POTION;
+        assert!(heal.heals());
+        assert!(potion.heals());
+        assert!(!bless.heals(), "bless is a buff, not a heal");
+        assert!(!attack.heals());
+    }
+
+    #[test]
+    fn no_modifier_for_unmatched_damage_type() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        // Slashing isn't on the zombie's resist/vuln/immune lists.
+        DealDamage {
+            actor_id: id,
+            amount: 5,
+            damage_type: DamageType::Slashing,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max - 5);
     }
 }
