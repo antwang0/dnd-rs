@@ -356,6 +356,35 @@ impl EncounterInstance {
                 mode = mode.combine(RollMode::Disadvantage);
             }
         }
+        // 5e: ranged attacks have disadvantage if a hostile non-incapacitated
+        // creature is within 5ft of the attacker. We approximate "hostile"
+        // as "different team" and "5ft" as footprint-Chebyshev gap ≤ 1.
+        // Stunned creatures are incapacitated and don't qualify.
+        if !is_melee
+            && let Some(attacker) = self.actors.get(&attacker_id)
+        {
+            let a_loc = attacker.location();
+            let a_size = get_tiles_from_size(attacker.size());
+            let my_team = attacker.team();
+            let in_melee_with_hostile = self.actors.iter().any(|(other_id, other)| {
+                if *other_id == attacker_id || other.team() == my_team || !other.is_combat_active() {
+                    return false;
+                }
+                if other.has_condition(Condition::Stunned) {
+                    return false;
+                }
+                let dist = footprint_chebyshev(
+                    a_loc,
+                    a_size,
+                    other.location(),
+                    get_tiles_from_size(other.size()),
+                );
+                dist <= 1
+            });
+            if in_melee_with_hostile {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+        }
         mode
     }
 
@@ -2694,6 +2723,122 @@ mod tests {
         let aei_far =
             ActionExecutionInfo::new(&*CURE_WOUNDS, cleric, Some(vec![far]), None, None);
         assert!(!aei_far.validate(&e), "far ally outside touch range should reject");
+    }
+
+    #[test]
+    fn ranged_attack_disadvantaged_by_adjacent_hostile() {
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let archer = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let melee_threat = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        let far_target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 5), 1, 1)
+            .unwrap();
+        // Ranged attack at far_target while a hostile is in melee with us.
+        assert_eq!(
+            e.compute_attack_mode(archer, far_target, false),
+            RollMode::Disadvantage,
+            "ranged-with-melee-threat should be disadvantaged",
+        );
+        // Same scenario, but the threat is downed → no disadvantage.
+        let max = e.actors[&melee_threat].max_hitpoints();
+        e.actors
+            .get_mut(&melee_threat)
+            .unwrap()
+            .take_damage(max + 100);
+        e.cleanup_dead_actors();
+        assert_eq!(
+            e.compute_attack_mode(archer, far_target, false),
+            RollMode::Normal,
+            "downed adjacent threat should not impose disadvantage",
+        );
+    }
+
+    #[test]
+    fn cause_fear_applies_frightened_with_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::CAUSE_FEAR;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+
+        // Cause Fear gates on a WIS save. Loop until the target's WIS save
+        // fails (low-WIS zombie, very high DC from wizard) — usually inside
+        // the first roll, but allow retries for RNG. Each call without a
+        // successful application is a no-op.
+        let mut applied = false;
+        for _ in 0..200 {
+            if e.actors[&target].has_condition(Condition::Frightened) {
+                applied = true;
+                break;
+            }
+            // Reset concentration so each attempt is fresh.
+            e.drop_concentration(wiz);
+            let target_vec = vec![target];
+            let effects =
+                CAUSE_FEAR.side_effects(&mut e, wiz, Some(&target_vec), None, None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+        }
+        assert!(applied, "expected Frightened to land within 200 attempts");
+        assert!(e.actors[&wiz].is_concentrating());
+    }
+
+    #[test]
+    fn melee_attack_vs_stunned_auto_crits() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::SLAM;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Stunned, ConditionTimer::Rounds(5));
+
+        // Run several swings; against Stunned in melee, every hit should
+        // be logged as CRIT! (auto-crit clause). Verify at least one
+        // CRIT! line appears within a small batch.
+        let mut crit_seen = false;
+        for _ in 0..20 {
+            // Heal the target so they don't drop and disappear.
+            let max = e.actors[&target].max_hitpoints();
+            e.actors.get_mut(&target).unwrap().heal(max);
+            let log_before = e.messages().len();
+            let target_vec = vec![target];
+            let effects =
+                SLAM.side_effects(&mut e, attacker, Some(&target_vec), None, None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            if e.messages()[log_before..]
+                .iter()
+                .any(|line| line.contains("CRIT!"))
+            {
+                crit_seen = true;
+                break;
+            }
+        }
+        assert!(crit_seen, "stunned melee target should auto-crit on hit");
     }
 
     #[test]
