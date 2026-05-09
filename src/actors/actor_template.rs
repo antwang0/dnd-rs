@@ -583,6 +583,36 @@ impl ActorInstance {
         self.temp_hp
     }
 
+    /// Damage-type response for this actor: Resistance / Immunity /
+    /// Vulnerability, or `None` for normal damage. Lookups are static today
+    /// (template-driven), but the entry point exists so future temporary
+    /// resistances (Stoneskin, Resistance cantrip, etc.) can fold in here.
+    pub fn damage_response_for(&self, dt: DamageType) -> Option<DamageResponse> {
+        self.damage_responses.get(&dt).copied()
+    }
+
+    /// Compute the actual HP delta this actor would take from `raw` damage
+    /// of `dt`, after immunities / resistances / vulnerabilities. Doesn't
+    /// account for temp HP — that's handled at apply time.
+    pub fn effective_damage(&self, raw: u32, dt: DamageType) -> u32 {
+        match self.damage_response_for(dt) {
+            Some(r) => r.apply(raw),
+            None => raw,
+        }
+    }
+
+    pub fn temp_hp(&self) -> u32 {
+        self.temp_hp
+    }
+
+    /// Apply temp HP per 5e: a new application replaces the old only if
+    /// it's higher. (Multiple temp-HP sources don't stack.)
+    pub fn add_temp_hp(&mut self, amount: u32) {
+        if amount > self.temp_hp {
+            self.temp_hp = amount;
+        }
+    }
+
     pub fn cr(&self) -> f32 {
         self.cr
     }
@@ -1310,6 +1340,50 @@ impl ActorInstance {
 
     pub fn is_vulnerable_to(&self, dt: DamageType) -> bool {
         self.damage_vulnerabilities.contains(&dt)
+    }
+
+    /// Apply `raw` damage of type `dt`, factoring in immunity / resistance
+    /// / vulnerability and absorbing the result through any temp HP first.
+    /// Returns `(outcome, final_amount)` where `final_amount` is the actual
+    /// HP delta that landed (after all reductions and temp-HP absorption).
+    /// Logging is the caller's job — the engine's `DealDamage::apply` does it.
+    pub fn take_typed_damage(
+        &mut self,
+        raw: u32,
+        dt: DamageType,
+    ) -> (DamageOutcome, u32) {
+        let scaled = self.effective_damage(raw, dt);
+        if scaled == 0 {
+            // Immunity (or zero raw): never moves HP, never adds death-save
+            // failures, even on Dying / Stable targets.
+            return (
+                match self.hp_state {
+                    HpState::Dying { .. } | HpState::Stable | HpState::Dead => {
+                        DamageOutcome::DyingFailure
+                    }
+                    HpState::Active => DamageOutcome::Reduced,
+                },
+                0,
+            );
+        }
+        // Burn temp HP first; only the leftover hits real HP.
+        let absorbed = scaled.min(self.temp_hp);
+        self.temp_hp -= absorbed;
+        let to_hp = scaled - absorbed;
+        if to_hp == 0 {
+            // Damage was fully absorbed by temp HP. No HP transition.
+            return (
+                match self.hp_state {
+                    HpState::Dying { .. } | HpState::Stable | HpState::Dead => {
+                        DamageOutcome::DyingFailure
+                    }
+                    HpState::Active => DamageOutcome::Reduced,
+                },
+                0,
+            );
+        }
+        let outcome = self.take_damage(to_hp);
+        (outcome, to_hp)
     }
 
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {

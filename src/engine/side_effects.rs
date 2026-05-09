@@ -108,12 +108,9 @@ impl ApplicableSideEffect for MoveActor {
             {
                 return;
             }
-            if let Err(e) = ei.set_actor_map(self.actor_id, dest) {
+            if let Err(e) = ei.place_actor_at(self.actor_id, dest) {
                 ei.log(format!("MoveActor failed: {}", e));
                 return;
-            }
-            if let Some(actor) = ei.get_actor(self.actor_id) {
-                actor.set_location(dest);
             }
             // Walk-over auto-pickup: any items at the destination tile
             // get added to the actor's inventory. Logged inside.
@@ -215,6 +212,43 @@ impl ApplicableSideEffect for DealDamage {
                 "  {} {} {:?} ({} -> {})",
                 name, tag, self.damage_type, raw, final_damage
             ));
+        }
+
+        // Single-line damage breakdown: "X takes 6 fire damage [resisted (12 → 6)] [absorbed 4 temp]"
+        if self.amount > 0 {
+            let mut parts: Vec<String> = Vec::new();
+            match response {
+                Some(DamageResponse::Immunity) => {
+                    parts.push(format!(
+                        "  {} is immune to {:?} ({} damage absorbed)",
+                        name, self.damage_type, self.amount
+                    ));
+                }
+                Some(DamageResponse::Resistance) => parts.push(format!(
+                    "  {} resists {:?}: {} \u{2192} {}",
+                    name,
+                    self.damage_type,
+                    self.amount,
+                    self.amount / 2
+                )),
+                Some(DamageResponse::Vulnerability) => parts.push(format!(
+                    "  {} is vulnerable to {:?}: {} \u{2192} {}",
+                    name,
+                    self.damage_type,
+                    self.amount,
+                    self.amount.saturating_mul(2)
+                )),
+                None => {}
+            }
+            if temp_absorbed > 0 {
+                parts.push(format!(
+                    "  {} absorbs {} damage (temp HP)",
+                    name, temp_absorbed
+                ));
+            }
+            for line in parts {
+                ei.log(line);
+            }
         }
 
         match outcome {

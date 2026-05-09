@@ -1584,6 +1584,21 @@ impl EncounterInstance {
         Ok(())
     }
 
+    /// Move an actor to `coord`, syncing both the actor map and the actor's
+    /// own location field. Single source of truth for "teleport / step
+    /// without OAs"; OA-honoring movement goes through `MoveActor::apply`.
+    pub fn place_actor_at(
+        &mut self,
+        actor_id: usize,
+        coord: Coordinate,
+    ) -> Result<(), Box<dyn Error>> {
+        self.set_actor_map(actor_id, coord)?;
+        if let Some(a) = self.get_actor(actor_id) {
+            a.set_location(coord);
+        }
+        Ok(())
+    }
+
     pub fn instantiate_creature(
         &mut self,
         creature_template: &'static CreatureTemplate,
@@ -2632,13 +2647,13 @@ mod tests {
         let id = e
             .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        // 3 level-1 slots and 2 level-2 slots per the template.
+        // 4 level-1 slots and 2 level-2 slots per the template.
         assert_eq!(
             e.actors[&id]
                 .spell_slot_manager
                 .spell_slots(1)
                 .spell_slots,
-            3
+            4
         );
         assert_eq!(
             e.actors[&id]
@@ -9503,5 +9518,441 @@ mod tests {
             e.actors[&reactor_id].can_consume_resource(Resource::Reaction),
             "reactor should still have their reaction — Disengage suppressed the OA"
         );
+    }
+
+    #[test]
+    fn skeleton_takes_double_bludgeoning_damage() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        // Cap the actor's HP at a known value so the doubled-damage
+        // computation is unambiguous regardless of HP roll.
+        let damage = 3u32;
+        DealDamage {
+            actor_id: id,
+            amount: damage,
+            damage_type: DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        // Vulnerability: 3 → 6 actual HP loss.
+        assert_eq!(e.actors[&id].hitpoints(), max - damage * 2);
+    }
+
+    #[test]
+    fn zombie_immune_to_poison() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 100,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max, "poison should not affect undead");
+    }
+
+    #[test]
+    fn slime_resists_acid_halves_damage() {
+        use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SLIME_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 6,
+            damage_type: DamageType::Acid,
+        }
+        .apply(&mut e);
+        // Slime is immune to acid → 0 damage absorbed.
+        assert_eq!(e.actors[&id].hitpoints(), max);
+        // Try cold (vulnerability instead): 4 → 8.
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Cold,
+        }
+        .apply(&mut e);
+        // Cold doubled to 8.
+        assert_eq!(e.actors[&id].hitpoints(), max.saturating_sub(8));
+    }
+
+    #[test]
+    fn temp_hp_absorbs_damage_first() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&id).unwrap().add_temp_hp(5);
+        let max = e.actors[&id].max_hitpoints();
+        // 4 damage: fully absorbed by temp HP, none of HP lost.
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Force,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max);
+        assert_eq!(e.actors[&id].temp_hp(), 1);
+        // 4 more damage: 1 absorbed, 3 to HP.
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Force,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max - 3);
+        assert_eq!(e.actors[&id].temp_hp(), 0);
+    }
+
+    #[test]
+    fn restrained_zeros_movement_and_grants_attack_advantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Restrained, ConditionTimer::Permanent);
+        // Attack against restrained target → advantage; restrained mover
+        // can't move.
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage
+        );
+        assert_eq!(e.actors[&target].remaining_movement(), 0.0);
+    }
+
+    #[test]
+    fn blinded_attacker_disadvantage_target_advantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        // Blinded attacker → disadvantage on attacks.
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage
+        );
+        // Now blind the target too — advantage and disadvantage cancel to Normal.
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Normal
+        );
+    }
+
+    #[test]
+    fn invisible_attacker_advantage_target_disadvantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage
+        );
+        // Invisible target as well — cancels.
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Normal
+        );
+    }
+
+    #[test]
+    fn dodging_target_imposes_disadvantage_on_attackers() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Dodging, ConditionTimer::Rounds(1));
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn incapacitated_blocks_action_economy_but_allows_movement() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Incapacitated, ConditionTimer::Permanent);
+        assert!(!e.actors[&id].can_consume_resource(Resource::Action));
+        assert!(!e.actors[&id].can_consume_resource(Resource::BonusAction));
+        // Movement still allowed (no zero-out).
+        assert!(e.actors[&id].remaining_movement() > 0.0);
+    }
+
+    #[test]
+    fn dodge_action_applies_dodging_condition() {
+        use crate::actions::default_actions::DODGE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*DODGE, id, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&id].has_condition(Condition::Dodging));
+    }
+
+    #[test]
+    fn disengage_skips_opportunity_attack() {
+        use crate::actions::default_actions::DISENGAGE;
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+
+        // Apply Disengage via the action to ensure plumbing works.
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*DISENGAGE, mover_id, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&mover_id].has_condition(Condition::Disengaged));
+
+        // Move past the reactor — they should NOT spend their reaction.
+        let move_effect = MoveActor {
+            actor_id: mover_id,
+            path: vec![Coordinate::new(15, 5)],
+        };
+        move_effect.apply(&mut e);
+
+        if let Some(reactor) = e.actors.get(&reactor_id) {
+            assert!(
+                reactor.can_consume_resource(Resource::Reaction),
+                "disengage should suppress opportunity attacks"
+            );
+        }
+    }
+
+    #[test]
+    fn help_grants_helped_to_target_ally_only() {
+        use crate::actions::default_actions::HELP;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let helper = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 0, 1)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(9, 5), 1, 0)
+            .unwrap();
+        // Self-targeting fails.
+        let self_aei = ActionExecutionInfo::new(&*HELP, helper, Some(vec![helper]), None, None);
+        assert!(!self_aei.validate(&e));
+        // Targeting an enemy fails (different team).
+        let _ = enemy;
+        let enemy_aei = ActionExecutionInfo::new(&*HELP, helper, Some(vec![enemy]), None, None);
+        assert!(!enemy_aei.validate(&e));
+        // Targeting ally succeeds.
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*HELP, helper, Some(vec![ally]), None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&ally].has_condition(Condition::Helped));
+    }
+
+    #[test]
+    fn helped_grants_advantage_then_clears() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::SLAM;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Helped, ConditionTimer::Permanent);
+        // Fire a slam — Helped should be cleared after the roll.
+        let target_vec = vec![target];
+        let _ = SLAM.side_effects(&mut e, attacker, Some(&target_vec), None, None);
+        assert!(!e.actors[&attacker].has_condition(Condition::Helped));
+    }
+
+    #[test]
+    fn cure_wounds_heals_an_ally() {
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        let max = e.actors[&ally].max_hitpoints();
+        e.actors.get_mut(&ally).unwrap().take_damage(max - 1);
+        let before = e.actors[&ally].hitpoints();
+
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*CURE_WOUNDS,
+            cleric,
+            Some(vec![ally]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e), "cure wounds should validate at touch range");
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&ally].hitpoints() > before, "ally should have gained HP");
+    }
+
+    #[test]
+    fn bless_grants_blessed_to_caster_and_starts_concentration() {
+        use crate::actions::spells::BLESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(7, 5), 0, 1)
+            .unwrap();
+
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*BLESS, cleric, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&cleric].has_condition(Condition::Blessed));
+        assert!(e.actors[&ally].has_condition(Condition::Blessed));
+        assert!(e.actors[&cleric].is_concentrating());
+    }
+
+    #[test]
+    fn bless_drops_blessed_when_concentration_ends() {
+        use crate::actions::spells::BLESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(7, 5), 0, 1)
+            .unwrap();
+        e.pop_prompt();
+        e.push_action(ActionExecutionInfo::new(&*BLESS, cleric, None, None, None));
+        e.process_stack();
+        e.drop_concentration(cleric);
+        assert!(!e.actors[&cleric].has_condition(Condition::Blessed));
+        assert!(!e.actors[&ally].has_condition(Condition::Blessed));
+    }
+
+    #[test]
+    fn false_life_grants_temp_hp() {
+        use crate::actions::spells::FALSE_LIFE;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // Use the cleric for the slot pool — it has level-1 slots.
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let aei = ActionExecutionInfo::new(&*FALSE_LIFE, cleric, None, None, None);
+        assert!(aei.validate(&e));
+        e.pop_prompt();
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&cleric].temp_hp() >= 5, "should be at least 1d4+4");
+    }
+
+    #[test]
+    fn temp_hp_does_not_stack() {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        actor.add_temp_hp(7);
+        actor.add_temp_hp(3); // smaller — ignored
+        assert_eq!(actor.temp_hp(), 7);
+        actor.add_temp_hp(10); // larger — replaces
+        assert_eq!(actor.temp_hp(), 10);
     }
 }

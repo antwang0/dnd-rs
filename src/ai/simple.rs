@@ -60,7 +60,13 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 4. Hold Person — lock down toughest enemy if we have it and
+        // 4. Bless — round 1 self+ally buff. Only valid before we're
+        //    already concentrating on something.
+        if let Some(aei) = try_bless(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 5. Hold Person — lock down toughest enemy if we have it and
         //    aren't already concentrating on something.
         if let Some(aei) = try_hold_person(encounter, actor_id) {
             return ControllerDecision::Act(aei);
@@ -291,6 +297,57 @@ fn try_cause_fear(
         }
     }
     best.map(|(_, aei)| aei)
+}
+
+/// Cast Bless if we have it, aren't already concentrating, and there's at
+/// least one combat-active ally (otherwise the buff is wasted on solo).
+fn try_bless(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() {
+        return None;
+    }
+    let bless = actor.actions.iter().find(|a| a.name() == "bless").copied()?;
+    // Only worth casting if at least one other allied combatant exists.
+    let my_team = actor.team();
+    let has_ally = encounter.actors.iter().any(|(id, a)| {
+        *id != actor_id && a.team() == my_team && a.is_combat_active()
+    });
+    if !has_ally {
+        return None;
+    }
+    let aei = ActionExecutionInfo::new(bless, actor_id, None, None, None);
+    if aei.validate(encounter) {
+        Some(aei)
+    } else {
+        None
+    }
+}
+
+/// Take the Dodge action when we're below half HP and an enemy still
+/// threatens us. Better than Skip when the actor has nothing else to do.
+fn try_dodge(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.has_condition(Condition::Dodging) {
+        return None;
+    }
+    let hp = actor.hitpoints() as f32;
+    let max = actor.max_hitpoints().max(1) as f32;
+    if hp / max >= 0.5 {
+        return None;
+    }
+    let dodge = actor.actions.iter().find(|a| a.name() == "dodge").copied()?;
+    let aei = ActionExecutionInfo::new(dodge, actor_id, None, None, None);
+    if aei.validate(encounter) {
+        Some(aei)
+    } else {
+        None
+    }
 }
 
 /// Sort key for advantage-aware target selection — lower wins.
