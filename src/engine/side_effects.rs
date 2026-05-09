@@ -1,4 +1,6 @@
-use crate::actors::actor_template::{ConcentrationData, DamageOutcome, HealOutcome};
+use crate::actors::actor_template::{
+    ConcentrationData, DamageModKind, DamageOutcome, HealOutcome,
+};
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::triggers::TriggerEvent;

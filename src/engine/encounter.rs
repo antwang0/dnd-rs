@@ -182,6 +182,70 @@ impl OutcomeTracker {
     }
 }
 
+/// Conditions on the attacker that contribute a single advantage /
+/// disadvantage source. Returned as a tiny vec (≤ a few entries) so the
+/// caller folds them through `RollMode::combine`.
+fn attacker_mode_contrib(attacker: &ActorInstance) -> Vec<RollMode> {
+    use crate::conditions::Condition;
+    let mut out = Vec::new();
+    // Disadvantage clauses.
+    for c in [
+        Condition::Prone,
+        Condition::Poisoned,
+        Condition::Blinded,
+        Condition::Frightened,
+        Condition::Restrained,
+    ] {
+        if attacker.has_condition(c) {
+            out.push(RollMode::Disadvantage);
+        }
+    }
+    // Advantage clauses.
+    if attacker.has_condition(Condition::Invisible) {
+        out.push(RollMode::Advantage);
+    }
+    // Help action: someone Helped this attacker — advantage on their next
+    // attack. Consumption happens at the call site (`weapon_attack`)
+    // since `compute_attack_mode` is read-only.
+    if attacker.has_condition(Condition::Helped) {
+        out.push(RollMode::Advantage);
+    }
+    out
+}
+
+/// Conditions on the defender that contribute a single advantage /
+/// disadvantage source from the attacker's POV. `is_melee` matters only
+/// for Prone (melee = adv, ranged = dis).
+fn target_mode_contrib(target: &ActorInstance, is_melee: bool) -> Vec<RollMode> {
+    use crate::conditions::Condition;
+    let mut out = Vec::new();
+    if target.has_condition(Condition::Prone) {
+        out.push(if is_melee {
+            RollMode::Advantage
+        } else {
+            RollMode::Disadvantage
+        });
+    }
+    // Defender effectively can't react — attacker has advantage. 5e RAW.
+    for c in [
+        Condition::Stunned,
+        Condition::Unconscious,
+        Condition::Restrained,
+        Condition::Blinded,
+    ] {
+        if target.has_condition(c) {
+            out.push(RollMode::Advantage);
+        }
+    }
+    // Defender harder to see / brace against.
+    for c in [Condition::Invisible, Condition::Dodging] {
+        if target.has_condition(c) {
+            out.push(RollMode::Disadvantage);
+        }
+    }
+    out
+}
+
 /// Authoritative state for one combat encounter. Most fields are kept
 /// private; access goes through methods so engine invariants (actor map
 /// stays in sync with actor locations, initiative queue stays in sync with
@@ -364,7 +428,6 @@ impl EncounterInstance {
         target_id: usize,
         is_melee: bool,
     ) -> RollMode {
-        use crate::conditions::Condition;
         let mut mode = RollMode::Normal;
         if let Some(attacker) = self.actors.get(&attacker_id) {
             for c in [
@@ -3105,6 +3168,42 @@ mod tests {
         }
         .apply(&mut e);
         assert!(!e.actors[&caster].is_concentrating());
+    }
+
+    #[test]
+    fn add_condition_longer_timer_wins_over_shorter() {
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        actor.add_condition(Condition::Stunned, ConditionTimer::Rounds(2));
+        actor.add_condition(Condition::Stunned, ConditionTimer::Rounds(5));
+        let timer = actor.conditions().get(&Condition::Stunned).copied().unwrap();
+        assert_eq!(timer, ConditionTimer::Rounds(5));
+        // Re-adding a shorter timer should not shrink it.
+        actor.add_condition(Condition::Stunned, ConditionTimer::Rounds(1));
+        let timer = actor.conditions().get(&Condition::Stunned).copied().unwrap();
+        assert_eq!(timer, ConditionTimer::Rounds(5));
+    }
+
+    #[test]
+    fn add_condition_permanent_beats_rounds() {
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        actor.add_condition(Condition::Stunned, ConditionTimer::Rounds(2));
+        actor.add_condition(Condition::Stunned, ConditionTimer::Permanent);
+        let timer = actor.conditions().get(&Condition::Stunned).copied().unwrap();
+        assert_eq!(timer, ConditionTimer::Permanent);
+        // And once Permanent, a Rounds(_) doesn't downgrade it.
+        actor.add_condition(Condition::Stunned, ConditionTimer::Rounds(99));
+        let timer = actor.conditions().get(&Condition::Stunned).copied().unwrap();
+        assert_eq!(timer, ConditionTimer::Permanent);
     }
 
     #[test]

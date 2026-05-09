@@ -79,6 +79,23 @@ impl ConcentrationData {
     }
 }
 
+/// How damage was filtered by an actor's resistances / immunities /
+/// vulnerabilities. `DealDamage` reads `kind` for log flavor and applies
+/// `amount` as the post-filter HP delta.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DamageMod {
+    pub amount: u32,
+    pub kind: DamageModKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DamageModKind {
+    Normal,
+    Resisted,
+    Vulnerable,
+    Immune,
+}
+
 /// What `heal` did. Mirrors `DamageOutcome` for the inverse direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HealOutcome {
@@ -749,7 +766,11 @@ impl ActorInstance {
                     self.conditions.insert(c, ConditionTimer::Rounds(n - 1));
                 }
             }
-        }
+            ConditionTimer::Rounds(n) => {
+                *timer = ConditionTimer::Rounds(n - 1);
+                true
+            }
+        });
         expired
     }
 

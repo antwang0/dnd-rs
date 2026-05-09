@@ -7,7 +7,7 @@ use crate::{
         action_overrides::ActionOverride,
         dice::Dice,
         encounter::EncounterInstance,
-        side_effects::{ApplicableSideEffect, DealDamage, Heal, Resource},
+        side_effects::{ApplicableSideEffect, DealDamage, GainTempHp, Heal, Resource},
         types::{AbilityScoreType, Coordinate, DamageType},
         util::modifier_from_score,
     },

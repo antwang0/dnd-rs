@@ -349,6 +349,38 @@ fn try_step_away_from_threats(
     ))
 }
 
+/// Self-targeted heal (e.g. fighter Second Wind, drink healing potion).
+/// Triggers when the actor is below 50% HP and has any heal action with
+/// a `NoArgs` schema (which by convention self-targets). Picks the first
+/// validating heal — order is action-list order so high-value class
+/// features land before consumables.
+fn try_self_heal(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if !actor.is_combat_active() {
+        return None;
+    }
+    let max_hp = actor.max_hitpoints().max(1);
+    if (actor.hitpoints() as f32) / (max_hp as f32) >= 0.5 {
+        return None;
+    }
+    for &action in &actor.actions {
+        if !action.is_heal() {
+            continue;
+        }
+        if !matches!(action.targeting_schema(), TargetingSchema::NoArgs) {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
+        if aei.validate(encounter) {
+            return Some(aei);
+        }
+    }
+    None
+}
+
 /// Cast a helpful single-actor action (e.g. Healing Word) on an ally who
 /// needs it. Priority: dying allies first (revival prevents death-save
 /// failure), then wounded combat-active allies below 50% HP. Stable and
@@ -1178,6 +1210,46 @@ mod tests {
             "AI should fish for advantage when HP ties"
         );
         let _ = upright;
+    }
+
+    #[test]
+    fn ai_self_heals_when_low_hp() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = empty_arena();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Drop fighter below 50%.
+        let max = e.actors[&fighter].max_hitpoints();
+        e.actors.get_mut(&fighter).unwrap().take_damage(max - 1);
+
+        let ai = SimpleAi;
+        let decision = ai.decide(&e, fighter);
+        let ControllerDecision::Act(aei) = decision else {
+            panic!("expected an action");
+        };
+        assert_eq!(aei.action().name(), "second wind");
+    }
+
+    #[test]
+    fn ai_does_not_self_heal_at_full_hp() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = empty_arena();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        let ai = SimpleAi;
+        let decision = ai.decide(&e, fighter);
+        let ControllerDecision::Act(aei) = decision else {
+            panic!("expected an action");
+        };
+        assert_ne!(aei.action().name(), "second wind");
     }
 
     #[test]
