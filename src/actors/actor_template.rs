@@ -587,6 +587,16 @@ impl ActorInstance {
         self.cr
     }
 
+    /// 5e proficiency bonus: +2 at L1-4, +3 at L5-8, +4 at L9-12, etc.
+    /// Both PCs (driven by `level`) and monsters (whose CR is roughly
+    /// equivalent to a player level) read from the same scale here.
+    /// For monsters we approximate level from CR: floor(cr) clamped to
+    /// at least 1.
+    pub fn proficiency_bonus(&self) -> i32 {
+        let effective_level = self.level.max(self.cr.floor().max(1.0) as u32);
+        2 + ((effective_level.saturating_sub(1)) / 4) as i32
+    }
+
     /// XP a slain instance of this actor awards. Linear in CR
     /// (CR 1 → 200 XP, CR 2 → 400 XP). The 5e table is non-linear at
     /// the ends, but linear is good enough for the dungeon loop and
@@ -1455,6 +1465,8 @@ impl ActorInstance {
         modifier_from_score(self.strength) + self.proficiency_bonus()
     }
 
+    /// Default melee damage bonus: STR mod (proficiency does NOT apply
+    /// to damage in 5e — only to to-hit).
     pub fn damage_bonus(&self) -> i32 {
         modifier_from_score(self.strength)
     }

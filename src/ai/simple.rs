@@ -85,7 +85,15 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 7. No one in reach — close on the lowest-HP enemy.
+        // 7. Defensive dodge: if we're below 30% HP, no allies need
+        //    healing, and we don't have a high-leverage attack queued
+        //    above, take the Dodge action so incoming swings have
+        //    disadvantage. Better than trading blows on the way down.
+        if let Some(aei) = try_dodge_when_low_hp(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 8. No one in reach — close on the lowest-HP enemy.
         if let Some(aei) = try_step_toward_lowest_hp(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }

@@ -369,7 +369,7 @@ impl Action for AcidSpit {
         use crate::engine::types::AbilityScoreType;
         use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -451,10 +451,6 @@ impl Action for AcidSpit {
 
 pub static ACID_SPIT: LazyLock<AcidSpit> = LazyLock::new(|| AcidSpit {});
 
-/// Scimitar — generic STR-based 1d6 slashing melee attack. Used by
-/// goblins and other light melee creatures that don't have a flashy
-/// rider effect. Same shape as Slam but slashing instead of bludgeoning.
-pub struct Scimitar {}
 
 impl Action for Scimitar {
     fn name(&self) -> &str {
@@ -504,12 +500,6 @@ impl Action for Scimitar {
 }
 pub static SCIMITAR: LazyLock<Scimitar> = LazyLock::new(|| Scimitar {});
 
-/// Shortbow — DEX-based 1d4 piercing ranged attack. Distinguished from
-/// Longbow by *bonus-action* economy: meant to be a quick second swing
-/// that pairs with an Action attack. Reach 12 tiles (30ft, half of
-/// longbow). Demonstrates the BonusAction cost slot, which has been
-/// underused.
-pub struct Shortbow {}
 
 impl Action for Shortbow {
     fn name(&self) -> &str {
@@ -578,18 +568,18 @@ pub static SHORTBOW: WeaponAction = WeaponAction {
     on_hit_rider: None,
 };
 
-impl Action for Greatclub {
+impl Action for SpiderBite {
     fn name(&self) -> &str {
-        "greatclub"
+        "spider bite"
     }
     fn aliases(&self) -> Vec<&str> {
-        vec!["gc"]
+        vec!["sbite"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::SingleActor
     }
     fn reach_tiles(&self) -> Option<isize> {
-        Some(2)
+        Some(MELEE_REACH)
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Bludgeoning]
@@ -623,10 +613,35 @@ impl Action for Greatclub {
             Dice::new(1, 10),
             DamageType::Bludgeoning,
             true,
-        )
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        // Poison rider — separate save. On fail: extra poison damage AND
+        // Poisoned for 2 rounds.
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 11);
+        if !save.passed() {
+            let poison = encounter.roll(&Dice::new(2, 4));
+            encounter.log(format!(
+                "  spider venom: 2d4({}) = {} poison",
+                poison, poison
+            ));
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: poison,
+                damage_type: DamageType::Poison,
+            }));
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Poisoned,
+                timer: ConditionTimer::Rounds(2),
+            }));
+        }
+        effects
     }
 }
-pub static GREATCLUB: LazyLock<Greatclub> = LazyLock::new(|| Greatclub {});
+pub static SPIDER_BITE: LazyLock<SpiderBite> = LazyLock::new(|| SpiderBite {});
+
 
 /// Greataxe — Orc-flavored heavy two-hander. STR-based 1d12 slashing,
 /// melee reach. Hits harder than a longsword on a single die; pairs

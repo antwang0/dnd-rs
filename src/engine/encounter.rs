@@ -580,6 +580,7 @@ impl EncounterInstance {
     ) -> crate::engine::saves::SaveOutcome {
         use crate::conditions::Condition;
         use crate::engine::saves::SaveOutcome;
+        use crate::engine::types::AbilityScoreType;
         use crate::engine::util::modifier_from_score;
 
         // Paralyzed / Stunned auto-fail STR & DEX saves (5e). Log it so
