@@ -11,7 +11,7 @@ pub static ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // an alternative single attack that on hit forces a STR save or prone —
     // less raw damage but disables movement.
     actions.push(&*ZOMBIE_MULTISLAM);
-    actions.push(&*TRIP);
+    actions.push(&TRIP);
     CreatureTemplate {
         name: "Zombie",
         glyph: 'Z',

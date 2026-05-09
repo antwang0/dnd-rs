@@ -13,7 +13,7 @@ use std::sync::LazyLock;
 /// hits hard without trivially erasing parties.
 pub static OGRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*GREATCLUB);
+    actions.push(&GREATCLUB);
     CreatureTemplate {
         name: "Ogre",
         glyph: 'O',

@@ -490,6 +490,9 @@ impl EncounterInstance {
             if target.has_condition(Condition::Dodging) {
                 mode = mode.combine(RollMode::Disadvantage);
             }
+            if target.has_condition(Condition::Blinded) {
+                mode = mode.combine(RollMode::Advantage);
+            }
         }
         // Attacker-side perks. Help-aided attackers get advantage on their
         // single next attack; consume it after the mode is computed.
@@ -2511,7 +2514,7 @@ mod tests {
             .unwrap();
         assert_eq!(GREATCLUB.reach_tiles(), Some(2));
         let aei =
-            ActionExecutionInfo::new(&*GREATCLUB, ogre, Some(vec![target]), None, None);
+            ActionExecutionInfo::new(&GREATCLUB, ogre, Some(vec![target]), None, None);
         assert!(aei.validate(&e), "greatclub should reach 2-gap target");
 
         // Place a target further out — outside reach.
@@ -2519,7 +2522,7 @@ mod tests {
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 10), 1, 1)
             .unwrap();
         let aei_far =
-            ActionExecutionInfo::new(&*GREATCLUB, ogre, Some(vec![far]), None, None);
+            ActionExecutionInfo::new(&GREATCLUB, ogre, Some(vec![far]), None, None);
         assert!(!aei_far.validate(&e), "greatclub should not reach gap-7 target");
     }
 
@@ -2558,7 +2561,7 @@ mod tests {
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
             .unwrap();
         let aei =
-            ActionExecutionInfo::new(&*WOLF_BITE, wolf, Some(vec![target]), None, None);
+            ActionExecutionInfo::new(&WOLF_BITE, wolf, Some(vec![target]), None, None);
         assert!(aei.validate(&e));
         // Reach is plain melee (1-tile gap).
         assert_eq!(WOLF_BITE.reach_tiles(), Some(1));
@@ -7764,5 +7767,163 @@ mod tests {
         }
         .apply(&mut e);
         assert_eq!(e.actors[&id].hitpoints(), max.saturating_sub(5));
+    }
+
+    #[test]
+    fn zombie_immune_to_poison() {
+        use crate::engine::side_effects::DealDamage;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 10,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(
+            e.actors[&id].hitpoints(),
+            before,
+            "zombie is poison-immune; damage should be 0"
+        );
+    }
+
+    #[test]
+    fn zombie_vulnerable_to_radiant() {
+        use crate::engine::side_effects::DealDamage;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Radiant,
+        }
+        .apply(&mut e);
+        // Vulnerable doubles damage: 4 -> 8.
+        assert_eq!(e.actors[&id].hitpoints() + 8, before);
+    }
+
+    #[test]
+    fn zombie_resistant_to_necrotic() {
+        use crate::engine::side_effects::DealDamage;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 6,
+            damage_type: DamageType::Necrotic,
+        }
+        .apply(&mut e);
+        // Resistant halves: 6 -> 3.
+        assert_eq!(e.actors[&id].hitpoints() + 3, before);
+    }
+
+    #[test]
+    fn frightened_imposes_disadvantage_on_attacks() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Frightened, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn blinded_grants_advantage_against_target() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage
+        );
+    }
+
+    #[test]
+    fn bless_adds_to_attack_log_when_active() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::SLAM;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Blessed, ConditionTimer::Permanent);
+
+        // Attack a few times — at least one log line should mention bless.
+        let mut bless_seen = false;
+        for _ in 0..40 {
+            let log_before = e.messages().len();
+            let target_vec = vec![target];
+            let effects = SLAM.side_effects(&mut e, attacker, Some(&target_vec), None, None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            if e.messages()[log_before..]
+                .iter()
+                .any(|line| line.contains("bless("))
+            {
+                bless_seen = true;
+                break;
+            }
+        }
+        assert!(bless_seen, "blessed attacker should log bless bonus");
+    }
+
+    #[test]
+    fn wizard_has_spell_actions() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let names: Vec<&str> = e.actors[&id].actions.iter().map(|a| a.name()).collect();
+        assert!(names.contains(&"fire bolt"));
+        assert!(names.contains(&"magic missile"));
+        assert!(names.contains(&"cause fear"));
     }
 }

@@ -3,6 +3,7 @@ use std::sync::LazyLock;
 
 use crate::{
     actions::action_template::{Action, MELEE_REACH, TargetingSchema},
+    conditions::{Condition, ConditionTimer},
     engine::{
         action_overrides::ActionOverride,
         attack::{AttackParams, resolve_attack},
@@ -201,8 +202,8 @@ impl Action for TripAttack {
         TargetingSchema::SingleActor
     }
 
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
+    fn requires_los(&self) -> bool {
+        self.requires_los
     }
 
     fn damage_types(&self) -> Vec<DamageType> {
@@ -217,7 +218,7 @@ impl Action for TripAttack {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action]
+        vec![self.cost_resource]
     }
 
     fn side_effects(
@@ -262,7 +263,56 @@ impl Action for TripAttack {
     }
 }
 
-pub static TRIP: LazyLock<TripAttack> = LazyLock::new(|| TripAttack {});
+
+/// Standard 5e longbow: ranged, requires line-of-sight, +DEX to hit and damage.
+/// 20 tiles = 50ft on this 2.5ft grid — short of the 5e 80/320 normal/long
+/// range but plenty for our 40×20 maps.
+pub static LONGBOW: WeaponAction = WeaponAction {
+    display_name: "longbow",
+    aliases: &["bow", "shoot"],
+    reach: 20,
+    requires_los: true,
+    cost_resource: Resource::Action,
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Piercing,
+    ability: AbilityScoreType::Dexterity,
+    is_melee: false,
+    on_hit_rider: None,
+};
+
+/// Slam — vanilla zombie melee. STR-based 2d6 bludgeoning at melee reach.
+pub static SLAM: WeaponAction = WeaponAction {
+    display_name: "slam",
+    aliases: &["slm"],
+    reach: MELEE_REACH,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Bludgeoning,
+    ability: AbilityScoreType::Strength,
+    is_melee: true,
+    on_hit_rider: None,
+};
+
+/// Trip — STR-based melee swing that forces a STR save (DC 13) on hit;
+/// fail = Prone. Damage applies regardless of the rider save.
+pub static TRIP: WeaponAction = WeaponAction {
+    display_name: "trip",
+    aliases: &["tp"],
+    reach: MELEE_REACH,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    damage_dice: Dice::new(1, 6),
+    damage_type: DamageType::Bludgeoning,
+    ability: AbilityScoreType::Strength,
+    is_melee: true,
+    on_hit_rider: Some(SaveRider {
+        ability: AbilityScoreType::Strength,
+        dc: 13,
+        condition: Condition::Prone,
+        timer: ConditionTimer::Permanent,
+    }),
+};
 
 /// Ranged spit attack with splash. Primary uses an attack roll vs AC; on
 /// hit deals 1d6 acid to the primary target AND auto-damages every
@@ -512,11 +562,21 @@ impl Action for Shortbow {
 }
 pub static SHORTBOW: LazyLock<Shortbow> = LazyLock::new(|| Shortbow {});
 
-/// Greatclub — Ogre's signature weapon. STR-based 1d10 bludgeoning, but
-/// the headline feature is **reach 2** (10ft), letting Large ogres swing
-/// past their footprint. First polearm-style attack in the codebase —
-/// exercises footprint_chebyshev > 1 reach validation.
-pub struct Greatclub {}
+/// Shortbow — DEX-based 1d4 piercing ranged attack. Bonus-action economy
+/// pairs with an Action attack so a goblin can both stab and shoot in
+/// the same round.
+pub static SHORTBOW: WeaponAction = WeaponAction {
+    display_name: "shortbow",
+    aliases: &["sb-bow", "shoot2"],
+    reach: 12,
+    requires_los: true,
+    cost_resource: Resource::BonusAction,
+    damage_dice: Dice::new(1, 4),
+    damage_type: DamageType::Piercing,
+    ability: AbilityScoreType::Dexterity,
+    is_melee: false,
+    on_hit_rider: None,
+};
 
 impl Action for Greatclub {
     fn name(&self) -> &str {
@@ -914,7 +974,7 @@ impl Action for Multiattack {
 /// zombie at the cost of nothing (this game's zombies are scarier than MM).
 pub static ZOMBIE_MULTISLAM: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
     display_name: "multislam",
-    sub_attack: &*SLAM,
+    sub_attack: &SLAM,
     count: 2,
 });
 

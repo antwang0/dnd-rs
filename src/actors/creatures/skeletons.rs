@@ -10,7 +10,7 @@ use std::sync::LazyLock;
 /// MM since we only use a subset of fields.
 pub static SKELETON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*LONGBOW);
+    actions.push(&LONGBOW);
     CreatureTemplate {
         name: "Skeleton",
         glyph: 'S',
