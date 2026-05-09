@@ -1367,13 +1367,9 @@ impl EncounterInstance {
     }
 
     fn template_pool() -> Vec<&'static CreatureTemplate> {
-        // TODO: encounter-difficulty-driven pool selection; for now all
-        // creatures are uniformly drawable.
         vec![
-            &ZOMBIE_TEMPLATE,
-            &SKELETON_TEMPLATE,
+            &BANDIT_TEMPLATE,
             &CLERIC_TEMPLATE,
-            &SLIME_TEMPLATE,
             &GOBLIN_TEMPLATE,
             &GOBLIN_BOSS_TEMPLATE,
             &OGRE_TEMPLATE,
@@ -2877,6 +2873,10 @@ mod tests {
         assert_eq!(
             e.compute_attack_mode(attacker, target, true),
             RollMode::Disadvantage
+        );
+        assert_eq!(
+            e.compute_save_mode(id, AbilityScoreType::Constitution),
+            RollMode::Normal
         );
     }
 

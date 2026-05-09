@@ -625,7 +625,13 @@ fn try_attack_aoe(
         if anchor.team() == my_team || !anchor.is_combat_active() {
             continue;
         }
-        let point = anchor.location();
+        candidate_points.push((anchor.location(), *anchor_id));
+    }
+
+    let mut best: Option<(usize, usize, ActionExecutionInfo)> = None; // (enemy_hits, anchor_id, aei)
+    for (point, anchor_id) in &candidate_points {
+        let point = *point;
+        let anchor_id = *anchor_id;
 
         for (action, radius) in &burst_actions {
             // Validate caster→point reach + LOS + cost via the action's
@@ -667,11 +673,11 @@ fn try_attack_aoe(
                 None => true,
                 Some((best_hits, best_anchor, _)) => {
                     enemy_hits > *best_hits
-                        || (enemy_hits == *best_hits && *anchor_id < *best_anchor)
+                        || (enemy_hits == *best_hits && anchor_id < *best_anchor)
                 }
             };
             if pick {
-                best = Some((enemy_hits, *anchor_id, aei));
+                best = Some((enemy_hits, anchor_id, aei));
             }
         }
     }

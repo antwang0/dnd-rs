@@ -343,9 +343,10 @@ impl Action for SacredBurst {
 pub static SACRED_BURST: LazyLock<SacredBurst> = LazyLock::new(|| SacredBurst {});
 
 /// Hold Person — 5e-flavored single-target paralysis. WIS save vs the
-/// caster's WIS-based DC; on fail, target is Stunned (close enough to
-/// Paralyzed for our model, since we don't yet model auto-fail STR/DEX
-/// saves or melee crit-on-hit) for 10 rounds. Concentration: when the
+/// caster's WIS-based DC; on fail, target is Stunned for 10 rounds.
+/// Stunned models paralysis: blocks actions/movement, auto-fails STR/DEX
+/// saves, and attackers roll with advantage. Missing: the 5-foot crit rule
+/// (melee hits auto-crit vs paralyzed targets). Concentration: when the
 /// caster takes damage and fails a CON save (or hits 0 HP), the spell
 /// drops and Stunned clears immediately.
 pub struct HoldPerson {}
