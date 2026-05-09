@@ -3069,4 +3069,108 @@ mod tests {
         let enemy_count = next.actors.values().filter(|a| a.team() != 0).count();
         assert!(enemy_count > 0, "expected enemies on teams 1+");
     }
+
+    #[test]
+    fn damage_immunity_zeroes_damage() {
+        // Zombies are immune to poison; a 50-point poison hit should be a no-op.
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let pre = e.actors[&id].hitpoints();
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        DealDamage {
+            actor_id: id,
+            amount: 50,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), pre, "poison should be ignored");
+    }
+
+    #[test]
+    fn damage_vulnerability_doubles_damage() {
+        // Skeletons are vulnerable to bludgeoning.
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let pre = e.actors[&id].hitpoints();
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let dmg = 3.min(pre / 2); // make sure 2*dmg fits within HP
+        DealDamage {
+            actor_id: id,
+            amount: dmg,
+            damage_type: DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        assert_eq!(
+            e.actors[&id].hitpoints(),
+            pre - dmg.saturating_mul(2),
+            "skeleton should take double bludgeoning damage"
+        );
+    }
+
+    #[test]
+    fn shield_of_faith_grants_plus_two_ac() {
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(0, 0), 0, 0)
+            .unwrap();
+        let pre = e.actors[&id].armor_class();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::ShieldedByFaith, ConditionTimer::Permanent);
+        assert_eq!(e.actors[&id].armor_class(), pre + 2);
+    }
+
+    #[test]
+    fn restrained_zeroes_movement_and_grants_attacker_advantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let mover_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(0, 0), 0, 0)
+            .unwrap();
+        let target_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 0), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&mover_id)
+            .unwrap()
+            .add_condition(Condition::Restrained, ConditionTimer::Permanent);
+        assert_eq!(
+            e.actors[&mover_id].remaining_movement(),
+            0.0,
+            "restrained pins speed to 0"
+        );
+        let mode = e.compute_attack_mode(target_id, mover_id, true);
+        assert_eq!(
+            mode,
+            RollMode::Advantage,
+            "attacks vs restrained get advantage"
+        );
+    }
+
+    #[test]
+    fn incapacitated_blocks_action_economy() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(0, 0), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Incapacitated, ConditionTimer::Permanent);
+        let actor = &e.actors[&id];
+        assert!(!actor.can_consume_resource(Resource::Action));
+        assert!(!actor.can_consume_resource(Resource::BonusAction));
+        assert!(!actor.can_consume_resource(Resource::Reaction));
+    }
 }

@@ -146,42 +146,49 @@ pub struct SpellSlotManager {
 }
 
 impl SpellSlotManager {
+    /// Convert a 1-based spell level to a 0-based index, returning None
+    /// for level 0 (cantrips don't use slots in 5e). All public methods
+    /// guard on this so an accidental `consume_spell_slot(0)` no-ops
+    /// instead of wrapping the unsigned subtraction into a huge index.
+    fn idx(lvl: u32) -> Option<usize> {
+        if lvl == 0 { None } else { Some((lvl - 1) as usize) }
+    }
+
     pub fn spell_slots(&self, lvl: u32) -> SpellSlotInfo {
-        let i_usize = (lvl - 1) as usize;
-        if let Some(ssi) = self.ssi_by_lvl.get(i_usize) {
-            ssi.clone()
-        } else {
-            SpellSlotInfo {
+        Self::idx(lvl)
+            .and_then(|i| self.ssi_by_lvl.get(i).cloned())
+            .unwrap_or(SpellSlotInfo {
                 max_spell_slots: 0,
                 spell_slots: 0,
-            }
-        }
+            })
     }
 
     pub fn consume_spell_slot(&mut self, lvl: u32) -> bool {
-        let i_usize = (lvl - 1) as usize;
-        if let Some(ssi) = self.ssi_by_lvl.get_mut(i_usize) {
-            if ssi.spell_slots == 0 {
-                return false;
-            }
-            ssi.spell_slots -= 1;
-            true
-        } else {
-            false
+        let Some(i) = Self::idx(lvl) else {
+            return false;
+        };
+        let Some(ssi) = self.ssi_by_lvl.get_mut(i) else {
+            return false;
+        };
+        if ssi.spell_slots == 0 {
+            return false;
         }
+        ssi.spell_slots -= 1;
+        true
     }
 
     pub fn restore_spell_slot(&mut self, lvl: u32, qty: u32) -> bool {
-        let i_usize = (lvl - 1) as usize;
-        if let Some(ssi) = self.ssi_by_lvl.get_mut(i_usize) {
-            if ssi.spell_slots + qty > ssi.max_spell_slots {
-                return false;
-            }
-            ssi.spell_slots += qty;
-            true
-        } else {
-            false
+        let Some(i) = Self::idx(lvl) else {
+            return false;
+        };
+        let Some(ssi) = self.ssi_by_lvl.get_mut(i) else {
+            return false;
+        };
+        if ssi.spell_slots + qty > ssi.max_spell_slots {
+            return false;
         }
+        ssi.spell_slots += qty;
+        true
     }
 
     pub fn restore_spell_slots(&mut self) {
@@ -191,11 +198,9 @@ impl SpellSlotManager {
     }
 
     pub fn increase_max_spell_slot(&mut self, lvl: u32, qty: u32) {
-        if lvl == 0 {
+        let Some(i_usize) = Self::idx(lvl) else {
             return;
-        }
-
-        let i_usize = (lvl - 1) as usize;
+        };
         for _ in self.ssi_by_lvl.len()..=i_usize {
             self.ssi_by_lvl.push(SpellSlotInfo {
                 max_spell_slots: 0,
