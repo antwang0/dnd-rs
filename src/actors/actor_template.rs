@@ -729,7 +729,14 @@ impl ActorInstance {
     }
 
     pub fn remaining_movement(&self) -> f32 {
-        if self.has_condition(Condition::Prone) || self.has_condition(Condition::Stunned) {
+        // Conditions that hard-zero an actor's movement budget. Prone is
+        // gated on a separate path (Stand-up itself charges movement, so
+        // remaining_movement isn't asked-for during stand-up validation).
+        if self.has_condition(Condition::Prone)
+            || self.has_condition(Condition::Stunned)
+            || self.has_condition(Condition::Restrained)
+            || self.has_condition(Condition::Grappled)
+        {
             return 0.0;
         }
         self.movement
