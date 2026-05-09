@@ -345,6 +345,18 @@ impl EncounterInstance {
     ///
     /// Multiple sources of the same direction don't stack; opposing
     /// sources cancel via `RollMode::combine`.
+    ///
+    /// Attacker side (disadvantage):
+    /// Prone, Poisoned, Blinded, Restrained, Frightened.
+    ///
+    /// Attacker side (advantage):
+    /// Invisible.
+    ///
+    /// Target side (advantage on attacks against them):
+    /// Stunned, Blinded, Restrained, Prone (melee only), Incapacitated.
+    ///
+    /// Target side (disadvantage on attacks against them):
+    /// Invisible, Prone (ranged only).
     pub fn compute_attack_mode(
         &self,
         attacker_id: usize,
@@ -938,6 +950,45 @@ impl EncounterInstance {
             }
         }
         false
+    }
+
+    /// Sorted ids of every combat-active actor whose footprint touches a
+    /// `radius`-tile burst centered on `point`, with the caster always
+    /// excluded. Returned in actor-id order so dependent rolls (saves,
+    /// damage rerolls per target) consume the shared seedable roller in
+    /// a deterministic order.
+    ///
+    /// Burst spells (Sacred Burst, Web, Faerie Fire) all want this exact
+    /// list — factoring it here keeps the per-spell `side_effects` tight
+    /// and means the "exclude caster, skip downed, footprint-Chebyshev"
+    /// invariant lives in one place.
+    pub fn burst_targets(
+        &self,
+        caster_id: usize,
+        point: Coordinate,
+        radius: isize,
+    ) -> Vec<usize> {
+        let mut ids: Vec<usize> = self.actors.keys().copied().collect();
+        ids.sort_unstable();
+        ids.retain(|&id| {
+            if id == caster_id {
+                return false;
+            }
+            let Some(actor) = self.actors.get(&id) else {
+                return false;
+            };
+            if !actor.is_combat_active() {
+                return false;
+            }
+            let dist = footprint_chebyshev(
+                actor.location(),
+                get_tiles_from_size(actor.size()),
+                point,
+                1,
+            );
+            dist <= radius
+        });
+        ids
     }
 
     /// Footprint-Chebyshev distance between two living actors, or `None` if
@@ -6222,5 +6273,565 @@ mod tests {
         // The condition expires on the dodger's start_of_turn refresh.
         e.actors.get_mut(&target).unwrap().reset_for_new_round();
         assert!(!e.actors[&target].has_condition(Condition::Dodging));
+    }
+
+    #[test]
+    fn damage_modifier_immunity_zeros_damage() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // Zombies are immune to poison.
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 999,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(
+            e.actors[&id].hitpoints(),
+            max,
+            "poison-immune zombie shouldn't lose HP"
+        );
+    }
+
+    #[test]
+    fn damage_modifier_resistance_halves_damage() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // Zombies resist necrotic (halved).
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 8,
+            damage_type: DamageType::Necrotic,
+        }
+        .apply(&mut e);
+        // 8 -> 4 after resistance.
+        assert_eq!(e.actors[&id].hitpoints(), max - 4);
+    }
+
+    #[test]
+    fn damage_modifier_vulnerability_doubles_damage() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // Skeletons vulnerable to bludgeoning.
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        // Use a small amount so doubling doesn't kill / saturate.
+        let amount = 3.min(max / 4).max(1);
+        DealDamage {
+            actor_id: id,
+            amount,
+            damage_type: DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max - amount * 2);
+    }
+
+    #[test]
+    fn attack_mode_blinded_attacker_disadvantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Permanent);
+        // Blinded attacker → disadvantage on its attacks.
+        // Blinded target on the other side would be advantage; combining
+        // both would cancel to Normal (covered in another test).
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn attack_mode_blinded_both_sides_cancel() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        for id in [attacker, target] {
+            e.actors
+                .get_mut(&id)
+                .unwrap()
+                .add_condition(Condition::Blinded, ConditionTimer::Permanent);
+        }
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Normal
+        );
+    }
+
+    #[test]
+    fn attack_mode_invisible_attacker_advantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage
+        );
+    }
+
+    #[test]
+    fn attack_mode_invisible_target_disadvantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn restrained_zeros_movement() {
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&id].remaining_movement() > 0.0);
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Restrained, ConditionTimer::Permanent);
+        assert_eq!(e.actors[&id].remaining_movement(), 0.0);
+    }
+
+    #[test]
+    fn grappled_zeros_movement_but_keeps_actions() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Grappled, ConditionTimer::Permanent);
+        assert_eq!(e.actors[&id].remaining_movement(), 0.0);
+        // Grappled does NOT block the action economy.
+        assert!(e.actors[&id].can_consume_resource(Resource::Action));
+        assert!(e.actors[&id].can_consume_resource(Resource::BonusAction));
+    }
+
+    #[test]
+    fn incapacitated_blocks_action_economy() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Incapacitated, ConditionTimer::Permanent);
+        assert!(!e.actors[&id].can_consume_resource(Resource::Action));
+        assert!(!e.actors[&id].can_consume_resource(Resource::BonusAction));
+        assert!(!e.actors[&id].can_consume_resource(Resource::Reaction));
+        // Movement is still allowed (key Incapacitated vs Stunned diff).
+        assert!(e.actors[&id].remaining_movement() > 0.0);
+    }
+
+    #[test]
+    fn restrained_imposes_dex_save_disadvantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Restrained, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_save_mode(id, AbilityScoreType::Dexterity),
+            RollMode::Disadvantage,
+            "Restrained → DEX save disadvantage"
+        );
+        // Other saves unaffected by Restrained.
+        assert_eq!(
+            e.compute_save_mode(id, AbilityScoreType::Strength),
+            RollMode::Normal
+        );
+    }
+
+    #[test]
+    fn frightened_attacker_disadvantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Frightened, ConditionTimer::Rounds(2));
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn blindness_consumes_action_and_level2_slot() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::BLINDNESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let costs = BLINDNESS.cost(&e, cleric, None, None, None);
+        assert!(costs.iter().any(|c| matches!(c, Resource::Action)));
+        assert!(costs
+            .iter()
+            .any(|c| matches!(c, Resource::SpellSlot(2))));
+    }
+
+    #[test]
+    fn blindness_failed_save_blinds_target_and_starts_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::BLINDNESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+
+        // Cast Blindness many times — the target's CON save will fail
+        // sometimes; we just need *one* failure to validate the wiring.
+        // A Zombie's CON +3 vs cleric DC 8+2=10 means save fails on
+        // d20 ≤ 6 ≈ 30% of the time; 50 attempts is plenty.
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            .unwrap();
+
+        let mut blinded_seen = false;
+        for _ in 0..50 {
+            // Clear concentration so each call starts fresh.
+            e.drop_concentration(cleric);
+            // Reset condition for next attempt.
+            e.actors
+                .get_mut(&target)
+                .unwrap()
+                .remove_condition(Condition::Blinded);
+            let target_vec = vec![target];
+            let effects =
+                BLINDNESS.side_effects(&mut e, cleric, Some(&target_vec), None, None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            if e.actors[&target].has_condition(Condition::Blinded) {
+                assert!(
+                    e.actors[&cleric].is_concentrating(),
+                    "cleric must be concentrating when target is Blinded"
+                );
+                blinded_seen = true;
+                break;
+            }
+        }
+        assert!(blinded_seen, "expected at least one failed CON save");
+    }
+
+    #[test]
+    fn web_failed_save_restrains_targets_and_starts_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::WEB;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+
+        // Cleric drops a web on a tile next to a zombie. Loop until at
+        // least one zombie fails the DEX save and is webbed; verify the
+        // caster is concentrating and the target is Restrained.
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+            .unwrap();
+
+        let mut webbed = false;
+        for _ in 0..50 {
+            e.drop_concentration(cleric);
+            e.actors
+                .get_mut(&target)
+                .unwrap()
+                .remove_condition(Condition::Restrained);
+            // Restore the level-2 slot so we can keep casting in the loop.
+            e.actors
+                .get_mut(&cleric)
+                .unwrap()
+                .spell_slot_manager
+                .restore_spell_slots();
+            let locs = vec![Coordinate::new(8, 5)];
+            let effects =
+                WEB.side_effects(&mut e, cleric, None, Some(&locs), None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            if e.actors[&target].has_condition(Condition::Restrained) {
+                assert!(e.actors[&cleric].is_concentrating());
+                webbed = true;
+                break;
+            }
+        }
+        assert!(webbed, "expected at least one Web to land");
+    }
+
+    #[test]
+    fn web_costs_action_and_level2_slot() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::WEB;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let costs = WEB.cost(&e, cleric, None, None, None);
+        assert!(costs.iter().any(|c| matches!(c, Resource::Action)));
+        assert!(costs
+            .iter()
+            .any(|c| matches!(c, Resource::SpellSlot(2))));
+    }
+
+    #[test]
+    fn outlined_target_grants_attacker_advantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Outlined, ConditionTimer::Rounds(5));
+        // Outlined target → advantage on attacks against them.
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage
+        );
+    }
+
+    #[test]
+    fn outlined_target_does_not_affect_target_attacks() {
+        // Outlined doesn't burden the target's own attacks, distinct
+        // from Blinded.
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let outlined = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let foe = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&outlined)
+            .unwrap()
+            .add_condition(Condition::Outlined, ConditionTimer::Rounds(5));
+        // outlined's attack on foe: outlined isn't on the attacker side
+        // so there's no disadvantage clause; mode is Normal.
+        assert_eq!(
+            e.compute_attack_mode(outlined, foe, true),
+            RollMode::Normal
+        );
+    }
+
+    #[test]
+    fn faerie_fire_failed_save_outlines_target_and_starts_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::FAERIE_FIRE;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+            .unwrap();
+
+        let mut lit = false;
+        for _ in 0..50 {
+            e.drop_concentration(cleric);
+            e.actors
+                .get_mut(&target)
+                .unwrap()
+                .remove_condition(Condition::Outlined);
+            e.actors
+                .get_mut(&cleric)
+                .unwrap()
+                .spell_slot_manager
+                .restore_spell_slots();
+            let locs = vec![Coordinate::new(8, 5)];
+            let effects =
+                FAERIE_FIRE.side_effects(&mut e, cleric, None, Some(&locs), None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            if e.actors[&target].has_condition(Condition::Outlined) {
+                assert!(e.actors[&cleric].is_concentrating());
+                lit = true;
+                break;
+            }
+        }
+        assert!(lit, "expected at least one Faerie Fire to land");
+    }
+
+    #[test]
+    fn proficiency_bonus_scales_with_level() {
+        // Pure unit test: take one fighter and bump their level via
+        // award_xp + try_level_up. The +2/+3/+4/... ramp follows the
+        // 5e table.
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut roller = FastRandRoller::with_seed(0);
+        let actor = ActorInstance::from_creature_template(
+            &FIGHTER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut roller,
+            0,
+        )
+        .unwrap();
+        // Level 1 default → +2.
+        assert_eq!(actor.proficiency_bonus(), 2);
+    }
+
+    #[test]
+    fn fighter_save_proficiency_includes_str_and_con() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = &e.actors[&id];
+        assert!(actor.is_save_proficient(AbilityScoreType::Strength));
+        assert!(actor.is_save_proficient(AbilityScoreType::Constitution));
+        assert!(!actor.is_save_proficient(AbilityScoreType::Wisdom));
+    }
+
+    #[test]
+    fn cleric_save_proficiency_includes_wis_and_cha() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = &e.actors[&id];
+        assert!(actor.is_save_proficient(AbilityScoreType::Wisdom));
+        assert!(actor.is_save_proficient(AbilityScoreType::Charisma));
+        assert!(!actor.is_save_proficient(AbilityScoreType::Dexterity));
+    }
+
+    #[test]
+    fn spell_save_dc_includes_proficiency_bonus() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = &e.actors[&id];
+        // Cleric WIS 14 → +2 modifier; level 1 → +2 prof; DC = 8 + 2 + 2 = 12.
+        assert_eq!(actor.spell_save_dc(AbilityScoreType::Wisdom), 12);
+    }
+
+    #[test]
+    fn damage_modifier_normal_unchanged() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // Zombie has no fire interaction → normal damage.
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Fire,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max - 4);
     }
 }
