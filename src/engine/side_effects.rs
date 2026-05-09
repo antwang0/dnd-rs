@@ -129,6 +129,8 @@ pub struct DealDamage {
 
 impl ApplicableSideEffect for DealDamage {
     fn apply(&self, ei: &mut EncounterInstance) {
+        use crate::engine::types::DamageModifier;
+
         let Some(actor) = ei.get_actor(self.actor_id) else {
             ei.log(format!(
                 "DealDamage: actor {} missing, ignoring",
@@ -137,7 +139,35 @@ impl ApplicableSideEffect for DealDamage {
             return;
         };
         let name = actor.name().to_string();
-        let outcome = actor.take_damage(self.amount);
+        // Apply per-creature damage modifier (resistance / immunity /
+        // vulnerability) before HP is touched. Logging the adjustment
+        // makes it obvious why a fireball did half / no damage.
+        let modifier = actor.damage_modifier(self.damage_type);
+        let final_amount = match modifier {
+            Some(m) => m.apply(self.amount),
+            None => self.amount,
+        };
+        if let Some(m) = modifier {
+            let label = match m {
+                DamageModifier::Resistance => "resists",
+                DamageModifier::Immunity => "is immune to",
+                DamageModifier::Vulnerability => "is vulnerable to",
+            };
+            ei.log(format!(
+                "  {} {} {:?} ({} -> {})",
+                name, label, self.damage_type, self.amount, final_amount
+            ));
+        }
+        if final_amount == 0 && matches!(modifier, Some(DamageModifier::Immunity)) {
+            // No further effects — immunity short-circuits everything
+            // (no concentration save, no transition to dying).
+            return;
+        }
+
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let outcome = actor.take_damage(final_amount);
         let was_concentrating = actor.is_concentrating();
         // actor borrow ends here.
 
@@ -155,7 +185,9 @@ impl ApplicableSideEffect for DealDamage {
             }
             DamageOutcome::Reduced if was_concentrating => {
                 // 5e: take damage while concentrating → CON save vs DC max(10, dmg/2).
-                let dc = ((self.amount / 2) as i32).max(10);
+                // Use the post-modifier amount: a resisted hit is half
+                // damage and the save DC follows the actually-felt damage.
+                let dc = ((final_amount / 2) as i32).max(10);
                 let save = ei.roll_save(
                     self.actor_id,
                     crate::engine::types::AbilityScoreType::Constitution,
@@ -273,5 +305,100 @@ pub struct SkipTurn {}
 impl ApplicableSideEffect for SkipTurn {
     fn apply(&self, ei: &mut EncounterInstance) {
         ei.skip_turn();
+    }
+}
+
+/// Toggle the actor's Dodge flag. The flag is consumed at the start of
+/// their next turn by `reset_for_new_round`. While set, attacks against
+/// the actor have disadvantage and they have advantage on DEX saves.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct SetDodging {
+    pub actor_id: usize,
+    pub dodging: bool,
+}
+
+impl ApplicableSideEffect for SetDodging {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        actor.set_dodging(self.dodging);
+        if self.dodging {
+            ei.log(format!("{} takes the Dodge action.", name));
+        }
+    }
+}
+
+/// Toggle the actor's Disengage flag. While set, this actor's movement
+/// doesn't provoke opportunity attacks. Cleared at start-of-next-turn.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct SetDisengaging {
+    pub actor_id: usize,
+    pub disengaging: bool,
+}
+
+impl ApplicableSideEffect for SetDisengaging {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        actor.set_disengaging(self.disengaging);
+        if self.disengaging {
+            ei.log(format!("{} disengages.", name));
+        }
+    }
+}
+
+/// Grant temporary HP. Doesn't stack — replaces the existing pool only
+/// if larger (see `ActorInstance::grant_temp_hp`).
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct GrantTempHp {
+    pub actor_id: usize,
+    pub amount: u32,
+}
+
+impl ApplicableSideEffect for GrantTempHp {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        if actor.grant_temp_hp(self.amount) {
+            ei.log(format!("{} gains {} temp HP.", name, self.amount));
+        }
+    }
+}
+
+/// Modify an actor's flat attack-roll buff (used by Bless). Pair with
+/// concentration installation so the buff drops cleanly when the spell
+/// ends. Negative deltas remove the buff on cleanup.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct AdjustAttackBuff {
+    pub actor_id: usize,
+    pub delta: i32,
+}
+
+impl ApplicableSideEffect for AdjustAttackBuff {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        if let Some(actor) = ei.get_actor(self.actor_id) {
+            actor.add_attack_bonus_buff(self.delta);
+        }
+    }
+}
+
+/// Same as AdjustAttackBuff but for the save-roll buff lane.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct AdjustSaveBuff {
+    pub actor_id: usize,
+    pub delta: i32,
+}
+
+impl ApplicableSideEffect for AdjustSaveBuff {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        if let Some(actor) = ei.get_actor(self.actor_id) {
+            actor.add_save_bonus_buff(self.delta);
+        }
     }
 }

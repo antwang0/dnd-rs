@@ -12,14 +12,30 @@
 pub enum Condition {
     /// Speed = 0; ranged attacks against you have disadvantage; melee
     /// against you have advantage; you have disadvantage on attacks.
-    /// Today only the speed clause is wired.
     Prone,
     /// Cannot take Actions, Bonus Actions, or Reactions. Movement is also
     /// 0 (in 5e via Incapacitated, but we collapse for simplicity).
     Stunned,
-    /// Disadvantage on attack rolls and ability checks. Marker only today
-    /// (no advantage/disadvantage system yet).
+    /// Disadvantage on attack rolls and ability checks.
     Poisoned,
+    /// Disadvantage on attack rolls and ability checks while you can see
+    /// the source of fear. We don't track LOS-to-fear-source today; the
+    /// effect is unconditional disadvantage on attacks.
+    Frightened,
+    /// Speed = 0; disadvantage on attacks; attacks against you have
+    /// advantage; disadvantage on DEX saves.
+    Restrained,
+    /// Auto-fail any check requiring sight; attack rolls against you have
+    /// advantage; you have disadvantage on attacks.
+    Blinded,
+    /// Cannot take actions or reactions (movement is still allowed).
+    /// Distinct from Stunned — Incapacitated still moves; Stunned can't.
+    Incapacitated,
+    /// You have no effect on combat behavior — you can't take hostile
+    /// actions against the charmer. Marker only today (we don't yet
+    /// model the "can't attack the charmer" enforcement; the AI just
+    /// avoids charmed targets via `is_pacified`).
+    Charmed,
 }
 
 impl Condition {
@@ -28,6 +44,11 @@ impl Condition {
             Condition::Prone => "prone",
             Condition::Stunned => "stunned",
             Condition::Poisoned => "poisoned",
+            Condition::Frightened => "frightened",
+            Condition::Restrained => "restrained",
+            Condition::Blinded => "blinded",
+            Condition::Incapacitated => "incapacitated",
+            Condition::Charmed => "charmed",
         }
     }
 }

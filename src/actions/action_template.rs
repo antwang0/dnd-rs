@@ -89,50 +89,29 @@ pub trait Action {
         target_locations: Option<&Vec<Coordinate>>,
         overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        // TODO: overrides
-        // TODO: validate points and target ids
-        // TODO this is gross
-        let schema_validation = match self.targeting_schema() {
+        // First gate: did the caller pass argument shapes consistent with
+        // the action's declared schema? Each branch returns true on a
+        // legal shape and false otherwise. Custom schemas opt out and
+        // delegate everything to `custom_validate_input` below.
+        let schema_ok = match self.targeting_schema() {
             TargetingSchema::NoArgs => {
-                if target_ids.is_some() {
-                    return false;
-                }
-                if target_locations.is_some() {
-                    return false;
-                }
-                if overrides.is_some() {
-                    return false;
-                }
-                true
+                target_ids.is_none() && target_locations.is_none() && overrides.is_none()
             }
             TargetingSchema::SinglePoint => {
-                if target_ids.is_some() {
-                    return false;
-                }
-                if let Some(tl) = target_locations {
-                    if tl.len() != 1 {
-                        return false;
-                    }
-                } else {
-                    return false;
-                }
-                true
+                target_ids.is_none()
+                    && target_locations.is_some_and(|tl| tl.len() == 1)
             }
             TargetingSchema::SingleActor => {
-                if target_locations.is_some() {
-                    return false;
-                }
-                target_ids.is_some_and(|ids| !ids.is_empty())
+                target_locations.is_none()
+                    && target_ids.is_some_and(|ids| !ids.is_empty())
             }
-            TargetingSchema::Burst { radius: _ } => {
-                if target_ids.is_some() {
-                    return false;
-                }
-                target_locations.is_some_and(|tl| tl.len() == 1)
+            TargetingSchema::Burst { .. } => {
+                target_ids.is_none()
+                    && target_locations.is_some_and(|tl| tl.len() == 1)
             }
             TargetingSchema::Custom => true,
         };
-        if !schema_validation {
+        if !schema_ok {
             return false;
         }
         // Reach + LOS check. SingleActor measures from caster to target

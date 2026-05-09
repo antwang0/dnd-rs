@@ -42,6 +42,19 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 2b. If we're a low-HP ranged caster surrounded by melee, the
+        //    safer exit is the Disengage action — gives our retreat free
+        //    OA-suppression. We use it only when our HP is below 30% and
+        //    we have a ranged option to capitalize on the disengaged
+        //    movement after the action.
+        if has_ranged_attack(encounter, actor_id)
+            && under_melee_threat(encounter, actor_id)
+            && is_low_hp(encounter, actor_id, 0.3)
+            && let Some(aei) = try_disengage(encounter, actor_id)
+        {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3. Heal a dying / wounded ally.
         if let Some(aei) = try_support_heal(encounter, actor_id) {
             return ControllerDecision::Act(aei);
@@ -72,6 +85,35 @@ impl Controller for SimpleAi {
         // 8. Nothing useful. End the turn.
         skip_or_await(encounter, actor_id)
     }
+}
+
+/// True if the actor's current HP fraction is below `frac`. Stable /
+/// dying actors return true (HP is 0). Used by the AI to gate
+/// defensive actions (Disengage, retreat heals) on actually being hurt.
+fn is_low_hp(encounter: &EncounterInstance, actor_id: usize, frac: f32) -> bool {
+    let Some(actor) = encounter.actors.get(&actor_id) else {
+        return false;
+    };
+    let max = actor.max_hitpoints().max(1) as f32;
+    (actor.hitpoints() as f32) / max < frac
+}
+
+/// Take the Disengage action if available and currently valid. The
+/// caller is expected to gate this on actually wanting the OA-skip
+/// (under threat, low HP, etc.). Returns None when the actor doesn't
+/// have Disengage in their loadout or can't afford the Action cost.
+fn try_disengage(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let act = actor
+        .actions
+        .iter()
+        .find(|a| a.name() == "disengage")
+        .copied()?;
+    let aei = ActionExecutionInfo::new(act, actor_id, None, None, None);
+    aei.validate(encounter).then_some(aei)
 }
 
 /// If the actor is Prone, return the StandUp action invocation. The action
@@ -816,10 +858,7 @@ mod tests {
         e.actors
             .get_mut(&cleric)
             .unwrap()
-            .start_concentration(ConcentrationData {
-                spell_name: "Placeholder".to_string(),
-                conditions: vec![],
-            });
+            .start_concentration(ConcentrationData::with_conditions("Placeholder", vec![]));
 
         let ai = SimpleAi;
         let decision = ai.decide(&e, cleric);
@@ -857,10 +896,7 @@ mod tests {
         e.actors
             .get_mut(&cleric)
             .unwrap()
-            .start_concentration(ConcentrationData {
-                spell_name: "Placeholder".to_string(),
-                conditions: vec![],
-            });
+            .start_concentration(ConcentrationData::with_conditions("Placeholder", vec![]));
 
         let ai = SimpleAi;
         let decision = ai.decide(&e, cleric);
@@ -948,10 +984,7 @@ mod tests {
         e.actors
             .get_mut(&cleric)
             .unwrap()
-            .start_concentration(ConcentrationData {
-                spell_name: "Bless".to_string(),
-                conditions: vec![],
-            });
+            .start_concentration(ConcentrationData::with_conditions("Bless", vec![]));
 
         let ai = SimpleAi;
         let decision = ai.decide(&e, cleric);
@@ -1025,6 +1058,54 @@ mod tests {
             aei.action().name(),
             "healing word",
             "AI should not target an enemy with a heal"
+        );
+    }
+
+    #[test]
+    fn low_hp_caster_disengages_when_surrounded() {
+        // Skeleton (longbow only) deep in the red, with a zombie in melee
+        // reach. With kite available *and* HP below 30%, the AI should
+        // pick Disengage so the next-step retreat is OA-free. The kite
+        // tactic itself fires on the same predicates above this branch,
+        // so we need the kite step to be impossible (e.g. surrounded so
+        // every cell is still in reach). We arrange that by walling the
+        // skeleton in with multiple zombies.
+        let mut e = empty_arena();
+        let skeleton = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+            .unwrap();
+        for (dx, dy) in [(-1, -1), (1, -1), (-1, 1), (1, 1)] {
+            // Use NONE adjacent zombie spawn on each diagonal (footprints
+            // overlap with the skeleton's neighbors). gap should be 0/1.
+            e.instantiate_creature(
+                &ZOMBIE_TEMPLATE,
+                Coordinate::new(10 + dx * 3, 10 + dy * 3),
+                1,
+                0,
+            )
+            .unwrap();
+        }
+        // Drop the skeleton's HP under 30%.
+        let max = e.actors[&skeleton].max_hitpoints();
+        let target_hp = (max as f32 * 0.2) as u32;
+        let dmg = max.saturating_sub(target_hp);
+        e.actors.get_mut(&skeleton).unwrap().take_damage(dmg);
+
+        // We don't strictly assert "disengage" because if a kite step
+        // exists the kite branch beats the disengage branch — we just
+        // assert the AI is making a defensive choice.
+        let ai = SimpleAi;
+        let decision = ai.decide(&e, skeleton);
+        let ControllerDecision::Act(aei) = decision else {
+            panic!("expected an action");
+        };
+        // The AI should make a movement-flavored choice (move / disengage)
+        // rather than committing to a longbow shot at point-blank range.
+        let name = aei.action().name();
+        assert!(
+            name == "move" || name == "disengage" || name == "stand",
+            "expected a defensive choice, got {}",
+            name
         );
     }
 

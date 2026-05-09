@@ -1,5 +1,6 @@
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::{Dice, DiceExpr, Roller};
+use crate::engine::types::DamageType;
 
 /// Lifecycle state of an actor's hit points. Replaces the previous
 /// `dying: bool` + `stable: bool` pair so the four meaningful states are
@@ -57,6 +58,25 @@ pub struct ConcentrationData {
     /// Conditions this concentration applied. On drop, each is removed
     /// from its target. `(target_id, condition)`.
     pub conditions: Vec<(usize, Condition)>,
+    /// Attack-roll buff deltas to roll back on drop. Each entry is the
+    /// signed amount that was added by the spell (often +2 for Bless);
+    /// cleanup negates the delta. Same shape as `save_buffs`.
+    pub attack_buffs: Vec<(usize, i32)>,
+    pub save_buffs: Vec<(usize, i32)>,
+}
+
+impl ConcentrationData {
+    /// Build with empty buff vecs — convenience for spells that only
+    /// install conditions or that piggyback on concentration purely
+    /// for the duration timer.
+    pub fn with_conditions(spell_name: impl Into<String>, conditions: Vec<(usize, Condition)>) -> Self {
+        Self {
+            spell_name: spell_name.into(),
+            conditions,
+            attack_buffs: Vec::new(),
+            save_buffs: Vec::new(),
+        }
+    }
 }
 
 /// What `heal` did. Mirrors `DamageOutcome` for the inverse direction.
@@ -77,7 +97,7 @@ use crate::items::item_template::{Item, ItemBonuses};
 use crate::{
     actions::action_template::Action,
     engine::{
-        types::{AbilityScoreType, Language, Size, Skill, SpecialSense},
+        types::{AbilityScoreType, DamageModifier, Language, Size, Skill, SpecialSense},
         util::modifier_from_score,
     },
 };
@@ -120,6 +140,12 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Per-damage-type modifiers (resistance / immunity / vulnerability).
+    /// Empty for creatures that take damage normally. Skeletons should
+    /// be vulnerable to Bludgeoning; zombies immune to Poison; demons
+    /// resistant to Fire, etc. Looked up by `damage_modifier` on the
+    /// instance.
+    pub damage_modifiers: HashMap<DamageType, DamageModifier>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -131,8 +157,6 @@ pub struct SpellSlotInfo {
 #[derive(Clone, PartialEq)]
 pub struct SpellSlotManager {
     ssi_by_lvl: Vec<SpellSlotInfo>,
-    warlock_ssi: SpellSlotInfo,
-    warlock_spell_slot_lvl: u32,
 }
 
 impl SpellSlotManager {
@@ -197,34 +221,6 @@ impl SpellSlotManager {
         self.ssi_by_lvl[i_usize].spell_slots += qty;
     }
 
-    pub fn warlock_spell_slots(&self) -> SpellSlotInfo {
-        self.warlock_ssi.clone()
-    }
-
-    pub fn warlock_spell_slot_lvl(&self) -> u32 {
-        self.warlock_spell_slot_lvl
-    }
-
-    pub fn upgrade_warlock_spell_slots(&mut self, lvls: u32) {
-        self.warlock_spell_slot_lvl += lvls;
-    }
-
-    pub fn consume_warlock_spell_slot(&mut self) -> bool {
-        if self.warlock_ssi.spell_slots == 0 {
-            return false;
-        }
-        self.warlock_ssi.spell_slots -= 1;
-        true
-    }
-
-    pub fn restore_warlock_spell_slots(&mut self) {
-        self.warlock_ssi.spell_slots = self.warlock_ssi.max_spell_slots;
-    }
-
-    pub fn increase_max_warlock_spell_slots(&mut self) {
-        self.warlock_ssi.max_spell_slots += 1;
-        self.warlock_ssi.spell_slots += 1;
-    }
 }
 
 #[derive(Clone)]
@@ -287,6 +283,33 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    /// Per-damage-type modifier table copied from the creature template.
+    /// Mutable on the instance so future buffs / curses can flip a
+    /// creature's resistance profile mid-fight (Bless, Protection from
+    /// Energy, etc.) without rebuilding from the template.
+    damage_modifiers: HashMap<DamageType, DamageModifier>,
+    /// Temporary hit points (5e). Absorbed first by `take_damage` and
+    /// don't stack — a new pool replaces the old if larger, otherwise
+    /// the old wins. Cleared by long rest. Doesn't count toward
+    /// `max_hitpoints`; pure damage soak.
+    temp_hp: u32,
+    /// Set by the Dodge action; cleared at the start of the actor's next
+    /// turn. While true, attacks against this actor have disadvantage
+    /// (5e: Dodge action) and they have advantage on DEX saves. Falls
+    /// off automatically if they become Incapacitated or Stunned.
+    dodging: bool,
+    /// Set by the Disengage action; cleared at the start of the actor's
+    /// next turn. Suppresses opportunity attacks fired by other actors
+    /// when this actor leaves a threatened tile.
+    disengaging: bool,
+    /// Tally of attack-roll bonuses contributed by Bless-style buffs.
+    /// Read by `weapon_attack` / spell-attack helpers and added to the
+    /// d20 + modifier total. Cleared on long rest; concentration spells
+    /// drop it via their cleanup hook.
+    attack_bonus_buff: i32,
+    /// Same shape as `attack_bonus_buff` but applied to saving throws
+    /// (Bless, Resistance, etc.).
+    save_bonus_buff: i32,
 }
 
 impl ActorInstance {
@@ -339,11 +362,6 @@ impl ActorInstance {
                         spell_slots: n,
                     })
                     .collect(),
-                warlock_ssi: SpellSlotInfo {
-                    max_spell_slots: 0,
-                    spell_slots: 0,
-                },
-                warlock_spell_slot_lvl: 0,
             },
             actions: ct.actions.clone(),
             glyph: ct.glyph,
@@ -353,6 +371,12 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            damage_modifiers: ct.damage_modifiers.clone(),
+            temp_hp: 0,
+            dodging: false,
+            disengaging: false,
+            attack_bonus_buff: 0,
+            save_bonus_buff: 0,
         })
     }
 
@@ -414,15 +438,21 @@ impl ActorInstance {
         out
     }
 
-    /// Restore full HP, all spell slots, clear non-permanent conditions
-    /// and concentration. 5e long rest semantics — at the multi-encounter
-    /// game-loop boundary, this is what "rest between fights" means.
+    /// Restore full HP, all spell slots, clear non-permanent conditions,
+    /// concentration and any temp HP. 5e long rest semantics — at the
+    /// multi-encounter game-loop boundary, this is what "rest between
+    /// fights" means.
     pub fn long_rest(&mut self) {
         self.hp_state = HpState::Active;
         self.hitpoints = self.max_hitpoints();
         self.spell_slot_manager.restore_spell_slots();
         self.conditions.clear();
         self.concentration = None;
+        self.temp_hp = 0;
+        self.dodging = false;
+        self.disengaging = false;
+        self.attack_bonus_buff = 0;
+        self.save_bonus_buff = 0;
     }
 
     pub fn cr(&self) -> f32 {
@@ -574,12 +604,15 @@ impl ActorInstance {
     }
 
     pub fn can_consume_resource(&self, resource: Resource) -> bool {
-        // Stunned actors lose their entire action economy. Prone is NOT
-        // checked here for Movement: stand-up itself pays in Movement, so
-        // blocking the resource here would create a catch-22. Move-the-
-        // action is still blocked because `remaining_movement()` returns 0
-        // when Prone, which makes `path_cost_to` find no path.
+        // Stunned actors lose their entire action economy. Incapacitated
+        // is similar but movement still works. Prone is NOT checked here
+        // for Movement: stand-up itself pays in Movement, so blocking the
+        // resource here would create a catch-22. Move-the-action is still
+        // blocked because `remaining_movement()` returns 0 when Prone or
+        // Restrained, which makes `path_cost_to` find no path.
         let stunned = self.has_condition(Condition::Stunned);
+        let incapacitated = self.has_condition(Condition::Incapacitated);
+        let action_blocked = stunned || incapacitated;
         match resource {
             Resource::Movement(amt) => {
                 if stunned {
@@ -588,15 +621,15 @@ impl ActorInstance {
                 amt <= self.movement
             }
             Resource::SpellSlot(spell_lvl) => {
-                if stunned {
+                if action_blocked {
                     return false;
                 }
                 self.spell_slot_manager.spell_slots(spell_lvl).spell_slots >= 1
             }
-            Resource::Action => !stunned && self.action_slots >= 1,
-            Resource::BonusAction => !stunned && self.bonus_action_slots >= 1,
-            Resource::Reaction => !stunned && self.reaction_slots >= 1,
-            Resource::LegendaryAction => !stunned && self.legendary_action_slots >= 1,
+            Resource::Action => !action_blocked && self.action_slots >= 1,
+            Resource::BonusAction => !action_blocked && self.bonus_action_slots >= 1,
+            Resource::Reaction => !action_blocked && self.reaction_slots >= 1,
+            Resource::LegendaryAction => !action_blocked && self.legendary_action_slots >= 1,
         }
     }
 
@@ -680,7 +713,13 @@ impl ActorInstance {
     }
 
     pub fn remaining_movement(&self) -> f32 {
-        if self.has_condition(Condition::Prone) || self.has_condition(Condition::Stunned) {
+        // Prone, Stunned, and Restrained all zero out movement (Restrained
+        // by RAW, the others by our conflated model). Incapacitated does
+        // NOT zero movement — the actor can still walk, just not act.
+        if self.has_condition(Condition::Prone)
+            || self.has_condition(Condition::Stunned)
+            || self.has_condition(Condition::Restrained)
+        {
             return 0.0;
         }
         self.movement
@@ -720,6 +759,51 @@ impl ActorInstance {
         self.bonus_action_slots = 1;
         self.reaction_slots = 1;
         // TODO: legendary actions
+
+        // Dodge / Disengage are "until the start of your next turn"
+        // effects. Clear them at turn-start so the action only buffs
+        // the next round of incoming events, not later rounds too.
+        self.dodging = false;
+        self.disengaging = false;
+    }
+
+    pub fn is_dodging(&self) -> bool {
+        // 5e: Dodge fails if you're Incapacitated or your speed is 0.
+        // We model the "speed 0" case implicitly via Stunned/Restrained
+        // (which set remaining_movement to 0) and check Incapacitated
+        // explicitly so the buff drops the moment the condition lands.
+        self.dodging
+            && !self.has_condition(Condition::Incapacitated)
+            && !self.has_condition(Condition::Stunned)
+            && !self.has_condition(Condition::Restrained)
+    }
+
+    pub fn set_dodging(&mut self, v: bool) {
+        self.dodging = v;
+    }
+
+    pub fn is_disengaging(&self) -> bool {
+        self.disengaging
+    }
+
+    pub fn set_disengaging(&mut self, v: bool) {
+        self.disengaging = v;
+    }
+
+    pub fn attack_bonus_buff(&self) -> i32 {
+        self.attack_bonus_buff
+    }
+
+    pub fn save_bonus_buff(&self) -> i32 {
+        self.save_bonus_buff
+    }
+
+    pub fn add_attack_bonus_buff(&mut self, delta: i32) {
+        self.attack_bonus_buff += delta;
+    }
+
+    pub fn add_save_bonus_buff(&mut self, delta: i32) {
+        self.save_bonus_buff += delta;
     }
 
     pub fn action_slots(&self) -> u32 {
@@ -757,14 +841,68 @@ impl ActorInstance {
         }
     }
 
-    /// 5e spell save DC: 8 + spellcasting ability modifier (we don't track
-    /// proficiency yet; once we do, add it here). Actions that force saves
-    /// call this on the caster to set their DC.
+    /// 5e spell save DC: 8 + proficiency bonus + spellcasting ability
+    /// modifier. Actions that force saves call this on the caster to set
+    /// their DC.
     pub fn spell_save_dc(&self, ability: AbilityScoreType) -> i32 {
-        8 + modifier_from_score(self.ability_score(ability))
+        8 + self.proficiency_bonus() + modifier_from_score(self.ability_score(ability))
+    }
+
+    /// 5e spell attack modifier: proficiency bonus + spellcasting ability
+    /// modifier. Used by spells with attack rolls (Fire Bolt, Eldritch
+    /// Blast). Caller adds this to the d20.
+    pub fn spell_attack_modifier(&self, ability: AbilityScoreType) -> i32 {
+        self.proficiency_bonus() + modifier_from_score(self.ability_score(ability))
+    }
+
+    /// Damage modifier for `dt`, or `None` if the actor takes normal
+    /// damage of this type. Read-only; populated from the creature
+    /// template at spawn.
+    pub fn damage_modifier(&self, dt: DamageType) -> Option<DamageModifier> {
+        self.damage_modifiers.get(&dt).copied()
+    }
+
+    /// Apply 5e damage rules to a raw amount: vulnerability doubles,
+    /// resistance halves, immunity zeroes. Returns the post-modifier
+    /// value so callers can decide whether to log a "no effect" line.
+    pub fn modified_damage(&self, raw: u32, dt: DamageType) -> u32 {
+        match self.damage_modifier(dt) {
+            Some(m) => m.apply(raw),
+            None => raw,
+        }
+    }
+
+    pub fn temp_hp(&self) -> u32 {
+        self.temp_hp
+    }
+
+    /// Grant temp HP. 5e: temp HP doesn't stack — use the new pool only
+    /// if it's larger than the current pool. Returns whether the new
+    /// pool replaced the old one.
+    pub fn grant_temp_hp(&mut self, amount: u32) -> bool {
+        if amount > self.temp_hp {
+            self.temp_hp = amount;
+            true
+        } else {
+            false
+        }
     }
 
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {
+        // Temp HP only matters for Active actors — 5e: Dying/Stable
+        // creatures don't carry temp HP through unconsciousness, and
+        // damage to them goes straight to death saves, not the pool.
+        let amount = if matches!(self.hp_state, HpState::Active) {
+            if self.temp_hp >= amount {
+                self.temp_hp -= amount;
+                return DamageOutcome::Reduced;
+            }
+            let leftover = amount - self.temp_hp;
+            self.temp_hp = 0;
+            leftover
+        } else {
+            amount
+        };
         match self.hp_state {
             HpState::Stable => {
                 // Stable creature takes damage: dying state restarts fresh
@@ -881,11 +1019,24 @@ impl ActorInstance {
     }
 
     pub fn attack_bonus(&self) -> i32 {
-        // TODO: add proficiency bonus once it's tracked
-        modifier_from_score(self.strength)
+        modifier_from_score(self.strength) + self.proficiency_bonus()
     }
 
     pub fn damage_bonus(&self) -> i32 {
         modifier_from_score(self.strength)
+    }
+
+    /// 5e proficiency bonus by level: +2 at 1-4, +3 at 5-8, +4 at 9-12,
+    /// +5 at 13-16, +6 at 17+. Folded into attack bonuses, save DCs and
+    /// the spell-attack modifier so a level-5 caster's Fire Bolt gets the
+    /// canonical +1 jump.
+    pub fn proficiency_bonus(&self) -> i32 {
+        match self.level {
+            0..=4 => 2,
+            5..=8 => 3,
+            9..=12 => 4,
+            13..=16 => 5,
+            _ => 6,
+        }
     }
 }

@@ -1,8 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{TRIP, ZOMBIE_MULTISLAM};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{Language, Size, SpecialSense};
-use std::collections::HashSet;
+use crate::engine::types::{DamageModifier, DamageType, Language, Size, SpecialSense};
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 pub static ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -34,5 +34,7 @@ pub static ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
+        // Zombies: undead — immune to poison.
+        damage_modifiers: HashMap::from([(DamageType::Poison, DamageModifier::Immunity)]),
     }
 });
