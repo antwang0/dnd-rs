@@ -1519,3 +1519,50 @@ mod tests {
         assert_eq!(adj.apply(DamageType::Fire, 20), 0);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    use crate::engine::dice::FastRandRoller;
+    use crate::engine::types::DamageType;
+
+    fn make(
+        ct: &'static CreatureTemplate,
+    ) -> ActorInstance {
+        ActorInstance::from_creature_template(
+            ct,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(1),
+            0,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn poison_immunity_zeroes_damage() {
+        let z = make(&ZOMBIE_TEMPLATE);
+        assert_eq!(z.effective_damage(10, DamageType::Poison), 0);
+        assert_eq!(z.effective_damage(10, DamageType::Slashing), 10);
+    }
+
+    #[test]
+    fn skeleton_doubles_bludgeoning() {
+        let s = make(&SKELETON_TEMPLATE);
+        assert_eq!(s.effective_damage(7, DamageType::Bludgeoning), 14);
+        // Poison still immune.
+        assert_eq!(s.effective_damage(99, DamageType::Poison), 0);
+        // Other damage passes through.
+        assert_eq!(s.effective_damage(7, DamageType::Slashing), 7);
+    }
+
+    #[test]
+    fn resistance_halves_round_down() {
+        use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+        let s = make(&SLIME_TEMPLATE);
+        assert_eq!(s.effective_damage(7, DamageType::Acid), 3);
+        assert_eq!(s.effective_damage(0, DamageType::Acid), 0);
+    }
+}

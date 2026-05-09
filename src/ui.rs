@@ -270,9 +270,10 @@ pub fn render_sideinfo(
             initiative_lines.push(Line::from(spans));
         }
     }
+    let init_title = format!("Initiative — Round {}", encounter.round());
     frame.render_widget(
         Paragraph::new(initiative_lines)
-            .block(Block::default().borders(Borders::ALL).title("Initiative")),
+            .block(Block::default().borders(Borders::ALL).title(init_title)),
         area_split[0],
     );
 

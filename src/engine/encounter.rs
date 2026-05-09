@@ -257,6 +257,12 @@ pub struct EncounterInstance {
     initialized: bool,
     pub width: usize,
     pub height: usize,
+    /// 1-indexed encounter round counter. Bumped each time the initiative
+    /// queue wraps back to the first actor (see `advance_initiative`).
+    /// Surfaced to the UI so the player can see "round 5" in the side
+    /// panel and so future round-aware effects (e.g. Bless ending after
+    /// N rounds) can read the absolute round.
+    round: u32,
     terrain: Vec<TerrainInfo>,
     actor_id_next: usize,
     actor_map: Vec<Option<usize>>,
@@ -875,6 +881,16 @@ impl EncounterInstance {
         from: Coordinate,
         to: Coordinate,
     ) {
+        use crate::conditions::Condition;
+        // 5e Disengage: this action suppresses opportunity attacks
+        // triggered by your movement until the start of your next turn.
+        if self
+            .actors
+            .get(&mover_id)
+            .is_some_and(|a| a.has_condition(Condition::Disengaging))
+        {
+            return;
+        }
         use crate::actions::action_template::{MELEE_REACH, TargetingSchema};
         use crate::conditions::Condition;
         use crate::engine::side_effects::Resource;
@@ -1312,6 +1328,7 @@ impl EncounterInstance {
             initialized: false,
             width: terrain_params.width,
             height: terrain_params.height,
+            round: 1,
             terrain: generate_terrain(terrain_params, &mut rng),
             actor_id_next: 0,
             actor_map: vec![None; terrain_params.width * terrain_params.height],
@@ -1449,6 +1466,7 @@ impl EncounterInstance {
         let wrapped = self.initiative_tracker.advance();
         if wrapped {
             self.round_end();
+            self.round = self.round.saturating_add(1);
         }
     }
 
