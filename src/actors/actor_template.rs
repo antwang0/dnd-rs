@@ -472,6 +472,16 @@ impl ActorInstance {
         self.rolls_death_saves
     }
 
+    /// First action in the actor's list whose `name()` matches `name`.
+    /// Convenience used by AI / tests / engine helpers that look up
+    /// canonical actions like "move", "skip", "stand", "dodge".
+    pub fn find_action(
+        &self,
+        name: &str,
+    ) -> Option<&'static (dyn Action + Send + Sync)> {
+        self.actions.iter().find(|a| a.name() == name).copied()
+    }
+
     /// Sum every carried item's `ItemBonuses` into one struct. Stat
     /// accessors (`armor_class`, `speed`, `max_hitpoints`, etc.) fold
     /// this in so callers don't need to think about items at all.
@@ -542,6 +552,18 @@ impl ActorInstance {
         self.disengaging = false;
         self.attack_bonus_buff = 0;
         self.save_bonus_buff = 0;
+    }
+
+    pub fn temp_hp(&self) -> u32 {
+        self.temp_hp
+    }
+
+    /// Set temporary HP. 5e: temp HP doesn't stack — a new application
+    /// keeps the higher value rather than summing. Returns the value the
+    /// buffer holds after the call.
+    pub fn gain_temp_hp(&mut self, amount: u32) -> u32 {
+        self.temp_hp = self.temp_hp.max(amount);
+        self.temp_hp
     }
 
     pub fn cr(&self) -> f32 {
@@ -706,8 +728,9 @@ impl ActorInstance {
     }
 
     /// Decrement every `Rounds(n)` timer by 1 and report which conditions
-    /// expired (were removed because their timer hit 0). Permanent timers
-    /// are untouched. The engine calls this on every round-end.
+    /// expired (were removed because their timer hit 0). `Permanent` and
+    /// `UntilStartOfNextTurn` timers are untouched here — the latter is
+    /// cleared by `clear_until_next_turn_conditions` at turn-start.
     pub fn tick_condition_timers(&mut self) -> Vec<Condition> {
         let mut expired = Vec::new();
         let snapshot: Vec<(Condition, ConditionTimer)> = self
@@ -717,7 +740,7 @@ impl ActorInstance {
             .collect();
         for (c, timer) in snapshot {
             match timer {
-                ConditionTimer::Permanent => {}
+                ConditionTimer::Permanent | ConditionTimer::UntilStartOfNextTurn => {}
                 ConditionTimer::Rounds(0) | ConditionTimer::Rounds(1) => {
                     self.conditions.remove(&c);
                     expired.push(c);
@@ -726,6 +749,26 @@ impl ActorInstance {
                     self.conditions.insert(c, ConditionTimer::Rounds(n - 1));
                 }
             }
+        }
+        expired
+    }
+
+    /// Clear every condition with the `UntilStartOfNextTurn` timer. The
+    /// engine calls this when it advances to this actor's turn — Dodge
+    /// and similar self-buffs end here.
+    pub fn clear_until_next_turn_conditions(&mut self) -> Vec<Condition> {
+        let mut expired = Vec::new();
+        let to_remove: Vec<Condition> = self
+            .conditions
+            .iter()
+            .filter_map(|(c, t)| match t {
+                ConditionTimer::UntilStartOfNextTurn => Some(*c),
+                _ => None,
+            })
+            .collect();
+        for c in to_remove {
+            self.conditions.remove(&c);
+            expired.push(c);
         }
         expired
     }
@@ -941,7 +984,10 @@ impl ActorInstance {
         self.initiative = Some(rolled + self.initiative_mod());
     }
 
-    pub fn reset_for_new_round(&mut self) {
+    /// Top-of-turn refresh: movement and action-economy slots regenerate,
+    /// and any condition with `UntilStartOfNextTurn` (e.g. Dodge) expires.
+    /// Returns the conditions that were cleared so the engine can log them.
+    pub fn reset_for_new_round(&mut self) -> Vec<Condition> {
         self.movement = self.speed();
 
         // TODO: pull from function
@@ -1028,7 +1074,8 @@ impl ActorInstance {
     /// Restore HP. A Dying or Stable actor with `amount > 0` snaps back to
     /// Active at exactly `amount` HP (5e: regaining HP from 0 sets you to
     /// the new value, not adds to it). Active actors heal up to their
-    /// max. Dead actors are unrecoverable here.
+    /// max — the item-aware `max_hitpoints()`, so amulet bonuses count
+    /// toward the cap. Dead actors are unrecoverable here.
     pub fn heal(&mut self, amount: u32) -> HealOutcome {
         if amount == 0 {
             return HealOutcome::AlreadyFull;
@@ -1140,6 +1187,36 @@ impl ActorInstance {
             self.temp_hp = amount;
         }
         self.temp_hp
+    }
+
+    /// Apply 5e resistance / vulnerability / immunity to a raw damage
+    /// amount. Immunity wins (returns 0); vulnerability doubles;
+    /// resistance halves; nothing matches → unchanged. Halving rounds
+    /// down per RAW.
+    pub fn apply_damage_modifiers(&self, amount: u32, ty: DamageType) -> u32 {
+        if self.damage_immunities.contains(&ty) {
+            return 0;
+        }
+        let resisted = self.damage_resistances.contains(&ty);
+        let vulnerable = self.damage_vulnerabilities.contains(&ty);
+        match (resisted, vulnerable) {
+            (true, false) => amount / 2,
+            (false, true) => amount.saturating_mul(2),
+            // 5e: resist + vulnerable on the same type → unchanged.
+            (true, true) | (false, false) => amount,
+        }
+    }
+
+    pub fn is_resistant_to(&self, ty: DamageType) -> bool {
+        self.damage_resistances.contains(&ty)
+    }
+
+    pub fn is_vulnerable_to(&self, ty: DamageType) -> bool {
+        self.damage_vulnerabilities.contains(&ty)
+    }
+
+    pub fn is_immune_to(&self, ty: DamageType) -> bool {
+        self.damage_immunities.contains(&ty)
     }
 
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {

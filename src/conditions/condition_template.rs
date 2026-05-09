@@ -79,4 +79,7 @@ impl Condition {
 pub enum ConditionTimer {
     Permanent,
     Rounds(u32),
+    /// Lasts until the start of the holder's next turn — used for Dodge.
+    /// The engine clears these at the start of an actor's turn.
+    UntilStartOfNextTurn,
 }

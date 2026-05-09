@@ -133,7 +133,7 @@ fn try_stand_up(
     if !actor.has_condition(Condition::Prone) {
         return None;
     }
-    let stand = actor.actions.iter().find(|a| a.name() == "stand").copied()?;
+    let stand = actor.find_action("stand")?;
     let aei = ActionExecutionInfo::new(stand, actor_id, None, None, None);
     if aei.validate(encounter) {
         Some(aei)
@@ -287,11 +287,7 @@ fn try_step_away_from_threats(
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
     let actor = encounter.actors.get(&actor_id)?;
-    let move_action = actor
-        .actions
-        .iter()
-        .find(|a| a.name() == "move")
-        .copied()?;
+    let move_action = actor.find_action("move")?;
     let my_team = actor.team();
     let my_loc = actor.location();
     let my_size = get_tiles_from_size(actor.size());
@@ -644,11 +640,7 @@ fn try_step_toward_lowest_hp(
 ) -> Option<ActionExecutionInfo> {
     let actor = encounter.actors.get(&actor_id)?;
     let my_team = actor.team();
-    let move_action = actor
-        .actions
-        .iter()
-        .find(|a| a.name() == "move")
-        .copied()?;
+    let move_action = actor.find_action("move")?;
     // Sort by id to break HP ties deterministically (HashMap iteration is
     // non-deterministic across processes).
     let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();

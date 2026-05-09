@@ -6,10 +6,11 @@ use std::{collections::HashSet, sync::LazyLock};
 
 use crate::{
     actions::action_template::Action,
+    conditions::{Condition, ConditionTimer},
     engine::{
         action_overrides::ActionOverride,
         encounter::EncounterInstance,
-        side_effects::{MoveActor, Resource, SkipTurn},
+        side_effects::{ApplyCondition, MoveActor, Resource, SkipTurn},
     },
 };
 
