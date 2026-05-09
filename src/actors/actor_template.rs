@@ -79,7 +79,7 @@ use crate::{
     actions::action_template::Action,
     engine::{
         types::{AbilityScoreType, Language, Size, Skill, SpecialSense},
-        util::modifier_from_score,
+        util::{modifier_from_score, proficiency_bonus_for_level},
     },
 };
 use std::collections::{HashMap, HashSet};
@@ -769,15 +769,16 @@ impl ActorInstance {
         if amount == 0 {
             return HealOutcome::AlreadyFull;
         }
+        let cap = self.max_hitpoints();
         match self.hp_state {
             HpState::Dead => HealOutcome::NoOp,
             HpState::Dying { .. } | HpState::Stable => {
                 self.hp_state = HpState::Active;
-                self.hitpoints = amount.min(self.base_hitpoints);
+                self.hitpoints = amount.min(cap);
                 HealOutcome::Revived
             }
             HpState::Active => {
-                let new_hp = (self.hitpoints + amount).min(self.base_hitpoints);
+                let new_hp = self.hitpoints.saturating_add(amount).min(cap);
                 if new_hp == self.hitpoints {
                     HealOutcome::AlreadyFull
                 } else {
@@ -788,11 +789,21 @@ impl ActorInstance {
         }
     }
 
-    /// 5e spell save DC: 8 + spellcasting ability modifier (we don't track
-    /// proficiency yet; once we do, add it here). Actions that force saves
-    /// call this on the caster to set their DC.
+    /// 5e proficiency bonus, derived from this actor's level. Reused by
+    /// attack rolls, save DCs, and (eventually) skill checks.
+    pub fn proficiency_bonus(&self) -> i32 {
+        proficiency_bonus_for_level(self.level)
+    }
+
+    /// 5e spell save DC: 8 + proficiency + spellcasting ability modifier.
     pub fn spell_save_dc(&self, ability: AbilityScoreType) -> i32 {
-        8 + modifier_from_score(self.ability_score(ability))
+        8 + self.proficiency_bonus() + modifier_from_score(self.ability_score(ability))
+    }
+
+    /// 5e spell attack bonus: proficiency + spellcasting ability modifier.
+    /// Used by spell-attack-roll spells (not save-vs-DC spells).
+    pub fn spell_attack_bonus(&self, ability: AbilityScoreType) -> i32 {
+        self.proficiency_bonus() + modifier_from_score(self.ability_score(ability))
     }
 
     pub fn is_immune_to(&self, dt: DamageType) -> bool {
@@ -947,7 +958,10 @@ impl ActorInstance {
     }
 
     pub fn attack_bonus(&self) -> i32 {
-        // TODO: add proficiency bonus once it's tracked
+        // STR-based melee attack bonus. Proficiency would normally apply
+        // for proficient weapons, but we don't track per-weapon proficiency
+        // — adding it unconditionally inflates every monster's hit rate
+        // (the spell-DC clause is fine because casters are rare).
         modifier_from_score(self.strength)
     }
 
