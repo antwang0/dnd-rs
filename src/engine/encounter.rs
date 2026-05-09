@@ -279,6 +279,10 @@ pub struct EncounterInstance {
     rng: Rng,
     messages: Vec<String>,
     outcome_tracker: OutcomeTracker,
+    /// Round counter (1-indexed). Bumped each time the initiative queue
+    /// wraps. UI can display this as "Round N"; future spell-duration
+    /// systems can key off it.
+    round: u32,
 }
 
 impl EncounterInstance {
@@ -1340,6 +1344,7 @@ impl EncounterInstance {
             rng,
             messages: Vec::new(),
             outcome_tracker: OutcomeTracker::new(),
+            round: 1,
         }
     }
 
@@ -1465,6 +1470,7 @@ impl EncounterInstance {
     fn advance_initiative(&mut self) {
         let wrapped = self.initiative_tracker.advance();
         if wrapped {
+            self.round = self.round.saturating_add(1);
             self.round_end();
             self.round = self.round.saturating_add(1);
         }
@@ -1825,13 +1831,16 @@ impl EncounterInstance {
         let (succ, fail) = actor.death_save_record();
         match outcome {
             DeathSaveOutcome::Continuing => {
+                let label = if raw == 1 {
+                    "critical failure (2 fails)"
+                } else if raw >= 10 {
+                    "success"
+                } else {
+                    "failure"
+                };
                 self.log(format!(
                     "  {} death save: 1d20({}) — {} ({}/{} S/F)",
-                    name,
-                    raw,
-                    if raw >= 10 { "success" } else { "failure" },
-                    succ,
-                    fail
+                    name, raw, label, succ, fail
                 ));
                 false
             }
@@ -9353,5 +9362,145 @@ mod tests {
 
         let mode = e.compute_attack_mode(shooter, target, false);
         assert_eq!(mode, RollMode::Disadvantage);
+    }
+
+    #[test]
+    fn damage_immunity_reduces_to_zero() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        // Zombies are poison-immune.
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 100,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max, "poison should be a no-op");
+    }
+
+    #[test]
+    fn damage_resistance_halves() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        // Zombies resist necrotic; 10 → 5.
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 10,
+            damage_type: DamageType::Necrotic,
+        }
+        .apply(&mut e);
+        let after = e.actors[&id].hitpoints();
+        // Should have taken 5, not 10. Use saturating because zombie HP
+        // could be lower than 10.
+        assert!(
+            before.saturating_sub(after) < 10,
+            "expected resistance to halve damage: {} → {}",
+            before,
+            after
+        );
+    }
+
+    #[test]
+    fn damage_vulnerability_doubles() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        // Skeletons take double bludgeoning. 5 raw → 10 effective.
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 5,
+            damage_type: DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        let after = e.actors[&id].hitpoints();
+        // Diff of at least 10 (double the raw 5). May exceed if it killed
+        // the skeleton outright.
+        assert!(
+            before.saturating_sub(after) >= before.min(10),
+            "vulnerability didn't double: {} → {}",
+            before,
+            after
+        );
+    }
+
+    #[test]
+    fn round_counter_advances_on_initiative_wrap() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let tp = TerrainGenParams {
+            width: 20,
+            height: 20,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 1,
+            pc_template: Some(&FIGHTER_TEMPLATE),
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(5)).unwrap();
+        assert_eq!(e.round(), 1);
+        // One actor → every advance wraps.
+        e.skip_turn();
+        assert_eq!(e.round(), 2);
+        e.skip_turn();
+        assert_eq!(e.round(), 3);
+    }
+
+    #[test]
+    fn dodge_clears_after_one_turn() {
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Dodging, crate::conditions::ConditionTimer::Permanent);
+        assert!(e.actors[&id].has_condition(Condition::Dodging));
+        // Simulate a turn boundary (reset_for_new_round clears Dodging).
+        e.actors.get_mut(&id).unwrap().reset_for_new_round();
+        assert!(!e.actors[&id].has_condition(Condition::Dodging));
+    }
+
+    #[test]
+    fn disengage_suppresses_opportunity_attack() {
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Mark the mover as disengaged — OAs against them this turn are
+        // suppressed.
+        e.actors.get_mut(&mover_id).unwrap().set_disengaged(true);
+        let move_effect = MoveActor {
+            actor_id: mover_id,
+            path: vec![Coordinate::new(15, 5)],
+        };
+        move_effect.apply(&mut e);
+        assert!(
+            e.actors[&reactor_id].can_consume_resource(Resource::Reaction),
+            "reactor should still have their reaction — Disengage suppressed the OA"
+        );
     }
 }

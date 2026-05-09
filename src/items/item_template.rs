@@ -163,7 +163,8 @@ pub static SCROLL_OF_MAGIC_MISSILE: Item = Item {
 
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
-/// rotation without touching call sites.
+/// rotation without touching call sites. Some entries appear multiple
+/// times to weight the drop table toward more common items.
 pub static LOOT_POOL: &[&Item] = &[
     &RING_OF_PROTECTION,
     &BOOTS_OF_STRIDING,
