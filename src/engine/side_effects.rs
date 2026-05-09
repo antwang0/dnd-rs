@@ -301,12 +301,24 @@ impl ApplicableSideEffect for ApplyCondition {
             return;
         };
         let name = actor.name().to_string();
-        if actor.add_condition(self.condition, self.timer) {
-            let suffix = match self.timer {
-                ConditionTimer::Permanent => String::new(),
-                ConditionTimer::Rounds(n) => format!(" ({} round{})", n, if n == 1 { "" } else { "s" }),
-            };
+        let newly_added = actor.add_condition(self.condition, self.timer);
+        let suffix = match self.timer {
+            ConditionTimer::Permanent => String::new(),
+            ConditionTimer::Rounds(n) => {
+                format!(" ({} round{})", n, if n == 1 { "" } else { "s" })
+            }
+        };
+        if newly_added {
             ei.log(format!("{} is now {}{}.", name, self.condition.name(), suffix));
+        } else {
+            // Re-application — log the refresh so the player sees that
+            // the timer changed (e.g. a re-cast Bless extending duration).
+            ei.log(format!(
+                "{}'s {} refreshes{}.",
+                name,
+                self.condition.name(),
+                suffix
+            ));
         }
     }
 }
