@@ -194,6 +194,13 @@ impl ApplicableSideEffect for DealDamage {
         // Use the post-modifier amount for downstream concentration-DC math.
         let dmg_for_conc = adjusted;
 
+        if let Some(label) = modifier_label {
+            ei.log(format!(
+                "  {} is {} to {:?}: {} \u{2192} {}",
+                name, label, self.damage_type, self.amount, adjusted
+            ));
+        }
+
         match outcome {
             DamageOutcome::Downed => {
                 ei.log(format!("{} falls unconscious.", name));
