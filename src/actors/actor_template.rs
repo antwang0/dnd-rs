@@ -105,6 +105,38 @@ use std::collections::{HashMap, HashSet};
 
 use std::error::Error;
 
+/// 5e-style damage adjustment. Resistances halve incoming damage of a
+/// given type; immunities zero it; vulnerabilities double it. Resolution
+/// order matters (immunity beats vulnerability beats resistance) so we
+/// pick the most-specific outcome at the call site rather than naïvely
+/// stacking multipliers.
+#[derive(Debug, Default, Clone)]
+pub struct DamageAdjustments {
+    pub resistances: HashSet<DamageType>,
+    pub immunities: HashSet<DamageType>,
+    pub vulnerabilities: HashSet<DamageType>,
+}
+
+impl DamageAdjustments {
+    /// Apply this actor's resistances/immunities/vulnerabilities to a raw
+    /// damage amount. 5e resolution: immunity → 0; vulnerability without
+    /// immunity → doubled; resistance otherwise → halved (rounded down).
+    /// Multiple categories can't overlap on the same type in our model;
+    /// if they do, the order above wins.
+    pub fn apply(&self, dt: DamageType, amount: u32) -> u32 {
+        if self.immunities.contains(&dt) {
+            return 0;
+        }
+        if self.vulnerabilities.contains(&dt) {
+            return amount.saturating_mul(2);
+        }
+        if self.resistances.contains(&dt) {
+            return amount / 2;
+        }
+        amount
+    }
+}
+
 pub struct CreatureTemplate {
     pub name: &'static str,
     /// Single-character glyph for the map. Convention: capital letter
@@ -1270,5 +1302,51 @@ impl ActorInstance {
             13..=16 => 5,
             _ => 6,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn damage_adjustments_resistance_halves() {
+        let adj = DamageAdjustments {
+            resistances: HashSet::from([DamageType::Fire]),
+            ..Default::default()
+        };
+        assert_eq!(adj.apply(DamageType::Fire, 10), 5);
+        assert_eq!(adj.apply(DamageType::Cold, 10), 10);
+    }
+
+    #[test]
+    fn damage_adjustments_immunity_zeros() {
+        let adj = DamageAdjustments {
+            immunities: HashSet::from([DamageType::Poison]),
+            ..Default::default()
+        };
+        assert_eq!(adj.apply(DamageType::Poison, 99), 0);
+    }
+
+    #[test]
+    fn damage_adjustments_vulnerability_doubles() {
+        let adj = DamageAdjustments {
+            vulnerabilities: HashSet::from([DamageType::Bludgeoning]),
+            ..Default::default()
+        };
+        assert_eq!(adj.apply(DamageType::Bludgeoning, 7), 14);
+    }
+
+    #[test]
+    fn damage_adjustments_immunity_beats_vulnerability() {
+        // Should never both be set in practice, but the resolver picks the
+        // most-specific outcome when they do (immunity > vulnerability >
+        // resistance).
+        let adj = DamageAdjustments {
+            immunities: HashSet::from([DamageType::Fire]),
+            vulnerabilities: HashSet::from([DamageType::Fire]),
+            ..Default::default()
+        };
+        assert_eq!(adj.apply(DamageType::Fire, 20), 0);
     }
 }

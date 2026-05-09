@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::SCIMITAR;
-use crate::actors::actor_template::CreatureTemplate;
+use crate::actors::actor_template::{CreatureTemplate, DamageAdjustments};
 use crate::engine::types::{Language, Size};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;

@@ -149,6 +149,18 @@ pub static SCROLL_OF_FIREBALL: Item = Item {
     on_use: Some(&crate::actions::item_actions::READ_FIREBALL_SCROLL),
 };
 
+pub static SCROLL_OF_MAGIC_MISSILE: Item = Item {
+    name: "Scroll of Magic Missile",
+    glyph: 'm',
+    bonuses: ItemBonuses {
+        ac: 0,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: Some(&crate::actions::item_actions::READ_MAGIC_MISSILE_SCROLL),
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites.
@@ -165,4 +177,5 @@ pub static LOOT_POOL: &[&Item] = &[
     &POTION_OF_HEALING,
     &POTION_OF_HEALING,
     &SCROLL_OF_FIREBALL,
+    &SCROLL_OF_MAGIC_MISSILE,
 ];
