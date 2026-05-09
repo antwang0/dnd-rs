@@ -3,6 +3,7 @@ use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
 use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
 use crate::actors::creatures::wolves::WOLF_TEMPLATE;
 use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
 use std::collections::HashMap;
@@ -1053,6 +1054,7 @@ impl EncounterInstance {
             &GOBLIN_TEMPLATE,
             &OGRE_TEMPLATE,
             &WOLF_TEMPLATE,
+            &WIZARD_TEMPLATE,
         ]
     }
 
@@ -2623,6 +2625,61 @@ mod tests {
         }
         .apply(&mut e);
         assert!(!e.actors[&caster].is_concentrating());
+    }
+
+    #[test]
+    fn magic_missile_deals_force_damage_to_target() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::MAGIC_MISSILE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let tgt = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        let max = e.actors[&tgt].max_hitpoints();
+        let target_vec = vec![tgt];
+        let effects =
+            MAGIC_MISSILE.side_effects(&mut e, wiz, Some(&target_vec), None, None);
+        // Three darts → three DealDamage hits.
+        assert_eq!(effects.len(), 3);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        // Each dart is 1d4+1 (2..=5) of force damage; minimum total = 6.
+        let after = e.actors.get(&tgt).map(|a| a.hitpoints()).unwrap_or(0);
+        let lost = max.saturating_sub(after);
+        assert!(lost >= 6, "expected ≥ 6 force damage, got {}", lost);
+        assert!(lost <= 15, "expected ≤ 15 force damage, got {}", lost);
+    }
+
+    #[test]
+    fn cure_wounds_validates_only_in_touch_range() {
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let near = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        let far = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(15, 15), 0, 2)
+            .unwrap();
+        // Wound `near` so heal is meaningful.
+        let max = e.actors[&near].max_hitpoints();
+        e.actors.get_mut(&near).unwrap().take_damage(max - 1);
+        let aei_near =
+            ActionExecutionInfo::new(&*CURE_WOUNDS, cleric, Some(vec![near]), None, None);
+        assert!(aei_near.validate(&e), "touch-range ally should be valid");
+        let aei_far =
+            ActionExecutionInfo::new(&*CURE_WOUNDS, cleric, Some(vec![far]), None, None);
+        assert!(!aei_far.validate(&e), "far ally outside touch range should reject");
     }
 
     #[test]
