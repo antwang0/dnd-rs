@@ -1,5 +1,5 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::spells::{FIRE_BOLT, MAGIC_MISSILE};
+use crate::actions::spells::{CAUSE_FEAR, FIRE_BOLT, MAGIC_MISSILE};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{Language, Size, SpecialSense};
 use std::collections::HashSet;
@@ -13,6 +13,7 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*FIRE_BOLT);
     actions.push(&*MAGIC_MISSILE);
+    actions.push(&*CAUSE_FEAR);
     CreatureTemplate {
         name: "Wizard",
         glyph: 'M',

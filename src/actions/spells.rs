@@ -492,52 +492,22 @@ impl Action for FireBolt {
         else {
             return Vec::new();
         };
-
-        // Spell attack — use the same compute_attack_mode pipeline so
-        // advantage/disadvantage from conditions still apply.
-        let mode = encounter.compute_attack_mode(caster_id, target_id, false);
-        let raw_d20 = encounter.roll_d20_with_mode(mode) as i32;
-        let is_crit = raw_d20 == 20;
-        let total = raw_d20 + attack_bonus;
-        let hit = is_crit || total >= target_ac;
-        let outcome = if is_crit {
-            "CRIT!"
-        } else if hit {
-            "hit"
-        } else {
-            "miss"
-        };
-        encounter.log(format!(
-            "  fire bolt: 1d20({}){:+} = {} vs AC {}{} \u{2014} {}",
-            raw_d20,
+        // Reuse the centralized d20 + crit + log helper. Fire Bolt is
+        // a ranged spell attack: no STR/DEX-to-damage rider, just the
+        // 1d10 fire die. Marking it ranged (`is_melee = false`) so
+        // prone-target clauses resolve correctly.
+        crate::actions::monster_attacks::weapon_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
             attack_bonus,
-            total,
             target_ac,
-            mode.log_suffix(),
-            outcome,
-        ));
-        if !hit {
-            return Vec::new();
-        }
-        let dice = Dice::new(1, 10);
-        let raw = encounter.roll(&dice);
-        let crit_extra = if is_crit { encounter.roll(&dice) } else { 0 };
-        let damage = raw + crit_extra;
-        encounter.log(format!(
-            "  fire bolt: 1d10({}){} = {} fire damage",
-            raw,
-            if is_crit {
-                format!("+1d10({})", crit_extra)
-            } else {
-                String::new()
-            },
-            damage,
-        ));
-        vec![Box::new(crate::engine::side_effects::DealDamage {
-            actor_id: target_id,
-            amount: damage,
-            damage_type: DamageType::Fire,
-        })]
+            Dice::new(1, 10),
+            0,
+            DamageType::Fire,
+            false,
+        )
     }
 }
 
@@ -620,3 +590,84 @@ impl Action for MagicMissile {
 }
 
 pub static MAGIC_MISSILE: LazyLock<MagicMissile> = LazyLock::new(|| MagicMissile {});
+
+/// Cause Fear — level-1 enchantment. Single living target; on a failed
+/// WIS save vs the caster's WIS-based DC, target is Frightened for up
+/// to 5 rounds (we don't yet model the "save again at end of each turn"
+/// clause — fixed timer is close enough). Concentration tracks the
+/// effect so the caster taking damage can drop the fear early.
+pub struct CauseFear {}
+
+impl Action for CauseFear {
+    fn name(&self) -> &str {
+        "cause fear"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cf", "fear"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::{ApplyCondition, StartConcentration};
+
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Frightened,
+                timer: ConditionTimer::Rounds(5),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData {
+                    spell_name: "Cause Fear".to_string(),
+                    conditions: vec![(target_id, Condition::Frightened)],
+                },
+            }),
+        ]
+    }
+}
+
+pub static CAUSE_FEAR: LazyLock<CauseFear> = LazyLock::new(|| CauseFear {});

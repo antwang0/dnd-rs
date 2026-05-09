@@ -761,9 +761,11 @@ pub static ZOMBIE_MULTISLAM: LazyLock<Multiattack> = LazyLock::new(|| Multiattac
 /// modifier is added once. 5e RAW.
 ///
 /// Returns the side-effect vec (empty on miss). Centralizes the pattern
-/// so every weapon-style attack logs in the same shape.
+/// so every weapon-style attack — and spell-attack-roll cantrips like
+/// Fire Bolt — log in the same shape. `pub(crate)` so other action
+/// modules can reuse it without duplicating the d20 + crit + log glue.
 #[allow(clippy::too_many_arguments)]
-fn weapon_attack(
+pub(crate) fn weapon_attack(
     encounter: &mut EncounterInstance,
     caster_id: usize,
     target_id: usize,
