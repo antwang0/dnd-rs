@@ -173,6 +173,23 @@ impl ApplicableSideEffect for DealDamage {
         };
         let outcome = actor.take_damage(final_amount);
         let was_concentrating = actor.is_concentrating();
+        if scaled != self.amount {
+            let suffix = if scaled == 0 {
+                "immune"
+            } else if scaled < self.amount {
+                "resistant"
+            } else {
+                "vulnerable"
+            };
+            ei.log(format!(
+                "  {} is {} to {:?}: {} -> {} damage",
+                name, suffix, self.damage_type, self.amount, scaled
+            ));
+        }
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let outcome = actor.take_damage(scaled);
         // actor borrow ends here.
         // Use the post-modifier amount for downstream concentration-DC math.
         let dmg_for_conc = adjusted;

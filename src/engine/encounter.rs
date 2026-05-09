@@ -420,6 +420,9 @@ impl EncounterInstance {
             if target.has_condition(Condition::Dodging) {
                 mode = mode.combine(RollMode::Disadvantage);
             }
+            if target.has_condition(Condition::Dodging) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
         }
         // Attacker-side perks. Help-aided attackers get advantage on their
         // single next attack; consume it after the mode is computed.
@@ -819,7 +822,11 @@ impl EncounterInstance {
                     .actions
                     .iter()
                     .find(|act| {
-                        matches!(act.targeting_schema(), TargetingSchema::SingleActor)
+                        // is_harmful filters out touch-range buffs / heals
+                        // (Cure Wounds is reach 1, SingleActor, but harmless)
+                        // so allies don't opportunity-heal a leaving target.
+                        act.is_harmful()
+                            && matches!(act.targeting_schema(), TargetingSchema::SingleActor)
                             && act.reach_tiles().is_some_and(|r| r <= MELEE_REACH)
                     })
                     .copied()?;
@@ -6833,5 +6840,302 @@ mod tests {
         }
         .apply(&mut e);
         assert_eq!(e.actors[&id].hitpoints(), max - 4);
+    }
+
+    #[test]
+    fn magic_missile_auto_hits_for_force_damage() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::MAGIC_MISSILE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        let max_hp = e.actors[&target].max_hitpoints();
+        let target_vec = vec![target];
+        let effects = MAGIC_MISSILE.side_effects(&mut e, caster, Some(&target_vec), None, None);
+        // 3 darts of 1d4+1 = min 6, max 15. We can only assert it's in range.
+        for effect in effects {
+            effect.apply(&mut e);
+        }
+        let hp = e.actors[&target].hitpoints();
+        assert!(hp < max_hp, "magic missile should always hit");
+        let damage_taken = max_hp - hp;
+        assert!(
+            (6..=15).contains(&damage_taken),
+            "magic missile damage should be 6-15, got {}",
+            damage_taken
+        );
+    }
+
+    #[test]
+    fn cure_wounds_heals_dying_ally_back_to_active() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        // Drop the fighter to dying.
+        let max = e.actors[&fighter].max_hitpoints();
+        e.actors.get_mut(&fighter).unwrap().take_damage(max);
+        assert!(e.actors[&fighter].is_dying());
+        let target_vec = vec![fighter];
+        for eff in CURE_WOUNDS.side_effects(&mut e, cleric, Some(&target_vec), None, None) {
+            eff.apply(&mut e);
+        }
+        assert!(e.actors[&fighter].is_combat_active(), "cure wounds revives");
+        assert!(e.actors[&fighter].hitpoints() > 0);
+    }
+
+    #[test]
+    fn skeleton_vulnerable_to_bludgeoning_takes_double() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        // 4 damage doubled → 8.
+        assert_eq!(e.actors[&id].hitpoints(), max.saturating_sub(8));
+    }
+
+    #[test]
+    fn zombie_immune_to_poison_takes_no_damage() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 50,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max);
+    }
+
+    #[test]
+    fn zombie_resistant_to_necrotic_halves() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Necrotic,
+        }
+        .apply(&mut e);
+        // 4 / 2 = 2 (5e: round down).
+        assert_eq!(e.actors[&id].hitpoints(), max.saturating_sub(2));
+    }
+
+    #[test]
+    fn dodge_imposes_disadvantage_on_attackers() {
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        let mode_before = e.compute_attack_mode(attacker, target, true);
+        assert_eq!(mode_before, RollMode::Normal);
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Dodging, ConditionTimer::Permanent);
+        let mode_after = e.compute_attack_mode(attacker, target, true);
+        assert_eq!(mode_after, RollMode::Disadvantage);
+    }
+
+    #[test]
+    fn restrained_zeros_movement_and_advantages_attackers() {
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Restrained, ConditionTimer::Permanent);
+        // Movement is zeroed
+        assert_eq!(e.actors[&target].remaining_movement(), 0.0);
+        // Attackers gain advantage
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage
+        );
+        // Target has disadvantage on DEX saves
+        let mode = e.compute_save_mode(target, crate::engine::types::AbilityScoreType::Dexterity);
+        assert_eq!(mode, RollMode::Disadvantage);
+    }
+
+    #[test]
+    fn dodging_clears_on_next_turn_start() {
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Dodging, ConditionTimer::Permanent);
+        assert!(e.actors[&id].has_condition(Condition::Dodging));
+        // reset_for_new_round drops Dodging.
+        e.actors.get_mut(&id).unwrap().reset_for_new_round();
+        assert!(!e.actors[&id].has_condition(Condition::Dodging));
+    }
+
+    #[test]
+    fn disengage_suppresses_opportunity_attacks() {
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Apply Disengaged before moving — OAs should not fire.
+        e.actors.get_mut(&mover_id).unwrap().add_condition(
+            crate::conditions::Condition::Disengaged,
+            crate::conditions::ConditionTimer::Permanent,
+        );
+        let move_effect = MoveActor {
+            actor_id: mover_id,
+            path: vec![Coordinate::new(15, 5)],
+        };
+        move_effect.apply(&mut e);
+        assert!(
+            e.actors[&reactor_id].can_consume_resource(Resource::Reaction),
+            "Disengaged mover shouldn't have provoked"
+        );
+    }
+
+    #[test]
+    fn immunity_does_not_break_concentration() {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Cleric isn't poison-immune by default — manually rig damage
+        // adjustments via direct condition: instead, give the cleric a
+        // concentration spell, then deal it 5 poison damage with a
+        // poison-immune actor variant. Simpler: deal 0 damage by using
+        // the resistance/immunity machinery explicitly. We use the
+        // Zombie which is poison-immune and check NO concentration save
+        // is triggered.
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .start_concentration(ConcentrationData {
+                spell_name: "Test".to_string(),
+                conditions: Vec::new(),
+            });
+        // Move the cleric's adjustment to add poison immunity manually
+        // for this test.
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&zombie)
+            .unwrap()
+            .start_concentration(ConcentrationData {
+                spell_name: "Test".to_string(),
+                conditions: Vec::new(),
+            });
+        assert!(e.actors[&zombie].is_concentrating());
+        // Zombie is poison-immune — 50 poison damage scales to 0; no
+        // concentration save should be needed (and the zombie should
+        // still be concentrating afterwards).
+        DealDamage {
+            actor_id: zombie,
+            amount: 50,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert!(
+            e.actors[&zombie].is_concentrating(),
+            "immunity-zeroed damage should not trigger concentration save"
+        );
+    }
+
+    #[test]
+    fn fighter_save_proficiency_adds_proficiency_bonus() {
+        // Fighter is proficient in STR + CON saves; baseline level 1 →
+        // proficiency bonus +2. With STR 16 (mod +3), a STR save should
+        // beat any DC <= 1d20(min)+3+2 = 6 every time. Use that to
+        // confirm the proficiency bonus is being added.
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // INT save has no proficiency, INT 10 (mod 0) — DC 6 should
+        // sometimes fail (1d20 >= 6 is 75%). Run lots of saves and
+        // count: STR-prof must outperform INT-noprof on the same DC.
+        let mut str_passes = 0;
+        let mut int_passes = 0;
+        for _ in 0..200 {
+            if e.roll_save(id, AbilityScoreType::Strength, 6).passed() {
+                str_passes += 1;
+            }
+            if e.roll_save(id, AbilityScoreType::Intelligence, 6)
+                .passed()
+            {
+                int_passes += 1;
+            }
+        }
+        assert!(
+            str_passes > int_passes,
+            "STR-proficient saves should pass more often than non-proficient INT (got {} vs {})",
+            str_passes,
+            int_passes
+        );
     }
 }
