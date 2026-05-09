@@ -6,12 +6,14 @@ use crate::{
         action_overrides::ActionOverride,
         dice::Dice,
         encounter::EncounterInstance,
-        side_effects::{ApplicableSideEffect, DealDamage, Heal, Resource},
+        side_effects::{ApplicableSideEffect, Heal, Resource},
         types::{Coordinate, DamageType},
     },
 };
 
 const POTION_OF_HEALING_NAME: &str = "Potion of Healing";
+const POTION_OF_GREATER_HEALING_NAME: &str = "Potion of Greater Healing";
+const ANTITOXIN_NAME: &str = "Antitoxin";
 const SCROLL_OF_FIREBALL_NAME: &str = "Scroll of Fireball";
 const SCROLL_OF_MAGIC_MISSILE_NAME: &str = "Scroll of Magic Missile";
 
@@ -163,6 +165,9 @@ impl Action for ReadFireballScroll {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actions::action_template::resolve_burst_save_damage;
+        use crate::engine::types::AbilityScoreType;
+
         let Some(&center) = target_locations.and_then(|locs| locs.first()) else {
             return Vec::new();
         };

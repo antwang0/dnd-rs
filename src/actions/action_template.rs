@@ -3,9 +3,66 @@ use std::collections::HashSet;
 use crate::engine::{
     action_overrides::ActionOverride,
     encounter::EncounterInstance,
-    side_effects::{ApplicableSideEffect, ConsumeResource, Resource},
-    types::Coordinate,
+    side_effects::{ApplicableSideEffect, ConsumeResource, DealDamage, Resource},
+    types::{AbilityScoreType, Coordinate, DamageType},
 };
+
+/// Resolve a damage-burst AoE: every combat-active actor whose footprint is
+/// within `radius` of `center` (excluding the caster) makes a save against
+/// `dc` using `save_ability`. Pass = half damage (rounded down), fail = full.
+/// `damage` is rolled once and shared, matching 5e shared-roll semantics
+/// for area effects. Returns DealDamage side-effects (empty for actors who
+/// take 0). Caller controls the actual roll + log message.
+///
+/// Centralizes the pattern shared by Sacred Burst, Burning Hands, and the
+/// Fireball scroll — keeps save sequencing deterministic (sorted ids) and
+/// the caster-exempt + combat-active filters consistent.
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_burst_save_damage(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    center: Coordinate,
+    radius: isize,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    damage: u32,
+    damage_type: DamageType,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+    let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
+    ids.sort_unstable();
+
+    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+    for target_id in ids {
+        let Some(target) = encounter.actors.get(&target_id) else {
+            continue;
+        };
+        if target_id == caster_id || !target.is_combat_active() {
+            continue;
+        }
+        let dist = footprint_chebyshev(
+            target.location(),
+            get_tiles_from_size(target.size()),
+            center,
+            1,
+        );
+        if dist > radius {
+            continue;
+        }
+        let save = encounter.roll_save(target_id, save_ability, dc);
+        let dmg = if save.passed() { damage / 2 } else { damage };
+        if dmg == 0 {
+            continue;
+        }
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: dmg,
+            damage_type,
+        }));
+    }
+    effects
+}
 
 /// Reach for melee/touch actions, expressed as a footprint-Chebyshev gap cap.
 /// 5e melee weapons are 5ft = 1-tile gap in this 2.5ft grid. Polearms /

@@ -979,6 +979,37 @@ impl ActorInstance {
         self.movement
     }
 
+    /// Flat AC contribution from active conditions (e.g. Shield of Faith
+    /// gives +2). Folded into `armor_class` so all attack-vs-AC checks
+    /// pick it up without extra plumbing.
+    pub fn condition_ac_bonus(&self) -> i32 {
+        let mut bonus = 0;
+        if self.has_condition(Condition::Shielded) {
+            bonus += 2;
+        }
+        bonus
+    }
+
+    /// Flat to-hit / save bonus from buff conditions (Bless gives +1d4 in
+    /// 5e; we use a flat +2 — the d4 average — to avoid dragging another
+    /// die roll through every code path). Folded into the relevant
+    /// accessors below.
+    pub fn condition_attack_bonus(&self) -> i32 {
+        let mut bonus = 0;
+        if self.has_condition(Condition::Blessed) {
+            bonus += 2;
+        }
+        bonus
+    }
+
+    pub fn condition_save_bonus(&self) -> i32 {
+        let mut bonus = 0;
+        if self.has_condition(Condition::Blessed) {
+            bonus += 2;
+        }
+        bonus
+    }
+
     pub fn size(&self) -> Size {
         self.size
     }

@@ -493,6 +493,9 @@ impl EncounterInstance {
             if target.has_condition(Condition::Blinded) {
                 mode = mode.combine(RollMode::Advantage);
             }
+            if target.has_condition(Condition::Dodging) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
         }
         // Attacker-side perks. Help-aided attackers get advantage on their
         // single next attack; consume it after the mode is computed.
@@ -7925,5 +7928,251 @@ mod tests {
         assert!(names.contains(&"fire bolt"));
         assert!(names.contains(&"magic missile"));
         assert!(names.contains(&"cause fear"));
+    }
+
+    #[test]
+    fn zombie_resists_necrotic_and_takes_double_radiant() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+
+        // 10 necrotic → resisted to 5.
+        DealDamage {
+            actor_id: id,
+            amount: 10,
+            damage_type: DamageType::Necrotic,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max - 5);
+
+        // Heal back, then 4 radiant → vulnerable doubles to 8.
+        e.actors.get_mut(&id).unwrap().heal(100);
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Radiant,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max - 8);
+    }
+
+    #[test]
+    fn slime_immune_to_acid_takes_no_damage() {
+        use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SLIME_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&id].max_hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 999,
+            damage_type: DamageType::Acid,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max, "slime should be acid-immune");
+    }
+
+    #[test]
+    fn cure_wounds_revives_dying_pc() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // Cleric next to a dying fighter (1-tile gap = melee reach).
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        let max = e.actors[&fighter].max_hitpoints();
+        e.actors.get_mut(&fighter).unwrap().take_damage(max);
+        assert!(e.actors[&fighter].is_dying());
+
+        e.pop_prompt();
+        let aei =
+            ActionExecutionInfo::new(&*CURE_WOUNDS, cleric, Some(vec![fighter]), None, None);
+        assert!(aei.validate(&e), "cure wounds should validate at melee reach");
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(
+            e.actors[&fighter].is_combat_active(),
+            "fighter should be back on their feet"
+        );
+    }
+
+    #[test]
+    fn bless_applies_blessed_condition_and_starts_concentration() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::spells::BLESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 2), 0, 1)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*BLESS, cleric, Some(vec![ally]), None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&ally].has_condition(Condition::Blessed));
+        assert!(e.actors[&cleric].is_concentrating());
+    }
+
+    #[test]
+    fn shield_of_faith_grants_ac_via_concentration() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::spells::SHIELD_OF_FAITH;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 2), 0, 1)
+            .unwrap();
+        let base_ac = e.actors[&ally].armor_class();
+        e.pop_prompt();
+        let aei =
+            ActionExecutionInfo::new(&*SHIELD_OF_FAITH, cleric, Some(vec![ally]), None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&ally].has_condition(Condition::Shielded));
+        assert_eq!(e.actors[&ally].armor_class(), base_ac + 2);
+    }
+
+    #[test]
+    fn antitoxin_clears_poisoned_and_consumes_item() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::DRINK_ANTITOXIN;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::items::item_template::ANTITOXIN;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&id).unwrap().pickup_item(&ANTITOXIN);
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Poisoned, ConditionTimer::Permanent);
+
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&DRINK_ANTITOXIN, id, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(!e.actors[&id].has_condition(Condition::Poisoned));
+        assert!(!e.actors[&id].has_item_named("Antitoxin"));
+    }
+
+    #[test]
+    fn greater_healing_potion_uses_bonus_action() {
+        use crate::actions::action_template::Action;
+        use crate::actions::item_actions::DRINK_GREATER_HEALING_POTION;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(2, 2),
+                0,
+                0,
+            )
+            .unwrap();
+        let costs = DRINK_GREATER_HEALING_POTION.cost(&e, id, None, None, None);
+        assert_eq!(costs.len(), 1);
+        assert!(matches!(costs[0], Resource::BonusAction));
+    }
+
+    #[test]
+    fn disengage_suppresses_opportunity_attacks() {
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Set the mover as disengaging — flag normally comes from the
+        // Disengage action's SetDisengaging side-effect.
+        e.actors.get_mut(&mover_id).unwrap().set_disengaging(true);
+
+        // Move the mover well out of reach. Reactor should NOT fire.
+        let move_effect = MoveActor {
+            actor_id: mover_id,
+            path: vec![Coordinate::new(15, 5)],
+        };
+        move_effect.apply(&mut e);
+
+        assert!(
+            e.actors[&reactor_id].can_consume_resource(Resource::Reaction),
+            "disengaging mover should not provoke OA"
+        );
+    }
+
+    #[test]
+    fn dodge_grants_disadvantage_on_attacks_against_self() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::default_actions::DODGE;
+        use crate::conditions::Condition;
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let dodger = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*DODGE, dodger, None, None, None);
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(e.actors[&dodger].has_condition(Condition::Dodging));
+        assert_eq!(
+            e.compute_attack_mode(attacker, dodger, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn shielded_condition_grants_two_ac() {
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base = e.actors[&id].armor_class();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Shielded, ConditionTimer::Permanent);
+        assert_eq!(e.actors[&id].armor_class(), base + 2);
     }
 }

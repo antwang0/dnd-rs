@@ -243,7 +243,6 @@ impl Action for SacredBurst {
             _ => return Vec::new(),
         };
 
-        // Roll damage once for the whole burst (5e: shared damage roll).
         let raw = encounter.roll(&Dice::new(2, 6));
         encounter.log(format!(
             "  sacred burst: 2d6({}) = {} radiant area",
