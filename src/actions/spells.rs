@@ -576,3 +576,80 @@ impl Action for ShieldOfFaith {
 }
 
 pub static SHIELD_OF_FAITH: LazyLock<ShieldOfFaith> = LazyLock::new(|| ShieldOfFaith {});
+
+/// Bless — concentration buff. Target gains the `Blessed` condition for
+/// 10 rounds; while blessed, attack rolls and saves get a fresh +1d4.
+/// 5e RAW lets you bless up to 3 targets — we collapse to single-target
+/// to keep the targeting picker consistent. Action cost, level-1 slot,
+/// 30ft range, requires LOS.
+pub struct Bless {}
+
+impl Action for Bless {
+    fn name(&self) -> &str {
+        "bless"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bls"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(12)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::{ApplyCondition, StartConcentration};
+
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Blessed,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData {
+                    spell_name: "Bless".to_string(),
+                    conditions: vec![(target_id, Condition::Blessed)],
+                },
+            }),
+        ]
+    }
+}
+
+pub static BLESS: LazyLock<Bless> = LazyLock::new(|| Bless {});

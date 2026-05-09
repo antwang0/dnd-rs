@@ -398,11 +398,12 @@ impl EncounterInstance {
 
         let mode = self.compute_save_mode(actor_id, ability);
         let raw = self.roll_d20_with_mode(mode);
+        let bless = self.bless_bonus(actor_id);
         let Some(actor) = self.actors.get(&actor_id) else {
             return SaveOutcome::Fail;
         };
         let item_bonus = actor.item_save_bonus();
-        let modifier = modifier_from_score(actor.ability_score(ability)) + item_bonus;
+        let modifier = modifier_from_score(actor.ability_score(ability)) + item_bonus + bless;
         let total = raw as i32 + modifier;
         let outcome = if total >= dc {
             SaveOutcome::Pass
@@ -410,8 +411,13 @@ impl EncounterInstance {
             SaveOutcome::Fail
         };
         let name = actor.name().to_string();
+        let bless_suffix = if bless > 0 {
+            format!(" (+{} bless)", bless)
+        } else {
+            String::new()
+        };
         self.log(format!(
-            "  {} {:?} save: 1d20({}){:+} = {} vs DC {}{} \u{2014} {}",
+            "  {} {:?} save: 1d20({}){:+} = {} vs DC {}{}{} \u{2014} {}",
             name,
             ability,
             raw,
@@ -419,9 +425,26 @@ impl EncounterInstance {
             total,
             dc,
             mode.log_suffix(),
+            bless_suffix,
             if outcome.passed() { "pass" } else { "fail" }
         ));
         outcome
+    }
+
+    /// Bless adds 1d4 to a single attack or save. We roll the d4 fresh on
+    /// each consumption so each blessed roll is independent — matches
+    /// 5e RAW. Returns 0 (no log line) when the actor isn't blessed.
+    pub fn bless_bonus(&mut self, actor_id: usize) -> i32 {
+        use crate::conditions::Condition;
+        let blessed = self
+            .actors
+            .get(&actor_id)
+            .is_some_and(|a| a.has_condition(Condition::Blessed));
+        if blessed {
+            self.roll(&Dice::new(1, 4)) as i32
+        } else {
+            0
+        }
     }
 
     /// Direct mutable handle to the encounter's general-purpose RNG. Used

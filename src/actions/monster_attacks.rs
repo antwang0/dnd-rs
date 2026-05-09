@@ -777,8 +777,9 @@ fn weapon_attack(
 ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
     let mode = encounter.compute_attack_mode(caster_id, target_id, is_melee);
     let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
+    let bless = encounter.bless_bonus(caster_id);
     let is_crit = raw_attack == 20;
-    let attack_total = raw_attack + attack_bonus;
+    let attack_total = raw_attack + attack_bonus + bless;
     // Crits auto-hit regardless of AC. Otherwise compare normally.
     let hit = is_crit || attack_total >= target_ac;
     let outcome = if is_crit {
@@ -788,14 +789,20 @@ fn weapon_attack(
     } else {
         "miss"
     };
+    let bless_suffix = if bless > 0 {
+        format!(" (+{} bless)", bless)
+    } else {
+        String::new()
+    };
     encounter.log(format!(
-        "  {}: 1d20({}){:+} = {} vs AC {}{} \u{2014} {}",
+        "  {}: 1d20({}){:+} = {} vs AC {}{}{} \u{2014} {}",
         action_name,
         raw_attack,
         attack_bonus,
         attack_total,
         target_ac,
         mode.log_suffix(),
+        bless_suffix,
         outcome,
     ));
     if !hit {
