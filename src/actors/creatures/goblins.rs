@@ -16,7 +16,6 @@ pub static GOBLIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     CreatureTemplate {
         name: "Goblin",
         glyph: 'G',
-        n_instances: 0,
         ac: 15,
         hitpoints: "2d6".parse().unwrap(),
         speed: 30.,

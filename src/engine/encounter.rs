@@ -1,5 +1,6 @@
 use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+use crate::actors::creatures::fire_imps::FIRE_IMP_TEMPLATE;
 use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::orcs::ORC_TEMPLATE;
@@ -328,6 +329,9 @@ impl EncounterInstance {
             if attacker.has_condition(Condition::Invisible) {
                 mode = mode.combine(RollMode::Advantage);
             }
+            if attacker.has_condition(Condition::Frightened) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
         }
         if let Some(target) = self.actors.get(&target_id) {
             if target.has_condition(Condition::Prone) {
@@ -360,6 +364,9 @@ impl EncounterInstance {
             // before movement is consumed it's equivalent to "is this turn
             // capable of moving."
             if target.is_dodging() {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+            if target.has_condition(Condition::Dodging) {
                 mode = mode.combine(RollMode::Disadvantage);
             }
         }
@@ -420,6 +427,7 @@ impl EncounterInstance {
     /// Roll a saving throw for `actor_id` against `dc` using `ability`.
     /// Auto-applies advantage / disadvantage based on the actor's
     /// conditions (see `compute_save_mode`). Missing actor auto-fails.
+    /// Blessed actors get a fresh +1d4 added to the total per RAW.
     pub fn roll_save(
         &mut self,
         actor_id: usize,
@@ -489,6 +497,21 @@ impl EncounterInstance {
             if outcome.passed() { "pass" } else { "fail" }
         ));
         outcome
+    }
+
+    /// Pre-roll the +1d4 attack bonus an attacker gets while Blessed.
+    /// Returns 0 if the attacker isn't Blessed (or is missing). The
+    /// weapon_attack helper folds this into the attack-roll log line.
+    pub fn bless_attack_bonus(&mut self, attacker_id: usize) -> i32 {
+        use crate::conditions::Condition;
+        let blessed = self
+            .actors
+            .get(&attacker_id)
+            .is_some_and(|a| a.has_condition(Condition::Blessed));
+        if !blessed {
+            return 0;
+        }
+        self.roll(&Dice::new(1, 4)) as i32
     }
 
     /// Direct mutable handle to the encounter's general-purpose RNG. Used
@@ -4603,5 +4626,296 @@ mod tests {
             .unwrap()
             .add_condition(Condition::Restrained, ConditionTimer::Rounds(3));
         assert_eq!(e.actors[&id].remaining_movement(), 0.0);
+    }
+
+    #[test]
+    fn damage_immunity_zeros_damage() {
+        // Slime is acid-immune. Apply DealDamage with acid; HP must not change.
+        use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SLIME_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 12,
+            damage_type: crate::engine::types::DamageType::Acid,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), before, "acid-immune slime should ignore acid damage");
+    }
+
+    #[test]
+    fn damage_resistance_halves_damage() {
+        // Zombie is necrotic-resistant. 8 damage → 4 applied.
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 8,
+            damage_type: crate::engine::types::DamageType::Necrotic,
+        }
+        .apply(&mut e);
+        assert_eq!(
+            e.actors[&id].hitpoints(),
+            before - 4,
+            "resistant target should halve necrotic damage"
+        );
+    }
+
+    #[test]
+    fn damage_vulnerability_doubles_damage() {
+        // Skeleton is bludgeoning-vulnerable. 3 damage → 6 applied.
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 3,
+            damage_type: crate::engine::types::DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        let lost = before - e.actors[&id].hitpoints();
+        assert_eq!(lost, 6, "vulnerable target should take double damage");
+    }
+
+    #[test]
+    fn frightened_imposes_attack_disadvantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Frightened, ConditionTimer::Rounds(3));
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn frightened_imposes_save_disadvantage() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Frightened, ConditionTimer::Rounds(3));
+        assert_eq!(
+            e.compute_save_mode(id, AbilityScoreType::Wisdom),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn magic_missile_emits_three_force_effects() {
+        // Magic Missile auto-hits; three darts → three DealDamage effects, all Force.
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::MAGIC_MISSILE;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        let target_vec = vec![target];
+        let effects = MAGIC_MISSILE.side_effects(&mut e, caster, Some(&target_vec), None, None);
+        assert_eq!(effects.len(), 3, "three darts → three side effects");
+    }
+
+    #[test]
+    fn bless_applies_blessed_condition_and_starts_concentration() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::spells::BLESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let caster = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Bless is non-harmful; it works on self.
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*BLESS, caster, Some(vec![caster]), None, None);
+        assert!(aei.validate(&e), "bless should validate self-targeted in range");
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(
+            e.actors[&caster].has_condition(Condition::Blessed),
+            "caster should have Blessed condition"
+        );
+        assert!(
+            e.actors[&caster].is_concentrating(),
+            "caster should be concentrating"
+        );
+    }
+
+    #[test]
+    fn bless_drops_blessed_when_concentration_ends() {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let caster = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&ally)
+            .unwrap()
+            .add_condition(Condition::Blessed, ConditionTimer::Rounds(10));
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .start_concentration(ConcentrationData {
+                spell_name: "Bless".to_string(),
+                conditions: vec![(ally, Condition::Blessed)],
+            });
+        e.drop_concentration(caster);
+        assert!(
+            !e.actors[&ally].has_condition(Condition::Blessed),
+            "Blessed condition should clear when concentration drops"
+        );
+    }
+
+    #[test]
+    fn dodge_imposes_disadvantage_on_attacks_against_dodger() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Dodging, ConditionTimer::Rounds(1));
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn dodge_grants_advantage_on_dex_save() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Dodging, ConditionTimer::Rounds(1));
+        assert_eq!(
+            e.compute_save_mode(id, AbilityScoreType::Dexterity),
+            RollMode::Advantage
+        );
+        // Non-DEX save unaffected.
+        assert_eq!(
+            e.compute_save_mode(id, AbilityScoreType::Strength),
+            RollMode::Normal
+        );
+    }
+
+    #[test]
+    fn disengage_suppresses_opportunity_attack() {
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Mark mover as disengaging — OA dispatcher should ignore them.
+        e.actors.get_mut(&mover_id).unwrap().set_disengaging(true);
+        let move_effect = MoveActor {
+            actor_id: mover_id,
+            path: vec![Coordinate::new(15, 5)],
+        };
+        move_effect.apply(&mut e);
+        assert!(
+            e.actors[&reactor_id].can_consume_resource(Resource::Reaction),
+            "reactor should NOT have spent reaction against a disengaging mover"
+        );
+    }
+
+    #[test]
+    fn reset_for_new_round_clears_disengaging() {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&id).unwrap().set_disengaging(true);
+        e.actors.get_mut(&id).unwrap().reset_for_new_round();
+        assert!(!e.actors[&id].is_disengaging());
+    }
+
+    #[test]
+    fn frightful_presence_skips_already_frightened() {
+        // Frightful Presence shouldn't redundantly target already-frightened
+        // actors (waste of saves). Verify by setting one target Frightened
+        // and confirming they don't re-roll.
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::FRIGHTFUL_PRESENCE;
+        use crate::actors::creatures::fire_imps::FIRE_IMP_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let imp = e
+            .instantiate_creature(&FIRE_IMP_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Frightened, ConditionTimer::Rounds(5));
+        let log_before = e.messages().len();
+        let _ = FRIGHTFUL_PRESENCE.side_effects(&mut e, imp, None, None, None);
+        // No save line should appear for the already-frightened target.
+        let new_lines: Vec<&String> = e.messages()[log_before..].iter().collect();
+        assert!(
+            !new_lines.iter().any(|s| s.contains("save")),
+            "should not have rolled a save for already-frightened target"
+        );
     }
 }

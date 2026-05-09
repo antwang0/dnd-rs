@@ -80,14 +80,20 @@ pub trait Action {
     /// healing word). Empty vec = free (e.g. Skip). All costs are
     /// validated together; the action only fires if the actor can
     /// afford every entry.
+    ///
+    /// Default: `[Action]` — the most common case (single-Action attacks
+    /// and most cantrips). Override for free actions, bonus-action
+    /// attacks, leveled spells, and movement-priced actions.
     fn cost(
         &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        target_locations: Option<&Vec<Coordinate>>,
-        overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource>;
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
 
     fn validate_input(
         &self,

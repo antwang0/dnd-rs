@@ -1,6 +1,7 @@
 pub mod bandits;
 pub mod clerics;
 pub mod fighters;
+pub mod fire_imps;
 pub mod goblins;
 pub mod ogres;
 pub mod orcs;

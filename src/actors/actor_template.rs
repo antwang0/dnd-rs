@@ -92,7 +92,7 @@ pub enum HealOutcome {
     NoOp,
 }
 use crate::engine::side_effects::Resource;
-use crate::engine::types::Coordinate;
+use crate::engine::types::{Coordinate, DamageReaction, DamageType};
 use crate::items::item_template::{Item, ItemBonuses};
 use crate::{
     actions::action_template::Action,
@@ -112,7 +112,6 @@ pub struct CreatureTemplate {
     /// instances on the same team look identical on the map; the side
     /// panel and log disambiguate via the instance-numbered name.
     pub glyph: char,
-    pub n_instances: usize,
     pub ac: u32,
     pub hitpoints: DiceExpr,
     pub speed: f32,
@@ -402,6 +401,24 @@ impl ActorInstance {
             attack_bonus_buff: 0,
             save_bonus_buff: 0,
         })
+    }
+
+    pub fn is_disengaging(&self) -> bool {
+        self.disengaging
+    }
+
+    pub fn set_disengaging(&mut self, value: bool) {
+        self.disengaging = value;
+    }
+
+    /// Reaction for a specific damage type, defaulting to Normal when no
+    /// entry exists. The DealDamage side-effect applies this to scale the
+    /// raw amount before subtracting from HP.
+    pub fn damage_reaction(&self, damage_type: DamageType) -> DamageReaction {
+        self.damage_reactions
+            .get(&damage_type)
+            .copied()
+            .unwrap_or(DamageReaction::Normal)
     }
 
     pub fn rolls_death_saves(&self) -> bool {
