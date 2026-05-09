@@ -2626,6 +2626,63 @@ mod tests {
     }
 
     #[test]
+    fn dodge_action_applies_dodging_condition() {
+        use crate::actions::default_actions::DODGE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Add an ally in the same team so the encounter doesn't auto-end.
+        let _other = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+
+        let aei = ActionExecutionInfo::new(&*DODGE, id, None, None, None);
+        assert!(aei.validate(&e), "dodge should validate with action available");
+        e.pop_prompt();
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&id].has_condition(Condition::Dodging));
+    }
+
+    #[test]
+    fn disengage_suppresses_oa() {
+        use crate::actions::default_actions::DISENGAGE;
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Apply Disengaging directly so we don't have to thread an action
+        // turn — the condition is what matters here.
+        e.actors.get_mut(&mover_id).unwrap().add_condition(
+            Condition::Disengaging,
+            crate::conditions::ConditionTimer::Rounds(1),
+        );
+
+        let move_effect = MoveActor {
+            actor_id: mover_id,
+            path: vec![Coordinate::new(15, 5)],
+        };
+        move_effect.apply(&mut e);
+
+        // Reactor's reaction should be untouched — disengage suppressed
+        // the OA that would have fired here.
+        assert!(
+            e.actors[&reactor_id].can_consume_resource(Resource::Reaction),
+            "disengaging mover should not provoke OA",
+        );
+        let _ = DISENGAGE; // ensure import isn't dropped
+    }
+
+    #[test]
     fn rounds_timer_decrements_on_round_wrap() {
         use crate::conditions::{Condition, ConditionTimer};
         let mut e = ei_with_terrain(15, 15, &[]);
