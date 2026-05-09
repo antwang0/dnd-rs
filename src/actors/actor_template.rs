@@ -806,11 +806,7 @@ impl ActorInstance {
                     self.conditions.insert(c, ConditionTimer::Rounds(n - 1));
                 }
             }
-            ConditionTimer::Rounds(n) => {
-                *timer = ConditionTimer::Rounds(n - 1);
-                true
-            }
-        });
+        }
         expired
     }
 

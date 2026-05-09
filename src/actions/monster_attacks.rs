@@ -163,27 +163,6 @@ pub static GREATCLUB: LazyLock<SimpleWeapon> = LazyLock::new(|| SimpleWeapon {
     cost_resource: Resource::Action,
 });
 
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        simple_weapon_attack(
-            encounter,
-            caster_id,
-            target_ids,
-            self.name(),
-            crate::engine::types::AbilityScoreType::Strength,
-            Dice::new(2, 6),
-            DamageType::Bludgeoning,
-            true,
-        )
-    }
-}
-
 /// Generic STR-based bite attack — 1d6+STR piercing, no rider. Use this
 /// for creatures whose bite is pure damage (Troll, most beasts). Creatures
 /// that also trip or grapple on a bite should use WolfBite or a dedicated
