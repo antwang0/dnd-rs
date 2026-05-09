@@ -15,6 +15,7 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*SACRED_FLAME);
     actions.push(&*SACRED_BURST);
     actions.push(&*HEALING_WORD);
+    actions.push(&*CURE_WOUNDS);
     actions.push(&*HOLD_PERSON);
     actions.push(&*CURE_WOUNDS);
     actions.push(&*SHIELD_OF_FAITH);

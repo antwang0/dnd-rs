@@ -269,21 +269,20 @@ impl Action for AcidSpit {
             return Vec::new();
         };
 
-        // Primary attack — reuse weapon_attack so logging matches other
-        // attacks. weapon_attack returns Vec containing the primary
-        // DealDamage on hit, empty on miss.
-        let mut effects = weapon_attack(
-            encounter,
+        // Primary attack — reuse WeaponAttack so logging matches other
+        // attacks. resolve returns Vec containing the primary DealDamage
+        // on hit, empty on miss.
+        let mut effects = WeaponAttack {
             caster_id,
             target_id,
-            self.name(),
+            action_name: self.name(),
             attack_bonus,
-            target_ac,
-            Dice::new(1, 6),
-            0, // no DEX-to-damage rider; keep splash potential as the perk
-            DamageType::Acid,
-            false, // ranged
-        );
+            damage_dice: Dice::new(1, 6),
+            damage_bonus: 0, // no DEX-to-damage rider; keep splash potential as the perk
+            damage_type: DamageType::Acid,
+            is_melee: false,
+        }
+        .resolve(encounter);
         if effects.is_empty() {
             return effects;
         }
@@ -786,3 +785,4 @@ fn weapon_attack(
         },
     )
 }
+

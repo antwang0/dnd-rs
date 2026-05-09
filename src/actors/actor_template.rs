@@ -274,6 +274,24 @@ pub struct ActorInstance {
     /// 0-HP transition: true = enter Dying and roll saves; false = enter
     /// Dead immediately.
     rolls_death_saves: bool,
+    /// See `CreatureTemplate.resistances`. Cloned at instantiation; an
+    /// equip / spell could mutate this at runtime, but no current effect
+    /// does so.
+    resistances: HashSet<DamageType>,
+    vulnerabilities: HashSet<DamageType>,
+    immunities: HashSet<DamageType>,
+    /// 5e temporary hit points. Damage drains temp HP before regular HP.
+    /// Doesn't stack: a new grant replaces existing temp HP only if larger
+    /// (see `gain_temp_hp`). Cleared on long rest.
+    temp_hp: u32,
+    /// 5e Dodge action: attacks against this actor have disadvantage and
+    /// they make DEX saves with advantage, until the start of their next
+    /// turn. `reset_for_new_round` clears this on the actor's own turn.
+    dodging: bool,
+    /// 5e Disengage action: this actor's movement doesn't provoke
+    /// opportunity attacks for the rest of the turn. Cleared on the next
+    /// `reset_for_new_round`.
+    disengaging: bool,
     /// Character level. Starts at 1; the multi-encounter loop's long-rest
     /// hook bumps this on hitting an XP threshold. Today only PCs (team
     /// 0) accumulate XP and level up — monsters keep level 1 and skip
@@ -369,6 +387,12 @@ impl ActorInstance {
             conditions: HashMap::new(),
             concentration: None,
             rolls_death_saves: ct.rolls_death_saves,
+            resistances: ct.resistances.clone(),
+            vulnerabilities: ct.vulnerabilities.clone(),
+            immunities: ct.immunities.clone(),
+            temp_hp: 0,
+            dodging: false,
+            disengaging: false,
             level: 1,
             xp: 0,
             damage_modifiers: ct.damage_modifiers.clone(),
@@ -445,6 +469,7 @@ impl ActorInstance {
     pub fn long_rest(&mut self) {
         self.hp_state = HpState::Active;
         self.hitpoints = self.max_hitpoints();
+        self.temp_hp = 0;
         self.spell_slot_manager.restore_spell_slots();
         self.conditions.clear();
         self.concentration = None;
@@ -777,6 +802,11 @@ impl ActorInstance {
         self.action_slots = 1;
         self.bonus_action_slots = 1;
         self.reaction_slots = 1;
+        // Dodge / Disengage are turn-scoped: they clear at the start of
+        // this actor's next turn (5e RAW). We zero them here so the buff
+        // / OA suppression only lasts one round.
+        self.dodging = false;
+        self.disengaging = false;
         // TODO: legendary actions
 
         // Dodge / Disengage are "until the start of your next turn"
@@ -823,6 +853,22 @@ impl ActorInstance {
 
     pub fn add_save_bonus_buff(&mut self, delta: i32) {
         self.save_bonus_buff += delta;
+    }
+
+    pub fn is_dodging(&self) -> bool {
+        self.dodging
+    }
+
+    pub fn set_dodging(&mut self, on: bool) {
+        self.dodging = on;
+    }
+
+    pub fn is_disengaging(&self) -> bool {
+        self.disengaging
+    }
+
+    pub fn set_disengaging(&mut self, on: bool) {
+        self.disengaging = on;
     }
 
     pub fn action_slots(&self) -> u32 {
@@ -907,6 +953,48 @@ impl ActorInstance {
         }
     }
 
+    pub fn is_resistant_to(&self, dt: DamageType) -> bool {
+        self.resistances.contains(&dt)
+    }
+
+    pub fn is_vulnerable_to(&self, dt: DamageType) -> bool {
+        self.vulnerabilities.contains(&dt)
+    }
+
+    pub fn is_immune_to(&self, dt: DamageType) -> bool {
+        self.immunities.contains(&dt)
+    }
+
+    /// Apply 5e resistance / vulnerability / immunity scaling. Immunity
+    /// short-circuits to 0; resistance halves (round down); vulnerability
+    /// doubles. RAW: at most one of resistance / vulnerability applies, but
+    /// since they're stored in disjoint sets that invariant is implicit.
+    pub fn adjusted_damage(&self, amount: u32, dt: DamageType) -> u32 {
+        if self.is_immune_to(dt) {
+            return 0;
+        }
+        if self.is_resistant_to(dt) {
+            return amount / 2;
+        }
+        if self.is_vulnerable_to(dt) {
+            return amount.saturating_mul(2);
+        }
+        amount
+    }
+
+    pub fn temp_hp(&self) -> u32 {
+        self.temp_hp
+    }
+
+    /// 5e temporary HP doesn't stack; the new grant replaces the old one
+    /// only if it's higher. Returns the new temp HP value.
+    pub fn gain_temp_hp(&mut self, amount: u32) -> u32 {
+        if amount > self.temp_hp {
+            self.temp_hp = amount;
+        }
+        self.temp_hp
+    }
+
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {
         // Temp HP only matters for Active actors — 5e: Dying/Stable
         // creatures don't carry temp HP through unconsciousness, and
@@ -947,6 +1035,7 @@ impl ActorInstance {
             HpState::Active => {
                 self.hitpoints = self.hitpoints.saturating_sub(amount);
                 if self.hitpoints == 0 {
+                    self.temp_hp = 0;
                     if self.rolls_death_saves {
                         self.hp_state = HpState::Dying {
                             successes: 0,
