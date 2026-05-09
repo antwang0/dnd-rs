@@ -44,6 +44,13 @@ pub enum Condition {
     /// Attacks against = disadvantage; attacks made = advantage. Tracked
     /// as a marker — turn-end reveal mechanics aren't modeled.
     Invisible,
+    /// Shield of Faith aura — +2 to AC while present. Concentration spell;
+    /// dropped when the caster's concentration ends.
+    ShieldedByFaith,
+    /// Bless aura — +1d4 to attack rolls and saves while present. The d4
+    /// is rolled at use-time; we stick the bonus into compute_attack_mode
+    /// and roll_save by reading the condition.
+    Blessed,
 }
 
 impl Condition {
@@ -59,6 +66,8 @@ impl Condition {
             Condition::Frightened => "frightened",
             Condition::Incapacitated => "incapacitated",
             Condition::Invisible => "invisible",
+            Condition::ShieldedByFaith => "shielded by faith",
+            Condition::Blessed => "blessed",
         }
     }
 }

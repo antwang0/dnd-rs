@@ -678,7 +678,12 @@ impl ActorInstance {
 
     pub fn armor_class(&self) -> u32 {
         let bonus = self.total_item_bonuses().ac;
-        (self.base_ac as i32 + bonus).max(0) as u32
+        let shield_of_faith = if self.has_condition(Condition::ShieldedByFaith) {
+            2
+        } else {
+            0
+        };
+        (self.base_ac as i32 + bonus + shield_of_faith).max(0) as u32
     }
 
     pub fn hitpoints(&self) -> u32 {
