@@ -603,6 +603,17 @@ impl ActorInstance {
         }
     }
 
+    /// True if any active condition's `blocks_action_economy` clause
+    /// (Stunned / Incapacitated / Paralyzed) is set. Used by the resource
+    /// gate to lock out Action / BonusAction / Reaction / SpellSlot /
+    /// Movement uniformly — these conditions all share the 5e
+    /// "Incapacitated" baseline.
+    fn is_incapacitated(&self) -> bool {
+        self.conditions
+            .keys()
+            .any(|c| c.blocks_action_economy())
+    }
+
     pub fn can_consume_resource(&self, resource: Resource) -> bool {
         // Stunned actors lose their entire action economy. Incapacitated
         // is similar but movement still works. Prone is NOT checked here
@@ -615,7 +626,7 @@ impl ActorInstance {
         let action_blocked = stunned || incapacitated;
         match resource {
             Resource::Movement(amt) => {
-                if stunned {
+                if incap {
                     return false;
                 }
                 amt <= self.movement
@@ -687,7 +698,15 @@ impl ActorInstance {
 
     pub fn armor_class(&self) -> u32 {
         let bonus = self.total_item_bonuses().ac;
-        (self.base_ac as i32 + bonus).max(0) as u32
+        // Shield of Faith — concentration buff worth +2 AC. Stack with
+        // item-AC bonuses; the spell drops if the caster's concentration
+        // breaks, removing the condition.
+        let shield_bonus = if self.has_condition(Condition::ShieldOfFaith) {
+            2
+        } else {
+            0
+        };
+        (self.base_ac as i32 + bonus + shield_bonus).max(0) as u32
     }
 
     pub fn hitpoints(&self) -> u32 {

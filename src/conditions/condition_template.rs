@@ -3,18 +3,14 @@
 /// while `Prone`; `can_consume_resource` blocks Action/BonusAction/Reaction
 /// while `Stunned`). New variants land here and then plug into the
 /// relevant accessor — no central dispatcher.
-///
-/// Durations aren't tracked yet: conditions persist until something
-/// explicitly removes them via `RemoveCondition`. Round-tracked durations
-/// (e.g. "stunned for 1 round") need a turn-end hook the engine doesn't
-/// have yet; deferred.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Condition {
     /// Speed = 0; ranged attacks against you have disadvantage; melee
     /// against you have advantage; you have disadvantage on attacks.
     Prone,
     /// Cannot take Actions, Bonus Actions, or Reactions. Movement is also
-    /// 0 (in 5e via Incapacitated, but we collapse for simplicity).
+    /// 0 (in 5e via Incapacitated, but we collapse for simplicity). Attacks
+    /// vs you have advantage; auto-fail STR/DEX saves.
     Stunned,
     /// Disadvantage on attack rolls and ability checks.
     Poisoned,
@@ -50,6 +46,28 @@ impl Condition {
             Condition::Incapacitated => "incapacitated",
             Condition::Charmed => "charmed",
         }
+    }
+
+    /// True if this condition completely blocks Action / BonusAction /
+    /// Reaction usage (5e's Incapacitated clause). Stunned and Paralyzed
+    /// inherit this clause.
+    pub fn blocks_action_economy(&self) -> bool {
+        matches!(
+            self,
+            Condition::Stunned | Condition::Incapacitated | Condition::Paralyzed
+        )
+    }
+
+    /// True if this condition zeros out movement.
+    pub fn zeros_movement(&self) -> bool {
+        matches!(
+            self,
+            Condition::Prone
+                | Condition::Stunned
+                | Condition::Restrained
+                | Condition::Grappled
+                | Condition::Paralyzed
+        )
     }
 }
 
