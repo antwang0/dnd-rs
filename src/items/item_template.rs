@@ -137,6 +137,18 @@ pub static POTION_OF_HEALING: Item = Item {
     on_use: Some(&crate::actions::item_actions::DRINK_HEALING_POTION),
 };
 
+pub static POTION_OF_GREATER_HEALING: Item = Item {
+    name: "Potion of Greater Healing",
+    glyph: 'P',
+    bonuses: ItemBonuses {
+        ac: 0,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: Some(&crate::actions::item_actions::DRINK_GREATER_HEALING_POTION),
+};
+
 pub static SCROLL_OF_FIREBALL: Item = Item {
     name: "Scroll of Fireball",
     glyph: 's',

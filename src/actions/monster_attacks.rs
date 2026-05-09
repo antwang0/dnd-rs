@@ -409,8 +409,7 @@ impl Action for AcidSpit {
         let splash_dice = Dice::new(1, 4);
         let splash_amount = encounter.roll(&splash_dice);
         let mut hit_anyone = false;
-        let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
-        ids.sort_unstable();
+        let ids = encounter.sorted_actor_ids();
         for sid in ids {
             if sid == caster_id || sid == target_id {
                 continue;

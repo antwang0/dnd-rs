@@ -273,8 +273,7 @@ fn try_cause_fear(
         .copied()?;
     let my_team = actor.team();
 
-    let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
-    ids.sort_unstable();
+    let ids = encounter.sorted_actor_ids();
 
     let mut best: Option<(u32, ActionExecutionInfo)> = None;
     for target_id in ids {
@@ -533,8 +532,7 @@ fn try_support_heal(
     }
 
     // Sort actor ids for deterministic tiebreak.
-    let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
-    ids.sort_unstable();
+    let ids = encounter.sorted_actor_ids();
 
     // (priority, hp, aei): lower priority value = more urgent.
     // 0 = dying, 1 = wounded combat-active.
@@ -617,8 +615,7 @@ fn try_attack_aoe(
     }
 
     // Iterate enemies in id order for deterministic tie-break.
-    let mut anchor_ids: Vec<usize> = encounter.actors.keys().copied().collect();
-    anchor_ids.sort_unstable();
+    let anchor_ids = encounter.sorted_actor_ids();
 
     let mut best: Option<(usize, usize, ActionExecutionInfo)> = None; // (enemy_hits, anchor_id, aei)
     for anchor_id in &anchor_ids {
@@ -695,8 +692,7 @@ fn try_attack_focus_fire(
     // Iterate actors by sorted id for determinism — HashMap iteration
     // order changes between process runs and would make the AI's
     // tiebreakers nondeterministic given the same seed.
-    let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
-    ids.sort_unstable();
+    let ids = encounter.sorted_actor_ids();
 
     // Sort key: (mode_pri, target_hp, -reach). Lower wins:
     //   - mode_pri (advantage=0, normal=1, disadvantage=2): fish for
@@ -851,8 +847,7 @@ fn try_step_toward_lowest_hp(
     let move_action = actor.find_action("move")?;
     // Sort by id to break HP ties deterministically (HashMap iteration is
     // non-deterministic across processes).
-    let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
-    ids.sort_unstable();
+    let ids = encounter.sorted_actor_ids();
     let target_id = ids
         .into_iter()
         .filter_map(|id| {

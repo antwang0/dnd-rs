@@ -6,8 +6,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 /// 5e-flavored skeleton archer. Lower HP than a zombie but DEX-based ranged
-/// attack — pressure-tests the longbow + LOS path. Stats trimmed compared to
-/// MM since we only use a subset of fields.
+/// attack — pressure-tests the longbow + LOS path. Vulnerable to bludgeoning
+/// (brittle bones); immune to poison and exhaustion (undead).
 pub static SKELETON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&LONGBOW);

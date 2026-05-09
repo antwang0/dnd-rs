@@ -8,8 +8,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 /// Acolyte-style spellcaster. WIS-primary; Sacred Flame as the staple
-/// damage option, Healing Word for support. Modeled to be roughly
-/// equivalent to MM Acolyte (CR 1/4) — light HP, medium AC, no melee.
+/// damage option, Healing Word and Cure Wounds for support, Bless for
+/// pre-buff, Hold Person for lockdown. Modeled to be roughly equivalent
+/// to MM Acolyte (CR 1/4) — light HP, medium AC, no melee.
 pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*SACRED_FLAME);

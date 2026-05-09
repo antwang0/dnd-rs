@@ -55,16 +55,22 @@ pub struct StackElement {
 struct InitiativeElement {
     pub actor_id: usize,
     pub initiative: i32,
+    /// Dex modifier of the actor at insertion time. 5e RAW: ties on the
+    /// initiative roll are broken by Dex modifier (higher first), with
+    /// the DM's discretion as a final tiebreak. We deterministically
+    /// fall back to actor_id ascending so the queue is stable across
+    /// seeded runs.
+    pub dex_mod: i32,
 }
 
 impl Ord for InitiativeElement {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Higher initiative first; actor_id ascending breaks ties so the
-        // turn order is deterministic when seeded (HashMap iteration order
-        // would otherwise leak through `initialize_actors`).
+        // Higher initiative first; higher dex modifier next; actor_id
+        // ascending as a final deterministic tiebreaker.
         other
             .initiative
             .cmp(&self.initiative)
+            .then_with(|| other.dex_mod.cmp(&self.dex_mod))
             .then(self.actor_id.cmp(&other.actor_id))
     }
 }
@@ -107,21 +113,22 @@ impl InitiativeTracker {
         self.curr_index == 0
     }
 
-    pub fn add_actor(&mut self, actor_id: usize, initiative: i32) {
-        // Find the first slot whose initiative is strictly less than the new
-        // value; insert before it so higher initiatives stay first.
+    pub fn add_actor(&mut self, actor_id: usize, initiative: i32, dex_mod: i32) {
+        // Build a temporary element to use the canonical Ord — we want the
+        // same multi-key (initiative DESC, dex DESC, id ASC) used for
+        // initial sort. Insert at the first position whose existing element
+        // sorts *after* the new one, preserving order.
+        let new_elem = InitiativeElement {
+            actor_id,
+            initiative,
+            dex_mod,
+        };
         let idx = self
             .initiatives
             .iter()
-            .position(|ie| initiative > ie.initiative)
+            .position(|ie| new_elem.cmp(ie) == Ordering::Less)
             .unwrap_or(self.initiatives.len());
-        self.initiatives.insert(
-            idx,
-            InitiativeElement {
-                actor_id,
-                initiative,
-            },
-        );
+        self.initiatives.insert(idx, new_elem);
         // If we inserted at or before the active slot, the active actor
         // shifted down by one; bump curr_index to keep pointing at them.
         if idx <= self.curr_index && !self.initiatives.is_empty() {
@@ -153,6 +160,7 @@ impl InitiativeTracker {
             self.initiatives.push(InitiativeElement {
                 actor_id: *id,
                 initiative: actor.initiative().expect("Expected initiative"),
+                dex_mod: actor.initiative_mod(),
             });
         }
         self.initiatives.sort();
@@ -665,6 +673,15 @@ impl EncounterInstance {
     /// doesn't fit. Do not call this from action side-effects — use `roll`.
     pub fn rng(&mut self) -> &mut Rng {
         &mut self.rng
+    }
+
+    /// Actor ids sorted ascending. Use when iteration order matters for
+    /// determinism — e.g. AoE saves, splash sweeps, AI tiebreakers — since
+    /// `HashMap` iteration order is non-deterministic across runs.
+    pub fn sorted_actor_ids(&self) -> Vec<usize> {
+        let mut ids: Vec<usize> = self.actors.keys().copied().collect();
+        ids.sort_unstable();
+        ids
     }
 
     pub fn get_actor(&mut self, actor_id: usize) -> Option<&mut ActorInstance> {
@@ -1418,8 +1435,7 @@ impl EncounterInstance {
         // Iterate ids in sorted order so multiple level-up rolls are
         // deterministic with the seeded RNG (HashMap order would otherwise
         // shuffle who rolls first across runs).
-        let mut ids: Vec<usize> = self.actors.keys().copied().collect();
-        ids.sort_unstable();
+        let ids = self.sorted_actor_ids();
         for id in ids {
             let mut announcements: Vec<String> = Vec::new();
             if let Some(actor) = self.actors.get_mut(&id) {
@@ -1619,8 +1635,11 @@ impl EncounterInstance {
 
         if self.initialized {
             actor.roll_initiative(&mut self.roller);
-            self.initiative_tracker
-                .add_actor(actor_id, actor.initiative().unwrap());
+            self.initiative_tracker.add_actor(
+                actor_id,
+                actor.initiative().unwrap(),
+                actor.initiative_mod(),
+            );
         }
 
         self.actors.insert(actor_id, actor);
@@ -1890,9 +1909,7 @@ impl EncounterInstance {
         // Roll initiative in actor-id order for seed reproducibility —
         // HashMap iteration order is per-process random and would otherwise
         // assign different d20 rolls to the same actor across runs.
-        let mut ids: Vec<usize> = self.actors.keys().copied().collect();
-        ids.sort_unstable();
-        for id in ids {
+        for id in self.sorted_actor_ids() {
             if let Some(actor) = self.actors.get_mut(&id) {
                 actor.roll_initiative(&mut self.roller);
             }
