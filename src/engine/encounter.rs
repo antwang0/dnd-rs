@@ -293,11 +293,13 @@ impl EncounterInstance {
     }
 
     /// Compute the attack-roll mode given attacker / target conditions.
-    /// 5e clauses we model today:
-    /// - Attacker Prone → disadvantage on all attacks.
-    /// - Attacker Poisoned → disadvantage.
+    /// 5e clauses modeled today:
+    /// - Attacker Prone / Poisoned / Frightened / Restrained / Blinded
+    ///   → disadvantage on all attacks.
+    /// - Attacker Invisible → advantage on all attacks (unseen).
     /// - Target Prone → melee attacks have advantage, ranged have disadvantage.
-    /// - Target Stunned → advantage on attacks vs them.
+    /// - Target Stunned / Restrained / Blinded → advantage on attacks vs them.
+    /// - Target Invisible → disadvantage on attacks vs them.
     ///
     /// Multiple sources of the same direction don't stack; opposing
     /// sources cancel via `RollMode::combine`.
@@ -310,11 +312,19 @@ impl EncounterInstance {
         use crate::conditions::Condition;
         let mut mode = RollMode::Normal;
         if let Some(attacker) = self.actors.get(&attacker_id) {
-            if attacker.has_condition(Condition::Prone) {
-                mode = mode.combine(RollMode::Disadvantage);
+            for c in [
+                Condition::Prone,
+                Condition::Poisoned,
+                Condition::Frightened,
+                Condition::Restrained,
+                Condition::Blinded,
+            ] {
+                if attacker.has_condition(c) {
+                    mode = mode.combine(RollMode::Disadvantage);
+                }
             }
-            if attacker.has_condition(Condition::Poisoned) {
-                mode = mode.combine(RollMode::Disadvantage);
+            if attacker.has_condition(Condition::Invisible) {
+                mode = mode.combine(RollMode::Advantage);
             }
         }
         if let Some(target) = self.actors.get(&target_id) {
@@ -325,25 +335,52 @@ impl EncounterInstance {
                     RollMode::Disadvantage
                 });
             }
-            if target.has_condition(Condition::Stunned) {
-                mode = mode.combine(RollMode::Advantage);
+            for c in [
+                Condition::Stunned,
+                Condition::Restrained,
+                Condition::Blinded,
+            ] {
+                if target.has_condition(c) {
+                    mode = mode.combine(RollMode::Advantage);
+                }
+            }
+            if target.has_condition(Condition::Invisible) {
+                mode = mode.combine(RollMode::Disadvantage);
             }
         }
         mode
     }
 
-    /// Compute the save-roll mode for an actor's ability save. Today
-    /// `Poisoned` imposes disadvantage on all saves derived from ability
-    /// checks (we conflate save-vs-check until we model that distinction).
+    /// Compute the save-roll mode for an actor's ability save.
+    /// - `Poisoned` / `Frightened` impose disadvantage on saves derived from
+    ///   ability checks (we conflate save-vs-check until we model that
+    ///   distinction).
+    /// - `Restrained` imposes disadvantage on DEX saves specifically.
+    /// - `Stunned` auto-fails STR/DEX saves; we model that as disadvantage
+    ///   here rather than an auto-fail to keep the surface uniform.
     pub fn compute_save_mode(
         &self,
         actor_id: usize,
-        _ability: crate::engine::types::AbilityScoreType,
+        ability: crate::engine::types::AbilityScoreType,
     ) -> RollMode {
         use crate::conditions::Condition;
+        use crate::engine::types::AbilityScoreType;
         let mut mode = RollMode::Normal;
-        if let Some(actor) = self.actors.get(&actor_id)
-            && actor.has_condition(Condition::Poisoned)
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return mode;
+        };
+        if actor.has_condition(Condition::Poisoned)
+            || actor.has_condition(Condition::Frightened)
+        {
+            mode = mode.combine(RollMode::Disadvantage);
+        }
+        if actor.has_condition(Condition::Restrained)
+            && ability == AbilityScoreType::Dexterity
+        {
+            mode = mode.combine(RollMode::Disadvantage);
+        }
+        if actor.has_condition(Condition::Stunned)
+            && matches!(ability, AbilityScoreType::Strength | AbilityScoreType::Dexterity)
         {
             mode = mode.combine(RollMode::Disadvantage);
         }
@@ -352,36 +389,50 @@ impl EncounterInstance {
 
     /// Roll a saving throw for `actor_id` against `dc` using `ability`.
     /// Auto-applies advantage / disadvantage based on the actor's
-    /// conditions (see `compute_save_mode`). Missing actor auto-fails.
+    /// conditions (see `compute_save_mode`); a Blessed actor adds 1d4 to
+    /// the total. Missing actor auto-fails.
     pub fn roll_save(
         &mut self,
         actor_id: usize,
         ability: crate::engine::types::AbilityScoreType,
         dc: i32,
     ) -> crate::engine::saves::SaveOutcome {
+        use crate::conditions::Condition;
         use crate::engine::saves::SaveOutcome;
         use crate::engine::util::modifier_from_score;
 
         let mode = self.compute_save_mode(actor_id, ability);
         let raw = self.roll_d20_with_mode(mode);
+        let blessed = self
+            .actors
+            .get(&actor_id)
+            .is_some_and(|a| a.has_condition(Condition::Blessed));
+        let bless_bonus = if blessed { self.roll(&Dice::new(1, 4)) as i32 } else { 0 };
+
         let Some(actor) = self.actors.get(&actor_id) else {
             return SaveOutcome::Fail;
         };
         let item_bonus = actor.item_save_bonus();
         let modifier = modifier_from_score(actor.ability_score(ability)) + item_bonus;
-        let total = raw as i32 + modifier;
+        let total = raw as i32 + modifier + bless_bonus;
         let outcome = if total >= dc {
             SaveOutcome::Pass
         } else {
             SaveOutcome::Fail
         };
         let name = actor.name().to_string();
+        let bless_tag = if blessed {
+            format!(" + bless 1d4({})", bless_bonus)
+        } else {
+            String::new()
+        };
         self.log(format!(
-            "  {} {:?} save: 1d20({}){:+} = {} vs DC {}{} \u{2014} {}",
+            "  {} {:?} save: 1d20({}){:+}{} = {} vs DC {}{} \u{2014} {}",
             name,
             ability,
             raw,
             modifier,
+            bless_tag,
             total,
             dc,
             mode.log_suffix(),

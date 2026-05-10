@@ -763,7 +763,7 @@ pub static ZOMBIE_MULTISLAM: LazyLock<Multiattack> = LazyLock::new(|| Multiattac
 /// Returns the side-effect vec (empty on miss). Centralizes the pattern
 /// so every weapon-style attack logs in the same shape.
 #[allow(clippy::too_many_arguments)]
-fn weapon_attack(
+pub(crate) fn weapon_attack(
     encounter: &mut EncounterInstance,
     caster_id: usize,
     target_id: usize,
@@ -775,10 +775,18 @@ fn weapon_attack(
     damage_type: DamageType,
     is_melee: bool,
 ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+    use crate::conditions::Condition;
     let mode = encounter.compute_attack_mode(caster_id, target_id, is_melee);
     let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
     let is_crit = raw_attack == 20;
-    let attack_total = raw_attack + attack_bonus;
+    // Bless: caster adds 1d4 to attack rolls (and saves) while concentrated
+    // on. Doesn't affect crit detection — that keys off the natural d20.
+    let blessed = encounter
+        .actors
+        .get(&caster_id)
+        .is_some_and(|a| a.has_condition(Condition::Blessed));
+    let bless_bonus = if blessed { encounter.roll(&Dice::new(1, 4)) as i32 } else { 0 };
+    let attack_total = raw_attack + attack_bonus + bless_bonus;
     // Crits auto-hit regardless of AC. Otherwise compare normally.
     let hit = is_crit || attack_total >= target_ac;
     let outcome = if is_crit {
@@ -788,11 +796,17 @@ fn weapon_attack(
     } else {
         "miss"
     };
+    let bless_tag = if blessed {
+        format!(" + bless 1d4({})", bless_bonus)
+    } else {
+        String::new()
+    };
     encounter.log(format!(
-        "  {}: 1d20({}){:+} = {} vs AC {}{} \u{2014} {}",
+        "  {}: 1d20({}){:+}{} = {} vs AC {}{} \u{2014} {}",
         action_name,
         raw_attack,
         attack_bonus,
+        bless_tag,
         attack_total,
         target_ac,
         mode.log_suffix(),
