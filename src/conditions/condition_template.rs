@@ -40,6 +40,9 @@ pub enum Condition {
     /// other bonuses. Marked here so the engine can attach the d4 in
     /// `roll_save` / `weapon_attack` and so removal cleans it up.
     Blessed,
+    /// +2 AC (Shield of Faith). Read by `armor_class`. Concentration on
+    /// the caster's side; Rounds-tracked on the target's side.
+    Shielded,
 }
 
 impl Condition {
@@ -54,6 +57,7 @@ impl Condition {
             Condition::Invisible => "invisible",
             Condition::Grappled => "grappled",
             Condition::Blessed => "blessed",
+            Condition::Shielded => "shielded",
         }
     }
 }
