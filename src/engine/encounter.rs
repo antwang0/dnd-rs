@@ -1,5 +1,8 @@
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+use crate::actors::creatures::dire_wolves::DIRE_WOLF_TEMPLATE;
+use crate::actors::creatures::ghouls::GHOUL_TEMPLATE;
 use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+use crate::actors::creatures::kobolds::KOBOLD_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
 use crate::actors::creatures::slimes::SLIME_TEMPLATE;
@@ -1026,8 +1029,11 @@ impl EncounterInstance {
             &CLERIC_TEMPLATE,
             &SLIME_TEMPLATE,
             &GOBLIN_TEMPLATE,
+            &KOBOLD_TEMPLATE,
             &OGRE_TEMPLATE,
             &WOLF_TEMPLATE,
+            &DIRE_WOLF_TEMPLATE,
+            &GHOUL_TEMPLATE,
         ]
     }
 

@@ -674,6 +674,296 @@ impl Action for WolfBite {
 }
 pub static WOLF_BITE: LazyLock<WolfBite> = LazyLock::new(|| WolfBite {});
 
+/// Dagger — DEX-based 1d4 piercing melee finesse. Kobold's main option.
+/// Same shape as Scimitar but uses DEX instead of STR (finesse weapon).
+pub struct Dagger {}
+
+impl Action for Dagger {
+    fn name(&self) -> &str {
+        "dagger"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dgr"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dex_mod = modifier_from_score(
+            caster.ability_score(crate::engine::types::AbilityScoreType::Dexterity),
+        );
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+        weapon_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            dex_mod,
+            target_ac,
+            Dice::new(1, 4),
+            dex_mod,
+            DamageType::Piercing,
+            true,
+        )
+    }
+}
+pub static DAGGER: LazyLock<Dagger> = LazyLock::new(|| Dagger {});
+
+/// Longsword — STR-based 1d8 slashing melee. Standard martial weapon for
+/// fighters / bandits / human warriors. Distinct from Scimitar by the
+/// d8 / d6 die step.
+pub struct Longsword {}
+
+impl Action for Longsword {
+    fn name(&self) -> &str {
+        "longsword"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ls", "sword"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let str_mod = modifier_from_score(
+            caster.ability_score(crate::engine::types::AbilityScoreType::Strength),
+        );
+        let attack_bonus = caster.attack_bonus();
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+        weapon_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            attack_bonus,
+            target_ac,
+            Dice::new(1, 8),
+            str_mod,
+            DamageType::Slashing,
+            true,
+        )
+    }
+}
+pub static LONGSWORD: LazyLock<Longsword> = LazyLock::new(|| Longsword {});
+
+/// Dire Wolf bite — STR-based 2d6 piercing with prone-on-fail rider.
+/// Bigger sister of WolfBite (1d4); the rider DC is also higher.
+pub struct DireWolfBite {}
+
+impl Action for DireWolfBite {
+    fn name(&self) -> &str {
+        "dire bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dbt", "dire"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::ApplyCondition;
+        use crate::engine::types::AbilityScoreType;
+
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let attack_bonus = caster.attack_bonus();
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+        let mut effects = weapon_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            attack_bonus,
+            target_ac,
+            Dice::new(2, 6),
+            str_mod,
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, 13);
+        if !save.passed() {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Prone,
+                timer: ConditionTimer::Permanent,
+            }));
+        }
+        effects
+    }
+}
+pub static DIRE_WOLF_BITE: LazyLock<DireWolfBite> = LazyLock::new(|| DireWolfBite {});
+
+/// Ghoul claws — STR-based 2d4 slashing with a paralysis rider on hit.
+/// Target makes a CON save (DC 10); on fail, Stunned for 5 rounds (we
+/// model the "paralyzed" condition as Stunned since they share the major
+/// mechanical effect: no actions, can't move).
+pub struct GhoulClaws {}
+
+impl Action for GhoulClaws {
+    fn name(&self) -> &str {
+        "ghoul claws"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["claws", "gc-claws"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::ApplyCondition;
+        use crate::engine::types::AbilityScoreType;
+
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let attack_bonus = caster.attack_bonus();
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+        let mut effects = weapon_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            attack_bonus,
+            target_ac,
+            Dice::new(2, 4),
+            str_mod,
+            DamageType::Slashing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 10);
+        if !save.passed() {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Stunned,
+                timer: ConditionTimer::Rounds(5),
+            }));
+        }
+        effects
+    }
+}
+pub static GHOUL_CLAWS: LazyLock<GhoulClaws> = LazyLock::new(|| GhoulClaws {});
+
 /// Wraps another action and runs it `count` times for one Action-slot
 /// expenditure. Reach / LOS / targeting schema are inherited from the
 /// sub-attack so creatures can declare e.g. `Multiattack { sub: &SLAM, count: 2 }`
