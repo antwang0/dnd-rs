@@ -36,5 +36,8 @@ pub static WOLF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
         damage_modifiers: HashMap::new(),
+        proficient_saves: HashSet::new(),
+        condition_immunities: HashSet::new(),
+        features: HashSet::new(),
     }
 });

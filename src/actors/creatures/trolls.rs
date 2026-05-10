@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{BITE, SLAM};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{Language, Size, SpecialSense};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 /// Troll — large regenerating brute (CR 5). High HP and two attacks
@@ -21,12 +21,11 @@ use std::sync::LazyLock;
 pub static TROLL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     // Claws (slam) + Bite — two attacks per action, matching 5e multiattack.
-    actions.push(&*SLAM);
+    actions.push(&SLAM);
     actions.push(&*BITE);
     CreatureTemplate {
         name: "Troll",
         glyph: 'T',
-        n_instances: 0,
         ac: 15,
         hitpoints: "8d10+24".parse().unwrap(),
         speed: 30.,
@@ -45,9 +44,9 @@ pub static TROLL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
-        immunities: HashSet::new(),
-        resistances: HashSet::new(),
-        vulnerabilities: HashSet::new(),
-        regeneration: 10,
+        damage_modifiers: HashMap::new(),
+        proficient_saves: HashSet::new(),
+        condition_immunities: HashSet::new(),
+        features: HashSet::new(),
     }
 });

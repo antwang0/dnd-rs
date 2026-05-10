@@ -69,6 +69,14 @@ pub fn resolve_burst_save_damage(
 /// reach weapons would be 2. Ranged actions return their max range here.
 pub const MELEE_REACH: isize = 1;
 
+/// Convenience for `SingleActor` schemas: extract the first id from the
+/// optional id list, returning `None` on empty / missing. Side-effect
+/// builders use this so they can early-return cleanly when the engine
+/// has no live target after validation.
+pub fn first_target_id(ids: Option<&Vec<usize>>) -> Option<usize> {
+    ids.and_then(|v| v.first().copied())
+}
+
 pub enum TargetingSchema {
     NoArgs,
     SinglePoint,
@@ -119,6 +127,26 @@ pub trait Action {
     /// actually whittle down enemy HP.
     fn deals_damage(&self) -> bool {
         true
+    }
+
+    /// True if this action restores HP / temp HP on its target.
+    /// Used by the AI's support pipeline (heal-the-lowest target).
+    fn is_heal(&self) -> bool {
+        false
+    }
+
+    /// Legacy alias — same semantics as `is_heal`. Some older tests
+    /// call this name; both delegate to `is_heal` so impls only need
+    /// to override one method.
+    fn heals(&self) -> bool {
+        self.is_heal()
+    }
+
+    /// Damage types this action can deal (for actor-side resistance /
+    /// immunity hints in the prompt UI). Empty for non-damaging actions
+    /// or those whose typing depends on runtime data.
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
     }
 
     fn side_effects(

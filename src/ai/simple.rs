@@ -60,6 +60,13 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3a. Self-heal (Second Wind) when below half HP — Fighter's
+        // bonus-action restore. Comes before attacks because the heal
+        // is bonus-action and doesn't conflict with this turn's swing.
+        if let Some(aei) = try_self_heal(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 4. Bless — round 1 self+ally buff. Only valid before we're
         //    already concentrating on something.
         if let Some(aei) = try_bless(encounter, actor_id) {
@@ -327,7 +334,7 @@ fn try_bless(
 
 /// Take the Dodge action when we're below half HP and an enemy still
 /// threatens us. Better than Skip when the actor has nothing else to do.
-fn try_dodge(
+fn try_dodge_when_low_hp(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
@@ -617,7 +624,7 @@ fn try_attack_aoe(
     // Iterate enemies in id order for deterministic tie-break.
     let anchor_ids = encounter.sorted_actor_ids();
 
-    let mut best: Option<(usize, usize, ActionExecutionInfo)> = None; // (enemy_hits, anchor_id, aei)
+    let mut candidate_points: Vec<(Coordinate, usize)> = Vec::new();
     for anchor_id in &anchor_ids {
         let Some(anchor) = encounter.actors.get(anchor_id) else {
             continue;
@@ -754,7 +761,7 @@ fn best_attack_against(
     encounter: &EncounterInstance,
     target_id: usize,
 ) -> Option<(isize, &'static (dyn Action + Send + Sync))> {
-    use crate::engine::types::DamageMod;
+    use crate::engine::types::DamageModifier;
 
     let target = encounter.actors.get(&target_id)?;
     let dist = footprint_chebyshev(
@@ -777,13 +784,13 @@ fn best_attack_against(
         let mut has_vuln = false;
         let mut has_resist = false;
         for dt in &dts {
-            match target.damage_mod_for(*dt) {
-                Some(DamageMod::Immune) => {}
-                Some(DamageMod::Vulnerable) => {
+            match target.damage_modifier(*dt) {
+                Some(DamageModifier::Immunity) => {}
+                Some(DamageModifier::Vulnerability) => {
                     all_immune = false;
                     has_vuln = true;
                 }
-                Some(DamageMod::Resistant) => {
+                Some(DamageModifier::Resistance) => {
                     all_immune = false;
                     has_resist = true;
                 }
@@ -837,7 +844,13 @@ fn best_attack_against(
         if !aei.validate(encounter) {
             continue;
         }
-        best = Some((reach, action));
+        let pick = match &best {
+            None => true,
+            Some((bs, br, _)) => score < *bs || (score == *bs && reach > *br),
+        };
+        if pick {
+            best = Some((score, reach, action));
+        }
     }
     best.map(|(_, r, a)| (r, a))
 }

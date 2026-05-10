@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GREATAXE;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{Language, Size, SpecialSense};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 /// Orc — STR-build heavy hitter. Greataxe with STR 16 yields a respectable
@@ -15,7 +15,6 @@ pub static ORC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Orc",
         // Lowercase 'o' to disambiguate from 'O' (Ogre).
         glyph: 'o',
-        n_instances: 0,
         ac: 13,
         hitpoints: "2d8+6".parse().unwrap(),
         speed: 30.,
@@ -34,8 +33,9 @@ pub static ORC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
-        damage_immunities: HashSet::new(),
-        damage_resistances: HashSet::new(),
-        damage_vulnerabilities: HashSet::new(),
+        damage_modifiers: HashMap::new(),
+        proficient_saves: HashSet::new(),
+        condition_immunities: HashSet::new(),
+        features: HashSet::new(),
     }
 });

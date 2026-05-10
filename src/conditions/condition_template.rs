@@ -32,6 +32,64 @@ pub enum Condition {
     /// model the "can't attack the charmer" enforcement; the AI just
     /// avoids charmed targets via `is_pacified`).
     Charmed,
+    /// Cannot move; cannot take actions or reactions; auto-fail STR/DEX
+    /// saves; attacks against you have advantage; melee crits are
+    /// auto-criticals on hit. We model the action-economy / movement
+    /// blocks here; the auto-crit on melee hit lives at the attack site.
+    Paralyzed,
+    /// Cannot be seen without special vision. Attack rolls against you
+    /// have disadvantage; your attacks have advantage. Bookkept as a
+    /// condition for clean removal on attack (per 5e Greater Invisibility
+    /// vs Invisibility — we treat both as the simple Invisible condition).
+    Invisible,
+    /// Active until the start of your next turn after taking the Dodge
+    /// action: attacks against you have disadvantage (if you can see the
+    /// attacker); you have advantage on DEX saves. Cleared by the
+    /// `UntilStartOfNextTurn` timer on your next turn.
+    Dodging,
+    /// Speed = 0; you can't gain a speed bonus. Ends when grappler is
+    /// incapacitated or target is moved out of range. We track only the
+    /// movement block here; ending is up to the grappler logic.
+    Grappled,
+    /// +1d4 to attack rolls and saving throws (Bless spell). Tracked as a
+    /// condition so it ticks down with the spell timer and clears cleanly
+    /// when concentration drops.
+    Blessed,
+    /// +2 AC from Shield of Faith (concentration buff). Read by
+    /// `armor_class()`; drops when concentration drops.
+    ShieldOfFaith,
+    /// +5 AC from the Shield reaction spell, until the start of your
+    /// next turn. Cleared by the `UntilStartOfNextTurn` timer.
+    Shielded,
+    /// Generic "halve incoming damage" buff (e.g. Stoneskin).
+    /// Stacks multiplicatively with damage-type resistance.
+    DamageResistant,
+    /// Hostile-to-hostile attack against the holder is at advantage and
+    /// the holder cannot benefit from being Hidden/Invisible. Used by
+    /// Faerie Fire / Hunter's Mark style effects.
+    Outlined,
+    /// Lit by Guiding Bolt — next attack against this actor before the
+    /// end of the caster's next turn has advantage. Burns off when the
+    /// next attack lands or when its short timer expires.
+    GuidingBoltLit,
+    /// Took the Help action against this turn — your next attack against
+    /// the helped target has advantage (cleared on use or end of round).
+    Helped,
+    /// Successful Stealth check; you have unseen advantage on attack and
+    /// attackers have disadvantage. Distinct from Invisible: it's broken
+    /// by attacking, ending hidden status.
+    Hidden,
+    /// On fire — takes 1d4 fire at the start of each of its turns until
+    /// extinguished. Burning is a DOT condition with `Rounds(n)` timer.
+    Burning,
+    /// Took the Disengage action this turn: their movement doesn't
+    /// provoke opportunity attacks. Cleared by `UntilStartOfNextTurn`.
+    /// Alias kept for legacy call sites; `Disengaging` is preferred.
+    Disengaging,
+    /// Knocked unconscious (HP 0 or magical sleep). Stronger than
+    /// Incapacitated: drops prone, fails STR/DEX saves, and melee crits
+    /// on hit. Set automatically when an actor enters HpState::Dying.
+    Unconscious,
 }
 
 impl Condition {
@@ -45,6 +103,21 @@ impl Condition {
             Condition::Blinded => "blinded",
             Condition::Incapacitated => "incapacitated",
             Condition::Charmed => "charmed",
+            Condition::Paralyzed => "paralyzed",
+            Condition::Invisible => "invisible",
+            Condition::Dodging => "dodging",
+            Condition::Grappled => "grappled",
+            Condition::Blessed => "blessed",
+            Condition::ShieldOfFaith => "shield of faith",
+            Condition::Shielded => "shielded",
+            Condition::DamageResistant => "damage resistant",
+            Condition::Outlined => "outlined",
+            Condition::GuidingBoltLit => "marked by guiding bolt",
+            Condition::Helped => "helped",
+            Condition::Hidden => "hidden",
+            Condition::Burning => "burning",
+            Condition::Disengaging => "disengaging",
+            Condition::Unconscious => "unconscious",
         }
     }
 
@@ -54,19 +127,26 @@ impl Condition {
     pub fn blocks_action_economy(&self) -> bool {
         matches!(
             self,
-            Condition::Stunned | Condition::Incapacitated | Condition::Paralyzed
+            Condition::Stunned
+                | Condition::Incapacitated
+                | Condition::Paralyzed
+                | Condition::Unconscious
         )
     }
 
     /// True if this condition zeros out movement.
     pub fn zeros_movement(&self) -> bool {
+        // Note: Prone is NOT in this list. RAW: prone halves movement
+        // (you crawl). We don't yet model the half-speed reduction;
+        // movement just costs the same. But blocking it entirely creates
+        // a catch-22 — standing up pays in movement.
         matches!(
             self,
-            Condition::Prone
-                | Condition::Stunned
+            Condition::Stunned
                 | Condition::Restrained
                 | Condition::Grappled
                 | Condition::Paralyzed
+                | Condition::Unconscious
         )
     }
 }
@@ -82,4 +162,12 @@ pub enum ConditionTimer {
     /// Lasts until the start of the holder's next turn — used for Dodge.
     /// The engine clears these at the start of an actor's turn.
     UntilStartOfNextTurn,
+}
+
+impl ConditionTimer {
+    /// Legacy alias — pre-existing code spells this `UntilOwnTurn`.
+    /// Same value as `UntilStartOfNextTurn`; kept const so it can be
+    /// dropped into match arms where renaming hasn't yet propagated.
+    #[allow(non_upper_case_globals)]
+    pub const UntilOwnTurn: ConditionTimer = ConditionTimer::UntilStartOfNextTurn;
 }

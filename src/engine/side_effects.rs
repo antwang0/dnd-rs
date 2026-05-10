@@ -1,6 +1,4 @@
-use crate::actors::actor_template::{
-    ConcentrationData, DamageModKind, DamageOutcome, HealOutcome,
-};
+use crate::actors::actor_template::{ConcentrationData, DamageOutcome, HealOutcome};
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::triggers::TriggerEvent;
@@ -137,19 +135,15 @@ impl ApplicableSideEffect for DealDamage {
             ));
             return;
         };
-        // 5e: resistance halves, vulnerability doubles, immunity zeroes.
-        // Applied before taking damage so the dying-actor branch and
-        // concentration-DC math see the post-mitigation number.
-        let adjusted = actor.adjusted_damage(self.amount, self.damage_type);
         let name = actor.name().to_string();
+
         // Apply per-creature damage modifier (resistance / immunity /
         // vulnerability) before HP is touched. Logging the adjustment
-        // makes it obvious why a fireball did half / no damage.
+        // makes it obvious why a hit did half / no damage.
         let modifier = actor.damage_modifier(self.damage_type);
-        let final_amount = match modifier {
-            Some(m) => m.apply(self.amount),
-            None => self.amount,
-        };
+        let scaled = actor.effective_damage(self.amount, self.damage_type);
+        let was_concentrating = actor.is_concentrating();
+        let temp_before = actor.temp_hp();
         if let Some(m) = modifier {
             let label = match m {
                 DamageModifier::Resistance => "resists",
@@ -157,117 +151,47 @@ impl ApplicableSideEffect for DealDamage {
                 DamageModifier::Vulnerability => "is vulnerable to",
             };
             ei.log(format!(
-                "  {} {} {:?} ({} -> {})",
-                name, label, self.damage_type, self.amount, final_amount
+                "  {} {} {:?} ({} \u{2192} {})",
+                name, label, self.damage_type, self.amount, scaled
             ));
         }
-        if final_amount == 0 && matches!(modifier, Some(DamageModifier::Immunity)) {
-            // No further effects — immunity short-circuits everything
-            // (no concentration save, no transition to dying).
+        if scaled == 0 {
+            // Immunity (or zeroed scaling): no further effects — no HP
+            // delta, no concentration save, no transition to dying.
             return;
         }
 
         let Some(actor) = ei.get_actor(self.actor_id) else {
             return;
         };
-        let outcome = actor.take_damage(final_amount);
-        let was_concentrating = actor.is_concentrating();
-        if scaled != self.amount {
-            let suffix = if scaled == 0 {
-                "immune"
-            } else if scaled < self.amount {
-                "resistant"
-            } else {
-                "vulnerable"
-            };
+        let (outcome, landed) = actor.take_typed_damage(self.amount, self.damage_type);
+        let temp_absorbed = temp_before.saturating_sub(actor.temp_hp());
+        if temp_absorbed > 0 {
             ei.log(format!(
-                "  {} is {} to {:?}: {} -> {} damage",
-                name, suffix, self.damage_type, self.amount, scaled
+                "  {} absorbs {} damage (temp HP)",
+                name, temp_absorbed
             ));
         }
-        let Some(actor) = ei.get_actor(self.actor_id) else {
-            return;
-        };
-        let outcome = actor.take_damage(scaled);
-        // actor borrow ends here.
-        // Use the post-modifier amount for downstream concentration-DC math.
-        let dmg_for_conc = adjusted;
-
-        if let Some(label) = modifier_label {
-            ei.log(format!(
-                "  {} is {} to {:?}: {} \u{2192} {}",
-                name, label, self.damage_type, self.amount, adjusted
-            ));
-        }
-
-        if let Some(tag) = resist_tag {
-            ei.log(format!(
-                "  {} is {} to {:?}: {} -> {}",
-                name, tag, self.damage_type, self.amount, effective
-            ));
-        }
-
-        if let Some(tag) = modifier_tag {
-            ei.log(format!(
-                "  {} {} {:?} ({} -> {})",
-                name, tag, self.damage_type, raw, final_damage
-            ));
-        }
-
-        // Single-line damage breakdown: "X takes 6 fire damage [resisted (12 → 6)] [absorbed 4 temp]"
-        if self.amount > 0 {
-            let mut parts: Vec<String> = Vec::new();
-            match response {
-                Some(DamageResponse::Immunity) => {
-                    parts.push(format!(
-                        "  {} is immune to {:?} ({} damage absorbed)",
-                        name, self.damage_type, self.amount
-                    ));
-                }
-                Some(DamageResponse::Resistance) => parts.push(format!(
-                    "  {} resists {:?}: {} \u{2192} {}",
-                    name,
-                    self.damage_type,
-                    self.amount,
-                    self.amount / 2
-                )),
-                Some(DamageResponse::Vulnerability) => parts.push(format!(
-                    "  {} is vulnerable to {:?}: {} \u{2192} {}",
-                    name,
-                    self.damage_type,
-                    self.amount,
-                    self.amount.saturating_mul(2)
-                )),
-                None => {}
-            }
-            if temp_absorbed > 0 {
-                parts.push(format!(
-                    "  {} absorbs {} damage (temp HP)",
-                    name, temp_absorbed
-                ));
-            }
-            for line in parts {
-                ei.log(line);
-            }
-        }
+        ei.log(format!(
+            "  {} takes {} {:?} damage",
+            name, landed, self.damage_type
+        ));
 
         match outcome {
             DamageOutcome::Downed => {
                 ei.log(format!("{} falls unconscious.", name));
-                // 5e: going to 0 HP auto-drops concentration.
                 ei.drop_concentration(self.actor_id);
             }
             DamageOutcome::Killed => {
-                // No log here — cleanup_dead_actors logs "X dies." when
-                // it removes the actor on the next pass. We just need to
-                // drop concentration before the actor is gone.
+                // cleanup_dead_actors logs "X dies." when it removes
+                // the actor; we just drop concentration here.
                 ei.drop_concentration(self.actor_id);
             }
-            DamageOutcome::Reduced if was_concentrating && scaled > 0 => {
-                // 5e: take damage while concentrating → CON save vs DC max(10, dmg/2).
-                // Use the post-modifier amount: a resisted hit is half
-                // damage and the save DC follows the actually-felt damage.
-                let dc = ((final_amount / 2) as i32).max(10);
+            DamageOutcome::Reduced if was_concentrating && landed > 0 => {
+                // 5e: take damage while concentrating → CON save vs
+                // DC max(10, dmg/2). Use the post-mitigation amount so a
+                // resisted hit makes a smaller DC.
+                let dc = ((landed / 2) as i32).max(10);
                 let save = ei.roll_save(
                     self.actor_id,
                     crate::engine::types::AbilityScoreType::Constitution,
@@ -401,6 +325,7 @@ impl ApplicableSideEffect for ApplyCondition {
             ConditionTimer::Rounds(n) => {
                 format!(" ({} round{})", n, if n == 1 { "" } else { "s" })
             }
+            ConditionTimer::UntilStartOfNextTurn => " (until next turn)".to_string(),
         };
         if newly_added {
             ei.log(format!("{} is now {}{}.", name, self.condition.name(), suffix));
@@ -485,26 +410,6 @@ impl ApplicableSideEffect for SetDisengaging {
         actor.set_disengaging(self.disengaging);
         if self.disengaging {
             ei.log(format!("{} disengages.", name));
-        }
-    }
-}
-
-/// Grant temporary HP. Doesn't stack — replaces the existing pool only
-/// if larger (see `ActorInstance::grant_temp_hp`).
-#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
-pub struct GrantTempHp {
-    pub actor_id: usize,
-    pub amount: u32,
-}
-
-impl ApplicableSideEffect for GrantTempHp {
-    fn apply(&self, ei: &mut EncounterInstance) {
-        let Some(actor) = ei.get_actor(self.actor_id) else {
-            return;
-        };
-        let name = actor.name().to_string();
-        if actor.grant_temp_hp(self.amount) {
-            ei.log(format!("{} gains {} temp HP.", name, self.amount));
         }
     }
 }

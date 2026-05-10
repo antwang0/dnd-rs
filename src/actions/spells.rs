@@ -3,11 +3,16 @@ use std::sync::LazyLock;
 
 use crate::{
     actions::action_template::{first_target_id, Action, TargetingSchema},
+    actors::actor_template::ConcentrationData,
+    conditions::{Condition, ConditionTimer},
     engine::{
         action_overrides::ActionOverride,
         dice::Dice,
         encounter::EncounterInstance,
-        side_effects::{ApplicableSideEffect, DealDamage, GainTempHp, Heal, Resource},
+        side_effects::{
+            ApplicableSideEffect, ApplyCondition, DealDamage, GainTempHp, Heal, Resource,
+            StartConcentration,
+        },
         types::{AbilityScoreType, Coordinate, DamageType},
         util::modifier_from_score,
     },
@@ -194,7 +199,7 @@ impl Action for HealSpell {
         false
     }
 
-    fn heals(&self) -> bool {
+    fn is_heal(&self) -> bool {
         true
     }
 
@@ -600,15 +605,9 @@ impl Action for Bless {
     }
 
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(12)
-    }
-
-    fn requires_los(&self) -> bool {
-        true
+        // Custom: accepts no args (auto-target all nearby allies) or
+        // a single SingleActor (just bless that one ally + caster).
+        TargetingSchema::Custom
     }
 
     fn is_harmful(&self) -> bool {
@@ -628,45 +627,91 @@ impl Action for Bless {
 
     fn side_effects(
         &self,
-        _encounter: &mut EncounterInstance,
+        encounter: &mut EncounterInstance,
         caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::actors::actor_template::ConcentrationData;
-        use crate::engine::side_effects::{AdjustAttackBuff, AdjustSaveBuff, StartConcentration};
+        use crate::engine::side_effects::{AdjustAttackBuff, AdjustSaveBuff};
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
-            return Vec::new();
+        // 5e Bless: pick targets in range. If `target_ids` was supplied,
+        // bless those (typical UI flow). Otherwise auto-pick the caster
+        // and every combat-active ally within 12 tiles.
+        let mut targets: Vec<usize> = match target_ids {
+            Some(v) if !v.is_empty() => v.clone(),
+            _ => {
+                let Some(caster) = encounter.actors.get(&caster_id) else {
+                    return Vec::new();
+                };
+                let caster_team = caster.team();
+                let caster_loc = caster.location();
+                let caster_size = get_tiles_from_size(caster.size());
+                const REACH: isize = 12;
+                let mut out = Vec::new();
+                let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
+                ids.sort_unstable();
+                for tid in ids {
+                    let Some(target) = encounter.actors.get(&tid) else {
+                        continue;
+                    };
+                    if target.team() != caster_team || !target.is_combat_active() {
+                        continue;
+                    }
+                    let dist = footprint_chebyshev(
+                        target.location(),
+                        get_tiles_from_size(target.size()),
+                        caster_loc,
+                        caster_size,
+                    );
+                    if dist > REACH {
+                        continue;
+                    }
+                    out.push(tid);
+                }
+                out
+            }
         };
-
-        // Bless adds +1d4 (avg ~2.5) — we apply a flat +2 to keep dice
-        // counts steady and the shape simple. Concentration hook drops
-        // via the side-effect ordering: install buffs first, then start
-        // concentration (which records nothing-to-roll-back; cleanup
-        // happens via the encounter's concentration hook below).
-        vec![
-            Box::new(AdjustAttackBuff {
-                actor_id: target_id,
+        // Always include the caster — Bless can target the caster too.
+        if !targets.contains(&caster_id) {
+            targets.insert(0, caster_id);
+        }
+        if targets.is_empty() {
+            return Vec::new();
+        }
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut conditions = Vec::new();
+        let mut attack_buffs = Vec::new();
+        let mut save_buffs = Vec::new();
+        for tid in &targets {
+            effects.push(Box::new(AdjustAttackBuff {
+                actor_id: *tid,
                 delta: 2,
-            }),
-            Box::new(AdjustSaveBuff {
-                actor_id: target_id,
+            }));
+            effects.push(Box::new(AdjustSaveBuff {
+                actor_id: *tid,
                 delta: 2,
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData {
-                    spell_name: "Bless".to_string(),
-                    conditions: Vec::new(),
-                    // Record the +2 buff so concentration cleanup can
-                    // negate it cleanly when the spell drops.
-                    attack_buffs: vec![(target_id, 2)],
-                    save_buffs: vec![(target_id, 2)],
-                },
-            }),
-        ]
+            }));
+            effects.push(Box::new(ApplyCondition {
+                actor_id: *tid,
+                condition: Condition::Blessed,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            conditions.push((*tid, Condition::Blessed));
+            attack_buffs.push((*tid, 2));
+            save_buffs.push((*tid, 2));
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData {
+                spell_name: "Bless".to_string(),
+                conditions,
+                attack_buffs,
+                save_buffs,
+            },
+        }));
+        effects
     }
 }
 
@@ -823,21 +868,452 @@ impl Action for MagicMissile {
         let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
             return Vec::new();
         };
-        // Three darts; each auto-hits for 1d4+1 force. We sum the rolls
-        // so the target only takes one DealDamage hit (saves a row of
-        // log spam and a multi-effect concentration save chain).
-        let mut total: u32 = 0;
-        for _ in 0..3 {
+        // Three darts; each auto-hits for 1d4+1 force. We emit three
+        // separate DealDamage effects so concentration-on-hit saves
+        // trigger per-dart (RAW: each dart counts as a separate hit
+        // for concentration check purposes).
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::with_capacity(3);
+        let mut totals = [0u32; 3];
+        for (i, t) in totals.iter_mut().enumerate() {
             let raw = encounter.roll(&Dice::new(1, 4));
-            total = total.saturating_add(raw + 1);
+            *t = raw + 1;
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: *t,
+                damage_type: DamageType::Force,
+            }));
+            let _ = i;
         }
-        encounter.log(format!("  magic missile: 3 darts \u{2014} {} force", total));
-        vec![Box::new(DealDamage {
-            actor_id: target_id,
-            amount: total,
-            damage_type: DamageType::Force,
-        })]
+        encounter.log(format!(
+            "  magic missile: 3 darts [{}, {}, {}] force",
+            totals[0], totals[1], totals[2]
+        ));
+        effects
     }
 }
 
 pub static MAGIC_MISSILE: LazyLock<MagicMissile> = LazyLock::new(|| MagicMissile {});
+
+/// Shield of Faith — concentration buff that grants +2 AC to a willing
+/// target for the spell's duration (10 rounds). Costs an Action and a
+/// level-1 spell slot. Tracked as the `ShieldOfFaith` condition; the
+/// engine reads it from `armor_class()` at attack-resolution time.
+pub struct ShieldOfFaith {}
+
+impl Action for ShieldOfFaith {
+    fn name(&self) -> &str {
+        "shield of faith"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sof", "shield-of-faith"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::ShieldOfFaith,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData {
+                    spell_name: "Shield of Faith".to_string(),
+                    conditions: vec![(target_id, Condition::ShieldOfFaith)],
+                    attack_buffs: Vec::new(),
+                    save_buffs: Vec::new(),
+                },
+            }),
+        ]
+    }
+}
+
+pub static SHIELD_OF_FAITH: LazyLock<ShieldOfFaith> = LazyLock::new(|| ShieldOfFaith {});
+
+/// Cause Fear — single-target WIS save vs spell DC; on fail, target is
+/// Frightened for up to 3 rounds (concentration). Costs an Action and a
+/// level-1 spell slot.
+pub struct CauseFear {}
+
+impl Action for CauseFear {
+    fn name(&self) -> &str {
+        "cause fear"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cf", "fear"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Frightened,
+                timer: ConditionTimer::Rounds(3),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData {
+                    spell_name: "Cause Fear".to_string(),
+                    conditions: vec![(target_id, Condition::Frightened)],
+                    attack_buffs: Vec::new(),
+                    save_buffs: Vec::new(),
+                },
+            }),
+        ]
+    }
+}
+
+pub static CAUSE_FEAR: LazyLock<CauseFear> = LazyLock::new(|| CauseFear {});
+
+/// Guiding Bolt — level-1 ranged spell attack. 4d6 radiant on hit; the
+/// next attack against the target before the end of the caster's next
+/// turn has advantage. Demonstrates timed-rider conditions.
+pub struct GuidingBolt {}
+
+impl Action for GuidingBolt {
+    fn name(&self) -> &str {
+        "guiding bolt"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["gb", "bolt"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Radiant]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_mod = caster.spell_attack_modifier(AbilityScoreType::Wisdom);
+        let mut effects = spell_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            attack_mod,
+            Dice::new(4, 6),
+            DamageType::Radiant,
+            false,
+        );
+        if !effects.is_empty() {
+            // Mark target so the next incoming attack benefits.
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::GuidingBoltLit,
+                timer: ConditionTimer::Rounds(1),
+            }));
+        }
+        effects
+    }
+}
+
+pub static GUIDING_BOLT: LazyLock<GuidingBolt> = LazyLock::new(|| GuidingBolt {});
+
+/// Web — level-2 conjuration. AoE 4-tile burst, 1-minute concentration.
+/// Targets in the burst make a DEX save; fail = Restrained, success =
+/// no effect. We don't model the "difficult terrain" clause yet (no
+/// terrain-mod system); the Restrained condition does the heavy lifting.
+pub struct Web {}
+
+impl Action for Web {
+    fn name(&self) -> &str {
+        "web"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wb"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(2)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let radius = match self.targeting_schema() {
+            TargetingSchema::Burst { radius } => radius,
+            _ => return Vec::new(),
+        };
+        let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
+        ids.sort_unstable();
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut conditions = Vec::new();
+        for tid in ids {
+            let Some(target) = encounter.actors.get(&tid) else {
+                continue;
+            };
+            if tid == caster_id || !target.is_combat_active() {
+                continue;
+            }
+            let dist = footprint_chebyshev(
+                target.location(),
+                get_tiles_from_size(target.size()),
+                point,
+                1,
+            );
+            if dist > radius {
+                continue;
+            }
+            let save = encounter.roll_save(tid, AbilityScoreType::Dexterity, dc);
+            if !save.passed() {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: tid,
+                    condition: Condition::Restrained,
+                    timer: ConditionTimer::Rounds(10),
+                }));
+                conditions.push((tid, Condition::Restrained));
+            }
+        }
+        if !conditions.is_empty() {
+            effects.push(Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData {
+                    spell_name: "Web".to_string(),
+                    conditions,
+                    attack_buffs: Vec::new(),
+                    save_buffs: Vec::new(),
+                },
+            }));
+        }
+        effects
+    }
+}
+
+pub static WEB: LazyLock<Web> = LazyLock::new(|| Web {});
+
+/// False Life — level-1 necromancy. Self-target; gain 1d4+4 temp HP.
+/// Doesn't require concentration (it's a flat buff). Cleared by long
+/// rest with the rest of temp HP.
+pub struct FalseLife {}
+
+impl Action for FalseLife {
+    fn name(&self) -> &str {
+        "false life"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fl", "false-life"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let raw = encounter.roll(&Dice::new(1, 4));
+        let amount = raw + 4;
+        encounter.log(format!(
+            "  false life: 1d4({})+4 = {} temp HP",
+            raw, amount
+        ));
+        vec![Box::new(GainTempHp {
+            actor_id: caster_id,
+            amount,
+        })]
+    }
+}
+
+pub static FALSE_LIFE: LazyLock<FalseLife> = LazyLock::new(|| FalseLife {});
+
+/// Blindness/Deafness — level-2 necromancy. CON save vs spell DC; on
+/// fail target is Blinded for 10 rounds (1 minute). Doesn't require
+/// concentration in 5e — the duration runs without sustain.
+pub struct Blindness {}
+
+impl Action for Blindness {
+    fn name(&self) -> &str {
+        "blindness"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["blind"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(2)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Blinded,
+            timer: ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static BLINDNESS: LazyLock<Blindness> = LazyLock::new(|| Blindness {});

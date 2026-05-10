@@ -173,6 +173,52 @@ pub static SCROLL_OF_MAGIC_MISSILE: Item = Item {
     on_use: Some(&crate::actions::item_actions::READ_MAGIC_MISSILE_SCROLL),
 };
 
+/// Cloak of Protection — premium passive trinket. +1 AC AND +1 to all
+/// saves. Strictly better than Cloak of Resistance for tanks who need
+/// the AC bump; rarer in the loot pool.
+pub static CLOAK_OF_PROTECTION: Item = Item {
+    name: "Cloak of Protection",
+    glyph: 'C',
+    bonuses: ItemBonuses {
+        ac: 1,
+        max_hp: 0,
+        speed: 0,
+        save: 1,
+    },
+    on_use: None,
+};
+
+/// Shield — passive +2 AC, no save bonus. Classic light-armor pairing
+/// with one-handed weapons. Distinct loot tier from heavy armor since
+/// we don't model armor proficiency yet.
+pub static SHIELD: Item = Item {
+    name: "Shield",
+    glyph: 'S',
+    bonuses: ItemBonuses {
+        ac: 2,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: None,
+};
+
+/// Antitoxin — single-use consumable. Drinking removes the Poisoned
+/// condition and grants advantage on the next CON save against poison
+/// (modeled as a flat +5 save buff via Bless's mechanic). One-shot:
+/// the action removes the item from inventory after use.
+pub static ANTITOXIN: Item = Item {
+    name: "Antitoxin",
+    glyph: 'A',
+    bonuses: ItemBonuses {
+        ac: 0,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: Some(&crate::actions::item_actions::DRINK_ANTITOXIN),
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple

@@ -1,8 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::SPIDER_BITE;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{DamageType, Size, SpecialSense};
-use std::collections::HashSet;
+use crate::engine::types::{DamageModifier, DamageType, Size, SpecialSense};
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 /// Giant Spider — small fast melee biter that injects poison on a failed
@@ -15,7 +15,6 @@ pub static SPIDER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     CreatureTemplate {
         name: "Spider",
         glyph: 'X',
-        n_instances: 0,
         ac: 14,
         hitpoints: "3d8+3".parse().unwrap(),
         speed: 30.,
@@ -37,8 +36,9 @@ pub static SPIDER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
-        damage_resistances: HashSet::new(),
-        damage_vulnerabilities: HashSet::new(),
-        damage_immunities: HashSet::from([DamageType::Poison]),
+        damage_modifiers: HashMap::from([(DamageType::Poison, DamageModifier::Immunity)]),
+        proficient_saves: HashSet::new(),
+        condition_immunities: HashSet::new(),
+        features: HashSet::new(),
     }
 });

@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{DAGGER, SHORTBOW};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{Language, Size, SpecialSense};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 /// Kobold — small, fragile DEX-based skirmisher. Dagger melee + shortbow
@@ -11,12 +11,11 @@ use std::sync::LazyLock;
 /// which kobolds have access to via DEFAULT_ACTIONS.
 pub static KOBOLD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*DAGGER);
-    actions.push(&*SHORTBOW);
+    actions.push(&DAGGER);
+    actions.push(&SHORTBOW);
     CreatureTemplate {
         name: "Kobold",
         glyph: 'K',
-        n_instances: 0,
         ac: 12,
         hitpoints: "2d6".parse().unwrap(),
         speed: 30.,
@@ -35,11 +34,11 @@ pub static KOBOLD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
-        damage_resistances: HashSet::new(),
-        damage_immunities: HashSet::new(),
         // Kobolds have sunlight sensitivity in 5e; we don't model lighting
         // so we skip it here.
-        damage_vulnerabilities: HashSet::new(),
-        save_proficiencies: HashSet::new(),
+        damage_modifiers: HashMap::new(),
+        proficient_saves: HashSet::new(),
+        condition_immunities: HashSet::new(),
+        features: HashSet::new(),
     }
 });

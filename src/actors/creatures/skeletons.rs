@@ -1,6 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::LONGBOW;
 use crate::actors::actor_template::CreatureTemplate;
+use crate::conditions::Condition;
 use crate::engine::types::{DamageModifier, DamageType, Language, Size, SpecialSense};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -38,5 +39,9 @@ pub static SKELETON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Bludgeoning, DamageModifier::Vulnerability),
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
+        proficient_saves: HashSet::new(),
+        // Undead: immune to Poisoned, Charmed, Frightened (sleep too).
+        condition_immunities: HashSet::from([Condition::Poisoned, Condition::Charmed]),
+        features: HashSet::new(),
     }
 });

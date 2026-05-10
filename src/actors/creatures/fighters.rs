@@ -1,8 +1,8 @@
-use crate::actions::class_features::{ACTION_SURGE, SECOND_WIND};
+use crate::actions::class_features::{ACTION_SURGE, ACTION_SURGE_TAG, SECOND_WIND, SECOND_WIND_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::SCIMITAR;
-use crate::actors::actor_template::{CreatureTemplate, DamageAdjustments};
-use crate::engine::types::{Language, Size};
+use crate::actors::actor_template::CreatureTemplate;
+use crate::engine::types::{AbilityScoreType, Language, Size};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -17,7 +17,7 @@ use std::sync::LazyLock;
 /// chain mail, STR 16 (the standard "strength build" defaults).
 pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*SCIMITAR);
+    actions.push(&SCIMITAR);
     actions.push(&*SECOND_WIND);
     actions.push(&*ACTION_SURGE);
     CreatureTemplate {
@@ -42,5 +42,9 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: true,
         damage_modifiers: HashMap::new(),
+        // Fighters are proficient in STR and CON saves (5e PHB).
+        proficient_saves: HashSet::from([AbilityScoreType::Strength, AbilityScoreType::Constitution]),
+        condition_immunities: HashSet::new(),
+        features: HashSet::from([SECOND_WIND_TAG, ACTION_SURGE_TAG]),
     }
 });

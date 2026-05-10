@@ -1,8 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::IMP_STING;
-use crate::actions::spells::FIRE_BOLT;
+use crate::actions::monster_attacks::{FIRE_BOLT, IMP_STING};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{DamageMod, DamageType, Language, Size, SpecialSense};
+use crate::engine::types::{DamageModifier, DamageType, Language, Size, SpecialSense};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -22,7 +21,6 @@ pub static IMP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     CreatureTemplate {
         name: "Imp",
         glyph: 'I',
-        n_instances: 0,
         ac: 13,
         hitpoints: "3d4+3".parse().unwrap(),
         speed: 20.,
@@ -41,13 +39,13 @@ pub static IMP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
-        // Devil heritage: fire / poison are at-home, cold is mostly
-        // shrugged off, but bludgeoning / piercing / slashing land
-        // normally (we don't track magical-weapons-only resistance yet).
-        damage_mods: HashMap::from([
-            (DamageType::Fire, DamageMod::Immune),
-            (DamageType::Poison, DamageMod::Immune),
-            (DamageType::Cold, DamageMod::Resistant),
+        damage_modifiers: HashMap::from([
+            (DamageType::Fire, DamageModifier::Immunity),
+            (DamageType::Poison, DamageModifier::Immunity),
+            (DamageType::Cold, DamageModifier::Resistance),
         ]),
+        proficient_saves: HashSet::new(),
+        condition_immunities: HashSet::new(),
+        features: HashSet::new(),
     }
 });

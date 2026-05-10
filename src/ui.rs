@@ -12,25 +12,54 @@ use crate::engine::terrain::TerrainType;
 use crate::engine::types::Coordinate;
 use crate::engine::util::get_colored_span;
 
-/// Push a `"<label>: type, type, ..."` line into `stats_lines` for a
-/// non-empty damage-type set. Sorted by debug name so the output is
-/// stable across runs (HashSet iteration order is non-deterministic).
-/// Empty set is a no-op so we don't pad the panel with "Resistant: -".
-fn push_damage_set_line(
+/// Render the actor's damage modifier table as up to three colored
+/// lines (Resistant / Immune / Vulnerable). Each line is suppressed if
+/// the corresponding bucket is empty so PCs without any modifiers don't
+/// show empty rows. Damage types are sorted alphabetically so the output
+/// is stable across runs.
+fn push_damage_modifier_line(
     stats_lines: &mut Vec<Line<'static>>,
-    label: &str,
-    set: &std::collections::HashSet<crate::engine::types::DamageType>,
-    color: Color,
+    actor: &crate::actors::actor_template::ActorInstance,
 ) {
-    if set.is_empty() {
-        return;
+    use crate::engine::types::{DamageModifier, DamageType};
+    let all = [
+        DamageType::Acid,
+        DamageType::Bludgeoning,
+        DamageType::Cold,
+        DamageType::Fire,
+        DamageType::Force,
+        DamageType::Lightning,
+        DamageType::Necrotic,
+        DamageType::Piercing,
+        DamageType::Poison,
+        DamageType::Psychic,
+        DamageType::Radiant,
+        DamageType::Slashing,
+        DamageType::Thunder,
+    ];
+    let mut buckets: [Vec<String>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    for dt in all {
+        match actor.damage_modifier(dt) {
+            Some(DamageModifier::Resistance) => buckets[0].push(format!("{:?}", dt)),
+            Some(DamageModifier::Immunity) => buckets[1].push(format!("{:?}", dt)),
+            Some(DamageModifier::Vulnerability) => buckets[2].push(format!("{:?}", dt)),
+            None => {}
+        }
     }
-    let mut names: Vec<String> = set.iter().map(|d| format!("{:?}", d)).collect();
-    names.sort();
-    stats_lines.push(Line::from(Span::styled(
-        format!("{}: {}", label, names.join(", ")),
-        Style::default().fg(color),
-    )));
+    let labeled = [
+        ("Resistant", Color::Cyan),
+        ("Immune", Color::Green),
+        ("Vulnerable", Color::Red),
+    ];
+    for (i, (label, color)) in labeled.iter().enumerate() {
+        if buckets[i].is_empty() {
+            continue;
+        }
+        stats_lines.push(Line::from(Span::styled(
+            format!("{}: {}", label, buckets[i].join(", ")),
+            Style::default().fg(*color),
+        )));
+    }
 }
 
 /// Heuristic classifier that styles a log line based on its contents.
@@ -394,33 +423,6 @@ pub fn render_sideinfo(
             Style::default().fg(Color::Yellow),
         )));
     }
-    // Damage modifier callout — only render if the creature has any. Most
-    // PCs have nothing here, so the line stays hidden in the common case.
-    let immunities = curr_actor.immunities();
-    let resistances = curr_actor.resistances();
-    let vulnerabilities = curr_actor.vulnerabilities();
-    if !immunities.is_empty() || !resistances.is_empty() || !vulnerabilities.is_empty() {
-        let fmt = |set: &std::collections::HashSet<crate::engine::types::DamageType>| {
-            let mut names: Vec<String> =
-                set.iter().map(|d| format!("{:?}", d)).collect();
-            names.sort_unstable();
-            names.join(",")
-        };
-        let mut parts: Vec<String> = Vec::new();
-        if !immunities.is_empty() {
-            parts.push(format!("Imm:{}", fmt(immunities)));
-        }
-        if !resistances.is_empty() {
-            parts.push(format!("Res:{}", fmt(resistances)));
-        }
-        if !vulnerabilities.is_empty() {
-            parts.push(format!("Vul:{}", fmt(vulnerabilities)));
-        }
-        stats_lines.push(Line::from(Span::styled(
-            parts.join(" "),
-            Style::default().fg(Color::Cyan),
-        )));
-    }
     if !curr_actor.conditions().is_empty() {
         // Format each condition with its remaining duration when timed.
         // Sort alphabetically so HashMap iteration order doesn't leak.
@@ -445,24 +447,8 @@ pub fn render_sideinfo(
             Style::default().fg(Color::Yellow),
         )));
     }
-    push_damage_set_line(
-        &mut stats_lines,
-        "Resistant",
-        curr_actor.damage_resistances(),
-        Color::Cyan,
-    );
-    push_damage_set_line(
-        &mut stats_lines,
-        "Immune",
-        curr_actor.damage_immunities(),
-        Color::Green,
-    );
-    push_damage_set_line(
-        &mut stats_lines,
-        "Vulnerable",
-        curr_actor.damage_vulnerabilities(),
-        Color::Red,
-    );
+    // Damage modifier callout — only render if the creature has any.
+    push_damage_modifier_line(&mut stats_lines, curr_actor);
     frame.render_widget(
         Paragraph::new(stats_lines)
             .block(Block::default().borders(Borders::ALL).title("Resources")),

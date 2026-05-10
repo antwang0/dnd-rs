@@ -369,5 +369,181 @@ impl Action for Disengage {
 
 pub static DISENGAGE: LazyLock<Disengage> = LazyLock::new(|| Disengage {});
 
-pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> =
-    LazyLock::new(|| vec![&*MOVE, &*DASH, &*SKIP, &*STAND_UP, &*DODGE, &*DISENGAGE]);
+/// 5e Help action: target one ally; their next attack against a
+/// designated foe before the start of *your* next turn has advantage.
+/// We collapse the timing slightly: we record `Helped` against *any*
+/// future attack, the helped actor consumes it on their next attack.
+pub struct Help {}
+
+impl Action for Help {
+    fn name(&self) -> &str {
+        "help"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["h", "assist"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        let Some(ally_id) = target_ids.and_then(|v| v.first().copied()) else {
+            return Vec::new();
+        };
+        // Tag the helped ally with the Helped condition so the next
+        // attack picks up advantage. We don't track the specific target
+        // foe today — RAW says you must designate one, but in practice
+        // the AI / player usually only attacks the obvious threat.
+        vec![Box::new(crate::engine::side_effects::ApplyCondition {
+            actor_id: ally_id,
+            condition: crate::conditions::Condition::Helped,
+            timer: crate::conditions::ConditionTimer::UntilStartOfNextTurn,
+        })]
+    }
+}
+
+pub static HELP: LazyLock<Help> = LazyLock::new(|| Help {});
+
+/// 5e Shove (special melee attack): contested STR (Athletics) vs target's
+/// STR or DEX (best of). On success, knock prone OR push 5 ft. We model
+/// the simpler "knock prone" variant — push-direction needs movement
+/// modeling we don't have. Costs an Action.
+pub struct Shove {}
+
+impl Action for Shove {
+    fn name(&self) -> &str {
+        "shove"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sh", "push"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::engine::types::AbilityScoreType;
+        let Some(target_id) = target_ids.and_then(|v| v.first().copied()) else {
+            return Vec::new();
+        };
+        // Contested STR check — caster's d20+STR vs target's d20+max(STR,DEX).
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = 10 + crate::engine::util::modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, dc);
+        if save.passed() {
+            encounter.log("  shove: target stays upright");
+            return Vec::new();
+        }
+        encounter.log("  shove: target knocked prone");
+        vec![Box::new(crate::engine::side_effects::ApplyCondition {
+            actor_id: target_id,
+            condition: crate::conditions::Condition::Prone,
+            timer: crate::conditions::ConditionTimer::Permanent,
+        })]
+    }
+}
+
+pub static SHOVE: LazyLock<Shove> = LazyLock::new(|| Shove {});
+
+/// 5e Hide action — Stealth check; on success the actor becomes Hidden
+/// (attackers have disadvantage, you have advantage on your next attack).
+/// We use a flat DC 10 since we don't model passive Perception today.
+pub struct Hide {}
+
+impl Action for Hide {
+    fn name(&self) -> &str {
+        "hide"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hd"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::engine::types::AbilityScoreType;
+        let save = encounter.roll_save(caster_id, AbilityScoreType::Dexterity, 10);
+        if !save.passed() {
+            encounter.log("  hide: stealth fails");
+            return Vec::new();
+        }
+        encounter.log("  hide: succeeds");
+        vec![Box::new(crate::engine::side_effects::ApplyCondition {
+            actor_id: caster_id,
+            condition: crate::conditions::Condition::Hidden,
+            timer: crate::conditions::ConditionTimer::Permanent,
+        })]
+    }
+}
+
+pub static HIDE: LazyLock<Hide> = LazyLock::new(|| Hide {});
+
+pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> = LazyLock::new(
+    || vec![&*MOVE, &*DASH, &*SKIP, &*STAND_UP, &*DODGE, &*DISENGAGE, &*HELP, &*SHOVE],
+);

@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GOBLIN_BOSS_MULTI, SHORTBOW};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{Language, Size, SpecialSense};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 /// Goblin Boss — 5e MM CR 1, the tougher cousin of the standard goblin.
@@ -13,11 +13,10 @@ use std::sync::LazyLock;
 pub static GOBLIN_BOSS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*GOBLIN_BOSS_MULTI);
-    actions.push(&*SHORTBOW);
+    actions.push(&SHORTBOW);
     CreatureTemplate {
         name: "Goblin Boss",
         glyph: 'B',
-        n_instances: 0,
         ac: 17, // chain shirt + shield
         hitpoints: "6d6+6".parse().unwrap(),
         speed: 30.,
@@ -36,8 +35,9 @@ pub static GOBLIN_BOSS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
-        resistances: HashSet::new(),
-        vulnerabilities: HashSet::new(),
-        immunities: HashSet::new(),
+        damage_modifiers: HashMap::new(),
+        proficient_saves: HashSet::new(),
+        condition_immunities: HashSet::new(),
+        features: HashSet::new(),
     }
 });

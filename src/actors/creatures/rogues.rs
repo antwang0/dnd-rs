@@ -1,7 +1,7 @@
 use crate::actions::class_attacks::ROGUE_SHORTSWORD;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{Language, Size};
+use crate::engine::types::{AbilityScoreType, Language, Size};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -16,7 +16,6 @@ pub static ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     CreatureTemplate {
         name: "Rogue",
         glyph: 'R',
-        n_instances: 0,
         ac: 14,
         hitpoints: "3d8+3".parse().unwrap(),
         speed: 30.,
@@ -36,5 +35,12 @@ pub static ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: true,
         damage_modifiers: HashMap::new(),
+        // Rogues are proficient in DEX and INT saves (5e PHB).
+        proficient_saves: HashSet::from([
+            AbilityScoreType::Dexterity,
+            AbilityScoreType::Intelligence,
+        ]),
+        condition_immunities: HashSet::new(),
+        features: HashSet::new(),
     }
 });

@@ -1,6 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{TRIP, ZOMBIE_MULTISLAM};
 use crate::actors::actor_template::CreatureTemplate;
+use crate::conditions::Condition;
 use crate::engine::types::{DamageModifier, DamageType, Language, Size, SpecialSense};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -11,7 +12,7 @@ pub static ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // an alternative single attack that on hit forces a STR save or prone —
     // less raw damage but disables movement.
     actions.push(&*ZOMBIE_MULTISLAM);
-    actions.push(&TRIP);
+    actions.push(&*TRIP);
     CreatureTemplate {
         name: "Zombie",
         glyph: 'Z',
@@ -33,7 +34,17 @@ pub static ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
-        // Zombies: undead — immune to poison.
-        damage_modifiers: HashMap::from([(DamageType::Poison, DamageModifier::Immunity)]),
+        // Zombies: undead — immune to poison; resistant to necrotic
+        // (negative energy is what animates them, so it heals more than
+        // it harms). Vulnerable to radiant (turn-undead flavor).
+        damage_modifiers: HashMap::from([
+            (DamageType::Poison, DamageModifier::Immunity),
+            (DamageType::Necrotic, DamageModifier::Resistance),
+            (DamageType::Radiant, DamageModifier::Vulnerability),
+        ]),
+        proficient_saves: HashSet::new(),
+        // Undead: immune to Poisoned and Charmed.
+        condition_immunities: HashSet::from([Condition::Poisoned, Condition::Charmed]),
+        features: HashSet::new(),
     }
 });

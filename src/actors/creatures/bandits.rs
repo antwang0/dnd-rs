@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{HEAVY_CROSSBOW, SCIMITAR};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{Language, Size};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 /// Bandit — generic mook with both melee and ranged options. Scimitar
@@ -10,12 +10,11 @@ use std::sync::LazyLock;
 /// from leather armor, modest HP. CR 1/8.
 pub static BANDIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*SCIMITAR);
+    actions.push(&SCIMITAR);
     actions.push(&*HEAVY_CROSSBOW);
     CreatureTemplate {
         name: "Bandit",
         glyph: 'B',
-        n_instances: 0,
         ac: 12,
         hitpoints: "2d8".parse().unwrap(),
         speed: 30.,
@@ -34,8 +33,9 @@ pub static BANDIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
-        damage_immunities: HashSet::new(),
-        damage_resistances: HashSet::new(),
-        damage_vulnerabilities: HashSet::new(),
+        damage_modifiers: HashMap::new(),
+        proficient_saves: HashSet::new(),
+        condition_immunities: HashSet::new(),
+        features: HashSet::new(),
     }
 });

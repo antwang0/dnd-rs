@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{BURNING_HANDS, CAUSE_FEAR};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{Language, Size};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 /// Mage — INT-based offensive caster. Burning Hands as a short-range
@@ -15,7 +15,6 @@ pub static MAGE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     CreatureTemplate {
         name: "Mage",
         glyph: 'M',
-        n_instances: 0,
         ac: 12,
         hitpoints: "2d8+2".parse().unwrap(),
         speed: 30.,
@@ -39,8 +38,9 @@ pub static MAGE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Burning + one Cause Fear.
         spell_slots_by_level: vec![3],
         rolls_death_saves: false,
-        resistances: HashSet::new(),
-        immunities: HashSet::new(),
-        vulnerabilities: HashSet::new(),
+        damage_modifiers: HashMap::new(),
+        proficient_saves: HashSet::new(),
+        condition_immunities: HashSet::new(),
+        features: HashSet::new(),
     }
 });

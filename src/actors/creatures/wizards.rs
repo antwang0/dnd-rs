@@ -19,7 +19,6 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.
         glyph: 'M',
-        n_instances: 0,
         ac: 12,
         hitpoints: "2d6+2".parse().unwrap(),
         speed: 30.,
@@ -40,5 +39,8 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         spell_slots_by_level: vec![4],
         rolls_death_saves: false,
         damage_modifiers: HashMap::new(),
+        proficient_saves: HashSet::new(),
+        condition_immunities: HashSet::new(),
+        features: HashSet::new(),
     }
 });
