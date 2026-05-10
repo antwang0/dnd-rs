@@ -90,6 +90,23 @@ pub enum Condition {
     /// Incapacitated: drops prone, fails STR/DEX saves, and melee crits
     /// on hit. Set automatically when an actor enters HpState::Dying.
     Unconscious,
+    /// -1d4 (modeled as -2) to attack rolls and saving throws (Bane spell).
+    /// Symmetric counterpart to `Blessed`. Tracked as a condition so it
+    /// ticks down with the spell timer and clears on concentration drop.
+    Baned,
+    /// Cannot hear; auto-fail any check requiring hearing. We don't yet
+    /// model verbal-component spell failure or audio-based perception, so
+    /// the in-combat impact is mostly cosmetic — but the flag is here for
+    /// spells like Blindness/Deafness so they can apply something.
+    Deafened,
+    /// Marked by Hunter's Mark — the marker (concentrating caster) deals
+    /// an extra 1d6 weapon damage to this target. Tracked as a condition
+    /// so dropping concentration cleans it up automatically.
+    HuntersMarked,
+    /// Mage Armor active — base AC becomes 13 + DEX modifier (we model as
+    /// a flat AC boost via `condition_ac_bonus`). Lasts 8 hours; we just
+    /// give it a long Rounds timer.
+    MageArmored,
 }
 
 impl Condition {
@@ -118,6 +135,10 @@ impl Condition {
             Condition::Burning => "burning",
             Condition::Disengaging => "disengaging",
             Condition::Unconscious => "unconscious",
+            Condition::Baned => "baned",
+            Condition::Deafened => "deafened",
+            Condition::HuntersMarked => "marked by hunter's mark",
+            Condition::MageArmored => "mage armored",
         }
     }
 

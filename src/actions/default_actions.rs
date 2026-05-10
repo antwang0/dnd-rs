@@ -541,6 +541,78 @@ impl Action for Shove {
 
 pub static SHOVE: LazyLock<Shove> = LazyLock::new(|| Shove {});
 
+/// 5e Grapple (special melee attack): contested STR (Athletics) vs the
+/// target's STR or DEX (best). On success, target is Grappled — speed
+/// drops to 0 until the grappler releases or is knocked Incapacitated.
+/// Costs an Action. Symmetric implementation with Shove (knock-prone).
+pub struct Grapple {}
+
+impl Action for Grapple {
+    fn name(&self) -> &str {
+        "grapple"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["gr", "grab"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::engine::types::AbilityScoreType;
+        let Some(target_id) = target_ids.and_then(|v| v.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Athletics-flavored: DC 10 + grappler's STR mod (matches Shove).
+        let dc = 10
+            + crate::engine::util::modifier_from_score(
+                caster.ability_score(AbilityScoreType::Strength),
+            );
+        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, dc);
+        if save.passed() {
+            encounter.log("  grapple: target slips free");
+            return Vec::new();
+        }
+        encounter.log("  grapple: target is grappled");
+        // Grappled until the grappler releases or is incapacitated. We
+        // don't yet model release as an action — for now we use a long
+        // Rounds timer (10 rounds = 1 minute) so it has a definite
+        // expiration. Concentration-style auto-release would be a follow-up.
+        vec![Box::new(crate::engine::side_effects::ApplyCondition {
+            actor_id: target_id,
+            condition: crate::conditions::Condition::Grappled,
+            timer: crate::conditions::ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static GRAPPLE: LazyLock<Grapple> = LazyLock::new(|| Grapple {});
+
 /// 5e Hide action — Stealth check; on success the actor becomes Hidden
 /// (attackers have disadvantage, you have advantage on your next attack).
 /// We use a flat DC 10 since we don't model passive Perception today.
@@ -637,6 +709,7 @@ pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> =
             &*DISENGAGE,
             &*HELP,
             &*SHOVE,
+            &*GRAPPLE,
             &*HIDE,
         ]
     },

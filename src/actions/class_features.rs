@@ -169,3 +169,117 @@ impl Action for ActionSurge {
 }
 
 pub static ACTION_SURGE: LazyLock<ActionSurge> = LazyLock::new(|| ActionSurge {});
+
+/// Tag for Cunning Action — at-will class feature, not consumable, so
+/// it never appears in `features_remaining`. Kept as a const for
+/// symmetry with the once-per-rest tags above and so creature templates
+/// can declare it explicitly.
+pub const CUNNING_ACTION_TAG: &str = "rogue.cunning_action";
+
+/// Rogue Cunning Action — bonus-action Dash. 5e gives the rogue a choice
+/// of Dash, Disengage, or Hide as a bonus action; we expose Dash here
+/// (the most universally useful) and leave a follow-up CunningDisengage
+/// / CunningHide pair that mirror the same gating. This is the
+/// signature once-a-turn rogue mobility tool.
+pub struct CunningDash {}
+
+impl Action for CunningDash {
+    fn name(&self) -> &str {
+        "cunning dash"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cdash", "ca-dash"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction]
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let speed = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.speed())
+            .unwrap_or(0.0);
+        encounter.log("  cunning dash: extra movement gained.".to_string());
+        vec![Box::new(GiveResource {
+            actor_id: caster_id,
+            resource: Resource::Movement(speed),
+        })]
+    }
+}
+
+pub static CUNNING_DASH: LazyLock<CunningDash> = LazyLock::new(|| CunningDash {});
+
+/// Rogue Cunning Disengage — bonus-action Disengage. Same effect as the
+/// regular Disengage action (your movement this turn doesn't provoke
+/// OAs), at the cheaper bonus-action cost.
+pub struct CunningDisengage {}
+
+impl Action for CunningDisengage {
+    fn name(&self) -> &str {
+        "cunning disengage"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cdis", "ca-dis"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction]
+    }
+
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![Box::new(crate::engine::side_effects::SetDisengaging {
+            actor_id: caster_id,
+            disengaging: true,
+        })]
+    }
+}
+
+pub static CUNNING_DISENGAGE: LazyLock<CunningDisengage> = LazyLock::new(|| CunningDisengage {});

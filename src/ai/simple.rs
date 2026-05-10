@@ -67,6 +67,14 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3b. Mage Armor — self-only AC boost. Casts once per combat
+        //     since the condition lasts ~100 rounds; gated by "don't
+        //     re-cast" via the condition check. Bonus action, so it
+        //     stacks with this turn's offensive action.
+        if let Some(aei) = try_self_buff_mage_armor(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 4. Bless — round 1 self+ally buff. Only valid before we're
         //    already concentrating on something.
         if let Some(aei) = try_bless(encounter, actor_id) {
@@ -306,6 +314,31 @@ fn try_cause_fear(
 
 /// Cast Bless if we have it, aren't already concentrating, and there's at
 /// least one combat-active ally (otherwise the buff is wasted on solo).
+/// Mage Armor self-buff — only worth casting once. The MageArmored
+/// condition has a long timer, so we suppress repeat casts by checking
+/// for it. Validates spell-slot availability via the action's own
+/// `validate_input`, so this also gracefully no-ops when out of slots.
+fn try_self_buff_mage_armor(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.has_condition(Condition::MageArmored) {
+        return None;
+    }
+    let spell = actor
+        .actions
+        .iter()
+        .find(|a| a.name() == "mage armor")
+        .copied()?;
+    let aei = ActionExecutionInfo::new(spell, actor_id, None, None, None);
+    if aei.validate(encounter) {
+        Some(aei)
+    } else {
+        None
+    }
+}
+
 fn try_bless(
     encounter: &EncounterInstance,
     actor_id: usize,

@@ -41,7 +41,16 @@ fn spell_attack(
         .unwrap_or(10);
     let mode = encounter.compute_attack_mode(caster_id, target_id, is_melee);
     let raw = encounter.roll_d20_with_mode(mode) as i32;
-    let total = raw + attack_bonus;
+    // Pull through the same caster-side flat buffs (Bless / Bane d4,
+    // attack_bonus_buff) that weapon attacks get via `resolve_attack`.
+    // This keeps spell-attack rolls consistent with weapon swings.
+    let buff = encounter
+        .actors
+        .get(&caster_id)
+        .map(|a| a.attack_bonus_buff())
+        .unwrap_or(0);
+    let (bless_die, bless_note) = encounter.bless_bane_attack_die(caster_id);
+    let total = raw + attack_bonus + buff + bless_die;
     let is_crit = raw == 20;
     let hit = is_crit || total >= target_ac;
     let outcome = if is_crit {
@@ -52,10 +61,11 @@ fn spell_attack(
         "miss"
     };
     encounter.log(format!(
-        "  {}: 1d20({}){:+} = {} vs AC {}{} \u{2014} {}",
+        "  {}: 1d20({}){:+}{} = {} vs AC {}{} \u{2014} {}",
         action_name,
         raw,
-        attack_bonus,
+        attack_bonus + buff,
+        bless_note,
         total,
         target_ac,
         mode.log_suffix(),
@@ -1656,3 +1666,524 @@ impl Action for MistyStep {
 }
 
 pub static MISTY_STEP: LazyLock<MistyStep> = LazyLock::new(|| MistyStep {});
+
+/// Bane — level-1 enchantment, concentration. Symmetric counterpart to
+/// Bless: enemy targets in range each make a CHA save vs the caster's
+/// spell save DC. On fail, they're Baned for 10 rounds: -1d4 to attacks
+/// and saves (we model as -2 flat via the existing condition pipeline).
+/// Concentration; all stacked debuffs drop when the caster's
+/// concentration drops.
+pub struct Bane {}
+
+impl Action for Bane {
+    fn name(&self) -> &str {
+        "bane"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bn"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // Single-target form for simplicity. RAW lets the caster pick up
+        // to 3 creatures, but the picker UI doesn't have a multi-actor
+        // schema yet — start with one.
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Charisma, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Baned,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Bane",
+                    vec![(target_id, Condition::Baned)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static BANE: LazyLock<Bane> = LazyLock::new(|| Bane {});
+
+/// Mage Armor — level-1 abjuration. Self-only; while active, the caster's
+/// AC becomes 13 + DEX modifier (we model as a floor; existing AC wins
+/// if higher). 8-hour duration; we use a generous 100-round timer so it
+/// sticks for the whole encounter. No concentration.
+pub struct MageArmor {}
+
+impl Action for MageArmor {
+    fn name(&self) -> &str {
+        "mage armor"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ma", "mage-armor"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::MageArmored,
+            // 8 hours = effectively permanent for any single encounter.
+            timer: ConditionTimer::Rounds(100),
+        })]
+    }
+}
+
+pub static MAGE_ARMOR: LazyLock<MageArmor> = LazyLock::new(|| MageArmor {});
+
+/// Aid — level-2 abjuration. Bumps each target's max HP by 5 and
+/// restores 5 HP to each. We collapse the multi-target form into a
+/// single ally pick for now (the picker UI doesn't yet support multi-
+/// actor selection). The HP boost is permanent for the encounter
+/// (8-hour 5e duration, longer than any combat).
+pub struct Aid {}
+
+impl Action for Aid {
+    fn name(&self) -> &str {
+        "aid"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["a"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(2)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Aid only affects allies — reject hostile targets at side-effect
+        // time as a safety net (the harmful=false flag should already
+        // steer the picker UI here).
+        let caster_team = caster.team();
+        if encounter
+            .actors
+            .get(&target_id)
+            .is_none_or(|t| t.team() != caster_team)
+        {
+            return Vec::new();
+        }
+        // RAW Aid: "the target's hit point maximum and current hit
+        // points increase by 5." Our `bump_max_hp` raises the base by
+        // `delta` and the current HP by the same amount, capped at the
+        // new max — no separate Heal needed.
+        if let Some(target) = encounter.actors.get_mut(&target_id) {
+            target.bump_max_hp(5);
+        }
+        encounter.log("  aid: +5 max HP, +5 HP".to_string());
+        Vec::new()
+    }
+}
+
+pub static AID: LazyLock<Aid> = LazyLock::new(|| Aid {});
+
+/// Acid Splash — wizard cantrip. Pick a target; that creature (and one
+/// adjacent creature) makes a DEX save vs spell DC. On fail: 1d6 acid.
+/// Cantrips don't half-on-save. We use a tiny burst (radius 1) at the
+/// target's tile to model the splash to one neighbor.
+pub struct AcidSplash {}
+
+impl Action for AcidSplash {
+    fn name(&self) -> &str {
+        "acid splash"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["as-spell", "splash"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // Single-tile burst — simulates the "pick a creature; an
+        // adjacent creature is also affected" wording with a 1-tile
+        // splash radius.
+        TargetingSchema::Burst { radius: 1 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Acid]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // Cantrip — no spell slot cost.
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let raw = encounter.roll(&Dice::new(1, 6));
+        encounter.log(format!("  acid splash: 1d6({}) = {} acid", raw, raw));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in encounter.actors_in_burst(point, 1) {
+            // Caster exempt — they wouldn't splash themselves.
+            if tid == caster_id {
+                continue;
+            }
+            let save = encounter.roll_save(tid, AbilityScoreType::Dexterity, dc);
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(DealDamage {
+                actor_id: tid,
+                amount: raw,
+                damage_type: DamageType::Acid,
+            }));
+        }
+        effects
+    }
+}
+
+pub static ACID_SPLASH: LazyLock<AcidSplash> = LazyLock::new(|| AcidSplash {});
+
+/// Chill Touch — wizard cantrip. Ranged spell attack: d20 + INT vs AC.
+/// On hit: 1d8 necrotic. Auxiliary RAW rider (target can't regain HP
+/// until the start of caster's next turn) is omitted for now — the
+/// engine doesn't yet model "no-heal" gates. Crit doubles the dice.
+pub struct ChillTouch {}
+
+impl Action for ChillTouch {
+    fn name(&self) -> &str {
+        "chill touch"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ct", "chill"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Necrotic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
+        spell_attack(
+            encounter,
+            caster_id,
+            target_id,
+            "chill touch",
+            attack_bonus,
+            Dice::new(1, 8),
+            DamageType::Necrotic,
+            false,
+        )
+    }
+}
+
+pub static CHILL_TOUCH: LazyLock<ChillTouch> = LazyLock::new(|| ChillTouch {});
+
+/// Spiritual Weapon — level-2 evocation. Bonus action; the caster makes
+/// a melee spell attack (using WIS modifier + proficiency, no STR) against
+/// a target within reach (we collapse the floating-weapon range to
+/// melee reach since we don't yet model summoned terrain). On hit:
+/// 1d8 + WIS mod force damage. Reach 1 tile (5 ft). No concentration.
+pub struct SpiritualWeapon {}
+
+impl Action for SpiritualWeapon {
+    fn name(&self) -> &str {
+        "spiritual weapon"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sw-spell", "spirit"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // We model the floating weapon as caster-melee for now.
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Force]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction, Resource::SpellSlot(2)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Wisdom);
+        let wis_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
+        // Custom resolver — same pattern as `spell_attack` but adds the
+        // WIS mod to the damage roll.
+        let target_ac = encounter
+            .actors
+            .get(&target_id)
+            .map(|a| a.armor_class() as i32)
+            .unwrap_or(10);
+        let mode = encounter.compute_attack_mode(caster_id, target_id, true);
+        let raw = encounter.roll_d20_with_mode(mode) as i32;
+        let total = raw + attack_bonus;
+        let is_crit = raw == 20;
+        let hit = is_crit || total >= target_ac;
+        let outcome = if is_crit {
+            "CRIT!"
+        } else if hit {
+            "hit"
+        } else {
+            "miss"
+        };
+        encounter.log(format!(
+            "  spiritual weapon: 1d20({}){:+} = {} vs AC {}{} \u{2014} {}",
+            raw,
+            attack_bonus,
+            total,
+            target_ac,
+            mode.log_suffix(),
+            outcome,
+        ));
+        if !hit {
+            return Vec::new();
+        }
+        let raw_dmg = encounter.roll(&Dice::new(1, 8)) as i32;
+        let crit_extra = if is_crit { encounter.roll(&Dice::new(1, 8)) as i32 } else { 0 };
+        let damage = (raw_dmg + crit_extra + wis_mod).max(0) as u32;
+        encounter.log(format!(
+            "  spiritual weapon: 1d8({}){:+} = {} force damage{}",
+            raw_dmg,
+            wis_mod,
+            damage,
+            if is_crit { " (crit)" } else { "" }
+        ));
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: damage,
+            damage_type: DamageType::Force,
+        })]
+    }
+}
+
+pub static SPIRITUAL_WEAPON: LazyLock<SpiritualWeapon> = LazyLock::new(|| SpiritualWeapon {});
+
+/// Hunter's Mark — level-1 divination, concentration. Mark a target;
+/// while marked, the caster's weapon attacks against them deal an
+/// extra 1d6 of weapon damage (handled by `resolve_attack`). Bonus
+/// action to cast.
+pub struct HuntersMark {}
+
+impl Action for HuntersMark {
+    fn name(&self) -> &str {
+        "hunters mark"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hm", "mark"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 90 ft = 36 tiles.
+        Some(36)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::HuntersMarked,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Hunter's Mark",
+                    vec![(target_id, Condition::HuntersMarked)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static HUNTERS_MARK: LazyLock<HuntersMark> = LazyLock::new(|| HuntersMark {});

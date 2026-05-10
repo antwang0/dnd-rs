@@ -441,19 +441,6 @@ impl ActorInstance {
         amt
     }
 
-    /// Same as effective_damage; kept for legacy callers.
-    pub fn modified_damage(&self, raw: u32, dt: DamageType) -> u32 {
-        self.effective_damage(raw, dt)
-    }
-
-    pub fn adjusted_damage(&self, raw: u32, dt: DamageType) -> u32 {
-        self.effective_damage(raw, dt)
-    }
-
-    pub fn apply_damage_modifiers(&self, raw: u32, dt: DamageType) -> u32 {
-        self.effective_damage(raw, dt)
-    }
-
     pub fn damage_modifier(&self, dt: DamageType) -> Option<DamageModifier> {
         self.damage_modifiers.get(&dt).copied()
     }
@@ -625,23 +612,6 @@ impl ActorInstance {
         expired
     }
 
-    /// Tick a Bless-like buff: returns true if it expired this tick.
-    /// Layered on top of `tick_condition_timers` for callers that want
-    /// a focused notification.
-    pub fn tick_bless(&mut self) -> bool {
-        // Already ticked by `tick_condition_timers`; this is a query for
-        // the engine logger. Returns true iff the condition is now gone
-        // but was set at the start of this round (we approximate by just
-        // returning whether it's currently absent — callers compose it
-        // with prior state).
-        !self.has_condition(Condition::Blessed)
-    }
-
-    /// Ditto for Shield of Faith.
-    pub fn tick_shield_of_faith(&mut self) -> bool {
-        !self.has_condition(Condition::ShieldOfFaith)
-    }
-
     /// Clear every condition with the `UntilStartOfNextTurn` timer.
     pub fn clear_until_next_turn_conditions(&mut self) -> Vec<Condition> {
         let mut expired = Vec::new();
@@ -746,13 +716,19 @@ impl ActorInstance {
     }
 
     pub fn armor_class(&self) -> u32 {
-        (self.base_ac as i32 + self.total_item_bonuses().ac + self.condition_ac_bonus())
-            .max(0) as u32
+        // Mage Armor sets a base-AC floor of 13 + DEX (it doesn't stack
+        // with worn armor RAW, but we treat it as a floor so the caster
+        // sees the better of the two values). The condition AC bonus
+        // (Shield, Shield of Faith) still applies on top.
+        let raw_base = self.base_ac as i32 + self.total_item_bonuses().ac;
+        let floor = self.mage_armor_floor();
+        (raw_base.max(floor) + self.condition_ac_bonus()).max(0) as u32
     }
 
     /// Flat AC contribution from active conditions. Shield of Faith
     /// (+2 from the spell), Shielded (+5 from the Shield reaction spell
-    /// — RAW value).
+    /// — RAW value), Mage Armored (sets minimum AC to 13 + DEX, which
+    /// we approximate as a flat top-up — see `armor_class`).
     pub fn condition_ac_bonus(&self) -> i32 {
         let mut bonus = 0;
         if self.has_condition(Condition::ShieldOfFaith) {
@@ -764,6 +740,18 @@ impl ActorInstance {
         bonus
     }
 
+    /// Mage Armor target AC: 13 + DEX modifier. Used to compute the
+    /// effective AC when the caster has the MageArmored condition.
+    /// Returns 0 if the actor is not Mage Armored — `armor_class` then
+    /// uses base AC unmodified.
+    pub fn mage_armor_floor(&self) -> i32 {
+        if self.has_condition(Condition::MageArmored) {
+            13 + modifier_from_score(self.dexterity)
+        } else {
+            0
+        }
+    }
+
     pub fn hitpoints(&self) -> u32 {
         self.hitpoints
     }
@@ -771,6 +759,24 @@ impl ActorInstance {
     pub fn max_hitpoints(&self) -> u32 {
         let bonus = self.total_item_bonuses().max_hp;
         (self.base_hitpoints as i32 + bonus).max(1) as u32
+    }
+
+    /// Permanently bump the actor's max HP by `delta`. Current HP rises
+    /// by the same amount so the boost is immediately useful (matches
+    /// 5e's Aid spell semantics: "their hit point maximum and current
+    /// hit points increase by 5"). Use a negative delta to apply a
+    /// max-HP penalty (e.g. exhaustion); the floor is 1 max HP.
+    pub fn bump_max_hp(&mut self, delta: i32) {
+        let new_base = (self.base_hitpoints as i32 + delta).max(1) as u32;
+        let added = new_base.saturating_sub(self.base_hitpoints);
+        self.base_hitpoints = new_base;
+        if added > 0 {
+            let cap = self.max_hitpoints();
+            self.hitpoints = self.hitpoints.saturating_add(added).min(cap);
+        } else {
+            // On a downward bump, never exceed the new cap.
+            self.hitpoints = self.hitpoints.min(self.max_hitpoints());
+        }
     }
 
     pub fn speed(&self) -> f32 {
@@ -783,13 +789,17 @@ impl ActorInstance {
     }
 
     /// Flat to-hit bonus contributed only by *conditions* (Bless = +2,
-    /// the d4 average). Independent of `attack_bonus_buff` so callers
-    /// that want both can sum them; the engine adds both at attack-roll
-    /// time via `condition_attack_bonus + attack_bonus_buff`.
+    /// the d4 average; Bane = -2, the symmetric debuff). Independent of
+    /// `attack_bonus_buff` so callers that want both can sum them; the
+    /// engine adds both at attack-roll time via
+    /// `condition_attack_bonus + attack_bonus_buff`.
     pub fn condition_attack_bonus(&self) -> i32 {
         let mut bonus = 0;
         if self.has_condition(Condition::Blessed) {
             bonus += 2;
+        }
+        if self.has_condition(Condition::Baned) {
+            bonus -= 2;
         }
         bonus
     }
@@ -798,6 +808,9 @@ impl ActorInstance {
         let mut bonus = 0;
         if self.has_condition(Condition::Blessed) {
             bonus += 2;
+        }
+        if self.has_condition(Condition::Baned) {
+            bonus -= 2;
         }
         bonus
     }
@@ -928,13 +941,6 @@ impl ActorInstance {
     /// keeps the map at most one entry, so this is unambiguous.
     pub fn helped_by(&self) -> Option<usize> {
         self.help_grants.keys().next().copied()
-    }
-
-    /// True if there's an active grant on this actor against `target_id`.
-    /// Used by the attack-mode computation to decide whether to fold in
-    /// advantage from a pending Help.
-    pub fn helped_against(&self, target_id: usize) -> bool {
-        self.help_grant(target_id)
     }
 
     /// Flat to-hit / save bonus contributed by Bless. Returns +2 (the

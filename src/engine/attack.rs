@@ -69,18 +69,11 @@ pub fn resolve_attack(
         .get(&p.caster_id)
         .map(|a| a.attack_bonus_buff())
         .unwrap_or(0);
-    // Bless: roll an actual 1d4 once per attack and add to total. We
-    // log the d4 separately so the player can see why the d20 alone
-    // doesn't account for the swing's hit.
-    let bless_die: i32 = if encounter
-        .actors
-        .get(&p.caster_id)
-        .is_some_and(|a| a.is_blessed())
-    {
-        encounter.roll(&Dice::new(1, 4)) as i32
-    } else {
-        0
-    };
+    // Bless/Bane: roll an actual 1d4 once per attack and add (Bless) or
+    // subtract (Bane) from the total. Both: they cancel and no die is
+    // rolled. We log the d4 separately so the player can see why the
+    // d20 alone doesn't account for the swing's hit.
+    let (bless_die, bless_note) = encounter.bless_bane_attack_die(p.caster_id);
     let attack_total = raw_attack + p.attack_bonus + buff + bless_die;
     let hit = is_crit || attack_total >= target_ac;
     let outcome = if is_crit {
@@ -89,11 +82,6 @@ pub fn resolve_attack(
         "hit"
     } else {
         "miss"
-    };
-    let bless_note = if bless_die > 0 {
-        format!(" + bless(1d4={})", bless_die)
-    } else {
-        String::new()
     };
     encounter.log(format!(
         "  {}: 1d20({}){:+}{} = {} vs AC {}{} \u{2014} {}",
@@ -115,7 +103,7 @@ pub fn resolve_attack(
     } else {
         0
     };
-    let damage = (raw_damage + crit_extra + p.damage_bonus).max(0) as u32;
+    let mut damage = (raw_damage + crit_extra + p.damage_bonus).max(0) as u32;
     if is_crit {
         encounter.log(format!(
             "  {}: {}({})+{}({}){:+} = {} {:?} damage (crit)",
@@ -132,6 +120,19 @@ pub fn resolve_attack(
         encounter.log(format!(
             "  {}: {}({}){:+} = {} {:?} damage",
             p.action_name, p.damage_dice, raw_damage, p.damage_bonus, damage, p.damage_type,
+        ));
+    }
+    // Hunter's Mark rider: attacker concentrating on Hunter's Mark with
+    // this target marked deals +1d6 (weapon-typed). Crits double the
+    // mark die per RAW.
+    if encounter.is_hunters_mark_target(p.caster_id, p.target_id) {
+        let hm_raw = encounter.roll(&Dice::new(1, 6));
+        let hm_extra = if is_crit { encounter.roll(&Dice::new(1, 6)) } else { 0 };
+        let hm_total = hm_raw + hm_extra;
+        damage = damage.saturating_add(hm_total);
+        encounter.log(format!(
+            "  hunter's mark: 1d6({}) = {} extra {:?}",
+            hm_raw, hm_total, p.damage_type
         ));
     }
     vec![Box::new(DealDamage {
