@@ -3155,7 +3155,7 @@ mod tests {
         if let Some(t) = e.actors.get(&target) {
             // Each dart deals 1d4+1, so total damage in [6, 15].
             let dmg = before - t.hitpoints().min(before);
-            assert!(dmg >= 6 && dmg <= 15, "magic missile total {} out of expected range", dmg);
+            assert!((6..=15).contains(&dmg), "magic missile total {} out of expected range", dmg);
         } else {
             // Target removed — magic missile killed it. Floor min damage 6
             // is below most max HP, but sanity check passed.
