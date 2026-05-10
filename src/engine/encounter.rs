@@ -3279,6 +3279,117 @@ mod tests {
     }
 
     #[test]
+    fn rogue_sneak_attack_triggers_when_ally_adjacent_to_target() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::SNEAK_ATTACK_DAGGER;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        // Rogue (caster) and a fighter ally both adjacent to a zombie.
+        // Sneak attack rider should fire on every successful hit.
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let _ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 5), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+
+        // Try up to 100 swings; verify at least one log line shows the
+        // sneak rider (we can't predict misses with the seeded roller).
+        let mut sneak_seen = false;
+        for _ in 0..100 {
+            let log_before = e.messages().len();
+            let target_vec = vec![target];
+            let effects =
+                SNEAK_ATTACK_DAGGER.side_effects(&mut e, rogue, Some(&target_vec), None, None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            // Heal target back so we can keep attacking.
+            let max = e.actors[&target].max_hitpoints();
+            e.actors.get_mut(&target).unwrap().heal(max);
+            if e.messages()[log_before..]
+                .iter()
+                .any(|line| line.contains("sneak attack rider"))
+            {
+                sneak_seen = true;
+                break;
+            }
+        }
+        assert!(sneak_seen, "sneak attack should fire when ally adjacent");
+    }
+
+    #[test]
+    fn rogue_sneak_attack_no_trigger_when_alone() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::SNEAK_ATTACK_DAGGER;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        // Rogue alone vs target — no advantage source, no ally adjacent.
+        // Sneak rider should never appear in the log.
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        let log_before = e.messages().len();
+        for _ in 0..50 {
+            let target_vec = vec![target];
+            let effects =
+                SNEAK_ATTACK_DAGGER.side_effects(&mut e, rogue, Some(&target_vec), None, None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            let max = e.actors[&target].max_hitpoints();
+            e.actors.get_mut(&target).unwrap().heal(max);
+        }
+        let any_sneak = e.messages()[log_before..]
+            .iter()
+            .any(|line| line.contains("sneak attack rider"));
+        assert!(!any_sneak, "no ally adjacent → no sneak attack");
+    }
+
+    #[test]
+    fn cunning_action_grants_movement_for_bonus_action() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::monster_attacks::CUNNING_ACTION;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let speed = e.actors[&rogue].speed();
+        // Spend half the rogue's movement first.
+        e.actors
+            .get_mut(&rogue)
+            .unwrap()
+            .consume_resource(Resource::Movement(speed / 2.0));
+
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*CUNNING_ACTION, rogue, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+
+        // After CA, can afford speed-worth of movement again
+        // (movement was at speed/2; gained `speed`; total ≈ 1.5×speed).
+        assert!(
+            e.actors[&rogue].can_consume_resource(Resource::Movement(speed)),
+            "cunning action should restore movement budget"
+        );
+        // BonusAction was consumed.
+        assert!(!e.actors[&rogue].can_consume_resource(Resource::BonusAction));
+    }
+
+    #[test]
     fn with_pcs_higher_cr_target_yields_more_enemy_cr() {
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
 

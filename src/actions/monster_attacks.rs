@@ -964,6 +964,174 @@ impl Action for GhoulClaws {
 }
 pub static GHOUL_CLAWS: LazyLock<GhoulClaws> = LazyLock::new(|| GhoulClaws {});
 
+/// Rogue's signature finesse strike. DEX-based 1d4 piercing dagger like
+/// the standard dagger, plus +1d6 Sneak Attack damage when *either*:
+/// - the attacker is rolling with advantage, or
+/// - a combat-active ally of the attacker is within melee reach of the
+///   target (the "ganging up" clause).
+///
+/// We don't yet model Hidden as a separate condition (Invisible is the
+/// closest, and it's already handled via attack-mode advantage), so the
+/// "advantage" branch covers both attacking from stealth and other
+/// advantage sources.
+pub struct SneakAttackDagger {}
+
+impl Action for SneakAttackDagger {
+    fn name(&self) -> &str {
+        "sneak attack"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sa", "stab"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::engine::side_effects::DealDamage;
+        use crate::engine::types::AbilityScoreType;
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dex_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Dexterity));
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+
+        // Decide whether sneak attack triggers BEFORE rolling — the rules
+        // depend on the situation, not the d20 result.
+        let attack_mode = encounter.compute_attack_mode(caster_id, target_id, true);
+        let advantage = matches!(attack_mode, crate::engine::dice::RollMode::Advantage);
+        let gang_up = {
+            let my_team = caster.team();
+            // Snapshot target footprint for the adjacency check.
+            let (t_loc, t_size) = match encounter.actors.get(&target_id) {
+                Some(t) => (t.location(), get_tiles_from_size(t.size())),
+                None => return Vec::new(),
+            };
+            encounter.actors.iter().any(|(other_id, other)| {
+                *other_id != caster_id
+                    && *other_id != target_id
+                    && other.team() == my_team
+                    && other.is_combat_active()
+                    && footprint_chebyshev(
+                        other.location(),
+                        get_tiles_from_size(other.size()),
+                        t_loc,
+                        t_size,
+                    ) <= 1
+            })
+        };
+        let sneak_triggers = advantage || gang_up;
+
+        let mut effects = weapon_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            dex_mod,
+            target_ac,
+            Dice::new(1, 4),
+            dex_mod,
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects; // miss — no sneak rider
+        }
+        if !sneak_triggers {
+            return effects;
+        }
+        // Bonus 1d6 sneak attack damage. Logged separately so the player
+        // can see why the damage was higher than the dagger's 1d4.
+        let sneak = encounter.roll(&Dice::new(1, 6));
+        encounter.log(format!("  sneak attack rider: 1d6 = {} piercing", sneak));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: sneak,
+            damage_type: DamageType::Piercing,
+        }));
+        effects
+    }
+}
+pub static SNEAK_ATTACK_DAGGER: LazyLock<SneakAttackDagger> = LazyLock::new(|| SneakAttackDagger {});
+
+/// Cunning Action — Rogue's bonus-action Dash. Rather than provide all
+/// three of Dash/Disengage/Hide here, we pick the most-used variant in
+/// our model (Dash) since we don't model Hidden and Disengage requires
+/// per-step OA suppression we don't track. Bumps the actor's remaining
+/// movement by their full speed for the cost of a Bonus Action.
+pub struct CunningAction {}
+
+impl Action for CunningAction {
+    fn name(&self) -> &str {
+        "cunning action"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cunning", "ca"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::engine::side_effects::GiveResource;
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let speed = actor.speed();
+        vec![Box::new(GiveResource {
+            actor_id: caster_id,
+            resource: Resource::Movement(speed),
+        })]
+    }
+}
+pub static CUNNING_ACTION: LazyLock<CunningAction> = LazyLock::new(|| CunningAction {});
+
 /// Wraps another action and runs it `count` times for one Action-slot
 /// expenditure. Reach / LOS / targeting schema are inherited from the
 /// sub-attack so creatures can declare e.g. `Multiattack { sub: &SLAM, count: 2 }`

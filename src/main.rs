@@ -7,7 +7,10 @@ pub mod engine;
 pub mod items;
 pub mod ui;
 
+use crate::actors::actor_template::CreatureTemplate;
+use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
 use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
 use crate::ai::SimpleAi;
 use crate::app::{App, Tick};
 use crate::engine::actor_gen::ActorGenParams;
@@ -32,6 +35,28 @@ fn main() -> io::Result<()> {
     result
 }
 
+/// Resolve a CLI class name (case-insensitive prefix) to a creature template.
+/// Falls back to the Fighter on unknown / missing names so the binary
+/// always launches; an unknown name prints a hint to stderr.
+fn pc_template_from_arg(arg: Option<&str>) -> &'static CreatureTemplate {
+    let Some(name) = arg else {
+        return &FIGHTER_TEMPLATE;
+    };
+    let lower = name.to_ascii_lowercase();
+    match lower.as_str() {
+        "fighter" | "f" => &FIGHTER_TEMPLATE,
+        "rogue" | "r" => &ROGUE_TEMPLATE,
+        "cleric" | "c" => &CLERIC_TEMPLATE,
+        other => {
+            eprintln!(
+                "unknown class \"{}\"; using Fighter. Try: fighter / rogue / cleric.",
+                other
+            );
+            &FIGHTER_TEMPLATE
+        }
+    }
+}
+
 fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
     let terrain_params = TerrainGenParams {
         width: 40,
@@ -39,15 +64,21 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> 
         branch_depth: 8,
         branch_prob: 0.5,
     };
+    // Args: [seed] [class]. Either may be missing; class defaults to
+    // Fighter, seed defaults to RNG-pick.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let seed: Option<u64> = args.iter().find_map(|a| a.parse::<u64>().ok());
+    let class_arg: Option<&str> = args
+        .iter()
+        .find(|a| a.parse::<u64>().is_err())
+        .map(|s| s.as_str());
+    let pc_template = pc_template_from_arg(class_arg);
     let actor_params = ActorGenParams {
         cr_target: 1.0,
         n_teams: 2,
-        pc_template: Some(&FIGHTER_TEMPLATE),
+        pc_template: Some(pc_template),
         start_team: 0,
     };
-    let seed: Option<u64> = std::env::args()
-        .nth(1)
-        .and_then(|s| s.parse::<u64>().ok());
 
     let encounter = EncounterInstance::from_params(&terrain_params, &actor_params, seed)
         .expect("failed to create encounter");
