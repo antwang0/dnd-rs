@@ -584,27 +584,21 @@ impl ActorInstance {
     }
 
     /// Decrement every `Rounds(n)` timer by 1 and report which conditions
-    /// expired (were removed because their timer hit 0). Permanent timers
-    /// are untouched. The engine calls this on every round-end.
+    /// expired (timer hit 0). `Permanent` timers are untouched. The engine
+    /// calls this on every round-end.
     pub fn tick_condition_timers(&mut self) -> Vec<Condition> {
         let mut expired = Vec::new();
-        let snapshot: Vec<(Condition, ConditionTimer)> = self
-            .conditions
-            .iter()
-            .map(|(c, t)| (*c, *t))
-            .collect();
-        for (c, timer) in snapshot {
-            match timer {
-                ConditionTimer::Permanent => {}
-                ConditionTimer::Rounds(0) | ConditionTimer::Rounds(1) => {
-                    self.conditions.remove(&c);
-                    expired.push(c);
-                }
-                ConditionTimer::Rounds(n) => {
-                    self.conditions.insert(c, ConditionTimer::Rounds(n - 1));
-                }
+        self.conditions.retain(|c, timer| match *timer {
+            ConditionTimer::Permanent => true,
+            ConditionTimer::Rounds(0) | ConditionTimer::Rounds(1) => {
+                expired.push(*c);
+                false
             }
-        }
+            ConditionTimer::Rounds(n) => {
+                *timer = ConditionTimer::Rounds(n - 1);
+                true
+            }
+        });
         expired
     }
 

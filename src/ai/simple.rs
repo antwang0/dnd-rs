@@ -1122,6 +1122,82 @@ mod tests {
     }
 
     #[test]
+    fn ai_buffs_unbuffed_ally_when_no_enemy_to_lock() {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = empty_arena();
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let _ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        // Place an enemy that's already stunned so Hold Person is skipped
+        // (it filters out already-stunned). No other lockdown candidates.
+        let enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+            .unwrap();
+        e.actors.get_mut(&enemy).unwrap().add_condition(
+            crate::conditions::Condition::Stunned,
+            crate::conditions::ConditionTimer::Rounds(10),
+        );
+        // Pre-burn the cleric's level-2 slots so Hold Person is unaffordable.
+        let mgr = &mut e.actors.get_mut(&cleric).unwrap().spell_slot_manager;
+        assert!(mgr.consume_spell_slot(2));
+        assert!(mgr.consume_spell_slot(2));
+
+        let ai = SimpleAi;
+        let decision = ai.decide(&e, cleric);
+        let ControllerDecision::Act(aei) = decision else {
+            panic!("expected a buff action");
+        };
+        assert!(
+            aei.action().name() == "bless" || aei.action().name() == "shield of faith",
+            "cleric with idle resources should buff an ally; got {}",
+            aei.action().name()
+        );
+        let _ = ConcentrationData {
+            spell_name: String::new(),
+            conditions: vec![],
+        };
+    }
+
+    #[test]
+    fn ai_does_not_rebuff_already_buffed_ally() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = empty_arena();
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        // The only ally already has Bless and Shielded — try_buff_ally
+        // should return None and the AI should fall through to attacks.
+        e.actors
+            .get_mut(&ally)
+            .unwrap()
+            .add_condition(Condition::Blessed, ConditionTimer::Rounds(10));
+        e.actors
+            .get_mut(&ally)
+            .unwrap()
+            .add_condition(Condition::Shielded, ConditionTimer::Rounds(10));
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+            .unwrap();
+        let ai = SimpleAi;
+        let decision = ai.decide(&e, cleric);
+        let ControllerDecision::Act(aei) = decision else {
+            panic!("expected an action");
+        };
+        assert_ne!(aei.action().name(), "bless");
+        assert_ne!(aei.action().name(), "shield of faith");
+    }
+
+    #[test]
     fn ranged_attacker_kites_when_threatened() {
         let mut e = empty_arena();
         // Skeleton (longbow only) on team 0, zombie (melee multislam) in
