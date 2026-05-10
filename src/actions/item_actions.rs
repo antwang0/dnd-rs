@@ -13,6 +13,8 @@ use crate::{
 
 const POTION_OF_HEALING_NAME: &str = "Potion of Healing";
 const SCROLL_OF_FIREBALL_NAME: &str = "Scroll of Fireball";
+const ANTITOXIN_NAME: &str = "Antitoxin";
+const SCROLL_OF_CURE_WOUNDS_NAME: &str = "Scroll of Cure Wounds";
 
 /// Drink a Potion of Healing. Self-targeted, costs an Action, heals
 /// 2d4+2 and removes one potion from inventory. The validate hook
@@ -204,3 +206,156 @@ impl Action for ReadFireballScroll {
 }
 
 pub static READ_FIREBALL_SCROLL: ReadFireballScroll = ReadFireballScroll {};
+
+/// Drink an Antitoxin: self-targeted, costs an Action, immediately
+/// removes the Poisoned condition (regardless of the source). 5e RAW
+/// gives advantage on poison saves; we model the cleanup variant since
+/// it's actionable in a fight while the buff variant requires a
+/// pending-save tracker we don't have.
+pub struct DrinkAntitoxin {}
+
+impl Action for DrinkAntitoxin {
+    fn name(&self) -> &str {
+        "drink antitoxin"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["antitoxin", "anti"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_item_named(ANTITOXIN_NAME))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::RemoveCondition;
+        let removed = encounter
+            .actors
+            .get_mut(&caster_id)
+            .is_some_and(|a| a.remove_item_by_name(ANTITOXIN_NAME));
+        if !removed {
+            return Vec::new();
+        }
+        encounter.log("  antitoxin: cures poison".to_string());
+        vec![Box::new(RemoveCondition {
+            actor_id: caster_id,
+            condition: Condition::Poisoned,
+        })]
+    }
+}
+
+pub static DRINK_ANTITOXIN: DrinkAntitoxin = DrinkAntitoxin {};
+
+/// Read a Scroll of Cure Wounds: self-target, costs an Action, heals
+/// 2d8+2 (one slot up from the level-1 baseline so the scroll feels
+/// premium). Consumes the scroll.
+pub struct ReadCureWoundsScroll {}
+
+impl Action for ReadCureWoundsScroll {
+    fn name(&self) -> &str {
+        "read cure wounds scroll"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cw-scroll", "cwscroll"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_item_named(SCROLL_OF_CURE_WOUNDS_NAME))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let raw = encounter.roll(&Dice::new(2, 8)) as i32;
+        let amount = (raw + 2).max(1) as u32;
+        let removed = encounter
+            .actors
+            .get_mut(&caster_id)
+            .is_some_and(|a| a.remove_item_by_name(SCROLL_OF_CURE_WOUNDS_NAME));
+        if !removed {
+            return Vec::new();
+        }
+        encounter.log(format!(
+            "  scroll of cure wounds: 2d8({}){:+} = {} HP",
+            raw, 2, amount
+        ));
+        vec![Box::new(Heal {
+            actor_id: caster_id,
+            amount,
+        })]
+    }
+}
+
+pub static READ_CURE_WOUNDS_SCROLL: ReadCureWoundsScroll = ReadCureWoundsScroll {};

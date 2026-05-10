@@ -119,6 +119,56 @@ pub static SCROLL_OF_FIREBALL: Item = Item {
     on_use: Some(&crate::actions::item_actions::READ_FIREBALL_SCROLL),
 };
 
+pub static SHIELD: Item = Item {
+    name: "Shield",
+    glyph: ']',
+    bonuses: ItemBonuses {
+        ac: 2,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: None,
+};
+
+/// "Plate Armor" — heavy chestpiece. AC bump above any base; sluggish
+/// (-5 ft speed) to give the trade-off some bite. Stacks with Shield.
+pub static PLATE_ARMOR: Item = Item {
+    name: "Plate Armor",
+    glyph: '[',
+    bonuses: ItemBonuses {
+        ac: 3,
+        max_hp: 0,
+        speed: -5,
+        save: 0,
+    },
+    on_use: None,
+};
+
+pub static ANTITOXIN: Item = Item {
+    name: "Antitoxin",
+    glyph: 'n',
+    bonuses: ItemBonuses {
+        ac: 0,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: Some(&crate::actions::item_actions::DRINK_ANTITOXIN),
+};
+
+pub static SCROLL_OF_CURE_WOUNDS: Item = Item {
+    name: "Scroll of Cure Wounds",
+    glyph: 's',
+    bonuses: ItemBonuses {
+        ac: 0,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: Some(&crate::actions::item_actions::READ_CURE_WOUNDS_SCROLL),
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites.
@@ -130,4 +180,8 @@ pub static LOOT_POOL: &[&Item] = &[
     &POTION_OF_HEALING,
     &POTION_OF_HEALING,
     &SCROLL_OF_FIREBALL,
+    &SHIELD,
+    &PLATE_ARMOR,
+    &ANTITOXIN,
+    &SCROLL_OF_CURE_WOUNDS,
 ];
