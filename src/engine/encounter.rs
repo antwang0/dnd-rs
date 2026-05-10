@@ -442,6 +442,12 @@ impl EncounterInstance {
     ) -> RollMode {
         let mut mode = RollMode::Normal;
 
+        // 5e: ranged attacks have disadvantage when a hostile creature
+        // is footprint-adjacent to the shooter.
+        if !is_melee && self.has_adjacent_enemy(attacker_id) {
+            mode = mode.combine(RollMode::Disadvantage);
+        }
+
         // Attacker-side modifiers.
         if let Some(attacker) = self.actors.get(&attacker_id) {
             // Disadvantage clauses.
@@ -1488,6 +1494,29 @@ impl EncounterInstance {
         if let Some(actor) = self.actors.get_mut(&actor_id) {
             actor.set_help_grant(None);
         }
+    }
+
+    /// True if any combat-active actor on a different team is footprint-
+    /// adjacent (Chebyshev gap 0) to `actor_id`. Used to gate the 5e
+    /// "ranged attacks at disadvantage in melee" clause.
+    fn has_adjacent_enemy(&self, actor_id: usize) -> bool {
+        let Some(me) = self.actors.get(&actor_id) else {
+            return false;
+        };
+        let my_team = me.team();
+        let my_loc = me.location();
+        let my_size = get_tiles_from_size(me.size());
+        self.actors.iter().any(|(id, other)| {
+            *id != actor_id
+                && other.team() != my_team
+                && other.is_combat_active()
+                && footprint_chebyshev(
+                    other.location(),
+                    get_tiles_from_size(other.size()),
+                    my_loc,
+                    my_size,
+                ) == 0
+        })
     }
 
     /// End the actor's concentration (if any) and roll back every

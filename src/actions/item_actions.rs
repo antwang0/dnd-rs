@@ -138,7 +138,10 @@ impl Action for DrinkGreaterHealingPotion {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action]
+        // Greater Healing is a bonus action — distinct from the regular
+        // Healing Potion's full Action cost. Lets a wounded martial drink
+        // and still swing in the same turn.
+        vec![Resource::BonusAction]
     }
 
     fn custom_validate_input(

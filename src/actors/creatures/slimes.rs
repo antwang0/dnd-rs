@@ -40,8 +40,12 @@ pub static SLIME_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // and slashing — physical weapons just gum up in the ooze.
         damage_modifiers: HashMap::from([
             (DamageType::Acid, DamageModifier::Immunity),
+            // Slimes are gel-like — physical weapons all gum up.
+            (DamageType::Bludgeoning, DamageModifier::Resistance),
             (DamageType::Piercing, DamageModifier::Resistance),
             (DamageType::Slashing, DamageModifier::Resistance),
+            // Cold turns the gel hard and brittle — vulnerability.
+            (DamageType::Cold, DamageModifier::Vulnerability),
         ]),
         proficient_saves: HashSet::new(),
         condition_immunities: HashSet::new(),

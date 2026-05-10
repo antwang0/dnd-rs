@@ -745,19 +745,13 @@ impl ActorInstance {
     }
 
     pub fn armor_class(&self) -> u32 {
-        let bonus = self.total_item_bonuses().ac;
-        // Conditions that grant flat AC. Shield of Faith (+2),
-        // Shield reaction spell (+5).
-        let mut cond_bonus = 0;
-        if self.has_condition(Condition::ShieldOfFaith) {
-            cond_bonus += 2;
-        }
-        if self.has_condition(Condition::Shielded) {
-            cond_bonus += 5;
-        }
-        (self.base_ac as i32 + bonus + cond_bonus).max(0) as u32
+        (self.base_ac as i32 + self.total_item_bonuses().ac + self.condition_ac_bonus())
+            .max(0) as u32
     }
 
+    /// Flat AC contribution from active conditions. Shield of Faith
+    /// (+2 from the spell), Shielded (+5 from the Shield reaction spell
+    /// — RAW value).
     pub fn condition_ac_bonus(&self) -> i32 {
         let mut bonus = 0;
         if self.has_condition(Condition::ShieldOfFaith) {
@@ -1144,7 +1138,10 @@ impl ActorInstance {
     }
 
     pub fn attack_bonus(&self) -> i32 {
-        modifier_from_score(self.strength) + self.proficiency_bonus()
+        modifier_from_score(self.strength)
+            + self.proficiency_bonus()
+            + self.attack_bonus_buff
+            + self.condition_attack_bonus()
     }
 
     pub fn damage_bonus(&self) -> i32 {

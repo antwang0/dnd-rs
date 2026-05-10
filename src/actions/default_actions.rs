@@ -403,7 +403,7 @@ impl Action for Help {
     }
     fn side_effects(
         &self,
-        _encounter: &mut EncounterInstance,
+        encounter: &mut EncounterInstance,
         caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
@@ -412,10 +412,38 @@ impl Action for Help {
         let Some(ally_id) = target_ids.and_then(|v| v.first().copied()) else {
             return Vec::new();
         };
-        // Tag the helped ally with the Helped condition so the next
-        // attack picks up advantage. We don't track the specific target
-        // foe today — RAW says you must designate one, but in practice
-        // the AI / player usually only attacks the obvious threat.
+        // Pick the closest hostile to the helped ally as the "designated
+        // foe" for the grant. This mirrors RAW where the helper picks a
+        // target; using closest enemy is a reasonable default.
+        let designated = encounter
+            .actors
+            .get(&ally_id)
+            .and_then(|a| {
+                let my_team = a.team();
+                let my_loc = a.location();
+                encounter
+                    .actors
+                    .iter()
+                    .filter(|(id, other)| {
+                        **id != ally_id && other.team() != my_team && other.is_combat_active()
+                    })
+                    .min_by_key(|(_, other)| {
+                        let dx = other.location().x - my_loc.x;
+                        let dy = other.location().y - my_loc.y;
+                        dx.unsigned_abs().max(dy.unsigned_abs())
+                    })
+                    .map(|(id, _)| *id)
+            })
+            .unwrap_or(0);
+        // Install the grant on the helped actor and tag them with the
+        // Helped condition so the UI / log knows. Both expire on next
+        // turn start.
+        if let Some(target) = encounter.actors.get_mut(&ally_id) {
+            target.set_help_grant(Some(crate::actors::actor_template::HelpGrant {
+                helper_id: caster_id,
+                against: designated,
+            }));
+        }
         vec![Box::new(crate::engine::side_effects::ApplyCondition {
             actor_id: ally_id,
             condition: crate::conditions::Condition::Helped,

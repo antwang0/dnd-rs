@@ -105,7 +105,11 @@ impl Prompt {
         let aei = ActionExecutionInfo::new(
             action,
             self.actor_id,
-            None,
+            if target_ids.is_empty() {
+                None
+            } else {
+                Some(target_ids)
+            },
             if target_locations.is_empty() {
                 None
             } else {

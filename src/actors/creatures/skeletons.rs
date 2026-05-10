@@ -38,6 +38,8 @@ pub static SKELETON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         damage_modifiers: HashMap::from([
             (DamageType::Bludgeoning, DamageModifier::Vulnerability),
             (DamageType::Poison, DamageModifier::Immunity),
+            // Bones / arrowfolk: piercing slips between ribs.
+            (DamageType::Piercing, DamageModifier::Resistance),
         ]),
         proficient_saves: HashSet::new(),
         // Undead: immune to Poisoned, Charmed, Frightened (sleep too).

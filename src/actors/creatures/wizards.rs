@@ -1,7 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::spells::{BURNING_HANDS, FIRE_BOLT, MAGIC_MISSILE};
+use crate::actions::spells::{
+    BLINDNESS, BURNING_HANDS, CAUSE_FEAR, FIRE_BOLT, MAGIC_MISSILE, SHIELD, WEB,
+};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{Language, Size, SpecialSense};
+use crate::engine::types::{AbilityScoreType, Language, Size, SpecialSense};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -15,6 +17,10 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*FIRE_BOLT);
     actions.push(&*MAGIC_MISSILE);
     actions.push(&*BURNING_HANDS);
+    actions.push(&*CAUSE_FEAR);
+    actions.push(&*WEB);
+    actions.push(&*BLINDNESS);
+    actions.push(&*SHIELD);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.
@@ -35,11 +41,16 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         cr: 0.5,
         size: Size::Medium,
         actions,
-        // 4 level-1 slots (3 magic missile + 1 burning hands typical loadout).
-        spell_slots_by_level: vec![4],
+        // 3 level-1 slots — typical level-2 wizard loadout. Plus 1
+        // level-2 for Web / Blindness.
+        spell_slots_by_level: vec![3, 1],
         rolls_death_saves: false,
         damage_modifiers: HashMap::new(),
-        proficient_saves: HashSet::new(),
+        // Wizards are proficient in INT and WIS saves (5e PHB).
+        proficient_saves: HashSet::from([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+        ]),
         condition_immunities: HashSet::new(),
         features: HashSet::new(),
     }

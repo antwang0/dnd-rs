@@ -1317,3 +1317,50 @@ impl Action for Blindness {
 }
 
 pub static BLINDNESS: LazyLock<Blindness> = LazyLock::new(|| Blindness {});
+
+/// Shield — level-1 abjuration reaction (we model as a normal Action
+/// for pipeline simplicity since Reaction-cost actions are also slotted
+/// through the Resource enum). Adds the Shielded condition (+5 AC)
+/// until the start of your next turn.
+pub struct Shield {}
+
+impl Action for Shield {
+    fn name(&self) -> &str {
+        "shield"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sh-spell"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Reaction, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::Shielded,
+            timer: ConditionTimer::UntilStartOfNextTurn,
+        })]
+    }
+}
+
+pub static SHIELD: LazyLock<Shield> = LazyLock::new(|| Shield {});

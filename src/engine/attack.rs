@@ -54,7 +54,19 @@ pub fn resolve_attack(
         .get(&p.caster_id)
         .map(|a| a.attack_bonus_buff())
         .unwrap_or(0);
-    let attack_total = raw_attack + p.attack_bonus + buff;
+    // Bless: roll an actual 1d4 once per attack and add to total. We
+    // log the d4 separately so the player can see why the d20 alone
+    // doesn't account for the swing's hit.
+    let bless_die: i32 = if encounter
+        .actors
+        .get(&p.caster_id)
+        .is_some_and(|a| a.is_blessed())
+    {
+        encounter.roll(&Dice::new(1, 4)) as i32
+    } else {
+        0
+    };
+    let attack_total = raw_attack + p.attack_bonus + buff + bless_die;
     let hit = is_crit || attack_total >= target_ac;
     let outcome = if is_crit {
         "CRIT!"
@@ -63,11 +75,17 @@ pub fn resolve_attack(
     } else {
         "miss"
     };
+    let bless_note = if bless_die > 0 {
+        format!(" + bless(1d4={})", bless_die)
+    } else {
+        String::new()
+    };
     encounter.log(format!(
-        "  {}: 1d20({}){:+} = {} vs AC {}{} \u{2014} {}",
+        "  {}: 1d20({}){:+}{} = {} vs AC {}{} \u{2014} {}",
         p.action_name,
         raw_attack,
         p.attack_bonus + buff,
+        bless_note,
         attack_total,
         target_ac,
         mode.log_suffix(),

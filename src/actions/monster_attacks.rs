@@ -301,6 +301,12 @@ impl Action for TripAttack {
         TargetingSchema::SingleActor
     }
 
+    fn reach_tiles(&self) -> Option<isize> {
+        // Melee reach so trip behaves like a normal melee attack — but
+        // wide enough that the test placing target at gap 1 still works.
+        Some(MELEE_REACH)
+    }
+
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Bludgeoning]
     }
