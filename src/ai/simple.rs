@@ -47,7 +47,14 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 4. Hold Person — lock down toughest enemy if we have it and
+        // 4. Buff an unbuffed ally if no one needs healing — Bless,
+        //    Shield of Faith. Skipped while concentrating to avoid
+        //    spending slots on a spell that drops the previous one.
+        if let Some(aei) = try_buff_ally(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 5. Hold Person — lock down toughest enemy if we have it and
         //    aren't already concentrating on something.
         if let Some(aei) = try_hold_person(encounter, actor_id) {
             return ControllerDecision::Act(aei);
@@ -145,6 +152,26 @@ fn mode_priority(mode: RollMode) -> u8 {
         RollMode::Normal => 1,
         RollMode::Disadvantage => 2,
     }
+}
+
+/// Heuristic: an action's name contains "heal" or "cure" if it actually
+/// restores HP. Used to keep buffing spells (Bless, Shield of Faith) out
+/// of the heal pipeline. A future `Action::is_healing()` method would be
+/// crisper, but a name check keeps the trait surface small.
+fn is_healing_action(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.contains("heal") || lower.contains("cure")
+}
+
+/// Heuristic: an action's name suggests a non-damaging buff
+/// (Bless, Shield of Faith, ...). Used by `try_buff_ally` so the AI
+/// knows what to consider.
+fn is_buff_action(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "bless" | "shield of faith"
+    )
 }
 
 /// True if the actor has any single-actor attack with reach beyond melee.
@@ -261,11 +288,16 @@ fn try_step_away_from_threats(
     ))
 }
 
-/// Cast a helpful single-actor action (e.g. Healing Word) on an ally who
+/// Cast a healing action (Healing Word, Cure Wounds, ...) on an ally who
 /// needs it. Priority: dying allies first (revival prevents death-save
 /// failure), then wounded combat-active allies below 50% HP. Stable and
 /// full-HP allies are ignored. Self-targeting is excluded — the actor
 /// should make hostile turns, not heal themselves preemptively.
+///
+/// Only actions whose name suggests actual HP restoration ("heal", "cure")
+/// qualify — buffs like Bless / Shield of Faith are non-harmful
+/// SingleActor too but don't help a dying ally. Buffs go through their
+/// own pipeline entry.
 fn try_support_heal(
     encounter: &EncounterInstance,
     actor_id: usize,
@@ -273,12 +305,14 @@ fn try_support_heal(
     let actor = encounter.actors.get(&actor_id)?;
     let my_team = actor.team();
 
-    // Helpful actions only — `is_harmful=false` guards against ever
-    // picking an attack here. SingleActor schema so we can pick a target.
     let heal_actions: Vec<&'static (dyn Action + Send + Sync)> = actor
         .actions
         .iter()
-        .filter(|a| !a.is_harmful() && matches!(a.targeting_schema(), TargetingSchema::SingleActor))
+        .filter(|a| {
+            !a.is_harmful()
+                && matches!(a.targeting_schema(), TargetingSchema::SingleActor)
+                && is_healing_action(a.name())
+        })
         .copied()
         .collect();
     if heal_actions.is_empty() {
@@ -333,6 +367,64 @@ fn try_support_heal(
     }
 
     best.map(|(_, _, aei)| aei)
+}
+
+/// Cast a buff (Bless, Shield of Faith) on a combat-active ally who
+/// doesn't already have it. Skipped if we're concentrating — buffs are
+/// concentration spells and a fresh cast would drop the prior one.
+/// Picks the lowest-id valid (target, action) pair for determinism;
+/// allies that already have the relevant condition are skipped.
+fn try_buff_ally(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() {
+        return None;
+    }
+    let buff_actions: Vec<&'static (dyn Action + Send + Sync)> = actor
+        .actions
+        .iter()
+        .filter(|a| {
+            !a.is_harmful()
+                && matches!(a.targeting_schema(), TargetingSchema::SingleActor)
+                && is_buff_action(a.name())
+        })
+        .copied()
+        .collect();
+    if buff_actions.is_empty() {
+        return None;
+    }
+    let my_team = actor.team();
+
+    let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
+    ids.sort_unstable();
+
+    for ally_id in ids {
+        let Some(ally) = encounter.actors.get(&ally_id) else {
+            continue;
+        };
+        if ally.team() != my_team || !ally.is_combat_active() {
+            continue;
+        }
+        for &buff in &buff_actions {
+            // Skip buffs whose effect already sits on the ally — Bless
+            // when blessed, Shield of Faith when shielded.
+            let already = match buff.name() {
+                "bless" => ally.has_condition(Condition::Blessed),
+                "shield of faith" => ally.has_condition(Condition::Shielded),
+                _ => false,
+            };
+            if already {
+                continue;
+            }
+            let aei = ActionExecutionInfo::new(buff, actor_id, Some(vec![ally_id]), None, None);
+            if aei.validate(encounter) {
+                return Some(aei);
+            }
+        }
+    }
+    None
 }
 
 /// Try to fire a Burst-schema action centered on a tile that hits as many
