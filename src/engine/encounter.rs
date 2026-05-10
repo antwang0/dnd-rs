@@ -1,22 +1,17 @@
 use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
-use crate::actors::creatures::fire_imps::FIRE_IMP_TEMPLATE;
 use crate::actors::creatures::goblin_bosses::GOBLIN_BOSS_TEMPLATE;
 use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
-use crate::actors::creatures::imps::IMP_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::orcs::ORC_TEMPLATE;
-use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
-use crate::actors::creatures::slimes::SLIME_TEMPLATE;
 use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
 use crate::actors::creatures::wolves::WOLF_TEMPLATE;
-use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
 use crate::actions::action_template::ActionExecutionInfo;
 use crate::actors::actor_template::{ActorInstance, CreatureTemplate, DeathSaveOutcome};
-use crate::conditions::{Condition, ConditionTimer};
+use crate::conditions::Condition;
 use crate::engine::actor_gen::{ActorGenParams, generate_actors};
 use crate::engine::errors::{NegativeAbsCoord, NoLegalPosition};
 use crate::engine::prompt::Prompt;
@@ -190,70 +185,6 @@ impl OutcomeTracker {
     pub fn reset(&mut self) {
         self.next_id = 0;
     }
-}
-
-/// Conditions on the attacker that contribute a single advantage /
-/// disadvantage source. Returned as a tiny vec (≤ a few entries) so the
-/// caller folds them through `RollMode::combine`.
-fn attacker_mode_contrib(attacker: &ActorInstance) -> Vec<RollMode> {
-    use crate::conditions::Condition;
-    let mut out = Vec::new();
-    // Disadvantage clauses.
-    for c in [
-        Condition::Prone,
-        Condition::Poisoned,
-        Condition::Blinded,
-        Condition::Frightened,
-        Condition::Restrained,
-    ] {
-        if attacker.has_condition(c) {
-            out.push(RollMode::Disadvantage);
-        }
-    }
-    // Advantage clauses.
-    if attacker.has_condition(Condition::Invisible) {
-        out.push(RollMode::Advantage);
-    }
-    // Help action: someone Helped this attacker — advantage on their next
-    // attack. Consumption happens at the call site (`weapon_attack`)
-    // since `compute_attack_mode` is read-only.
-    if attacker.has_condition(Condition::Helped) {
-        out.push(RollMode::Advantage);
-    }
-    out
-}
-
-/// Conditions on the defender that contribute a single advantage /
-/// disadvantage source from the attacker's POV. `is_melee` matters only
-/// for Prone (melee = adv, ranged = dis).
-fn target_mode_contrib(target: &ActorInstance, is_melee: bool) -> Vec<RollMode> {
-    use crate::conditions::Condition;
-    let mut out = Vec::new();
-    if target.has_condition(Condition::Prone) {
-        out.push(if is_melee {
-            RollMode::Advantage
-        } else {
-            RollMode::Disadvantage
-        });
-    }
-    // Defender effectively can't react — attacker has advantage. 5e RAW.
-    for c in [
-        Condition::Stunned,
-        Condition::Unconscious,
-        Condition::Restrained,
-        Condition::Blinded,
-    ] {
-        if target.has_condition(c) {
-            out.push(RollMode::Advantage);
-        }
-    }
-    // Defender harder to see / brace against.
-    for c in [Condition::Invisible, Condition::Dodging] {
-        if target.has_condition(c) {
-            out.push(RollMode::Disadvantage);
-        }
-    }
-    out
 }
 
 /// Authoritative state for one combat encounter. Most fields are kept
@@ -501,6 +432,11 @@ impl EncounterInstance {
                 Condition::Paralyzed,
                 Condition::Unconscious,
                 Condition::Outlined,
+                // 5e Guiding Bolt: next attack against the target before
+                // the end of the caster's next turn has advantage. We
+                // model "next attack" via a 1-round timer; the condition
+                // is consumed (cleared) after the next attack lands.
+                Condition::GuidingBoltLit,
             ] {
                 if target.has_condition(c) {
                     mode = mode.combine(RollMode::Advantage);
@@ -590,7 +526,6 @@ impl EncounterInstance {
     ) -> crate::engine::saves::SaveOutcome {
         use crate::conditions::Condition;
         use crate::engine::saves::SaveOutcome;
-        use crate::engine::types::AbilityScoreType;
         use crate::engine::util::modifier_from_score;
 
         // Paralyzed / Stunned auto-fail STR & DEX saves (5e). Log it so
@@ -652,21 +587,6 @@ impl EncounterInstance {
             if outcome.passed() { "pass" } else { "fail" }
         ));
         outcome
-    }
-
-    /// Pre-roll the +1d4 attack bonus an attacker gets while Blessed.
-    /// Returns 0 if the attacker isn't Blessed (or is missing). The
-    /// weapon_attack helper folds this into the attack-roll log line.
-    pub fn bless_attack_bonus(&mut self, attacker_id: usize) -> i32 {
-        use crate::conditions::Condition;
-        let blessed = self
-            .actors
-            .get(&attacker_id)
-            .is_some_and(|a| a.has_condition(Condition::Blessed));
-        if !blessed {
-            return 0;
-        }
-        self.roll(&Dice::new(1, 4)) as i32
     }
 
     /// Direct mutable handle to the encounter's general-purpose RNG. Used
@@ -2081,6 +2001,9 @@ impl EncounterInstance {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+    use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
     use crate::engine::actor_gen::ActorGenParams;
     use crate::engine::terrain::TerrainInfo;
     use crate::engine::terrain_gen::TerrainGenParams;
@@ -3089,22 +3012,23 @@ mod tests {
     }
 
     #[test]
-    fn aid_grants_temp_hp() {
+    fn false_life_grants_self_temp_hp() {
+        // False Life is a self-target NoArgs spell — caster gains 1d4+4
+        // temp HP. There's no targeting; the action only validates with
+        // None for ids and locations.
         use crate::actions::spells::FALSE_LIFE;
-        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         let mut e = ei_with_terrain(15, 15, &[]);
-        let cleric = e
-            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-            .unwrap();
-        let ally = e
-            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
         e.pop_prompt();
-        let aei = ActionExecutionInfo::new(&*FALSE_LIFE, cleric, Some(vec![ally]), None, None);
-        assert!(aei.validate(&e), "aid should validate at touch range");
+        let aei = ActionExecutionInfo::new(&*FALSE_LIFE, wizard, None, None, None);
+        assert!(aei.validate(&e), "false life is a self NoArgs spell");
         e.push_action(aei);
         e.process_stack();
-        assert_eq!(e.actors[&ally].temp_hitpoints(), 5);
+        // 1d4+4 ranges 5..=8. We just check the floor.
+        assert!(e.actors[&wizard].temp_hitpoints() >= 5);
     }
 
     #[test]
@@ -7122,13 +7046,13 @@ mod tests {
         e.push_action(aei);
         e.process_stack();
 
-        assert!(e.actors[&ally].has_condition(Condition::Shielded));
+        assert!(e.actors[&ally].has_condition(Condition::ShieldOfFaith));
         assert_eq!(e.actors[&ally].armor_class(), base_ac + 2);
         assert!(e.actors[&cleric].is_concentrating());
 
         // Drop concentration manually — shield should drop too.
         e.drop_concentration(cleric);
-        assert!(!e.actors[&ally].has_condition(Condition::Shielded));
+        assert!(!e.actors[&ally].has_condition(Condition::ShieldOfFaith));
         assert_eq!(e.actors[&ally].armor_class(), base_ac);
     }
 
@@ -7456,16 +7380,15 @@ mod tests {
     }
 
     #[test]
-    fn blindness_failed_save_blinds_target_and_starts_concentration() {
+    fn blindness_failed_save_blinds_target_without_concentration() {
+        // 5e Blindness/Deafness is *not* a concentration spell — its
+        // 1-minute duration runs without sustain. We just verify a failed
+        // CON save applies the Blinded condition.
         use crate::actions::action_template::Action;
         use crate::actions::spells::BLINDNESS;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::conditions::Condition;
 
-        // Cast Blindness many times — the target's CON save will fail
-        // sometimes; we just need *one* failure to validate the wiring.
-        // A Zombie's CON +3 vs cleric DC 8+2=10 means save fails on
-        // d20 ≤ 6 ≈ 30% of the time; 50 attempts is plenty.
         let mut e = ei_with_terrain(15, 15, &[]);
         let cleric = e
             .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
@@ -7476,9 +7399,6 @@ mod tests {
 
         let mut blinded_seen = false;
         for _ in 0..50 {
-            // Clear concentration so each call starts fresh.
-            e.drop_concentration(cleric);
-            // Reset condition for next attempt.
             e.actors
                 .get_mut(&target)
                 .unwrap()
@@ -7491,8 +7411,8 @@ mod tests {
             }
             if e.actors[&target].has_condition(Condition::Blinded) {
                 assert!(
-                    e.actors[&cleric].is_concentrating(),
-                    "cleric must be concentrating when target is Blinded"
+                    !e.actors[&cleric].is_concentrating(),
+                    "Blindness is not a concentration spell in 5e"
                 );
                 blinded_seen = true;
                 break;
@@ -7616,7 +7536,7 @@ mod tests {
     #[test]
     fn faerie_fire_failed_save_outlines_target_and_starts_concentration() {
         use crate::actions::action_template::Action;
-        use crate::actions::spells::BLINDNESS;
+        use crate::actions::spells::FAERIE_FIRE;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::conditions::Condition;
 
@@ -7642,7 +7562,7 @@ mod tests {
                 .restore_spell_slots();
             let locs = vec![Coordinate::new(8, 5)];
             let effects =
-                BLINDNESS.side_effects(&mut e, cleric, None, Some(&locs), None);
+                FAERIE_FIRE.side_effects(&mut e, cleric, None, Some(&locs), None);
             for eff in effects {
                 eff.apply(&mut e);
             }
@@ -8097,6 +8017,10 @@ mod tests {
 
     #[test]
     fn helped_grants_advantage_then_clears_after_attack() {
+        // 5e Help: the *attacker* carries the Helped condition (advantage
+        // on their next attack). Firing the attack clears it whether they
+        // hit or miss, so a second swing in the same turn isn't free
+        // advantage.
         use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::SLAM;
         use crate::conditions::{Condition, ConditionTimer};
@@ -8109,13 +8033,13 @@ mod tests {
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
             .unwrap();
         e.actors
-            .get_mut(&target)
+            .get_mut(&attacker)
             .unwrap()
             .add_condition(Condition::Helped, ConditionTimer::UntilOwnTurn);
         let target_vec = vec![target];
         let _effects = SLAM.side_effects(&mut e, attacker, Some(&target_vec), None, None);
         // Helped is consumed by the attack regardless of hit/miss.
-        assert!(!e.actors[&target].has_condition(Condition::Helped));
+        assert!(!e.actors[&attacker].has_condition(Condition::Helped));
     }
 
     #[test]
@@ -8846,7 +8770,7 @@ mod tests {
         assert!(aei.validate(&e));
         e.push_action(aei);
         e.process_stack();
-        assert!(e.actors[&ally].has_condition(Condition::Shielded));
+        assert!(e.actors[&ally].has_condition(Condition::ShieldOfFaith));
         assert_eq!(e.actors[&ally].armor_class(), base_ac + 2);
     }
 
@@ -8953,7 +8877,9 @@ mod tests {
     }
 
     #[test]
-    fn shielded_condition_grants_two_ac() {
+    fn shielded_condition_grants_five_ac() {
+        // 5e Shield reaction spell: +5 AC until the start of the caster's
+        // next turn. The Shielded condition mirrors that bump.
         use crate::conditions::{Condition, ConditionTimer};
         let mut e = ei_with_terrain(10, 10, &[]);
         let id = e
@@ -8964,7 +8890,7 @@ mod tests {
             .get_mut(&id)
             .unwrap()
             .add_condition(Condition::Shielded, ConditionTimer::Permanent);
-        assert_eq!(e.actors[&id].armor_class(), base + 2);
+        assert_eq!(e.actors[&id].armor_class(), base + 5);
     }
 
     #[test]
@@ -9158,13 +9084,20 @@ mod tests {
         let id = e
             .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        // Wizard ships with 3 level-1 slots.
+        // Wizard ships with 4 level-1 and 2 level-2 slots.
         assert_eq!(
             e.actors[&id]
                 .spell_slot_manager
                 .spell_slots(1)
                 .spell_slots,
-            3
+            4
+        );
+        assert_eq!(
+            e.actors[&id]
+                .spell_slot_manager
+                .spell_slots(2)
+                .spell_slots,
+            2
         );
         assert!(e.actors[&id].can_consume_resource(Resource::SpellSlot(1)));
     }
@@ -9379,23 +9312,33 @@ mod tests {
 
     #[test]
     fn web_restrains_target_on_failed_save() {
+        // Web is a Burst spell — target a tile, every actor in the burst
+        // makes a DEX save vs the caster's INT-based DC. Drop the burst
+        // on the fighter's tile so they're definitely caught.
         use crate::actions::action_template::Action;
         use crate::actions::spells::WEB;
-        use crate::actors::creatures::spiders::SPIDER_TEMPLATE;
-        use crate::conditions::Condition;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::Condition;
 
         let mut e = ei_with_terrain(20, 20, &[]);
-        let spider = e
-            .instantiate_creature(&SPIDER_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 1, 0)
             .unwrap();
         let fighter = e
             .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 2), 0, 0)
             .unwrap();
-        // Hit fighter with web until they fail the save (DC 12 vs DEX +1).
-        let target_vec = vec![fighter];
+        let burst_loc = vec![Coordinate::new(8, 2)];
         for _ in 0..50 {
-            let effects = WEB.side_effects(&mut e, spider, Some(&target_vec), None, None);
+            // Make sure the wizard isn't already concentrating, so a re-cast
+            // can install a fresh Restrained.
+            e.drop_concentration(wizard);
+            e.actors
+                .get_mut(&fighter)
+                .unwrap()
+                .remove_condition(Condition::Restrained);
+            let effects =
+                WEB.side_effects(&mut e, wizard, None, Some(&burst_loc), None);
             for eff in effects {
                 eff.apply(&mut e);
             }
@@ -10002,5 +9945,158 @@ mod tests {
         assert_eq!(actor.temp_hp(), 7);
         actor.add_temp_hp(10); // larger — replaces
         assert_eq!(actor.temp_hp(), 10);
+    }
+
+    #[test]
+    fn misty_step_teleports_without_provoking_oa() {
+        // Misty Step is a teleport — the caster doesn't traverse the
+        // intervening tiles, so an adjacent enemy's reaction stays
+        // intact. Use a wizard (carries Misty Step) with an adjacent
+        // zombie ready to OA.
+        use crate::actions::spells::MISTY_STEP;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        assert!(e.actors[&zombie].can_consume_resource(Resource::Reaction));
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*MISTY_STEP,
+            wizard,
+            None,
+            Some(vec![Coordinate::new(15, 5)]),
+            None,
+        );
+        assert!(aei.validate(&e), "misty step should validate");
+        e.push_action(aei);
+        e.process_stack();
+        // Wizard ended up at the destination AND the zombie's reaction
+        // is intact (no OA fired).
+        assert_eq!(e.actors[&wizard].location(), Coordinate::new(15, 5));
+        assert!(
+            e.actors[&zombie].can_consume_resource(Resource::Reaction),
+            "teleport should not provoke OA"
+        );
+    }
+
+    #[test]
+    fn thunderwave_damages_actors_in_burst() {
+        // Thunderwave is a 2-tile burst around the caster. We put a
+        // zombie adjacent and verify it takes some damage.
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::THUNDERWAVE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        let max_hp = e.actors[&zombie].max_hitpoints();
+        let effects = THUNDERWAVE.side_effects(&mut e, wizard, None, None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        // 2d8 (2..=16). Even on saved-half + low rolls it lands ≥ 1
+        // unless the zombie was killed outright (we just check < max).
+        assert!(
+            e.actors.get(&zombie).map(|a| a.hitpoints()).unwrap_or(0) < max_hp,
+            "thunderwave should reduce HP on a target in the burst"
+        );
+    }
+
+    #[test]
+    fn ray_of_frost_can_hit_target_in_range() {
+        // Plain ranged spell attack — verify it builds, validates, and
+        // logs an attack roll (we don't check hit/miss because the d20
+        // result drives the outcome).
+        use crate::actions::spells::RAY_OF_FROST;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*RAY_OF_FROST,
+            wizard,
+            Some(vec![zombie]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e), "ray of frost should validate in range with LOS");
+        let log_before = e.messages().len();
+        e.push_action(aei);
+        e.process_stack();
+        let log_lines: Vec<&String> = e.messages()[log_before..].iter().collect();
+        assert!(
+            log_lines.iter().any(|s| s.contains("ray of frost")),
+            "expected ray of frost to log an attack roll"
+        );
+    }
+
+    #[test]
+    fn potion_of_speed_grants_extra_action_and_buffs() {
+        // Drinking the potion costs a bonus action, grants +1 attack/
+        // save, and refunds an Action. Verify by giving the fighter the
+        // potion, draining their action slot, then drinking — they
+        // should be back at 1 Action with non-zero save buff.
+        use crate::actions::item_actions::DRINK_POTION_OF_SPEED;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+        use crate::items::item_template::POTION_OF_SPEED;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&id).unwrap().pickup_item(&POTION_OF_SPEED);
+        // Spend the action so we can prove the potion gives one back.
+        assert!(e.actors.get_mut(&id).unwrap().consume_resource(Resource::Action));
+        assert!(!e.actors[&id].can_consume_resource(Resource::Action));
+        e.pop_prompt();
+        let aei =
+            ActionExecutionInfo::new(&DRINK_POTION_OF_SPEED, id, None, None, None);
+        assert!(aei.validate(&e), "speed potion validates with potion + bonus action");
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&id].can_consume_resource(Resource::Action));
+        assert!(e.actors[&id].save_bonus_buff() >= 1);
+        assert!(!e.actors[&id].has_item_named("Potion of Speed"));
+    }
+
+    #[test]
+    fn hidden_clears_after_attacker_swings() {
+        // 5e: making an attack reveals you, even if it misses. The
+        // attacker rolls with advantage on the first swing, but a
+        // follow-up attack the same turn is at normal mode.
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::SLAM;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Hidden, ConditionTimer::Permanent);
+        let target_vec = vec![target];
+        let _ = SLAM.side_effects(&mut e, attacker, Some(&target_vec), None, None);
+        assert!(
+            !e.actors[&attacker].has_condition(Condition::Hidden),
+            "attacking should reveal the attacker"
+        );
     }
 }

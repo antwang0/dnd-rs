@@ -79,11 +79,10 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 5. Bless a different ally if we have it and aren't already
-        //    concentrating. Skip if the only ally in range is ourselves —
-        //    self-buffs are usually a worse use of an action than
-        //    pressing offense.
-        if let Some(aei) = try_bless(encounter, actor_id) {
+        // 5a. Cause Fear — disabler against the toughest enemy who isn't
+        //     already Frightened. Concentration-gated, so we only fire
+        //     when nothing else holds the slot.
+        if let Some(aei) = try_cause_fear(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 

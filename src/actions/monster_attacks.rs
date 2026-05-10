@@ -428,10 +428,9 @@ impl Action for AcidSpit {
             return Vec::new();
         };
         let attack_bonus = caster.ability_attack_bonus(AbilityScoreType::Dexterity);
-        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
-        else {
+        if !encounter.actors.contains_key(&target_id) {
             return Vec::new();
-        };
+        }
 
         // Primary attack — reuse the canonical attack resolver so the
         // log shape matches every other weapon. Returns DealDamage on
@@ -950,39 +949,6 @@ pub static GOBLIN_BOSS_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiatta
     count: 2,
 });
 
-/// Compatibility wrapper around `engine::attack::resolve_attack`. Older
-/// monster-attack call-sites pass `target_ac` explicitly; we ignore it
-/// here in favor of the canonical lookup inside `resolve_attack`. Kept
-/// around so this file's many `weapon_attack(...)` call-sites stay
-/// untouched while the implementation moves to a shared engine module.
-#[allow(clippy::too_many_arguments)]
-pub fn weapon_attack(
-    encounter: &mut EncounterInstance,
-    caster_id: usize,
-    target_id: usize,
-    action_name: &str,
-    attack_bonus: i32,
-    _target_ac: i32,
-    damage_dice: Dice,
-    damage_bonus: i32,
-    damage_type: DamageType,
-    is_melee: bool,
-) -> Vec<Box<dyn ApplicableSideEffect>> {
-    resolve_attack(
-        encounter,
-        AttackParams {
-            caster_id,
-            target_id,
-            action_name,
-            attack_bonus,
-            damage_dice,
-            damage_bonus,
-            damage_type,
-            is_melee,
-        },
-    )
-}
-
 /// Imp's poisoned sting — finesse melee, 1d4+DEX piercing on hit plus
 /// a CON save (DC 11) for 2d10 poison rider damage. Showcases the
 /// "weapon attack + ability save rider" pattern using the SimpleWeapon
@@ -1110,12 +1076,14 @@ impl Action for FrightfulPresence {
         let caster_loc = caster.location();
         let caster_size = get_tiles_from_size(caster.size());
         let caster_team = caster.team();
-        encounter.log("  frightful presence: enemies within 6 tiles must save vs DC 11 WIS");
 
         let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
         ids.sort_unstable();
 
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        // Filter once so we know if we have any victims to log about.
+        // Saves a log line when every potential target is already
+        // Frightened or out of range — keeps the play-by-play clean.
+        let mut victims: Vec<usize> = Vec::new();
         for tid in ids {
             if tid == caster_id {
                 continue;
@@ -1124,6 +1092,13 @@ impl Action for FrightfulPresence {
                 continue;
             };
             if target.team() == caster_team || !target.is_combat_active() {
+                continue;
+            }
+            // Already-Frightened targets are immune to a re-application —
+            // RAW: a successful save against Frightful Presence makes you
+            // immune for 24h. We model it as: don't re-roll for actors
+            // already carrying the condition.
+            if target.has_condition(Condition::Frightened) {
                 continue;
             }
             let dist = footprint_chebyshev(
@@ -1135,6 +1110,17 @@ impl Action for FrightfulPresence {
             if dist > RADIUS {
                 continue;
             }
+            victims.push(tid);
+        }
+        if victims.is_empty() {
+            return Vec::new();
+        }
+        encounter.log(
+            "  frightful presence: nearby enemies make a WIS check vs DC 11",
+        );
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in victims {
             let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, DC);
             if !save.passed() {
                 effects.push(Box::new(ApplyCondition {

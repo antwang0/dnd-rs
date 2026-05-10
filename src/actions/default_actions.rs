@@ -1,16 +1,15 @@
 use crate::{
-    actions::action_template::{MELEE_REACH, TargetingSchema},
+    actions::action_template::TargetingSchema,
     engine::{side_effects::GiveResource, types::Coordinate},
 };
 use std::{collections::HashSet, sync::LazyLock};
 
 use crate::{
     actions::action_template::Action,
-    conditions::{Condition, ConditionTimer},
     engine::{
         action_overrides::ActionOverride,
         encounter::EncounterInstance,
-        side_effects::{ApplyCondition, MoveActor, Resource, SkipTurn},
+        side_effects::{MoveActor, Resource, SkipTurn},
     },
 };
 
@@ -391,6 +390,29 @@ impl Action for Help {
     fn is_harmful(&self) -> bool {
         false
     }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Help requires an *ally* target — never self, never an enemy.
+        let Some(target_id) = target_ids.and_then(|v| v.first().copied()) else {
+            return false;
+        };
+        if target_id == caster_id {
+            return false;
+        }
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return false;
+        };
+        target.team() == caster.team() && target.is_combat_active()
+    }
     fn cost(
         &self,
         _encounter: &EncounterInstance,
@@ -522,6 +544,8 @@ pub static SHOVE: LazyLock<Shove> = LazyLock::new(|| Shove {});
 /// 5e Hide action — Stealth check; on success the actor becomes Hidden
 /// (attackers have disadvantage, you have advantage on your next attack).
 /// We use a flat DC 10 since we don't model passive Perception today.
+/// Cannot be used while any enemy is footprint-adjacent — you can't
+/// realistically duck from sight while they're inside arm's reach.
 pub struct Hide {}
 
 impl Action for Hide {
@@ -546,6 +570,36 @@ impl Action for Hide {
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
         vec![Resource::Action]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+        let Some(me) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        let my_team = me.team();
+        let my_loc = me.location();
+        let my_size = get_tiles_from_size(me.size());
+        // Hide is invalid while a hostile is footprint-adjacent — too
+        // close to slip out of sight.
+        let in_melee = encounter.actors.iter().any(|(id, other)| {
+            *id != caster_id
+                && other.team() != my_team
+                && other.is_combat_active()
+                && footprint_chebyshev(
+                    other.location(),
+                    get_tiles_from_size(other.size()),
+                    my_loc,
+                    my_size,
+                ) == 0
+        });
+        !in_melee
     }
     fn side_effects(
         &self,
@@ -573,5 +627,17 @@ impl Action for Hide {
 pub static HIDE: LazyLock<Hide> = LazyLock::new(|| Hide {});
 
 pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> = LazyLock::new(
-    || vec![&*MOVE, &*DASH, &*SKIP, &*STAND_UP, &*DODGE, &*DISENGAGE, &*HELP, &*SHOVE],
+    || {
+        vec![
+            &*MOVE,
+            &*DASH,
+            &*SKIP,
+            &*STAND_UP,
+            &*DODGE,
+            &*DISENGAGE,
+            &*HELP,
+            &*SHOVE,
+            &*HIDE,
+        ]
+    },
 );

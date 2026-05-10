@@ -194,6 +194,7 @@ impl SpellSlotManager {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct ActorInstance {
     name: String,
     location: Coordinate,

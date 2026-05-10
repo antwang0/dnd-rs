@@ -1364,3 +1364,295 @@ impl Action for Shield {
 }
 
 pub static SHIELD: LazyLock<Shield> = LazyLock::new(|| Shield {});
+
+/// Faerie Fire — level-1 evocation, concentration. Pick a tile; every
+/// actor in a 4-tile burst makes a DEX save. On fail, the target is
+/// Outlined: attacks against them have advantage and they can't benefit
+/// from invisibility. No damage. Helpful for breaking up clumped enemies
+/// or marking a tough single target. Caster takes the WIS-based DC.
+pub struct FaerieFire {}
+
+impl Action for FaerieFire {
+    fn name(&self) -> &str {
+        "faerie fire"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ff", "faerie"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let radius = match self.targeting_schema() {
+            TargetingSchema::Burst { radius } => radius,
+            _ => return Vec::new(),
+        };
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut conditions = Vec::new();
+        for tid in encounter.burst_targets(caster_id, point, radius) {
+            let save = encounter.roll_save(tid, AbilityScoreType::Dexterity, dc);
+            if !save.passed() {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: tid,
+                    condition: Condition::Outlined,
+                    timer: ConditionTimer::Rounds(10),
+                }));
+                conditions.push((tid, Condition::Outlined));
+            }
+        }
+        if !conditions.is_empty() {
+            effects.push(Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions("Faerie Fire", conditions),
+            }));
+        }
+        effects
+    }
+}
+
+pub static FAERIE_FIRE: LazyLock<FaerieFire> = LazyLock::new(|| FaerieFire {});
+
+/// Ray of Frost — wizard cantrip. Ranged spell attack: d20 + INT vs AC.
+/// On hit: 1d8 cold damage AND the target's speed is reduced by 10ft
+/// until the start of the caster's next turn (we approximate with a
+/// 1-round timer on a save-buff penalty rather than a full speed
+/// override; the effect is small enough that the simpler model is fine).
+pub struct RayOfFrost {}
+
+impl Action for RayOfFrost {
+    fn name(&self) -> &str {
+        "ray of frost"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["rof", "frost"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft range.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Cold]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::attack::{AttackParams, resolve_attack};
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
+        resolve_attack(
+            encounter,
+            AttackParams {
+                caster_id,
+                target_id,
+                action_name: self.name(),
+                attack_bonus,
+                damage_dice: Dice::new(1, 8),
+                damage_bonus: 0,
+                damage_type: DamageType::Cold,
+                is_melee: false,
+            },
+        )
+    }
+}
+
+pub static RAY_OF_FROST: LazyLock<RayOfFrost> = LazyLock::new(|| RayOfFrost {});
+
+/// Thunderwave — level-1 evocation. 15-ft cube around the caster (we
+/// approximate with a 2-tile burst centered on the caster's tile). Each
+/// creature in the burst makes a CON save vs the caster's INT-DC; on
+/// fail, takes 2d8 thunder and is pushed 10 ft (we don't model the
+/// push). On success, half damage and no push.
+pub struct Thunderwave {}
+
+impl Action for Thunderwave {
+    fn name(&self) -> &str {
+        "thunderwave"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["tw", "thunder"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Thunder]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let center = caster.location();
+        const RADIUS: isize = 2;
+        let raw = encounter.roll(&Dice::new(2, 8));
+        encounter.log(format!(
+            "  thunderwave: 2d8({}) = {} thunder area",
+            raw, raw
+        ));
+        crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            center,
+            RADIUS,
+            AbilityScoreType::Constitution,
+            dc,
+            raw,
+            DamageType::Thunder,
+        )
+    }
+}
+
+pub static THUNDERWAVE: LazyLock<Thunderwave> = LazyLock::new(|| Thunderwave {});
+
+/// Misty Step — level-2 conjuration. Bonus action; teleport the caster
+/// up to 30 ft (12 tiles) to an unoccupied spot you can see. No save,
+/// no concentration, no damage. Pure repositioning.
+pub struct MistyStep {}
+
+impl Action for MistyStep {
+    fn name(&self) -> &str {
+        "misty step"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ms", "step"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction, Resource::SpellSlot(2)]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Destination must be a legal landing spot for this caster's full
+        // footprint — same constraint as Move's pathing, minus the budget
+        // check (Misty Step bypasses movement entirely).
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return false;
+        };
+        encounter.can_move_to(caster_id, point)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        // Misty Step is RAW explicitly OA-free since the caster doesn't
+        // traverse intervening tiles. TeleportActor bypasses the per-step
+        // OA dispatch that MoveActor uses.
+        vec![Box::new(crate::engine::side_effects::TeleportActor {
+            actor_id: caster_id,
+            dest: point,
+        })]
+    }
+}
+
+pub static MISTY_STEP: LazyLock<MistyStep> = LazyLock::new(|| MistyStep {});

@@ -16,6 +16,7 @@ const POTION_OF_GREATER_HEALING_NAME: &str = "Potion of Greater Healing";
 const ANTITOXIN_NAME: &str = "Antitoxin";
 const SCROLL_OF_FIREBALL_NAME: &str = "Scroll of Fireball";
 const SCROLL_OF_MAGIC_MISSILE_NAME: &str = "Scroll of Magic Missile";
+const POTION_OF_SPEED_NAME: &str = "Potion of Speed";
 
 /// Drink a Potion of Healing. Self-targeted, costs an Action, heals
 /// 2d4+2 and removes one potion from inventory. The validate hook
@@ -249,7 +250,7 @@ impl Action for ReadFireballScroll {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::actions::action_template::resolve_burst_save_damage;
+        use crate::engine::saves::SaveOutcome;
         use crate::engine::types::AbilityScoreType;
 
         let Some(&center) = target_locations.and_then(|locs| locs.first()) else {
@@ -268,14 +269,10 @@ impl Action for ReadFireballScroll {
         let damage = encounter.roll(&Dice::new(6, 6));
         encounter.log(format!("  scroll of fireball: 6d6 = {} damage", damage));
 
-        // Find every combat-active actor whose footprint sits inside the
-        // blast radius (helper handles the sort + dist filter).
         const BLAST_RADIUS: isize = 4;
         let dc: i32 = 15;
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         for id in encounter.actors_in_burst(center, BLAST_RADIUS) {
-            use crate::engine::saves::SaveOutcome;
-            use crate::engine::types::AbilityScoreType;
             let outcome = encounter.roll_save(id, AbilityScoreType::Dexterity, dc);
             let final_damage = match outcome {
                 SaveOutcome::Pass => damage / 2,
@@ -461,3 +458,86 @@ impl Action for DrinkAntitoxin {
 }
 
 pub static DRINK_ANTITOXIN: DrinkAntitoxin = DrinkAntitoxin {};
+
+/// Drink a Potion of Speed: bonus action; gain an extra Action this turn
+/// AND a one-shot AC/save bonus from the haste-style buff. We model the
+/// haste effect simply as: +1 to attack/save buff and an extra action
+/// slot. Single-use; consumes one Potion of Speed from inventory.
+pub struct DrinkPotionOfSpeed {}
+
+impl Action for DrinkPotionOfSpeed {
+    fn name(&self) -> &str {
+        "drink potion of speed"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["speed", "haste"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction]
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_item_named(POTION_OF_SPEED_NAME))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let removed = encounter
+            .actors
+            .get_mut(&caster_id)
+            .is_some_and(|a| a.remove_item_by_name(POTION_OF_SPEED_NAME));
+        if !removed {
+            return Vec::new();
+        }
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            let name = actor.name().to_string();
+            // Refund an Action and dump the haste buffs. Haste in 5e is
+            // a concentration spell, but a potion is fire-and-forget;
+            // we skip concentration tracking and just install the flat
+            // buffs which clear on long rest.
+            actor.give_resource(Resource::Action);
+            actor.add_attack_bonus_buff(1);
+            actor.add_save_bonus_buff(1);
+            encounter.log(format!(
+                "{} drinks a potion of speed (extra action, +1 attack/save).",
+                name
+            ));
+        }
+        Vec::new()
+    }
+}
+
+pub static DRINK_POTION_OF_SPEED: DrinkPotionOfSpeed = DrinkPotionOfSpeed {};

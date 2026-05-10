@@ -1,6 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
-    BLINDNESS, BURNING_HANDS, CAUSE_FEAR, FIRE_BOLT, MAGIC_MISSILE, SHIELD, WEB,
+    BLINDNESS, BURNING_HANDS, CAUSE_FEAR, FIRE_BOLT, MAGIC_MISSILE, MISTY_STEP, RAY_OF_FROST,
+    SHIELD, THUNDERWAVE, WEB,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size, SpecialSense};
@@ -15,11 +16,14 @@ use std::sync::LazyLock;
 pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*FIRE_BOLT);
+    actions.push(&*RAY_OF_FROST);
     actions.push(&*MAGIC_MISSILE);
+    actions.push(&*THUNDERWAVE);
     actions.push(&*BURNING_HANDS);
     actions.push(&*CAUSE_FEAR);
     actions.push(&*WEB);
     actions.push(&*BLINDNESS);
+    actions.push(&*MISTY_STEP);
     actions.push(&*SHIELD);
     CreatureTemplate {
         name: "Wizard",
@@ -41,9 +45,9 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         cr: 0.5,
         size: Size::Medium,
         actions,
-        // 3 level-1 slots — typical level-2 wizard loadout. Plus 1
-        // level-2 for Web / Blindness.
-        spell_slots_by_level: vec![3, 1],
+        // 4 level-1 slots — typical level-3 wizard loadout. Plus 2
+        // level-2 slots for Web / Blindness.
+        spell_slots_by_level: vec![4, 2],
         rolls_death_saves: false,
         damage_modifiers: HashMap::new(),
         // Wizards are proficient in INT and WIS saves (5e PHB).

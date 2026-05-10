@@ -75,7 +75,11 @@ impl ApplicableSideEffect for GiveResource {
 /// Walks an actor through a sequence of tiles, one step at a time, firing
 /// opportunity attacks on every step that exits a threatened square. `path`
 /// excludes the actor's starting tile and includes the final destination.
-/// A single-tile teleport is just `path: vec![dest]`.
+/// A single-tile walk is just `path: vec![dest]`.
+///
+/// For a teleport (Misty Step, Dimension Door, etc.), use `TeleportActor`
+/// instead — it bypasses per-step OAs because the actor doesn't traverse
+/// intervening tiles.
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]
 pub struct MoveActor {
     pub actor_id: usize,
@@ -113,6 +117,36 @@ impl ApplicableSideEffect for MoveActor {
             // Walk-over auto-pickup: any items at the destination tile
             // get added to the actor's inventory. Logged inside.
             ei.pickup_items_at(self.actor_id, dest);
+        }
+    }
+}
+
+/// Move an actor to `dest` without firing per-step opportunity attacks.
+/// 5e teleports (Misty Step, Dimension Door, fey step abilities) bypass
+/// the normal "movement leaving threatened squares" trigger because the
+/// mover never crosses the intervening tiles. We still pickup any items
+/// on the destination tile so loot pickup is symmetric with `MoveActor`.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct TeleportActor {
+    pub actor_id: usize,
+    pub dest: Coordinate,
+}
+
+impl ApplicableSideEffect for TeleportActor {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let name = ei
+            .actors
+            .get(&self.actor_id)
+            .map(|a| a.name().to_string())
+            .unwrap_or_default();
+        match ei.place_actor_at(self.actor_id, self.dest) {
+            Ok(()) => {
+                if !name.is_empty() {
+                    ei.log(format!("{} teleports to {}.", name, self.dest));
+                }
+                ei.pickup_items_at(self.actor_id, self.dest);
+            }
+            Err(e) => ei.log(format!("TeleportActor failed: {}", e)),
         }
     }
 }

@@ -47,6 +47,21 @@ pub fn resolve_attack(
     };
 
     let mode = encounter.compute_attack_mode(p.caster_id, p.target_id, p.is_melee);
+    // Help is one-shot: a Helped attacker rolls with advantage on their
+    // first attack, then the condition clears regardless of hit/miss so
+    // a second swing in the same turn doesn't double-dip. We also drain
+    // any matching grant from the help-grant map — both bookkeeping
+    // tracks have to clear together so the AI's mode peek stays honest.
+    //
+    // Hidden also drops here: 5e RAW says making an attack reveals you,
+    // whether or not the attack hits. We pick up the Hidden-attacker
+    // advantage in `compute_attack_mode` above, then clear the condition
+    // so a follow-up swing this turn doesn't double-dip.
+    if let Some(attacker) = encounter.actors.get_mut(&p.caster_id) {
+        attacker.remove_condition(crate::conditions::Condition::Helped);
+        attacker.remove_condition(crate::conditions::Condition::Hidden);
+        attacker.consume_help_for(p.target_id);
+    }
     let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
     let is_crit = raw_attack == 20;
     let buff = encounter
