@@ -136,10 +136,22 @@ impl ApplicableSideEffect for DealDamage {
             ));
             return;
         };
+        // Apply resistance / immunity / vulnerability *before* damage hits HP.
+        // Logged inline so the player can see "8 fire (resisted) → 4" on the
+        // same scan as the original roll.
+        let modified = actor.apply_damage_modifiers(self.amount, self.damage_type);
+        let modifier_tag = actor.damage_modifier_tag(self.damage_type);
         let name = actor.name().to_string();
-        let outcome = actor.take_damage(self.amount);
+        let outcome = actor.take_damage(modified);
         let was_concentrating = actor.is_concentrating();
         // actor borrow ends here.
+
+        if !modifier_tag.is_empty() {
+            ei.log(format!(
+                "  {} takes {} {:?}{} (was {})",
+                name, modified, self.damage_type, modifier_tag, self.amount
+            ));
+        }
 
         match outcome {
             DamageOutcome::Downed => {
@@ -155,14 +167,18 @@ impl ApplicableSideEffect for DealDamage {
             }
             DamageOutcome::Reduced if was_concentrating => {
                 // 5e: take damage while concentrating → CON save vs DC max(10, dmg/2).
-                let dc = ((self.amount / 2) as i32).max(10);
-                let save = ei.roll_save(
-                    self.actor_id,
-                    crate::engine::types::AbilityScoreType::Constitution,
-                    dc,
-                );
-                if !save.passed() {
-                    ei.drop_concentration(self.actor_id);
+                // DC is computed from the *post-modifier* HP loss; nothing to
+                // save against if the damage was wiped to 0 by immunity.
+                if modified > 0 {
+                    let dc = ((modified / 2) as i32).max(10);
+                    let save = ei.roll_save(
+                        self.actor_id,
+                        crate::engine::types::AbilityScoreType::Constitution,
+                        dc,
+                    );
+                    if !save.passed() {
+                        ei.drop_concentration(self.actor_id);
+                    }
                 }
             }
             DamageOutcome::Reduced | DamageOutcome::DyingFailure => {}
@@ -237,6 +253,14 @@ impl ApplicableSideEffect for ApplyCondition {
             return;
         };
         let name = actor.name().to_string();
+        if actor.is_immune_to_condition(self.condition) {
+            ei.log(format!(
+                "{} is immune to {} \u{2014} no effect.",
+                name,
+                self.condition.name()
+            ));
+            return;
+        }
         if actor.add_condition(self.condition, self.timer) {
             let suffix = match self.timer {
                 ConditionTimer::Permanent => String::new(),

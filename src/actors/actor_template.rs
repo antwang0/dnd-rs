@@ -1,5 +1,6 @@
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::{Dice, DiceExpr, Roller};
+use crate::engine::types::DamageType;
 
 /// Lifecycle state of an actor's hit points. Replaces the previous
 /// `dying: bool` + `stable: bool` pair so the four meaningful states are
@@ -120,6 +121,19 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Damage types this creature takes only half damage from (rounded
+    /// down). Skeletons are resistant to piercing/slashing, fire elementals
+    /// to fire, etc. Stacks with `damage_immunities` (immunity wins).
+    pub damage_resistances: HashSet<DamageType>,
+    /// Damage types this creature takes no damage from. Skeletons are
+    /// immune to poison, undead to necrotic in some books, etc.
+    pub damage_immunities: HashSet<DamageType>,
+    /// Damage types this creature takes double damage from (rounded down
+    /// post-doubling). Skeletons are vulnerable to bludgeoning.
+    pub damage_vulnerabilities: HashSet<DamageType>,
+    /// Conditions this creature can never have applied (immune to). 5e:
+    /// undead are immune to Poisoned, constructs to many condition types.
+    pub condition_immunities: HashSet<Condition>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -287,6 +301,10 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    damage_resistances: HashSet<DamageType>,
+    damage_immunities: HashSet<DamageType>,
+    damage_vulnerabilities: HashSet<DamageType>,
+    condition_immunities: HashSet<Condition>,
 }
 
 impl ActorInstance {
@@ -353,7 +371,48 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            damage_resistances: ct.damage_resistances.clone(),
+            damage_immunities: ct.damage_immunities.clone(),
+            damage_vulnerabilities: ct.damage_vulnerabilities.clone(),
+            condition_immunities: ct.condition_immunities.clone(),
         })
+    }
+
+    /// Apply this actor's resistance / immunity / vulnerability to an
+    /// incoming damage roll. Immunity wipes damage to 0; resistance halves
+    /// (rounded down); vulnerability doubles. Resistance and vulnerability
+    /// to the same type cancel — RAW. Returns the post-modifier amount.
+    pub fn apply_damage_modifiers(&self, dmg: u32, dmg_type: DamageType) -> u32 {
+        if self.damage_immunities.contains(&dmg_type) {
+            return 0;
+        }
+        let resistant = self.damage_resistances.contains(&dmg_type);
+        let vulnerable = self.damage_vulnerabilities.contains(&dmg_type);
+        match (resistant, vulnerable) {
+            (true, true) | (false, false) => dmg,
+            (true, false) => dmg / 2,
+            (false, true) => dmg.saturating_mul(2),
+        }
+    }
+
+    /// Tag describing this damage's interaction with the actor — used by
+    /// the log so players can see when damage was halved / doubled / wiped.
+    /// Returns an empty string when no modifier applies.
+    pub fn damage_modifier_tag(&self, dmg_type: DamageType) -> &'static str {
+        if self.damage_immunities.contains(&dmg_type) {
+            return " (immune)";
+        }
+        let resistant = self.damage_resistances.contains(&dmg_type);
+        let vulnerable = self.damage_vulnerabilities.contains(&dmg_type);
+        match (resistant, vulnerable) {
+            (true, false) => " (resisted)",
+            (false, true) => " (vulnerable)",
+            _ => "",
+        }
+    }
+
+    pub fn is_immune_to_condition(&self, c: Condition) -> bool {
+        self.condition_immunities.contains(&c)
     }
 
     pub fn rolls_death_saves(&self) -> bool {

@@ -1,7 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::ACID_SPIT;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::Size;
+use crate::conditions::Condition;
+use crate::engine::types::{DamageType, Size};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -37,5 +38,11 @@ pub static SLIME_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
+        // Acid blob: shrugs off acid; amorphous body can't be tripped or
+        // pinned in place.
+        damage_resistances: HashSet::from([DamageType::Acid]),
+        damage_immunities: HashSet::new(),
+        damage_vulnerabilities: HashSet::new(),
+        condition_immunities: HashSet::from([Condition::Prone]),
     }
 });
