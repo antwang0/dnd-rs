@@ -47,16 +47,17 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 4. Buff an unbuffed ally if no one needs healing — Bless,
-        //    Shield of Faith. Skipped while concentrating to avoid
-        //    spending slots on a spell that drops the previous one.
-        if let Some(aei) = try_buff_ally(encounter, actor_id) {
+        // 4. Hold Person — lock down toughest enemy if we have it and
+        //    aren't already concentrating on something. Comes before
+        //    buffs because hard CC is higher leverage than +1d4.
+        if let Some(aei) = try_hold_person(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
-        // 5. Hold Person — lock down toughest enemy if we have it and
-        //    aren't already concentrating on something.
-        if let Some(aei) = try_hold_person(encounter, actor_id) {
+        // 5. Buff an unbuffed ally — Bless, Shield of Faith. Skipped
+        //    while concentrating to avoid spending slots on a spell
+        //    that drops the previous one.
+        if let Some(aei) = try_buff_ally(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 

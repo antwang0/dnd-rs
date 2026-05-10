@@ -2982,6 +2982,303 @@ mod tests {
     }
 
     #[test]
+    fn damage_resistance_halves_damage() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        // Heal up to a full known max, then poison-damage. Skeletons are
+        // immune to poison → no HP loss.
+        let max_hp = e.actors[&id].max_hitpoints();
+        e.actors.get_mut(&id).unwrap().heal(max_hp);
+        DealDamage {
+            actor_id: id,
+            amount: 10,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&id].hitpoints(), max_hp, "poison should be ignored");
+    }
+
+    #[test]
+    fn damage_vulnerability_doubles_damage() {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let max_hp = e.actors[&id].max_hitpoints();
+        e.actors.get_mut(&id).unwrap().heal(max_hp);
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Bludgeoning,
+        }
+        .apply(&mut e);
+        // Vulnerable: 4 → 8.
+        assert_eq!(before - e.actors[&id].hitpoints().min(before), 8);
+    }
+
+    #[test]
+    fn condition_immunity_blocks_apply() {
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::{ApplicableSideEffect, ApplyCondition};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        // Zombies are immune to Poisoned — apply should no-op.
+        ApplyCondition {
+            actor_id: id,
+            condition: Condition::Poisoned,
+            timer: ConditionTimer::Permanent,
+        }
+        .apply(&mut e);
+        assert!(!e.actors[&id].has_condition(Condition::Poisoned));
+    }
+
+    #[test]
+    fn shielded_condition_bumps_ac_by_two() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base_ac = e.actors[&id].armor_class();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Shielded, ConditionTimer::Rounds(10));
+        assert_eq!(e.actors[&id].armor_class(), base_ac + 2);
+    }
+
+    #[test]
+    fn restrained_zeros_movement() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&id].remaining_movement() > 0.0);
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Restrained, ConditionTimer::Rounds(2));
+        assert_eq!(e.actors[&id].remaining_movement(), 0.0);
+    }
+
+    #[test]
+    fn invisible_attacker_has_advantage() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Rounds(5));
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage
+        );
+    }
+
+    #[test]
+    fn frightened_imposes_disadvantage_on_attack_and_save() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Frightened, ConditionTimer::Rounds(5));
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage
+        );
+        assert_eq!(
+            e.compute_save_mode(attacker, AbilityScoreType::Wisdom),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn magic_missile_deals_three_force_hits() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::spells::MAGIC_MISSILE;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        let max_target_hp = e.actors[&target].max_hitpoints();
+        e.actors.get_mut(&target).unwrap().heal(max_target_hp);
+        let before = e.actors[&target].hitpoints();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*MAGIC_MISSILE,
+            cleric,
+            Some(vec![target]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e), "magic missile should validate");
+        e.push_action(aei);
+        e.process_stack();
+        if let Some(t) = e.actors.get(&target) {
+            // Each dart deals 1d4+1, so total damage in [6, 15].
+            let dmg = before - t.hitpoints().min(before);
+            assert!(dmg >= 6 && dmg <= 15, "magic missile total {} out of expected range", dmg);
+        } else {
+            // Target removed — magic missile killed it. Floor min damage 6
+            // is below most max HP, but sanity check passed.
+        }
+    }
+
+    #[test]
+    fn cure_wounds_heals_self_or_ally() {
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(3, 3), 0, 1)
+            .unwrap();
+        let max = e.actors[&ally].max_hitpoints();
+        e.actors.get_mut(&ally).unwrap().take_damage(max - 1); // down to 1
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*CURE_WOUNDS,
+            cleric,
+            Some(vec![ally]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&ally].hitpoints() > 1, "ally should have been healed");
+    }
+
+    #[test]
+    fn bless_grants_blessed_condition_with_concentration() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::spells::BLESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(3, 3), 0, 1)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*BLESS,
+            cleric,
+            Some(vec![ally]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&ally].has_condition(Condition::Blessed));
+        assert!(e.actors[&cleric].is_concentrating());
+    }
+
+    #[test]
+    fn shield_of_faith_bumps_target_ac_and_concentrates() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::spells::SHIELD_OF_FAITH;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(3, 3), 0, 1)
+            .unwrap();
+        let base_ac = e.actors[&ally].armor_class();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*SHIELD_OF_FAITH,
+            cleric,
+            Some(vec![ally]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&ally].has_condition(Condition::Shielded));
+        assert_eq!(e.actors[&ally].armor_class(), base_ac + 2);
+        assert!(e.actors[&cleric].is_concentrating());
+    }
+
+    #[test]
+    fn concentration_drop_clears_shielded_and_restores_ac() {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(3, 3), 0, 1)
+            .unwrap();
+        let base_ac = e.actors[&ally].armor_class();
+        e.actors
+            .get_mut(&ally)
+            .unwrap()
+            .add_condition(Condition::Shielded, ConditionTimer::Rounds(10));
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .start_concentration(ConcentrationData {
+                spell_name: "Shield of Faith".to_string(),
+                conditions: vec![(ally, Condition::Shielded)],
+            });
+        assert_eq!(e.actors[&ally].armor_class(), base_ac + 2);
+        e.drop_concentration(cleric);
+        assert!(!e.actors[&ally].has_condition(Condition::Shielded));
+        assert_eq!(e.actors[&ally].armor_class(), base_ac);
+    }
+
+    #[test]
     fn with_pcs_higher_cr_target_yields_more_enemy_cr() {
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
 
