@@ -16,4 +16,5 @@ pub mod spiders;
 pub mod trolls;
 pub mod wizards;
 pub mod wolves;
+pub mod wraiths;
 pub mod zombies;

@@ -2187,3 +2187,399 @@ impl Action for HuntersMark {
 }
 
 pub static HUNTERS_MARK: LazyLock<HuntersMark> = LazyLock::new(|| HuntersMark {});
+
+/// Poison Spray — wizard / druid / sorcerer / warlock cantrip. The caster
+/// extends a hand toward an adjacent creature; the target must make a
+/// CON save against the caster's spell save DC or take 1d12 poison. No
+/// damage on a successful save (cantrip saves are binary). Touch range
+/// (1 tile) per 5e RAW.
+pub struct PoisonSpray {}
+
+impl Action for PoisonSpray {
+    fn name(&self) -> &str {
+        "poison spray"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ps", "poison"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Poison]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        let raw = encounter.roll(&Dice::new(1, 12));
+        encounter.log(format!("  poison spray: 1d12({}) = {} poison", raw, raw));
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: raw,
+            damage_type: DamageType::Poison,
+        })]
+    }
+}
+
+pub static POISON_SPRAY: LazyLock<PoisonSpray> = LazyLock::new(|| PoisonSpray {});
+
+/// Inflict Wounds — level-1 necromancy. Melee spell attack; on hit, 3d10
+/// necrotic damage. The dark mirror of Cure Wounds — used by warlocks,
+/// evil clerics, and necromancers. Crit doubles the dice per RAW. Uses
+/// the caster's WIS spell-attack mod by default (cleric flavor); we pick
+/// WIS because Inflict Wounds is the cleric domain spell.
+pub struct InflictWounds {}
+
+impl Action for InflictWounds {
+    fn name(&self) -> &str {
+        "inflict wounds"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["iw", "inflict"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Necrotic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Wisdom);
+        spell_attack(
+            encounter,
+            caster_id,
+            target_id,
+            "inflict wounds",
+            attack_bonus,
+            Dice::new(3, 10),
+            DamageType::Necrotic,
+            true,
+        )
+    }
+}
+
+pub static INFLICT_WOUNDS: LazyLock<InflictWounds> = LazyLock::new(|| InflictWounds {});
+
+/// Ray of Sickness — level-1 necromancy. Ranged spell attack vs target's
+/// AC; on hit, 2d8 poison. Then the target rolls a CON save vs the
+/// caster's spell save DC; on fail, gains the Poisoned condition until
+/// the end of the caster's next turn (we use a 1-round timer for
+/// approximation). No effect on a passed save (other than the damage).
+pub struct RayOfSickness {}
+
+impl Action for RayOfSickness {
+    fn name(&self) -> &str {
+        "ray of sickness"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ros", "sickness"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Poison]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let mut effects = spell_attack(
+            encounter,
+            caster_id,
+            target_id,
+            "ray of sickness",
+            attack_bonus,
+            Dice::new(2, 8),
+            DamageType::Poison,
+            false,
+        );
+        // Only run the rider save when the ray landed — `spell_attack`
+        // returns an empty Vec on a miss, so checking emptiness keeps the
+        // RAW gate ("on a hit, also...") honest.
+        if effects.is_empty() {
+            return effects;
+        }
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
+        if !save.passed() {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Poisoned,
+                timer: ConditionTimer::Rounds(1),
+            }));
+        }
+        effects
+    }
+}
+
+pub static RAY_OF_SICKNESS: LazyLock<RayOfSickness> = LazyLock::new(|| RayOfSickness {});
+
+/// Lesser Restoration — level-2 abjuration. Touch range; remove one of
+/// Poisoned / Blinded / Deafened / Paralyzed from an ally. We don't
+/// expose the choice to the caller — the engine pops the first present
+/// condition in that priority order (poison-first matches the spell's
+/// most common 5e use case).
+pub struct LesserRestoration {}
+
+impl Action for LesserRestoration {
+    fn name(&self) -> &str {
+        "lesser restoration"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["lr", "restore"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(2)]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // RAW: the spell ends "one disease or condition" — there has to
+        // be something to end. Without this gate, the AI's heal-search
+        // would happily fire Lesser Restoration on a clean ally and
+        // burn a level-2 slot for nothing.
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return false;
+        };
+        Self::CANDIDATES.iter().any(|c| target.has_condition(*c))
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![Box::new(crate::engine::side_effects::RemoveOneOfConditions {
+            actor_id: target_id,
+            candidates: Self::CANDIDATES.to_vec(),
+        })]
+    }
+}
+
+impl LesserRestoration {
+    /// Conditions Lesser Restoration is allowed to lift, in priority
+    /// order (the cleanse pops the first match).
+    const CANDIDATES: [Condition; 4] = [
+        Condition::Poisoned,
+        Condition::Blinded,
+        Condition::Deafened,
+        Condition::Paralyzed,
+    ];
+}
+
+pub static LESSER_RESTORATION: LazyLock<LesserRestoration> =
+    LazyLock::new(|| LesserRestoration {});
+
+/// Thorn Whip — druid cantrip. Ranged spell attack at 30 ft (12 tiles);
+/// on hit, 1d6 piercing and the target is pulled up to 10 ft (2 tiles)
+/// toward the caster (RAW: Large or smaller; we apply the cap as a size
+/// gate). Crit doubles the dice; the pull is unaffected by crit.
+pub struct ThornWhip {}
+
+impl Action for ThornWhip {
+    fn name(&self) -> &str {
+        "thorn whip"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["tw-spell", "thorn"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::PullActor;
+        use crate::engine::types::Size;
+
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let caster_loc = caster.location();
+        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Wisdom);
+        let mut effects = spell_attack(
+            encounter,
+            caster_id,
+            target_id,
+            "thorn whip",
+            attack_bonus,
+            Dice::new(1, 6),
+            DamageType::Piercing,
+            false,
+        );
+        // Pull only fires on a hit; on a miss `spell_attack` returns
+        // an empty effect list so we'd skip silently anyway.
+        if effects.is_empty() {
+            return effects;
+        }
+        // 5e: Large or smaller — Huge / Gargantuan targets ignore the pull.
+        let too_big = encounter
+            .actors
+            .get(&target_id)
+            .map(|t| matches!(t.size(), Size::Huge | Size::Gargantuan))
+            .unwrap_or(true);
+        if !too_big {
+            effects.push(Box::new(PullActor {
+                actor_id: target_id,
+                toward: caster_loc,
+                max_tiles: 2,
+            }));
+        }
+        effects
+    }
+}
+
+pub static THORN_WHIP: LazyLock<ThornWhip> = LazyLock::new(|| ThornWhip {});

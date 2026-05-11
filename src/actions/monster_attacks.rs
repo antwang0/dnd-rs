@@ -1137,6 +1137,131 @@ impl Action for FrightfulPresence {
 pub static FRIGHTFUL_PRESENCE: LazyLock<FrightfulPresence> =
     LazyLock::new(|| FrightfulPresence {});
 
+/// Wraith Life Drain — melee attack. d20 + STR-prof vs AC; on hit 4d8+3
+/// necrotic damage AND the target must make a CON save vs DC 14 or have
+/// its max HP reduced by the damage dealt (lasts until long rest in 5e;
+/// we just leave the reduction in place — long rest restores baseline
+/// `bump_max_hp` does not — so the penalty is durable). Drained max HP
+/// floors at 1.
+pub struct LifeDrain {}
+
+impl Action for LifeDrain {
+    fn name(&self) -> &str {
+        "life drain"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["drain", "ld"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Necrotic]
+    }
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::AdjustMaxHp;
+
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // Resolve the attack inline (rather than via `resolve_attack`)
+        // because we need the rolled damage to mirror into the max-HP
+        // reduction on a failed CON save. Keeps the log shape identical
+        // to the shared resolver.
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength))
+            + caster.proficiency_bonus();
+        let target_ac = encounter
+            .actors
+            .get(&target_id)
+            .map(|a| a.armor_class() as i32)
+            .unwrap_or(10);
+        let mode = encounter.compute_attack_mode(caster_id, target_id, true);
+        let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
+        let is_crit = raw_attack == 20;
+        let buff = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.attack_bonus_buff())
+            .unwrap_or(0);
+        let (bless_die, bless_note) = encounter.bless_bane_attack_die(caster_id);
+        let attack_total = raw_attack + attack_mod + buff + bless_die;
+        let hit = is_crit || attack_total >= target_ac;
+        let outcome = if is_crit {
+            "CRIT!"
+        } else if hit {
+            "hit"
+        } else {
+            "miss"
+        };
+        encounter.log(format!(
+            "  life drain: 1d20({}){:+}{} = {} vs AC {}{} \u{2014} {}",
+            raw_attack,
+            attack_mod + buff,
+            bless_note,
+            attack_total,
+            target_ac,
+            mode.log_suffix(),
+            outcome,
+        ));
+        if !hit {
+            return Vec::new();
+        }
+        let dice = Dice::new(4, 8);
+        let raw_dmg = encounter.roll(&dice) as i32;
+        let crit_extra = if is_crit { encounter.roll(&dice) as i32 } else { 0 };
+        let damage = (raw_dmg + crit_extra + 3).max(0) as u32;
+        encounter.log(format!(
+            "  life drain: {}({}){:+} = {} necrotic damage{}",
+            dice,
+            raw_dmg,
+            3,
+            damage,
+            if is_crit { " (crit)" } else { "" }
+        ));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: damage,
+            damage_type: DamageType::Necrotic,
+        })];
+        // CON save vs DC 14 to avoid max-HP reduction. RAW: the reduction
+        // equals the necrotic damage dealt; we use the pre-mitigation
+        // amount so resistance to necrotic doesn't double-protect.
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 14);
+        if !save.passed() {
+            effects.push(Box::new(AdjustMaxHp {
+                actor_id: target_id,
+                delta: -(damage as i32),
+            }));
+        }
+        effects
+    }
+}
+
+pub static LIFE_DRAIN: LazyLock<LifeDrain> = LazyLock::new(|| LifeDrain {});
+
 /// Re-export the spell-table FIRE_BOLT here so monster files that import
 /// `crate::actions::monster_attacks::FIRE_BOLT` keep working — the
 /// canonical definition lives with the other spells, this just gives

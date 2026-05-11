@@ -1,7 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
     ACID_SPLASH, BLINDNESS, BURNING_HANDS, CAUSE_FEAR, CHILL_TOUCH, FIRE_BOLT, MAGE_ARMOR,
-    MAGIC_MISSILE, MISTY_STEP, RAY_OF_FROST, SHIELD, THUNDERWAVE, WEB,
+    MAGIC_MISSILE, MISTY_STEP, POISON_SPRAY, RAY_OF_FROST, RAY_OF_SICKNESS, SHIELD, THUNDERWAVE,
+    WEB,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size, SpecialSense};
@@ -28,6 +29,8 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*ACID_SPLASH);
     actions.push(&*CHILL_TOUCH);
     actions.push(&*MAGE_ARMOR);
+    actions.push(&*POISON_SPRAY);
+    actions.push(&*RAY_OF_SICKNESS);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

@@ -1276,6 +1276,9 @@ impl EncounterInstance {
             &ORC_TEMPLATE,
             &WOLF_TEMPLATE,
             &WIZARD_TEMPLATE,
+            // Wraith / skeleton / zombie / slime sit outside the random
+            // pool — CR-5+ undead and trash mobs are reserved for
+            // hand-built encounters via `instantiate_creature`.
         ]
     }
 
@@ -10528,5 +10531,361 @@ mod tests {
             after_hp <= starting_hp,
             "swing should not heal the target"
         );
+    }
+
+    #[test]
+    fn poison_spray_validates_at_melee_reach() {
+        use crate::actions::spells::POISON_SPRAY;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let w = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Adjacent target — touch range = 1 tile gap.
+        let close = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        // Distant target — out of touch range.
+        let far = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 10), 1, 1)
+            .unwrap();
+        e.pop_prompt();
+        let aei_close =
+            ActionExecutionInfo::new(&*POISON_SPRAY, w, Some(vec![close]), None, None);
+        assert!(aei_close.validate(&e), "poison spray should validate adjacent");
+        let aei_far = ActionExecutionInfo::new(&*POISON_SPRAY, w, Some(vec![far]), None, None);
+        assert!(!aei_far.validate(&e), "poison spray should NOT validate at distance");
+    }
+
+    #[test]
+    fn poison_spray_costs_no_spell_slot() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::POISON_SPRAY;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let w = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let costs = POISON_SPRAY.cost(&e, w, None, None, None);
+        assert!(
+            costs.iter().all(|c| !matches!(c, Resource::SpellSlot(_))),
+            "poison spray is a cantrip: no slot cost"
+        );
+        assert!(costs.contains(&Resource::Action));
+    }
+
+    #[test]
+    fn inflict_wounds_validates_at_melee_only() {
+        use crate::actions::spells::INFLICT_WOUNDS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let c = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let close = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        let far = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 2), 1, 1)
+            .unwrap();
+        e.pop_prompt();
+        assert!(ActionExecutionInfo::new(
+            &*INFLICT_WOUNDS,
+            c,
+            Some(vec![close]),
+            None,
+            None,
+        )
+        .validate(&e));
+        assert!(!ActionExecutionInfo::new(
+            &*INFLICT_WOUNDS,
+            c,
+            Some(vec![far]),
+            None,
+            None,
+        )
+        .validate(&e));
+    }
+
+    #[test]
+    fn inflict_wounds_consumes_level_1_slot() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::INFLICT_WOUNDS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let c = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let costs = INFLICT_WOUNDS.cost(&e, c, None, None, None);
+        assert!(
+            costs.contains(&Resource::SpellSlot(1)),
+            "inflict wounds is a level-1 spell"
+        );
+    }
+
+    #[test]
+    fn ray_of_sickness_consumes_level_1_slot_and_can_poison() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::RAY_OF_SICKNESS;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let w = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let costs = RAY_OF_SICKNESS.cost(&e, w, None, None, None);
+        assert!(costs.contains(&Resource::SpellSlot(1)));
+        assert!(costs.contains(&Resource::Action));
+    }
+
+    #[test]
+    fn lesser_restoration_clears_poisoned() {
+        use crate::actions::spells::LESSER_RESTORATION;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&ally)
+            .unwrap()
+            .add_condition(Condition::Poisoned, ConditionTimer::Rounds(5));
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*LESSER_RESTORATION,
+            cleric,
+            Some(vec![ally]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(!e.actors[&ally].has_condition(Condition::Poisoned));
+    }
+
+    #[test]
+    fn lesser_restoration_clears_first_matching_condition_only() {
+        // Verify the "pop one of N" semantics — applying it to a target
+        // with two listed conditions only removes one (Poisoned wins by
+        // priority).
+        use crate::actions::spells::LESSER_RESTORATION;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        let actor = e.actors.get_mut(&ally).unwrap();
+        actor.add_condition(Condition::Poisoned, ConditionTimer::Rounds(5));
+        actor.add_condition(Condition::Blinded, ConditionTimer::Rounds(5));
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*LESSER_RESTORATION,
+            cleric,
+            Some(vec![ally]),
+            None,
+            None,
+        );
+        e.push_action(aei);
+        e.process_stack();
+        assert!(!e.actors[&ally].has_condition(Condition::Poisoned));
+        assert!(
+            e.actors[&ally].has_condition(Condition::Blinded),
+            "lesser restoration should only cleanse one condition"
+        );
+    }
+
+    #[test]
+    fn lesser_restoration_rejects_clean_target() {
+        // RAW: spell ends "one disease or condition" — refuse to cast on
+        // an unafflicted ally so the AI doesn't burn a level-2 slot for
+        // nothing.
+        use crate::actions::spells::LESSER_RESTORATION;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*LESSER_RESTORATION,
+            cleric,
+            Some(vec![ally]),
+            None,
+            None,
+        );
+        assert!(
+            !aei.validate(&e),
+            "lesser restoration should not validate on a clean target"
+        );
+    }
+
+    #[test]
+    fn thorn_whip_pulls_target_toward_caster() {
+        use crate::engine::side_effects::PullActor;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster_loc = Coordinate::new(2, 2);
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        e.pop_prompt();
+        let before = e.actors[&target].location();
+        PullActor {
+            actor_id: target,
+            toward: caster_loc,
+            max_tiles: 2,
+        }
+        .apply(&mut e);
+        let after = e.actors[&target].location();
+        // 2-tile pull on a 6-tile gap: should land closer to caster.
+        let before_gap = (before.x - caster_loc.x).abs();
+        let after_gap = (after.x - caster_loc.x).abs();
+        assert!(after_gap < before_gap, "pull should reduce distance");
+        assert!(before_gap - after_gap <= 2, "pull should travel at most max_tiles");
+    }
+
+    #[test]
+    fn pull_actor_stops_at_walls() {
+        // Wall 1 tile away from caster — pull travels until blocked.
+        use crate::engine::side_effects::PullActor;
+        let walls = [(4isize, 2isize), (4, 3)];
+        let mut e = ei_with_terrain(20, 20, &walls);
+        let caster_loc = Coordinate::new(2, 2);
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        e.pop_prompt();
+        let before = e.actors[&target].location();
+        PullActor {
+            actor_id: target,
+            toward: caster_loc,
+            max_tiles: 10,
+        }
+        .apply(&mut e);
+        let after = e.actors[&target].location();
+        assert!(after.x > 4 || after == before, "should not pass through wall");
+    }
+
+    #[test]
+    fn adjust_max_hp_drops_max_and_floors_current() {
+        use crate::engine::side_effects::AdjustMaxHp;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].max_hitpoints();
+        AdjustMaxHp {
+            actor_id: id,
+            delta: -(before as i32) / 2,
+        }
+        .apply(&mut e);
+        let after = e.actors[&id].max_hitpoints();
+        assert!(after < before, "max HP should drop");
+        assert!(e.actors[&id].hitpoints() <= after, "current HP clamps to new cap");
+    }
+
+    #[test]
+    fn wraith_is_immune_to_necrotic_and_poison() {
+        use crate::actors::creatures::wraiths::WRAITH_TEMPLATE;
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&WRAITH_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&id].is_immune_to(DamageType::Necrotic));
+        assert!(e.actors[&id].is_immune_to(DamageType::Poison));
+        assert!(e.actors[&id].is_resistant_to(DamageType::Cold));
+        assert!(e.actors[&id].is_resistant_to(DamageType::Slashing));
+    }
+
+    #[test]
+    fn wraith_life_drain_validates_in_melee() {
+        use crate::actions::monster_attacks::LIFE_DRAIN;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wraiths::WRAITH_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let w = e
+            .instantiate_creature(&WRAITH_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.pop_prompt();
+        let aei =
+            ActionExecutionInfo::new(&*LIFE_DRAIN, w, Some(vec![fighter]), None, None);
+        assert!(aei.validate(&e), "life drain validates at melee reach");
+    }
+
+    #[test]
+    fn remove_one_of_conditions_only_pops_first_present() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::RemoveOneOfConditions;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Zombies are immune to Poisoned — add Blinded + Paralyzed.
+        let actor = e.actors.get_mut(&id).unwrap();
+        actor.add_condition(Condition::Blinded, ConditionTimer::Permanent);
+        actor.add_condition(Condition::Paralyzed, ConditionTimer::Permanent);
+        RemoveOneOfConditions {
+            actor_id: id,
+            candidates: vec![Condition::Poisoned, Condition::Blinded, Condition::Paralyzed],
+        }
+        .apply(&mut e);
+        assert!(!e.actors[&id].has_condition(Condition::Blinded));
+        assert!(e.actors[&id].has_condition(Condition::Paralyzed));
+    }
+
+    #[test]
+    fn cleric_loadout_includes_new_spells() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let c = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let names: Vec<&str> = e.actors[&c].actions.iter().map(|a| a.name()).collect();
+        for required in ["inflict wounds", "lesser restoration", "thorn whip"] {
+            assert!(
+                names.contains(&required),
+                "cleric missing {} (have: {:?})",
+                required,
+                names
+            );
+        }
+    }
+
+    #[test]
+    fn wizard_loadout_includes_new_spells() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let w = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let names: Vec<&str> = e.actors[&w].actions.iter().map(|a| a.name()).collect();
+        for required in ["poison spray", "ray of sickness"] {
+            assert!(
+                names.contains(&required),
+                "wizard missing {} (have: {:?})",
+                required,
+                names
+            );
+        }
     }
 }

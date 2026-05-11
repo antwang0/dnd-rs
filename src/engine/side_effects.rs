@@ -459,3 +459,121 @@ impl ApplicableSideEffect for AdjustSaveBuff {
         }
     }
 }
+
+/// Forced movement toward a fixed point, up to `max_tiles` steps, without
+/// firing opportunity attacks (5e treats forced movement as not a willing
+/// move). The actor stops as soon as it can't legally advance further —
+/// blocked by a wall, another actor's footprint, or hitting the target.
+/// Used by Thorn Whip's pull, future Repelling Blast push, etc.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct PullActor {
+    pub actor_id: usize,
+    pub toward: Coordinate,
+    pub max_tiles: u32,
+}
+
+impl ApplicableSideEffect for PullActor {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        let Some(actor) = ei.actors.get(&self.actor_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        let my_size = get_tiles_from_size(actor.size());
+        let mut from = actor.location();
+        // 1×1 anchor target for the gap math — that's how 5e treats the
+        // tile we're being pulled toward.
+        let mut remaining = self.max_tiles;
+        let mut last_good = from;
+        while remaining > 0 {
+            let gap = footprint_chebyshev(from, my_size, self.toward, 1);
+            if gap == 0 {
+                break;
+            }
+            let step_x = (self.toward.x - from.x).signum();
+            let step_y = (self.toward.y - from.y).signum();
+            let next = Coordinate::new(from.x + step_x, from.y + step_y);
+            if next == from {
+                break;
+            }
+            if !ei.can_move_to(self.actor_id, next) {
+                break;
+            }
+            from = next;
+            last_good = next;
+            remaining -= 1;
+        }
+        if last_good == actor.location() {
+            return;
+        }
+        let dest = last_good;
+        if let Err(e) = ei.place_actor_at(self.actor_id, dest) {
+            ei.log(format!("PullActor failed: {}", e));
+            return;
+        }
+        ei.log(format!("{} is pulled to {}.", name, dest));
+        ei.pickup_items_at(self.actor_id, dest);
+    }
+}
+
+/// Remove the *first* of the listed conditions that the actor has. Used by
+/// targeted-cleanse spells (Lesser Restoration: caster picks which
+/// condition to lift, but we just pop the first applicable). Logs only on
+/// a successful clear.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoveOneOfConditions {
+    pub actor_id: usize,
+    pub candidates: Vec<Condition>,
+}
+
+impl ApplicableSideEffect for RemoveOneOfConditions {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        for c in &self.candidates {
+            if actor.remove_condition(*c) {
+                ei.log(format!("{} is no longer {}.", name, c.name()));
+                return;
+            }
+        }
+    }
+}
+
+/// Permanently shift an actor's max HP by `delta`. Negative deltas model
+/// Wraith Life Drain and exhaustion effects; positive deltas model Aid's
+/// hp boost. Current HP rises with the cap on a positive delta (so the
+/// buff is immediately useful) and is clamped down on a negative one.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct AdjustMaxHp {
+    pub actor_id: usize,
+    pub delta: i32,
+}
+
+impl ApplicableSideEffect for AdjustMaxHp {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        let before = actor.max_hitpoints();
+        actor.bump_max_hp(self.delta);
+        let after = actor.max_hitpoints();
+        if after == before {
+            return;
+        }
+        if self.delta < 0 {
+            ei.log(format!(
+                "{}'s max HP drops {} \u{2192} {}.",
+                name, before, after
+            ));
+        } else {
+            ei.log(format!(
+                "{}'s max HP rises {} \u{2192} {}.",
+                name, before, after
+            ));
+        }
+    }
+}
