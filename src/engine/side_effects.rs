@@ -205,6 +205,12 @@ impl ApplicableSideEffect for DealDamage {
         if landed > 0 {
             actor.note_regen_damage(self.damage_type);
         }
+        // 5e Sleep: any damage wakes the target. Strip the Asleep
+        // condition silently — the engine logs the damage line right
+        // below, so we don't need a separate wake-up log.
+        if landed > 0 {
+            actor.remove_condition(crate::conditions::Condition::Asleep);
+        }
         let temp_absorbed = temp_before.saturating_sub(actor.temp_hp());
         if temp_absorbed > 0 {
             ei.log(format!(
@@ -564,6 +570,55 @@ impl ApplicableSideEffect for StabilizeActor {
         let name = actor.name().to_string();
         if actor.stabilize() {
             ei.log(format!("{} is stabilized.", name));
+        }
+    }
+}
+
+/// Record which actor Charmed the target. Paired with ApplyCondition
+/// (Charmed): the condition flag is read by `compute_attack_mode` for
+/// future debuffs, and the `charmed_by` link is read by
+/// `Action::validate_input` to block hostile actions against the
+/// charmer. Pass `charmer = None` to clear (e.g. on save success); the
+/// engine also clears it automatically when the Charmed condition is
+/// removed via `remove_condition`.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct SetCharmedBy {
+    pub target_id: usize,
+    pub charmer: Option<usize>,
+}
+
+impl ApplicableSideEffect for SetCharmedBy {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        if let Some(actor) = ei.get_actor(self.target_id) {
+            actor.set_charmed_by(self.charmer);
+        }
+    }
+}
+
+/// Grant `count` Mirror Image decoys to the target. Re-application
+/// overwrites the existing pool (5e: recasting refreshes the duplicates).
+/// Pair with ApplyCondition (MirroredImages) so the engine knows the
+/// holder has the buff active; removing the condition zeros the pool.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct SetMirrorImages {
+    pub actor_id: usize,
+    pub count: u32,
+}
+
+impl ApplicableSideEffect for SetMirrorImages {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        actor.set_mirror_images(self.count);
+        if self.count > 0 {
+            ei.log(format!(
+                "{} is surrounded by {} duplicate{}.",
+                name,
+                self.count,
+                if self.count == 1 { "" } else { "s" }
+            ));
         }
     }
 }

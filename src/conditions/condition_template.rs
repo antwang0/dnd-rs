@@ -121,6 +121,26 @@ pub enum Condition {
     /// metal armor — we model the simpler "no reaction" clause). Clears
     /// at start of own next turn.
     NoReaction,
+    /// Asleep (5e Sleep spell). Same mechanical effect as Unconscious
+    /// (prone, can't act, attacks against have advantage with auto-crit on
+    /// melee hit), but distinguished from natural unconsciousness so it
+    /// can be removed by taking damage or being shaken awake (any non-zero
+    /// damage we receive while Asleep wakes us; modeled by stripping the
+    /// condition on the damage-application path).
+    Asleep,
+    /// Surrounded by shimmering duplicates (5e Mirror Image). The holder
+    /// has a small pool of decoys (we track count via `mirror_images()`
+    /// on the actor); each incoming attack against them has a chance to
+    /// hit a duplicate instead, popping one. Drops to 0 ends the spell.
+    /// Doesn't require concentration.
+    MirroredImages,
+    /// Protected by Protection from Evil and Good. Aberrations, celestials,
+    /// elementals, fey, fiends, and undead have disadvantage on attacks
+    /// against this target. We approximate by giving disadvantage to *any*
+    /// attacker that is undead-flavored (i.e. has the Poisoned condition
+    /// immunity that mortal humanoids lack) — close enough for our pool of
+    /// fiends / undead / etc.
+    Warded,
 }
 
 impl Condition {
@@ -156,6 +176,9 @@ impl Condition {
             Condition::Mocked => "mocked",
             Condition::Heroic => "heroic",
             Condition::NoReaction => "shocked",
+            Condition::Asleep => "asleep",
+            Condition::MirroredImages => "mirror imaged",
+            Condition::Warded => "warded",
         }
     }
 
@@ -169,6 +192,7 @@ impl Condition {
                 | Condition::Incapacitated
                 | Condition::Paralyzed
                 | Condition::Unconscious
+                | Condition::Asleep
         )
     }
 
@@ -185,6 +209,7 @@ impl Condition {
                 | Condition::Grappled
                 | Condition::Paralyzed
                 | Condition::Unconscious
+                | Condition::Asleep
         )
     }
 }

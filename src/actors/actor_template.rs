@@ -273,6 +273,17 @@ pub struct ActorInstance {
     regen_per_round: u32,
     regen_suppressors: HashSet<DamageType>,
     regen_suppressed: bool,
+    /// Remaining 5e Mirror Image decoys. Each incoming attack rolls
+    /// against the decoy pool first; a hit pops one decoy and misses the
+    /// caster. Cleared when concentration drops or the pool hits zero
+    /// (which also strips the MirroredImages condition).
+    mirror_images: u32,
+    /// Identity of the actor that has Charmed this actor (if any). 5e
+    /// Charmed: the target cannot make attacks against the charmer. We
+    /// store the id rather than just the condition flag so the
+    /// validation site knows who to block. Cleared when the Charmed
+    /// condition is removed.
+    charmed_by: Option<usize>,
 }
 
 impl ActorInstance {
@@ -343,7 +354,47 @@ impl ActorInstance {
             regen_per_round: ct.regen_per_round,
             regen_suppressors: ct.regen_suppressors.clone(),
             regen_suppressed: false,
+            mirror_images: 0,
+            charmed_by: None,
         })
+    }
+
+    /// Remaining Mirror Image decoys (5e spell). Zero = no decoys; the
+    /// MirroredImages condition should be off in that state.
+    pub fn mirror_images(&self) -> u32 {
+        self.mirror_images
+    }
+
+    /// Grant `n` Mirror Image decoys. Overwrites any prior pool (5e: re-
+    /// casting the spell creates a fresh set). Caller is responsible for
+    /// applying the MirroredImages condition.
+    pub fn set_mirror_images(&mut self, n: u32) {
+        self.mirror_images = n;
+    }
+
+    /// Pop one Mirror Image decoy. Returns true if a decoy was consumed
+    /// (caller treats the attack as a miss). When the pool hits zero the
+    /// MirroredImages condition is cleared so the holder loses the
+    /// disadvantage-on-attacks rider.
+    pub fn pop_mirror_image(&mut self) -> bool {
+        if self.mirror_images == 0 {
+            return false;
+        }
+        self.mirror_images -= 1;
+        if self.mirror_images == 0 {
+            self.conditions.remove(&Condition::MirroredImages);
+        }
+        true
+    }
+
+    /// Who has this actor Charmed (if anyone). Used to gate attack-roll
+    /// validation: a Charmed actor can't attack their charmer.
+    pub fn charmed_by(&self) -> Option<usize> {
+        self.charmed_by
+    }
+
+    pub fn set_charmed_by(&mut self, id: Option<usize>) {
+        self.charmed_by = id;
     }
 
     /// HP regenerated each round-end while combat-active. 0 disables the
@@ -633,7 +684,17 @@ impl ActorInstance {
     }
 
     pub fn remove_condition(&mut self, c: Condition) -> bool {
-        self.conditions.remove(&c).is_some()
+        let removed = self.conditions.remove(&c).is_some();
+        if removed {
+            // Keep tightly-linked auxiliary state in sync with the
+            // primary condition flag.
+            match c {
+                Condition::Charmed => self.charmed_by = None,
+                Condition::MirroredImages => self.mirror_images = 0,
+                _ => {}
+            }
+        }
+        removed
     }
 
     pub fn conditions(&self) -> &HashMap<Condition, ConditionTimer> {
@@ -653,7 +714,9 @@ impl ActorInstance {
             match timer {
                 ConditionTimer::Permanent | ConditionTimer::UntilStartOfNextTurn => {}
                 ConditionTimer::Rounds(0) | ConditionTimer::Rounds(1) => {
-                    self.conditions.remove(&c);
+                    // Route through remove_condition so auxiliary state
+                    // (charmed_by, mirror_images) clears too.
+                    self.remove_condition(c);
                     expired.push(c);
                 }
                 ConditionTimer::Rounds(n) => {
@@ -676,7 +739,7 @@ impl ActorInstance {
             })
             .collect();
         for c in to_remove {
-            self.conditions.remove(&c);
+            self.remove_condition(c);
             expired.push(c);
         }
         expired

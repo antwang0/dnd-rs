@@ -231,6 +231,19 @@ pub trait Action {
             if self.requires_los() && !encounter.actor_has_line_of_sight(caster_id, target_id) {
                 return false;
             }
+            // 5e Charmed: the target of a Charm spell cannot make any
+            // hostile action against their charmer. Block harmful actions
+            // whose declared target is the charmer. We require both the
+            // Charmed condition AND the `charmed_by` link so an actor
+            // who is charm-immune (and thus never received the condition)
+            // is unaffected even if a SetCharmedBy ran in isolation.
+            if self.is_harmful()
+                && let Some(caster) = encounter.actors.get(&caster_id)
+                && caster.has_condition(crate::conditions::Condition::Charmed)
+                && caster.charmed_by() == Some(target_id)
+            {
+                return false;
+            }
         } else if let Some(locs) = target_locations
             && let Some(&point) = locs.first()
         {

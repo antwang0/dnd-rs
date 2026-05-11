@@ -3,10 +3,13 @@ use crate::actors::creatures::bugbears::BUGBEAR_TEMPLATE;
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
 use crate::actors::creatures::dire_wolves::DIRE_WOLF_TEMPLATE;
 use crate::actors::creatures::ghouls::GHOUL_TEMPLATE;
+use crate::actors::creatures::gnolls::GNOLL_TEMPLATE;
 use crate::actors::creatures::goblin_bosses::GOBLIN_BOSS_TEMPLATE;
 use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+use crate::actors::creatures::hobgoblins::HOBGOBLIN_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::orcs::ORC_TEMPLATE;
+use crate::actors::creatures::specters::SPECTER_TEMPLATE;
 use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
 use crate::actors::creatures::wolves::WOLF_TEMPLATE;
 use std::collections::HashMap;
@@ -22,7 +25,7 @@ use crate::engine::side_effects::ApplicableSideEffect;
 use crate::engine::terrain::{TerrainInfo, TerrainType};
 use crate::engine::terrain_gen::{TerrainGenParams, generate_terrain};
 use crate::engine::triggers::TriggerEvent;
-use crate::engine::types::{Coordinate, Size};
+use crate::engine::types::{Coordinate, DamageType, Size};
 use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 use fastrand::Rng;
 use std::cmp::Ordering;
@@ -457,6 +460,18 @@ impl EncounterInstance {
             if target.has_condition(Condition::Dodging) {
                 mode = mode.combine(RollMode::Disadvantage);
             }
+            // 5e Protection from Evil and Good: aberrations / celestials /
+            // elementals / fey / fiends / undead have disadvantage on
+            // attacks vs the Warded target. We approximate the creature-
+            // type gate by checking the attacker's necrotic/poison
+            // immunity (a reliable proxy for undead / fiend in our pool).
+            if target.has_condition(Condition::Warded)
+                && let Some(attacker) = self.actors.get(&attacker_id)
+                && (attacker.is_immune_to(DamageType::Necrotic)
+                    || attacker.is_immune_to(DamageType::Poison))
+            {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
         }
         mode
     }
@@ -561,7 +576,17 @@ impl EncounterInstance {
         };
         let item_bonus = actor.item_save_bonus();
         let buff = actor.save_bonus_buff();
-        let modifier = modifier_from_score(actor.ability_score(ability)) + item_bonus + buff;
+        // 5e: actors proficient in this save add their proficiency bonus.
+        // Previously this lane was dead code — the per-template
+        // `proficient_saves` set existed but was never read at roll time,
+        // so wizards proficient in INT/WIS saves got no edge.
+        let prof_bonus = if actor.is_save_proficient(ability) {
+            actor.proficiency_bonus()
+        } else {
+            0
+        };
+        let modifier =
+            modifier_from_score(actor.ability_score(ability)) + item_bonus + buff + prof_bonus;
         let total = raw as i32 + modifier + extra;
         let outcome = if total >= dc {
             SaveOutcome::Pass
@@ -1281,10 +1306,13 @@ impl EncounterInstance {
             &CLERIC_TEMPLATE,
             &DIRE_WOLF_TEMPLATE,
             &GHOUL_TEMPLATE,
+            &GNOLL_TEMPLATE,
             &GOBLIN_TEMPLATE,
             &GOBLIN_BOSS_TEMPLATE,
+            &HOBGOBLIN_TEMPLATE,
             &OGRE_TEMPLATE,
             &ORC_TEMPLATE,
+            &SPECTER_TEMPLATE,
             &WOLF_TEMPLATE,
             &WIZARD_TEMPLATE,
             // Wraith / skeleton / zombie / slime sit outside the random
@@ -10925,7 +10953,14 @@ mod tests {
             .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
         let names: Vec<&str> = e.actors[&w].actions.iter().map(|a| a.name()).collect();
-        for required in ["poison spray", "ray of sickness"] {
+        for required in [
+            "poison spray",
+            "ray of sickness",
+            "shatter",
+            "sleep",
+            "charm person",
+            "mirror image",
+        ] {
             assert!(
                 names.contains(&required),
                 "wizard missing {} (have: {:?})",
@@ -10933,6 +10968,21 @@ mod tests {
                 names
             );
         }
+    }
+
+    #[test]
+    fn cleric_loadout_includes_protection_from_evil_and_good() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let c = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let names: Vec<&str> = e.actors[&c].actions.iter().map(|a| a.name()).collect();
+        assert!(
+            names.contains(&"protection from evil and good"),
+            "cleric missing protection from evil and good (have: {:?})",
+            names
+        );
     }
 
     #[test]
@@ -11076,5 +11126,378 @@ mod tests {
         assert_eq!(after, mid, "troll should not regen the round after fire");
         // Suppression cleared after round_end.
         assert!(!e.actors[&troll].regen_suppressed());
+    }
+
+    #[test]
+    fn shatter_damages_actors_in_burst_around_point() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::SHATTER;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        let max_hp = e.actors[&target].max_hitpoints();
+        let locs = vec![Coordinate::new(8, 8)];
+        let effects = SHATTER.side_effects(&mut e, wizard, None, Some(&locs), None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        // 3d8 (3..=24); even at low rolls landed damage will reduce HP
+        // unless the zombie was killed outright (we accept either, just
+        // not "still at max").
+        assert!(
+            e.actors.get(&target).map(|a| a.hitpoints()).unwrap_or(0) < max_hp,
+            "shatter should reduce HP on a target in the burst"
+        );
+    }
+
+    #[test]
+    fn sleep_knocks_out_low_hp_targets() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::SLEEP;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Use a bandit (no Charmed/Asleep immunity) and crank its HP
+        // down so the 5d8 pool will always cover it.
+        use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
+        let target = e
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+            .unwrap();
+        let drain = e.actors[&target].max_hitpoints().saturating_sub(3);
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .take_typed_damage(drain, DamageType::Slashing);
+        let locs = vec![Coordinate::new(4, 4)];
+        let effects = SLEEP.side_effects(&mut e, wizard, None, Some(&locs), None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert!(
+            e.actors[&target].has_condition(Condition::Asleep),
+            "low-HP target should be put to sleep"
+        );
+        assert!(
+            e.actors[&target].has_condition(Condition::Prone),
+            "sleeping target should also be prone"
+        );
+    }
+
+    #[test]
+    fn sleep_skips_undead_target() {
+        // Undead are immune to Charmed; Sleep skips them per RAW.
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::SLEEP;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+            .unwrap();
+        let locs = vec![Coordinate::new(4, 4)];
+        let effects = SLEEP.side_effects(&mut e, wizard, None, Some(&locs), None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&zombie].has_condition(Condition::Asleep),
+            "undead should be unaffected by Sleep"
+        );
+    }
+
+    #[test]
+    fn sleep_target_wakes_on_damage() {
+        // Sleep is removed by any incoming damage.
+        use crate::conditions::ConditionTimer;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        // Bypass the Sleep-doesn't-affect-undead gate for this engine test
+        // by directly installing the condition.
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Asleep, ConditionTimer::Rounds(10));
+        assert!(e.actors[&target].has_condition(Condition::Asleep));
+        DealDamage {
+            actor_id: target,
+            amount: 1,
+            damage_type: DamageType::Slashing,
+        }
+        .apply(&mut e);
+        assert!(
+            !e.actors[&target].has_condition(Condition::Asleep),
+            "damage should wake the target"
+        );
+    }
+
+    #[test]
+    fn charmed_target_cannot_attack_charmer() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::SCIMITAR;
+        use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
+        use crate::engine::side_effects::ApplicableSideEffect;
+        use crate::engine::side_effects::SetCharmedBy;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let charmer = e
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let charmed = e
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        SetCharmedBy {
+            target_id: charmed,
+            charmer: Some(charmer),
+        }
+        .apply(&mut e);
+        e.actors
+            .get_mut(&charmed)
+            .unwrap()
+            .add_condition(Condition::Charmed, crate::conditions::ConditionTimer::Rounds(10));
+        let target_vec = vec![charmer];
+        assert!(
+            !SCIMITAR.validate_input(&e, charmed, Some(&target_vec), None, None),
+            "charmed actor should not be able to attack their charmer"
+        );
+    }
+
+    #[test]
+    fn charmed_target_can_still_attack_others() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::SCIMITAR;
+        use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
+        use crate::engine::side_effects::ApplicableSideEffect;
+        use crate::engine::side_effects::SetCharmedBy;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let charmer = e
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let charmed = e
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(3, 3), 1, 0)
+            .unwrap();
+        let bystander = e
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(4, 3), 2, 0)
+            .unwrap();
+        SetCharmedBy {
+            target_id: charmed,
+            charmer: Some(charmer),
+        }
+        .apply(&mut e);
+        e.actors
+            .get_mut(&charmed)
+            .unwrap()
+            .add_condition(Condition::Charmed, crate::conditions::ConditionTimer::Rounds(10));
+        let target_vec = vec![bystander];
+        assert!(
+            SCIMITAR.validate_input(&e, charmed, Some(&target_vec), None, None),
+            "charmed actor should be able to attack non-charmer targets"
+        );
+    }
+
+    #[test]
+    fn removing_charmed_clears_charmed_by() {
+        // The auxiliary `charmed_by` link must clear together with the
+        // condition flag so a re-charm doesn't leave stale state.
+        use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
+        use crate::engine::side_effects::ApplicableSideEffect;
+        use crate::engine::side_effects::SetCharmedBy;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let charmer = e
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(1, 1), 0, 0)
+            .unwrap();
+        let charmed = e
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        SetCharmedBy {
+            target_id: charmed,
+            charmer: Some(charmer),
+        }
+        .apply(&mut e);
+        e.actors
+            .get_mut(&charmed)
+            .unwrap()
+            .add_condition(Condition::Charmed, crate::conditions::ConditionTimer::Permanent);
+        assert_eq!(e.actors[&charmed].charmed_by(), Some(charmer));
+        e.actors.get_mut(&charmed).unwrap().remove_condition(Condition::Charmed);
+        assert_eq!(
+            e.actors[&charmed].charmed_by(),
+            None,
+            "charmed_by should clear with the Charmed condition"
+        );
+    }
+
+    #[test]
+    fn mirror_image_grants_decoy_pool() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::MIRROR_IMAGE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let effects = MIRROR_IMAGE.side_effects(&mut e, wizard, None, None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert_eq!(e.actors[&wizard].mirror_images(), 3);
+        assert!(e.actors[&wizard].has_condition(Condition::MirroredImages));
+    }
+
+    #[test]
+    fn mirror_image_pool_drains_to_zero_clears_condition() {
+        use crate::engine::side_effects::ApplicableSideEffect;
+        use crate::engine::side_effects::SetMirrorImages;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let actor = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        SetMirrorImages {
+            actor_id: actor,
+            count: 2,
+        }
+        .apply(&mut e);
+        e.actors
+            .get_mut(&actor)
+            .unwrap()
+            .add_condition(Condition::MirroredImages, crate::conditions::ConditionTimer::Rounds(10));
+        // Pop both.
+        e.actors.get_mut(&actor).unwrap().pop_mirror_image();
+        e.actors.get_mut(&actor).unwrap().pop_mirror_image();
+        assert_eq!(e.actors[&actor].mirror_images(), 0);
+        assert!(!e.actors[&actor].has_condition(Condition::MirroredImages));
+    }
+
+    #[test]
+    fn eldritch_blast_targets_in_range() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::ELDRITCH_BLAST;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+            .unwrap();
+        let target_vec = vec![target];
+        // Even though the wizard doesn't normally know Eldritch Blast,
+        // we can still validate the targeting/range outside of action
+        // loadout.
+        assert!(
+            ELDRITCH_BLAST.validate_input(&e, wizard, Some(&target_vec), None, None),
+            "eldritch blast should validate in range"
+        );
+    }
+
+    #[test]
+    fn warded_target_gets_disadvantage_against_fiendish_attackers() {
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // Ward an ally.
+        let ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        // Use Zombie as the "fiendish" attacker — it's Poison-immune,
+        // matching our proxy for fiend/undead detection.
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 3), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&ally)
+            .unwrap()
+            .add_condition(Condition::Warded, crate::conditions::ConditionTimer::Rounds(10));
+        let mode = e.compute_attack_mode(attacker, ally, true);
+        assert!(
+            matches!(mode, crate::engine::dice::RollMode::Disadvantage),
+            "warded target should give fiendish attacker disadvantage (got {:?})",
+            mode
+        );
+    }
+
+    #[test]
+    fn hobgoblin_template_instantiable() {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&HOBGOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert_eq!(e.actors[&id].armor_class(), 18);
+        assert!(e.actors[&id].is_combat_active());
+    }
+
+    #[test]
+    fn gnoll_template_instantiable() {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&GNOLL_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&id].is_combat_active());
+    }
+
+    #[test]
+    fn specter_template_instantiable_and_immune_to_necrotic() {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&SPECTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&id].is_immune_to(DamageType::Necrotic));
+        assert!(e.actors[&id].is_immune_to(DamageType::Poison));
+        assert!(e.actors[&id].is_resistant_to(DamageType::Slashing));
+    }
+
+    #[test]
+    fn save_proficiency_bonus_lands_in_roll_total() {
+        // 5e: a wizard proficient in INT saves should add their
+        // proficiency bonus to the d20 + INT mod. We verify the bonus
+        // shows up in the log so the math is auditable.
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&wiz].is_save_proficient(AbilityScoreType::Intelligence));
+        let log_before = e.messages().len();
+        let _ = e.roll_save(wiz, AbilityScoreType::Intelligence, 10);
+        let lines: Vec<&String> = e.messages()[log_before..].iter().collect();
+        // INT 16 → +3 mod, proficiency +2 → total mod displayed as +5
+        // (no item bonus, no buff). The exact d20 result varies but the
+        // modifier line must include +5.
+        assert!(
+            lines.iter().any(|s| s.contains("+5")),
+            "expected save log to include +5 modifier (got: {:?})",
+            lines
+        );
+    }
+
+    #[test]
+    fn save_proficiency_bonus_omitted_for_non_proficient_save() {
+        // The same wizard makes a STR save. They're not STR-proficient,
+        // so the modifier must NOT include the proficiency bonus.
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(!e.actors[&wiz].is_save_proficient(AbilityScoreType::Strength));
+        let log_before = e.messages().len();
+        let _ = e.roll_save(wiz, AbilityScoreType::Strength, 10);
+        let lines: Vec<&String> = e.messages()[log_before..].iter().collect();
+        // STR 8 → -1 mod, no proficiency → total mod is -1.
+        assert!(
+            lines.iter().any(|s| s.contains("-1")),
+            "expected save log to include -1 modifier (got: {:?})",
+            lines
+        );
     }
 }

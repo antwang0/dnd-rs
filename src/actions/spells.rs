@@ -3065,3 +3065,447 @@ impl Action for ShockingGrasp {
 }
 
 pub static SHOCKING_GRASP: LazyLock<ShockingGrasp> = LazyLock::new(|| ShockingGrasp {});
+
+/// Shatter — level-2 evocation. 10-ft-radius burst centered on a point
+/// within 60 ft (24 tiles). Every creature in the burst makes a CON save
+/// vs the caster's spell save DC: pass = half, fail = full. 3d8 thunder
+/// damage. We share-roll once and route through the burst-save helper —
+/// identical pattern to Burning Hands but spherical instead of a cone.
+pub struct Shatter {}
+
+impl Action for Shatter {
+    fn name(&self) -> &str {
+        "shatter"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sh-spell", "shat"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 10ft radius = 2-tile burst on the 2.5ft grid.
+        TargetingSchema::Burst { radius: 2 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Thunder]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(2)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let raw = encounter.roll(&Dice::new(3, 8));
+        encounter.log(format!("  shatter: 3d8({}) = {} thunder area", raw, raw));
+        crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            2,
+            AbilityScoreType::Constitution,
+            dc,
+            raw,
+            DamageType::Thunder,
+        )
+    }
+}
+
+pub static SHATTER: LazyLock<Shatter> = LazyLock::new(|| Shatter {});
+
+/// Sleep — level-1 enchantment. Roll 5d8; the total is a "HP pool".
+/// Sweep enemy creatures within range in ascending current-HP order and
+/// put each to Asleep until their pool of current HP is fully consumed
+/// (each target consumes `current_hp` from the pool). Undead and creatures
+/// immune to the Charmed condition (most are) are unaffected. Asleep is
+/// stripped by any damage.
+pub struct Sleep {}
+
+impl Action for Sleep {
+    fn name(&self) -> &str {
+        "sleep"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sleep-spell", "slumber"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 90ft = 36 tiles.
+        Some(36)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        const BURST_RADIUS: isize = 8; // 20ft radius
+        let pool_roll = encounter.roll(&Dice::new(5, 8));
+        encounter.log(format!("  sleep: 5d8({}) = {} HP pool", pool_roll, pool_roll));
+
+        // Sort eligible targets by ascending current HP (5e RAW). Undead
+        // and Charmed-immune creatures are skipped — they don't dream.
+        let mut candidates: Vec<(u32, usize)> = encounter
+            .actors
+            .iter()
+            .filter_map(|(id, a)| {
+                if *id == caster_id || !a.is_combat_active() {
+                    return None;
+                }
+                if a.is_immune_to_condition(Condition::Charmed)
+                    || a.is_immune_to_condition(Condition::Asleep)
+                {
+                    return None;
+                }
+                let dist = footprint_chebyshev(
+                    a.location(),
+                    get_tiles_from_size(a.size()),
+                    point,
+                    1,
+                );
+                if dist > BURST_RADIUS {
+                    return None;
+                }
+                Some((a.hitpoints(), *id))
+            })
+            .collect();
+        candidates.sort_unstable();
+
+        let mut remaining = pool_roll;
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for (hp, id) in candidates {
+            if hp == 0 || hp > remaining {
+                break;
+            }
+            remaining -= hp;
+            effects.push(Box::new(ApplyCondition {
+                actor_id: id,
+                condition: Condition::Asleep,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            // 5e: Sleep also drops the target prone (unconscious clause).
+            effects.push(Box::new(ApplyCondition {
+                actor_id: id,
+                condition: Condition::Prone,
+                timer: ConditionTimer::Permanent,
+            }));
+        }
+        effects
+    }
+}
+
+pub static SLEEP: LazyLock<Sleep> = LazyLock::new(|| Sleep {});
+
+/// Charm Person — level-1 enchantment. Target makes a WIS save vs the
+/// caster's spell save DC; on fail, the target is Charmed for an hour
+/// (we use 10 rounds). The charmed creature can't attack their charmer
+/// (enforced in `validate_input`). On a save, the spell fizzles.
+pub struct CharmPerson {}
+
+impl Action for CharmPerson {
+    fn name(&self) -> &str {
+        "charm person"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cp", "charm"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    // Charm is harmful in 5e (it's a hostile mind-affecting spell), so we
+    // leave is_harmful at the default true. The validate_input charm-vs-
+    // charmer block still works because a freshly-charmed actor can't
+    // retaliate against the original charmer.
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::SetCharmedBy;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Charmed,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(SetCharmedBy {
+                target_id,
+                charmer: Some(caster_id),
+            }),
+        ]
+    }
+}
+
+pub static CHARM_PERSON: LazyLock<CharmPerson> = LazyLock::new(|| CharmPerson {});
+
+/// Mirror Image — level-2 illusion. No save, no concentration, no
+/// targeting. The caster gains three duplicates that absorb incoming
+/// attacks: a hit may instead pop a decoy. Pool count is tracked on the
+/// actor and read by `resolve_attack` (engine/attack.rs).
+pub struct MirrorImage {}
+
+impl Action for MirrorImage {
+    fn name(&self) -> &str {
+        "mirror image"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mi", "mirror"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(2)]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::SetMirrorImages;
+        vec![
+            Box::new(SetMirrorImages {
+                actor_id: caster_id,
+                count: 3,
+            }),
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::MirroredImages,
+                timer: ConditionTimer::Rounds(10),
+            }),
+        ]
+    }
+}
+
+pub static MIRROR_IMAGE: LazyLock<MirrorImage> = LazyLock::new(|| MirrorImage {});
+
+/// Eldritch Blast — warlock cantrip. Ranged spell attack: d20 + CHA vs
+/// AC. On hit: 1d10 force. We don't model the per-level beam scaling
+/// (it adds one beam every few levels in 5e); we keep the single-beam
+/// base, which is the right shape for a CR 1-3 warlock.
+pub struct EldritchBlast {}
+
+impl Action for EldritchBlast {
+    fn name(&self) -> &str {
+        "eldritch blast"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["eb", "blast"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120ft = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Force]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Charisma);
+        spell_attack(
+            encounter,
+            caster_id,
+            target_id,
+            "eldritch blast",
+            attack_bonus,
+            Dice::new(1, 10),
+            DamageType::Force,
+            false,
+        )
+    }
+}
+
+pub static ELDRITCH_BLAST: LazyLock<EldritchBlast> = LazyLock::new(|| EldritchBlast {});
+
+/// Protection from Evil and Good — level-1 abjuration, concentration.
+/// Target gains the Warded condition: aberrations, celestials, elementals,
+/// fey, fiends, and undead have disadvantage on attacks against them. We
+/// approximate the creature-type gate via the target's necrotic/poison
+/// immunity profile (a rough but reliable proxy for undead / fiend status
+/// in our pool). The condition is read by `compute_attack_mode`.
+pub struct ProtectionFromEvilAndGood {}
+
+impl Action for ProtectionFromEvilAndGood {
+    fn name(&self) -> &str {
+        "protection from evil and good"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pfeg", "protection"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Warded,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Protection from Evil and Good",
+                    vec![(target_id, Condition::Warded)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static PROTECTION_FROM_EVIL_AND_GOOD: LazyLock<ProtectionFromEvilAndGood> =
+    LazyLock::new(|| ProtectionFromEvilAndGood {});
+

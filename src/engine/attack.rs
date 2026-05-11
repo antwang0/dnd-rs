@@ -97,6 +97,43 @@ pub fn resolve_attack(
     if !hit {
         return Vec::new();
     }
+    // 5e Mirror Image: a hit may instead strike a decoy. With N duplicates
+    // remaining, an extra d20 against the matching threshold (RAW: 6+
+    // for 3, 8+ for 2, 11+ for 1) determines whether the swing pops a
+    // decoy and misses the caster. Crits bypass the deflection.
+    if !is_crit
+        && let Some(target) = encounter.actors.get(&p.target_id)
+        && target.mirror_images() > 0
+    {
+        let images = target.mirror_images();
+        let dup_threshold = if images >= 3 {
+            6
+        } else if images == 2 {
+            8
+        } else {
+            11
+        };
+        let dup_roll = encounter.roll(&Dice::new(1, 20)) as i32;
+        if dup_roll >= dup_threshold {
+            if let Some(t) = encounter.actors.get_mut(&p.target_id) {
+                t.pop_mirror_image();
+            }
+            let remaining = encounter
+                .actors
+                .get(&p.target_id)
+                .map(|a| a.mirror_images())
+                .unwrap_or(0);
+            encounter.log(format!(
+                "  mirror image: 1d20({}) \u{2265} {} \u{2014} attack strikes a duplicate ({} left)",
+                dup_roll, dup_threshold, remaining
+            ));
+            return Vec::new();
+        }
+        encounter.log(format!(
+            "  mirror image: 1d20({}) < {} \u{2014} attack finds the real target",
+            dup_roll, dup_threshold
+        ));
+    }
     let raw_damage = encounter.roll(&p.damage_dice) as i32;
     let crit_extra = if is_crit {
         encounter.roll(&p.damage_dice) as i32
