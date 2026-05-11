@@ -46,5 +46,7 @@ pub static ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Undead: immune to Poisoned and Charmed.
         condition_immunities: HashSet::from([Condition::Poisoned, Condition::Charmed]),
         features: HashSet::new(),
+        regen_per_round: 0,
+        regen_suppressors: HashSet::new(),
     }
 });

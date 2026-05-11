@@ -1262,6 +1262,235 @@ impl Action for LifeDrain {
 
 pub static LIFE_DRAIN: LazyLock<LifeDrain> = LazyLock::new(|| LifeDrain {});
 
+/// Ghoul claws. 1d4+2 slashing on hit; on hit *against a non-elf*
+/// (we don't model lineage; we apply the rider unconditionally) the
+/// target makes a DC 10 CON save or is Paralyzed for one round. The
+/// rider is the marquee ghoul mechanic — paralyze chains hard with
+/// the auto-crit-on-melee-hit clause on paralyzed targets.
+pub struct GhoulClaws {}
+
+impl Action for GhoulClaws {
+    fn name(&self) -> &str {
+        "ghoul claws"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["gc", "claw"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Slashing]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let target_id = first_target_id(target_ids);
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            self.name(),
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(2, 4),
+            DamageType::Slashing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        let Some(target_id) = target_id else {
+            return effects;
+        };
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 10);
+        if !save.passed() {
+            effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Paralyzed,
+                timer: ConditionTimer::Rounds(2),
+            }));
+        }
+        effects
+    }
+}
+
+pub static GHOUL_CLAWS: LazyLock<GhoulClaws> = LazyLock::new(|| GhoulClaws {});
+
+/// Bugbear morningstar — 1d8+2 piercing, with a Surprise-Attack rider
+/// that deals an extra 2d6 damage on the first hit of the encounter
+/// per RAW. We simplify: extra damage applies on round 1 only (when
+/// the encounter is still "fresh"), and only on the first time the
+/// bugbear attacks. Tracking a per-actor "has surprise-attacked yet"
+/// flag without polluting state: we just gate on `encounter.round()
+/// == 1` and skip the second-strike concern (the AI rarely lines up
+/// a clean second swing in the first round anyway).
+pub struct BugbearMorningstar {}
+
+impl Action for BugbearMorningstar {
+    fn name(&self) -> &str {
+        "morningstar"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ms", "mace"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let target_id = first_target_id(target_ids);
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            self.name(),
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(2, 8),
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        if encounter.round() != 1 {
+            return effects;
+        }
+        let Some(target_id) = target_id else {
+            return effects;
+        };
+        // Surprise-attack rider: +2d6 on the opening salvo.
+        let surprise = encounter.roll(&Dice::new(2, 6));
+        encounter.log(format!(
+            "  surprise attack: +2d6({}) extra piercing",
+            surprise
+        ));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: surprise,
+            damage_type: DamageType::Piercing,
+        }));
+        effects
+    }
+}
+
+pub static BUGBEAR_MORNINGSTAR: LazyLock<BugbearMorningstar> =
+    LazyLock::new(|| BugbearMorningstar {});
+
+/// Dire Wolf bite — 2d6+3 piercing with the same trip rider as
+/// `WolfBite` but a higher save DC and bigger dice. Demonstrates how
+/// data-flavored copies of an existing pattern can share most of the
+/// structure; we don't extract a shared "bite with trip" helper yet
+/// because the rider's DC and dice differ per template.
+pub struct DireWolfBite {}
+
+impl Action for DireWolfBite {
+    fn name(&self) -> &str {
+        "dire wolf bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dwb"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let target_id = first_target_id(target_ids);
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            self.name(),
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(2, 6),
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        let Some(target_id) = target_id else {
+            return effects;
+        };
+        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, 13);
+        if !save.passed() {
+            effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Prone,
+                timer: ConditionTimer::Permanent,
+            }));
+        }
+        effects
+    }
+}
+
+pub static DIRE_WOLF_BITE: LazyLock<DireWolfBite> = LazyLock::new(|| DireWolfBite {});
+
 /// Re-export the spell-table FIRE_BOLT here so monster files that import
 /// `crate::actions::monster_attacks::FIRE_BOLT` keep working — the
 /// canonical definition lives with the other spells, this just gives

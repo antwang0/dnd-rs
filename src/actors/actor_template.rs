@@ -117,6 +117,15 @@ pub struct CreatureTemplate {
     /// Class-feature tags available to this creature (Second Wind,
     /// Action Surge, etc.). Empty for ordinary monsters.
     pub features: HashSet<&'static str>,
+    /// HP to regenerate at end-of-round while combat-active. 0 (the
+    /// default for ordinary monsters) disables the heal. Trolls set this
+    /// to 3; future regenerators (e.g. vampires) plug in here.
+    pub regen_per_round: u32,
+    /// Damage types that suppress this creature's regeneration for one
+    /// round (5e troll: fire / acid). When damage of one of these types
+    /// lands, `regen_suppressed` flips on the instance; `round_end`
+    /// clears it after skipping that round's heal.
+    pub regen_suppressors: HashSet<DamageType>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -256,6 +265,14 @@ pub struct ActorInstance {
     /// is providing advantage on the helped actor's next attack vs the
     /// listed target. Consumed when the helped actor attacks the target.
     help_grants: HashMap<usize, usize>,
+    /// 5e regenerator state: how much HP to recover each round-end while
+    /// combat-active, and which damage types disable that heal for one
+    /// round. `regen_suppressed` is set by `DealDamage` whenever damage
+    /// of a suppressor type lands and cleared by `round_end` after the
+    /// heal is skipped.
+    regen_per_round: u32,
+    regen_suppressors: HashSet<DamageType>,
+    regen_suppressed: bool,
 }
 
 impl ActorInstance {
@@ -323,7 +340,34 @@ impl ActorInstance {
             save_bonus_buff: 0,
             sneak_attack_used: false,
             help_grants: HashMap::new(),
+            regen_per_round: ct.regen_per_round,
+            regen_suppressors: ct.regen_suppressors.clone(),
+            regen_suppressed: false,
         })
+    }
+
+    /// HP regenerated each round-end while combat-active. 0 disables the
+    /// heal; non-zero means `EncounterInstance::round_end` will heal the
+    /// actor unless `regen_suppressed` is set.
+    pub fn regen_per_round(&self) -> u32 {
+        self.regen_per_round
+    }
+
+    pub fn regen_suppressed(&self) -> bool {
+        self.regen_suppressed
+    }
+
+    pub fn clear_regen_suppression(&mut self) {
+        self.regen_suppressed = false;
+    }
+
+    /// Flag the actor's regeneration as suppressed for this round if `dt`
+    /// is one of the configured suppressor types. No-op for non-regen
+    /// actors (whose `regen_suppressors` set is empty).
+    pub fn note_regen_damage(&mut self, dt: DamageType) {
+        if self.regen_suppressors.contains(&dt) {
+            self.regen_suppressed = true;
+        }
     }
 
     pub fn rolls_death_saves(&self) -> bool {
@@ -545,6 +589,8 @@ impl ActorInstance {
 
     /// Add a condition with the given timer. If the actor is immune to
     /// the condition (via `condition_immunities`), no-op and return false.
+    /// Heroism also confers immunity to Frightened — checked here so the
+    /// gate is symmetric with the template-driven immunity list.
     ///
     /// 5e: re-applying a condition with a *longer* timer extends the
     /// effect; a shorter timer is ignored. Permanent beats any rounds
@@ -552,6 +598,12 @@ impl ActorInstance {
     /// duration. Returns true if the condition was newly added.
     pub fn add_condition(&mut self, c: Condition, timer: ConditionTimer) -> bool {
         if self.condition_immunities.contains(&c) {
+            return false;
+        }
+        // 5e Heroism: target is immune to the Frightened condition while
+        // the spell is up. We honor that as a dynamic immunity here so
+        // any source (monster fear aura, Cause Fear spell) gets blocked.
+        if c == Condition::Frightened && self.has_condition(Condition::Heroic) {
             return false;
         }
         let is_new = !self.conditions.contains_key(&c);
@@ -680,7 +732,14 @@ impl ActorInstance {
             }
             Resource::Action => !action_blocked && self.action_slots >= 1,
             Resource::BonusAction => !action_blocked && self.bonus_action_slots >= 1,
-            Resource::Reaction => !action_blocked && self.reaction_slots >= 1,
+            // 5e Shocking Grasp & similar lockout effects: NoReaction
+            // blocks reactions until start of next turn. Stacks with the
+            // Incapacitated family which already zeroes them.
+            Resource::Reaction => {
+                !action_blocked
+                    && !self.has_condition(Condition::NoReaction)
+                    && self.reaction_slots >= 1
+            }
             Resource::LegendaryAction => !action_blocked && self.legendary_action_slots >= 1,
         }
     }
@@ -1089,6 +1148,19 @@ impl ActorInstance {
         matches!(self.hp_state, HpState::Stable)
     }
 
+    /// Promote a Dying actor to Stable without restoring any HP (5e
+    /// Spare the Dying / Medicine check stabilize semantics: they stop
+    /// rolling death saves but stay at 0 HP and Unconscious). No-op for
+    /// non-Dying actors. Returns true if the actor's state changed.
+    pub fn stabilize(&mut self) -> bool {
+        if matches!(self.hp_state, HpState::Dying { .. }) {
+            self.hp_state = HpState::Stable;
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn is_combat_active(&self) -> bool {
         matches!(self.hp_state, HpState::Active) && self.hitpoints > 0
     }
@@ -1177,6 +1249,14 @@ impl ActorInstance {
     /// import the Condition enum just for this single test.
     pub fn is_blessed(&self) -> bool {
         self.has_condition(Condition::Blessed)
+    }
+
+    pub fn is_baned(&self) -> bool {
+        self.has_condition(Condition::Baned)
+    }
+
+    pub fn is_heroic(&self) -> bool {
+        self.has_condition(Condition::Heroic)
     }
 
     /// Ability-mod + proficiency bonus for `ability` (the standard 5e

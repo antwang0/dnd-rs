@@ -28,9 +28,8 @@ pub enum Condition {
     /// Distinct from Stunned — Incapacitated still moves; Stunned can't.
     Incapacitated,
     /// You have no effect on combat behavior — you can't take hostile
-    /// actions against the charmer. Marker only today (we don't yet
-    /// model the "can't attack the charmer" enforcement; the AI just
-    /// avoids charmed targets via `is_pacified`).
+    /// actions against the charmer. Marker only today; we don't yet
+    /// model the "can't attack the charmer" enforcement.
     Charmed,
     /// Cannot move; cannot take actions or reactions; auto-fail STR/DEX
     /// saves; attacks against you have advantage; melee crits are
@@ -107,6 +106,21 @@ pub enum Condition {
     /// a flat AC boost via `condition_ac_bonus`). Lasts 8 hours; we just
     /// give it a long Rounds timer.
     MageArmored,
+    /// Mocked by Vicious Mockery — disadvantage on the next attack roll
+    /// before the end of the target's next turn. Short timer
+    /// (`UntilStartOfNextTurn`) clears the debuff after the holder takes
+    /// their turn (the disadvantage applies to attacks they make while
+    /// the condition is up).
+    Mocked,
+    /// Heroism active — immune to Frightened and gaining temp HP each
+    /// round from the spell's caster. Tracked as a condition so it
+    /// clears cleanly on concentration drop.
+    Heroic,
+    /// Cannot cast spells / take reactions until the start of their next
+    /// turn (Shocking Grasp's rider on a hit against a creature wearing
+    /// metal armor — we model the simpler "no reaction" clause). Clears
+    /// at start of own next turn.
+    NoReaction,
 }
 
 impl Condition {
@@ -139,6 +153,9 @@ impl Condition {
             Condition::Deafened => "deafened",
             Condition::HuntersMarked => "marked by hunter's mark",
             Condition::MageArmored => "mage armored",
+            Condition::Mocked => "mocked",
+            Condition::Heroic => "heroic",
+            Condition::NoReaction => "shocked",
         }
     }
 

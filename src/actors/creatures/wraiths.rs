@@ -68,5 +68,7 @@ pub static WRAITH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Frightened,
         ]),
         features: HashSet::new(),
+        regen_per_round: 0,
+        regen_suppressors: HashSet::new(),
     }
 });

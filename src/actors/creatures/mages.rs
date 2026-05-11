@@ -42,5 +42,7 @@ pub static MAGE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         proficient_saves: HashSet::new(),
         condition_immunities: HashSet::new(),
         features: HashSet::new(),
+        regen_per_round: 0,
+        regen_suppressors: HashSet::new(),
     }
 });

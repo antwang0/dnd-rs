@@ -1,8 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
-    AID, BANE, BLESS, CURE_WOUNDS, FAERIE_FIRE, GUIDING_BOLT, HEALING_WORD, HOLD_PERSON,
-    INFLICT_WOUNDS, LESSER_RESTORATION, SACRED_BURST, SACRED_FLAME, SHIELD_OF_FAITH,
-    SPIRITUAL_WEAPON, THORN_WHIP,
+    AID, BANE, BLESS, CURE_WOUNDS, FAERIE_FIRE, GUIDING_BOLT, HEALING_WORD, HEROISM, HOLD_PERSON,
+    INFLICT_WOUNDS, LESSER_RESTORATION, MASS_HEALING_WORD, SACRED_BURST, SACRED_FLAME,
+    SHIELD_OF_FAITH, SPARE_THE_DYING, SPIRITUAL_WEAPON, THORN_WHIP, TOLL_THE_DEAD,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size, SpecialSense};
@@ -30,6 +30,10 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*INFLICT_WOUNDS);
     actions.push(&*LESSER_RESTORATION);
     actions.push(&*THORN_WHIP);
+    actions.push(&*SPARE_THE_DYING);
+    actions.push(&*TOLL_THE_DEAD);
+    actions.push(&*HEROISM);
+    actions.push(&*MASS_HEALING_WORD);
     CreatureTemplate {
         name: "Cleric",
         glyph: 'C',
@@ -50,13 +54,16 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         actions,
         // 4 level-1 slots (Healing Word / Cure Wounds / Bless / Guiding
-        // Bolt) + 2 level-2 slots (Hold Person).
-        spell_slots_by_level: vec![4, 2],
+        // Bolt) + 2 level-2 slots (Hold Person) + 1 level-3 slot
+        // (Mass Healing Word emergency button).
+        spell_slots_by_level: vec![4, 2, 1],
         rolls_death_saves: false,
         damage_modifiers: HashMap::new(),
         // Clerics are proficient in WIS and CHA saves (5e PHB).
         proficient_saves: HashSet::from([AbilityScoreType::Wisdom, AbilityScoreType::Charisma]),
         condition_immunities: HashSet::new(),
         features: HashSet::new(),
+        regen_per_round: 0,
+        regen_suppressors: HashSet::new(),
     }
 });

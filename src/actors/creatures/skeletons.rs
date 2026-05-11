@@ -45,5 +45,7 @@ pub static SKELETON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Undead: immune to Poisoned, Charmed, Frightened (sleep too).
         condition_immunities: HashSet::from([Condition::Poisoned, Condition::Charmed]),
         features: HashSet::new(),
+        regen_per_round: 0,
+        regen_suppressors: HashSet::new(),
     }
 });

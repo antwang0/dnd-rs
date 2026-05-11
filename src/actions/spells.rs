@@ -2583,3 +2583,485 @@ impl Action for ThornWhip {
 }
 
 pub static THORN_WHIP: LazyLock<ThornWhip> = LazyLock::new(|| ThornWhip {});
+
+/// Spare the Dying — cleric cantrip. Stabilize a dying ally at touch
+/// range. No spell slot, no save, no damage. Only valid if the target
+/// has 0 HP and is rolling death saves (Dying). Stabilization stops
+/// the death-save cycle without restoring HP — the target sits at 0
+/// HP / Stable / Unconscious until healed.
+pub struct SpareTheDying {}
+
+impl Action for SpareTheDying {
+    fn name(&self) -> &str {
+        "spare the dying"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["std", "spare"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    // Stabilize is a heal in spirit — it pulls the target off the death-
+    // save treadmill. The AI's "find someone to help" pipeline keys off
+    // is_heal so this gets considered the same way Cure Wounds does.
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| a.is_dying())
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![Box::new(crate::engine::side_effects::StabilizeActor {
+            actor_id: target_id,
+        })]
+    }
+}
+
+pub static SPARE_THE_DYING: LazyLock<SpareTheDying> = LazyLock::new(|| SpareTheDying {});
+
+/// Toll the Dead — cleric / warlock cantrip. Range 60ft (24 tiles).
+/// Target makes a WIS save vs caster's spell save DC; on fail, takes
+/// 1d8 necrotic, or 1d12 if the target is already wounded (HP below max).
+/// On success, no damage. Cantrip damage doesn't scale here — at higher
+/// levels the dice would step, but we keep base.
+pub struct TollTheDead {}
+
+impl Action for TollTheDead {
+    fn name(&self) -> &str {
+        "toll the dead"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ttd", "toll"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Necrotic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        // d12 if target is below max HP, otherwise d8. Checked after the
+        // save so the breakdown lands in the log between save and damage.
+        let wounded = encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| a.hitpoints() < a.max_hitpoints());
+        let die = if wounded { Dice::new(1, 12) } else { Dice::new(1, 8) };
+        let raw = encounter.roll(&die);
+        encounter.log(format!(
+            "  toll the dead: {}({}) = {} necrotic{}",
+            die,
+            raw,
+            raw,
+            if wounded { " (wounded)" } else { "" }
+        ));
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: raw,
+            damage_type: DamageType::Necrotic,
+        })]
+    }
+}
+
+pub static TOLL_THE_DEAD: LazyLock<TollTheDead> = LazyLock::new(|| TollTheDead {});
+
+/// Vicious Mockery — bard cantrip. Range 60ft (24 tiles). Target WIS
+/// save vs caster's CHA-based DC. On fail: 1d4 psychic AND disadvantage
+/// on its next attack roll (we tag with Condition::Mocked, which the
+/// engine reads in `compute_attack_mode`). On pass, nothing.
+pub struct ViciousMockery {}
+
+impl Action for ViciousMockery {
+    fn name(&self) -> &str {
+        "vicious mockery"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["vm", "mock"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Psychic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        let raw = encounter.roll(&Dice::new(1, 4));
+        encounter.log(format!("  vicious mockery: 1d4({}) = {} psychic", raw, raw));
+        vec![
+            Box::new(DealDamage {
+                actor_id: target_id,
+                amount: raw,
+                damage_type: DamageType::Psychic,
+            }),
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Mocked,
+                timer: ConditionTimer::UntilStartOfNextTurn,
+            }),
+        ]
+    }
+}
+
+pub static VICIOUS_MOCKERY: LazyLock<ViciousMockery> = LazyLock::new(|| ViciousMockery {});
+
+/// Heroism — bard / paladin level-1, concentration. Target ally gains
+/// temp HP equal to caster's spellcasting modifier (we use CHA) at the
+/// start of each of their turns, and immunity to Frightened while the
+/// spell is up. We model the "temp HP each turn" via an immediate
+/// grant on cast and rely on concentration cleanup to drop the
+/// Heroic condition; ticking the regrant each turn would require a
+/// per-actor concentration tick we don't have today.
+pub struct Heroism {}
+
+impl Action for Heroism {
+    fn name(&self) -> &str {
+        "heroism"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hr", "hero"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let amt = modifier_from_score(caster.ability_score(AbilityScoreType::Charisma)).max(1) as u32;
+        vec![
+            Box::new(GainTempHp {
+                actor_id: target_id,
+                amount: amt,
+            }),
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Heroic,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Heroism",
+                    vec![(target_id, Condition::Heroic)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static HEROISM: LazyLock<Heroism> = LazyLock::new(|| Heroism {});
+
+/// Mass Healing Word — cleric level-3 bonus-action heal. Up to six
+/// creatures within range, each within line-of-sight of the caster,
+/// regain `1d4 + WIS` HP. We implement it with a per-actor radius
+/// (60ft = 24 tile gap) and an LOS check; the AI's heal-search
+/// pipeline can ignore it for now (it picks single-target).
+pub struct MassHealingWord {}
+
+impl Action for MassHealingWord {
+    fn name(&self) -> &str {
+        "mass healing word"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mhw", "mass-heal"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction, Resource::SpellSlot(3)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let caster_team = caster.team();
+        let caster_loc = caster.location();
+        let caster_size = get_tiles_from_size(caster.size());
+        let wis_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
+        let raw = encounter.roll(&Dice::new(1, 4)) as i32;
+        let amount = (raw + wis_mod).max(1) as u32;
+        encounter.log(format!(
+            "  mass healing word: 1d4({}){:+} = {} HP each",
+            raw, wis_mod, amount
+        ));
+        // RAW: pick up to 6 creatures. We snap to the closest 6 eligible
+        // allies (combat-active OR dying — heals revive both).
+        const RANGE_TILES: isize = 24;
+        const MAX_TARGETS: usize = 6;
+        let mut candidates: Vec<(isize, usize)> = encounter
+            .actors
+            .iter()
+            .filter_map(|(id, a)| {
+                if a.team() != caster_team {
+                    return None;
+                }
+                if !a.is_combat_active() && !a.is_dying() {
+                    return None;
+                }
+                let dist = footprint_chebyshev(
+                    caster_loc,
+                    caster_size,
+                    a.location(),
+                    get_tiles_from_size(a.size()),
+                );
+                if dist > RANGE_TILES {
+                    return None;
+                }
+                Some((dist, *id))
+            })
+            .collect();
+        candidates.sort_unstable();
+        candidates.truncate(MAX_TARGETS);
+        candidates
+            .into_iter()
+            .map(|(_, id)| {
+                Box::new(Heal {
+                    actor_id: id,
+                    amount,
+                }) as Box<dyn ApplicableSideEffect>
+            })
+            .collect()
+    }
+}
+
+pub static MASS_HEALING_WORD: LazyLock<MassHealingWord> = LazyLock::new(|| MassHealingWord {});
+
+/// Shocking Grasp — wizard / sorcerer cantrip. Melee spell attack; on
+/// hit, 1d8 lightning AND the target loses its reactions until the
+/// start of its next turn (we install Condition::NoReaction with the
+/// `UntilStartOfNextTurn` timer). Has advantage on the attack roll if
+/// the target is wearing metal armor — we don't model armor types, so
+/// we skip that rider.
+pub struct ShockingGrasp {}
+
+impl Action for ShockingGrasp {
+    fn name(&self) -> &str {
+        "shocking grasp"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sg", "shock"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Lightning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
+        let mut effects = spell_attack(
+            encounter,
+            caster_id,
+            target_id,
+            "shocking grasp",
+            attack_bonus,
+            Dice::new(1, 8),
+            DamageType::Lightning,
+            true,
+        );
+        // Rider applies only on a hit (empty effect list = miss).
+        if !effects.is_empty() {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::NoReaction,
+                timer: ConditionTimer::UntilStartOfNextTurn,
+            }));
+        }
+        effects
+    }
+}
+
+pub static SHOCKING_GRASP: LazyLock<ShockingGrasp> = LazyLock::new(|| ShockingGrasp {});

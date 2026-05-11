@@ -1,37 +1,37 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{GOBLIN_BOSS_MULTI, SHORTBOW};
+use crate::actions::monster_attacks::BUGBEAR_MORNINGSTAR;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{Language, Size, SpecialSense};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
-/// Goblin Boss — 5e MM CR 1, the tougher cousin of the standard goblin.
-/// Multiattack: two scimitar swings per Action, a real upgrade from the
-/// regular goblin's single swing. Higher AC (chain shirt + shield) and
-/// more HP make this the closest thing the codebase has to a "miniboss"
-/// — hard enough to break a low-CR encounter open without a full party.
-pub static GOBLIN_BOSS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+/// Bugbear — CR 1 goblinoid brute. Morningstar carries a Surprise
+/// Attack rider that adds 2d6 extra piercing damage on the first round
+/// of combat, capturing the "out of the dark" alpha-strike fantasy
+/// without modeling stealth approach. Medium-sized but stronger than
+/// a goblin / hobgoblin; lacks ranged options.
+pub static BUGBEAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*GOBLIN_BOSS_MULTI);
-    actions.push(&SHORTBOW);
+    actions.push(&*BUGBEAR_MORNINGSTAR);
     CreatureTemplate {
-        name: "Goblin Boss",
+        name: "Bugbear",
+        // 'B' for bugbear — distinct from 'b' (boots-of-striding glyph).
         glyph: 'B',
-        ac: 17, // chain shirt + shield
-        hitpoints: "6d6+6".parse().unwrap(),
+        ac: 16,
+        hitpoints: "5d8+5".parse().unwrap(),
         speed: 30.,
-        strength: 10,
-        intelligence: 10,
+        strength: 15,
+        intelligence: 8,
         dexterity: 14,
-        wisdom: 8,
-        constitution: 10,
-        charisma: 10,
+        wisdom: 11,
+        constitution: 13,
+        charisma: 9,
         skills: HashSet::new(),
         items: Vec::new(),
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
         languages: HashSet::from([Language::Common, Language::Goblin]),
         cr: 1.0,
-        size: Size::Small,
+        size: Size::Medium,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,

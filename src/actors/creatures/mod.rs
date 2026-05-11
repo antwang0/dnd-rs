@@ -1,7 +1,10 @@
 pub mod bandits;
+pub mod bugbears;
 pub mod clerics;
+pub mod dire_wolves;
 pub mod fighters;
 pub mod fire_imps;
+pub mod ghouls;
 pub mod goblin_bosses;
 pub mod goblins;
 pub mod imps;

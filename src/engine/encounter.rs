@@ -1,5 +1,8 @@
 use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
+use crate::actors::creatures::bugbears::BUGBEAR_TEMPLATE;
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+use crate::actors::creatures::dire_wolves::DIRE_WOLF_TEMPLATE;
+use crate::actors::creatures::ghouls::GHOUL_TEMPLATE;
 use crate::actors::creatures::goblin_bosses::GOBLIN_BOSS_TEMPLATE;
 use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
@@ -388,6 +391,11 @@ impl EncounterInstance {
                 Condition::Frightened,
                 Condition::Restrained,
                 Condition::Blinded,
+                // 5e Vicious Mockery: disadvantage on the next attack
+                // roll the target makes before the end of its next turn.
+                // Modeled with a one-turn condition that flips attack
+                // rolls to disadvantage while present.
+                Condition::Mocked,
             ] {
                 if attacker.has_condition(c) {
                     mode = mode.combine(RollMode::Disadvantage);
@@ -1269,7 +1277,10 @@ impl EncounterInstance {
     fn template_pool() -> Vec<&'static CreatureTemplate> {
         vec![
             &BANDIT_TEMPLATE,
+            &BUGBEAR_TEMPLATE,
             &CLERIC_TEMPLATE,
+            &DIRE_WOLF_TEMPLATE,
+            &GHOUL_TEMPLATE,
             &GOBLIN_TEMPLATE,
             &GOBLIN_BOSS_TEMPLATE,
             &OGRE_TEMPLATE,
@@ -1540,6 +1551,32 @@ impl EncounterInstance {
                 };
                 use crate::engine::side_effects::ApplicableSideEffect;
                 de.apply(self);
+            }
+            // Regeneration: heal `regen_per_round` HP at end-of-round if
+            // the actor is combat-active and hasn't been hit by a
+            // suppressor damage type this round (5e troll: fire/acid).
+            // Suppression resets after every round-end whether or not a
+            // heal happened, so a single fire hit only lasts one round.
+            if let Some(actor) = self.actors.get_mut(&id) {
+                let amt = actor.regen_per_round();
+                let suppressed = actor.regen_suppressed();
+                if amt > 0 && actor.is_combat_active() {
+                    let name = actor.name().to_string();
+                    if suppressed {
+                        self.log(format!("  {}'s regeneration is suppressed.", name));
+                    } else if actor.hitpoints() < actor.max_hitpoints() {
+                        let outcome = actor.heal(amt);
+                        if matches!(
+                            outcome,
+                            crate::actors::actor_template::HealOutcome::Healed
+                        ) {
+                            self.log(format!("  {} regenerates {} HP.", name, amt));
+                        }
+                    }
+                }
+                if let Some(a) = self.actors.get_mut(&id) {
+                    a.clear_regen_suppression();
+                }
             }
             let Some(actor) = self.actors.get_mut(&id) else {
                 continue;
@@ -2654,11 +2691,20 @@ mod tests {
                 .spell_slots,
             2
         );
+        // Cleric got a level-3 slot when Mass Healing Word was added.
+        assert_eq!(
+            e.actors[&id]
+                .spell_slot_manager
+                .spell_slots(3)
+                .spell_slots,
+            1
+        );
         // Affordability via the resource API.
         assert!(e.actors[&id].can_consume_resource(Resource::SpellSlot(1)));
         assert!(e.actors[&id].can_consume_resource(Resource::SpellSlot(2)));
-        // Level-3 wasn't given.
-        assert!(!e.actors[&id].can_consume_resource(Resource::SpellSlot(3)));
+        assert!(e.actors[&id].can_consume_resource(Resource::SpellSlot(3)));
+        // Level-4 wasn't given.
+        assert!(!e.actors[&id].can_consume_resource(Resource::SpellSlot(4)));
     }
 
     #[test]
@@ -10887,5 +10933,148 @@ mod tests {
                 names
             );
         }
+    }
+
+    #[test]
+    fn troll_regen_heals_at_round_end() {
+        use crate::actors::creatures::trolls::TROLL_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let troll = e
+            .instantiate_creature(&TROLL_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        // Knock 5 HP off — slashing doesn't suppress regen.
+        DealDamage {
+            actor_id: troll,
+            amount: 5,
+            damage_type: DamageType::Slashing,
+        }
+        .apply(&mut e);
+        let mid = e.actors[&troll].hitpoints();
+        // Two skips = one round wrap → round_end fires once.
+        e.skip_turn();
+        e.skip_turn();
+        let after = e.actors[&troll].hitpoints();
+        assert!(after > mid, "troll should regen ({} → {})", mid, after);
+    }
+
+    #[test]
+    fn heroism_blocks_frightened_application() {
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Without Heroism, Frightened applies normally.
+        let actor = e.actors.get_mut(&id).unwrap();
+        actor.add_condition(Condition::Frightened, ConditionTimer::Rounds(2));
+        assert!(actor.has_condition(Condition::Frightened));
+        actor.remove_condition(Condition::Frightened);
+        // With Heroism, Frightened is rejected.
+        actor.add_condition(Condition::Heroic, ConditionTimer::Rounds(10));
+        let applied = actor.add_condition(Condition::Frightened, ConditionTimer::Rounds(2));
+        assert!(!applied);
+        assert!(!actor.has_condition(Condition::Frightened));
+    }
+
+    #[test]
+    fn spare_the_dying_stabilizes_target() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::SPARE_THE_DYING;
+        use crate::actors::actor_template::HpState;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        // Force the fighter into the dying state by zeroing HP.
+        {
+            let f = e.actors.get_mut(&fighter).unwrap();
+            let hp = f.hitpoints();
+            f.take_damage(hp + 1);
+            assert!(matches!(f.hp_state(), HpState::Dying { .. }));
+        }
+        // Run Spare the Dying on the fighter.
+        let effects = SPARE_THE_DYING.execute(&mut e, cleric, Some(&vec![fighter]), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&fighter].is_stable());
+    }
+
+    #[test]
+    fn mocked_condition_imposes_disadvantage_on_attack() {
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        let baseline = e.compute_attack_mode(attacker, target, true);
+        assert!(matches!(baseline, crate::engine::dice::RollMode::Normal));
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Mocked, ConditionTimer::UntilStartOfNextTurn);
+        let with_mockery = e.compute_attack_mode(attacker, target, true);
+        assert!(matches!(
+            with_mockery,
+            crate::engine::dice::RollMode::Disadvantage
+        ));
+    }
+
+    #[test]
+    fn no_reaction_condition_blocks_reaction_resource() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Fresh-zombie should have a reaction available baseline.
+        assert!(e.actors[&id].can_consume_resource(Resource::Reaction));
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::NoReaction, ConditionTimer::UntilStartOfNextTurn);
+        assert!(!e.actors[&id].can_consume_resource(Resource::Reaction));
+    }
+
+    #[test]
+    fn troll_regen_suppressed_by_fire() {
+        use crate::actors::creatures::trolls::TROLL_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let troll = e
+            .instantiate_creature(&TROLL_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        DealDamage {
+            actor_id: troll,
+            amount: 10,
+            damage_type: DamageType::Fire,
+        }
+        .apply(&mut e);
+        let mid = e.actors[&troll].hitpoints();
+        assert!(e.actors[&troll].regen_suppressed());
+        e.skip_turn();
+        e.skip_turn();
+        let after = e.actors[&troll].hitpoints();
+        assert_eq!(after, mid, "troll should not regen the round after fire");
+        // Suppression cleared after round_end.
+        assert!(!e.actors[&troll].regen_suppressed());
     }
 }

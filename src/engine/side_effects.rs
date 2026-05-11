@@ -199,6 +199,12 @@ impl ApplicableSideEffect for DealDamage {
             return;
         };
         let (outcome, landed) = actor.take_typed_damage(self.amount, self.damage_type);
+        // Regenerator suppression: flag the actor if this damage type is
+        // on their suppressor list (troll vs acid/fire). The flag is
+        // cleared at round_end after the heal is skipped.
+        if landed > 0 {
+            actor.note_regen_damage(self.damage_type);
+        }
         let temp_absorbed = temp_before.saturating_sub(actor.temp_hp());
         if temp_absorbed > 0 {
             ei.log(format!(
@@ -538,6 +544,26 @@ impl ApplicableSideEffect for RemoveOneOfConditions {
                 ei.log(format!("{} is no longer {}.", name, c.name()));
                 return;
             }
+        }
+    }
+}
+
+/// Promote a Dying actor to Stable without restoring any HP — the 5e
+/// Spare the Dying outcome. No-op for non-Dying actors. Logs only on a
+/// successful stabilization.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct StabilizeActor {
+    pub actor_id: usize,
+}
+
+impl ApplicableSideEffect for StabilizeActor {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        if actor.stabilize() {
+            ei.log(format!("{} is stabilized.", name));
         }
     }
 }
