@@ -75,6 +75,21 @@ pub fn resolve_attack_outcome(
         attacker.remove_condition(crate::conditions::Condition::Hidden);
         attacker.consume_help_for(p.target_id);
     }
+    // 5e Invisibility: attacking ends the spell. We drop the attacker's
+    // concentration on Invisibility before the d20 so the Invisible
+    // condition disappears from the rider stack (a swing while invisible
+    // still benefits from advantage — that's handled by attack_mode above
+    // — but a *second* swing the same turn shouldn't, and `compute_attack_mode`
+    // already saw the condition before this hook). Matches the spell-
+    // attack drop in `spell_attack_outcome` for symmetry.
+    if encounter
+        .actors
+        .get(&p.caster_id)
+        .and_then(|a| a.concentration())
+        .is_some_and(|c| c.spell_name == "Invisibility")
+    {
+        encounter.drop_concentration(p.caster_id);
+    }
     let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
     let is_crit = raw_attack == 20;
     let buff = encounter
@@ -184,6 +199,37 @@ pub fn resolve_attack_outcome(
             "  hunter's mark: 1d6({}) = {} extra {:?}",
             hm_raw, hm_total, p.damage_type
         ));
+    }
+    // Hex rider: 1d6 necrotic on every hit against the Hexed target. Like
+    // Hunter's Mark, crits double the rider die. The necrotic typing
+    // matters more than HM's weapon-typed rider — it can chip past
+    // physical resistance but bounces off necrotic-resistant undead.
+    if encounter.is_hex_target(p.caster_id, p.target_id) {
+        let hex_raw = encounter.roll(&Dice::new(1, 6));
+        let hex_extra = if is_crit { encounter.roll(&Dice::new(1, 6)) } else { 0 };
+        let hex_total = hex_raw + hex_extra;
+        encounter.log(format!(
+            "  hex: 1d6({}) = {} extra Necrotic",
+            hex_raw, hex_total
+        ));
+        // Necrotic is a separate damage application so target resistances
+        // / immunities apply correctly. The weapon hit still lands via
+        // the DealDamage below.
+        return (
+            vec![
+                Box::new(DealDamage {
+                    actor_id: p.target_id,
+                    amount: damage,
+                    damage_type: p.damage_type,
+                }),
+                Box::new(DealDamage {
+                    actor_id: p.target_id,
+                    amount: hex_total,
+                    damage_type: DamageType::Necrotic,
+                }),
+            ],
+            damage,
+        );
     }
     (
         vec![Box::new(DealDamage {

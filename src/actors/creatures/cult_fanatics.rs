@@ -1,7 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::DAGGER;
 use crate::actions::spells::{
-    BLESS, COMMAND, HOLD_PERSON, INFLICT_WOUNDS, SACRED_FLAME, SHIELD_OF_FAITH, SPIRITUAL_WEAPON,
+    BESTOW_CURSE, BLESS, COMMAND, HEX, HOLD_PERSON, INFLICT_WOUNDS, SACRED_FLAME, SHIELD_OF_FAITH,
+    SPIRITUAL_WEAPON,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{Language, Size};
@@ -24,6 +25,8 @@ pub static CULT_FANATIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
     actions.push(&*SHIELD_OF_FAITH);
     actions.push(&*HOLD_PERSON);
     actions.push(&*SPIRITUAL_WEAPON);
+    actions.push(&*HEX);
+    actions.push(&*BESTOW_CURSE);
     CreatureTemplate {
         name: "Cult Fanatic",
         // 'V' for villain — distinct from 'C' (Cleric).

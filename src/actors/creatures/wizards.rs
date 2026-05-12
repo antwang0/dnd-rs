@@ -1,9 +1,10 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
-    ACID_SPLASH, BLINDNESS, BURNING_HANDS, CAUSE_FEAR, CHARM_PERSON, CHILL_TOUCH, COLOR_SPRAY,
-    FIRE_BOLT, FIREBALL, HYPNOTIC_PATTERN, LIGHTNING_BOLT, MAGE_ARMOR, MAGIC_MISSILE, MAGIC_WEAPON,
-    MIRROR_IMAGE, MISTY_STEP, POISON_SPRAY, RAY_OF_FROST, RAY_OF_SICKNESS, SCORCHING_RAY, SHATTER,
-    SHIELD, SHOCKING_GRASP, SLEEP, THUNDERWAVE, TOLL_THE_DEAD, VAMPIRIC_TOUCH, WEB,
+    ACID_SPLASH, BESTOW_CURSE, BLINDNESS, BLUR, BURNING_HANDS, CAUSE_FEAR, CHARM_PERSON,
+    CHILL_TOUCH, COLOR_SPRAY, FIRE_BOLT, FIREBALL, HOLD_MONSTER, HYPNOTIC_PATTERN, INVISIBILITY,
+    LIGHTNING_BOLT, MAGE_ARMOR, MAGIC_MISSILE, MAGIC_WEAPON, MIND_SLIVER, MIRROR_IMAGE, MISTY_STEP,
+    POISON_SPRAY, RAY_OF_FROST, RAY_OF_SICKNESS, SCORCHING_RAY, SHATTER, SHIELD, SHOCKING_GRASP,
+    SLEEP, THUNDERWAVE, TOLL_THE_DEAD, VAMPIRIC_TOUCH, WEB,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size, SpecialSense};
@@ -45,6 +46,11 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*LIGHTNING_BOLT);
     actions.push(&*VAMPIRIC_TOUCH);
     actions.push(&*HYPNOTIC_PATTERN);
+    actions.push(&*BLUR);
+    actions.push(&*INVISIBILITY);
+    actions.push(&*BESTOW_CURSE);
+    actions.push(&*MIND_SLIVER);
+    actions.push(&*HOLD_MONSTER);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

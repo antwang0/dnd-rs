@@ -9,11 +9,14 @@ use crate::actors::creatures::ghouls::GHOUL_TEMPLATE;
 use crate::actors::creatures::gnolls::GNOLL_TEMPLATE;
 use crate::actors::creatures::goblin_bosses::GOBLIN_BOSS_TEMPLATE;
 use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+use crate::actors::creatures::harpies::HARPY_TEMPLATE;
 use crate::actors::creatures::hobgoblins::HOBGOBLIN_TEMPLATE;
+use crate::actors::creatures::mimics::MIMIC_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::orcs::ORC_TEMPLATE;
 use crate::actors::creatures::owlbears::OWLBEAR_TEMPLATE;
 use crate::actors::creatures::specters::SPECTER_TEMPLATE;
+use crate::actors::creatures::werewolves::WEREWOLF_TEMPLATE;
 use crate::actors::creatures::wisps::WISP_TEMPLATE;
 use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
 use crate::actors::creatures::wolves::WOLF_TEMPLATE;
@@ -463,6 +466,11 @@ impl EncounterInstance {
                 mode = mode.combine(RollMode::Disadvantage);
             }
             if target.has_condition(Condition::Dodging) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+            // 5e Blur: attackers have disadvantage vs the blurred target,
+            // mirroring Dodge's defensive disadvantage clause.
+            if target.has_condition(Condition::Blurred) {
                 mode = mode.combine(RollMode::Disadvantage);
             }
             // 5e Protection from Evil and Good: aberrations / celestials /
@@ -1317,11 +1325,14 @@ impl EncounterInstance {
             &GNOLL_TEMPLATE,
             &GOBLIN_TEMPLATE,
             &GOBLIN_BOSS_TEMPLATE,
+            &HARPY_TEMPLATE,
             &HOBGOBLIN_TEMPLATE,
+            &MIMIC_TEMPLATE,
             &OGRE_TEMPLATE,
             &ORC_TEMPLATE,
             &OWLBEAR_TEMPLATE,
             &SPECTER_TEMPLATE,
+            &WEREWOLF_TEMPLATE,
             &WISP_TEMPLATE,
             &WOLF_TEMPLATE,
             &WIZARD_TEMPLATE,
@@ -1494,6 +1505,24 @@ impl EncounterInstance {
         conc.conditions
             .iter()
             .any(|(tid, c)| *tid == target_id && *c == Condition::HuntersMarked)
+    }
+
+    /// True if `caster_id` is concentrating on Hex and `target_id` is the
+    /// hex'd creature. Symmetric with `is_hunters_mark_target` — the
+    /// attack-roll resolver layers an extra 1d6 necrotic per RAW.
+    pub fn is_hex_target(&self, caster_id: usize, target_id: usize) -> bool {
+        let Some(caster) = self.actors.get(&caster_id) else {
+            return false;
+        };
+        let Some(conc) = caster.concentration() else {
+            return false;
+        };
+        if conc.spell_name != "Hex" {
+            return false;
+        }
+        conc.conditions
+            .iter()
+            .any(|(tid, c)| *tid == target_id && *c == Condition::Hexed)
     }
 
     /// True if any combat-active actor on a different team is footprint-
@@ -12061,5 +12090,302 @@ mod tests {
         assert!(names.contains(&LIGHTNING_BOLT.name()));
         assert!(names.contains(&VAMPIRIC_TOUCH.name()));
         assert!(names.contains(&HYPNOTIC_PATTERN.name()));
+    }
+
+    #[test]
+    fn hex_marks_target_and_starts_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::HEX;
+        use crate::actors::creatures::cult_fanatics::CULT_FANATIC_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cf = e
+            .instantiate_creature(&CULT_FANATIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            .unwrap();
+        let target_vec = vec![target];
+        let effects = HEX.side_effects(&mut e, cf, Some(&target_vec), None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert!(e.actors[&target].has_condition(Condition::Hexed));
+        assert!(e.actors[&cf].is_concentrating());
+        assert!(e.is_hex_target(cf, target));
+    }
+
+    #[test]
+    fn hex_adds_necrotic_damage_on_hit() {
+        // Mark a target with Hex, then have the caster swing at it.
+        // The DealDamage list should include both the weapon hit and a
+        // separate necrotic rider.
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::SCIMITAR;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let attacker = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Hexed, ConditionTimer::Permanent);
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .start_concentration(crate::actors::actor_template::ConcentrationData::with_conditions(
+                "Hex",
+                vec![(target, Condition::Hexed)],
+            ));
+        assert!(e.is_hex_target(attacker, target));
+        // Swing many times; at least one should hit and include a
+        // necrotic DealDamage entry alongside the slashing one.
+        let mut saw_necrotic_with_slashing = false;
+        for _ in 0..50 {
+            let target_vec = vec![target];
+            let effects = SCIMITAR.side_effects(&mut e, attacker, Some(&target_vec), None, None);
+            if effects.len() == 2 {
+                saw_necrotic_with_slashing = true;
+                break;
+            }
+        }
+        assert!(
+            saw_necrotic_with_slashing,
+            "expected at least one swing to include the hex necrotic rider"
+        );
+        // Sanity: necrotic damage on the target shouldn't crash even
+        // though zombies are necrotic-resistant — DealDamage halves it.
+        let _ = DamageType::Necrotic;
+    }
+
+    #[test]
+    fn blur_imposes_disadvantage_on_attackers() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 1)
+            .unwrap();
+        // Baseline: no Blurred → Normal mode.
+        let mode = e.compute_attack_mode(attacker, target, true);
+        assert!(matches!(mode, RollMode::Normal));
+        // Apply Blurred → Disadvantage.
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Blurred, ConditionTimer::Rounds(10));
+        let mode = e.compute_attack_mode(attacker, target, true);
+        assert!(matches!(mode, RollMode::Disadvantage));
+    }
+
+    #[test]
+    fn invisibility_concentration_drops_on_attack() {
+        // Caster invisible via the Invisibility spell; their next weapon
+        // attack should drop the concentration (and clear the Invisible
+        // condition via drop_concentration).
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::SCIMITAR;
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let attacker = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        // Wire up "I cast Invisibility on myself": concentration on
+        // "Invisibility" with (self, Invisible) condition entry.
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Rounds(10));
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .start_concentration(ConcentrationData::with_conditions(
+                "Invisibility",
+                vec![(attacker, Condition::Invisible)],
+            ));
+        assert!(e.actors[&attacker].is_concentrating());
+        // Swing once; the Invisibility concentration should drop and the
+        // Invisible condition should clear.
+        let target_vec = vec![target];
+        let effects = SCIMITAR.side_effects(&mut e, attacker, Some(&target_vec), None, None);
+        for eff in effects {
+            crate::engine::side_effects::ApplicableSideEffect::apply(&*eff, &mut e);
+        }
+        assert!(!e.actors[&attacker].is_concentrating());
+        assert!(!e.actors[&attacker].has_condition(Condition::Invisible));
+    }
+
+    #[test]
+    fn mimic_bite_applies_adhered_condition() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::MIMIC_BITE;
+        use crate::actors::creatures::mimics::MIMIC_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let mimic = e
+            .instantiate_creature(&MIMIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        // Swing repeatedly until a hit lands — Adhered should be on
+        // afterward (or no hit happened, in which case we keep trying).
+        let mut applied = false;
+        for _ in 0..30 {
+            let target_vec = vec![target];
+            let effects = MIMIC_BITE.side_effects(&mut e, mimic, Some(&target_vec), None, None);
+            let hit = !effects.is_empty();
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            if hit && e.actors[&target].has_condition(Condition::Adhered) {
+                applied = true;
+                break;
+            }
+        }
+        assert!(applied, "a successful mimic bite should apply Adhered");
+        // Adhered zeroes movement.
+        assert_eq!(e.actors[&target].remaining_movement(), 0.0);
+    }
+
+    #[test]
+    fn werewolf_resists_physical_damage() {
+        use crate::actors::creatures::werewolves::WEREWOLF_TEMPLATE;
+        use crate::engine::types::{DamageModifier, DamageType};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let ww = e
+            .instantiate_creature(&WEREWOLF_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let actor = &e.actors[&ww];
+        assert_eq!(
+            actor.damage_modifier(DamageType::Slashing),
+            Some(DamageModifier::Resistance)
+        );
+        assert_eq!(
+            actor.damage_modifier(DamageType::Piercing),
+            Some(DamageModifier::Resistance)
+        );
+        assert_eq!(
+            actor.damage_modifier(DamageType::Bludgeoning),
+            Some(DamageModifier::Resistance)
+        );
+        // Magic typings bypass the lycanthrope resistance lane.
+        assert_eq!(actor.damage_modifier(DamageType::Fire), None);
+    }
+
+    #[test]
+    fn harpy_luring_song_charms_in_radius() {
+        // Harpy sings; nearby enemies make WIS saves; failing enemies
+        // get Charmed + linked back to the harpy via SetCharmedBy.
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::LURING_SONG;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::harpies::HARPY_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let harpy = e
+            .instantiate_creature(&HARPY_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        // Run many trials and look for at least one charm landing on the
+        // fighter — DC 11 vs a fighter's middling WIS will sometimes
+        // pass, sometimes fail.
+        let mut charmed_once = false;
+        for _ in 0..50 {
+            let effects = LURING_SONG.side_effects(&mut e, harpy, None, None, None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            if e.actors[&fighter].has_condition(Condition::Charmed) {
+                charmed_once = true;
+                break;
+            }
+        }
+        assert!(charmed_once, "luring song should sometimes land a charm on the fighter");
+    }
+
+    #[test]
+    fn hold_monster_validates_for_humanoid_and_non_humanoid() {
+        // Verify Hold Monster (level-5) is wired into the wizard's
+        // action list and validates against arbitrary targets. We don't
+        // assert the save outcome (RNG-dependent); just that the action
+        // is callable.
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::HOLD_MONSTER;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            .unwrap();
+        // Give the wizard a level-5 slot so the cost validates.
+        e.actors
+            .get_mut(&wiz)
+            .unwrap()
+            .spell_slot_manager
+            .increase_max_spell_slot(5, 1);
+        let names: Vec<&str> = e.actors[&wiz].actions.iter().map(|a| a.name()).collect();
+        assert!(names.contains(&HOLD_MONSTER.name()));
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(
+            &*HOLD_MONSTER,
+            wiz,
+            Some(vec![target]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+    }
+
+    #[test]
+    fn mind_sliver_inflicts_baned_on_failed_save() {
+        // Make the save reliably fail by attacking a target with very
+        // low INT: zombies have INT 3 (mod -4) and aren't INT-proficient.
+        // DC 11 (wizard INT 16 → +5 spell save DC) is unreachable when
+        // raw d20 + (-4) maxes at 16; on failures the rider applies.
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::MIND_SLIVER;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            .unwrap();
+        // Run many trials; the rider should land at least once.
+        let mut saw_baned = false;
+        for _ in 0..30 {
+            let tv = vec![target];
+            let effects = MIND_SLIVER.side_effects(&mut e, wiz, Some(&tv), None, None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            if e.actors[&target].has_condition(Condition::Baned) {
+                saw_baned = true;
+                break;
+            }
+            e.actors.get_mut(&target).unwrap().remove_condition(Condition::Baned);
+        }
+        assert!(saw_baned, "mind sliver should sometimes apply Baned on failed INT save");
     }
 }

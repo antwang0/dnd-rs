@@ -105,7 +105,28 @@ fn spell_attack_outcome(
         .get(&target_id)
         .map(|a| a.armor_class() as i32)
         .unwrap_or(10);
-    let mode = encounter.compute_attack_mode(caster_id, target_id, is_melee);
+    // Spell attacks are attack rolls per 5e RAW, so the full rider stack
+    // applies: Help, Hidden, Bless, Mocked, etc. Route through
+    // attack_mode_with_riders so a one-shot Help grant on the caster is
+    // consumed exactly once (matching weapon-attack semantics in
+    // resolve_attack).
+    let mode = encounter.attack_mode_with_riders(caster_id, target_id, is_melee, true);
+    // Hidden / Helped / Invisibility(caster) drop on attack per RAW. We
+    // pop the conditions here so a follow-up swing in the same turn
+    // doesn't double-dip the advantage. The Invisibility concentration
+    // drop also clears the Invisible condition via drop_concentration.
+    if let Some(attacker) = encounter.actors.get_mut(&caster_id) {
+        attacker.remove_condition(crate::conditions::Condition::Hidden);
+        attacker.remove_condition(crate::conditions::Condition::Helped);
+    }
+    if encounter
+        .actors
+        .get(&caster_id)
+        .and_then(|a| a.concentration())
+        .is_some_and(|c| c.spell_name == "Invisibility")
+    {
+        encounter.drop_concentration(caster_id);
+    }
     let raw = encounter.roll_d20_with_mode(mode) as i32;
     // Pull through the same caster-side flat buffs (Bless / Bane d4,
     // attack_bonus_buff) that weapon attacks get via `resolve_attack`.
@@ -4265,4 +4286,423 @@ impl Action for SpiritGuardians {
 }
 
 pub static SPIRIT_GUARDIANS: LazyLock<SpiritGuardians> = LazyLock::new(|| SpiritGuardians {});
+
+/// Hex — level-1 enchantment, concentration. Bonus action to mark a target;
+/// the caster's weapon attacks against the hexed target deal an extra 1d6
+/// necrotic (handled by `resolve_attack` via `is_hex_target`). Distinct
+/// from Hunter's Mark: same on-hit rider but necrotic-typed (so resistant
+/// undead shrug it off) and tied to CHA-based warlock casting flavor.
+pub struct Hex {}
+
+impl Action for Hex {
+    fn name(&self) -> &str {
+        "hex"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hex-mark"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 90 ft = 36 tiles (same as Hunter's Mark).
+        Some(36)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Necrotic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Hexed,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Hex",
+                    vec![(target_id, Condition::Hexed)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static HEX: LazyLock<Hex> = LazyLock::new(|| Hex {});
+
+/// Hold Monster — level-5 enchantment, concentration. Identical mechanic
+/// to Hold Person (WIS save vs spell DC, on fail target is Stunned for up
+/// to 10 rounds, concentration tracks the lock), but consumes a level-5
+/// slot in exchange for working on creatures that would normally shrug
+/// off the humanoid-only Hold Person. Charm-immune creatures (undead,
+/// constructs) still resist via condition immunity.
+pub struct HoldMonster {}
+
+impl Action for HoldMonster {
+    fn name(&self) -> &str {
+        "hold monster"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hm-spell", "holdm"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 90 ft = 36 tiles.
+        Some(36)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(5)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Stunned,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Hold Monster",
+                    vec![(target_id, Condition::Stunned)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static HOLD_MONSTER: LazyLock<HoldMonster> = LazyLock::new(|| HoldMonster {});
+
+/// Invisibility — level-2 illusion, concentration. Target becomes Invisible
+/// until concentration ends or the target makes an attack / casts a spell.
+/// The "drop on attack" rider is enforced by `resolve_attack`: when the
+/// caster (or whoever they targeted) attacks while concentrating on
+/// Invisibility, the spell's concentration ends and the Invisible condition
+/// clears with it.
+pub struct Invisibility {}
+
+impl Action for Invisibility {
+    fn name(&self) -> &str {
+        "invisibility"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["invis"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch — 5 ft = 1 tile.
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(2)]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Invisible,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Invisibility",
+                    vec![(target_id, Condition::Invisible)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static INVISIBILITY: LazyLock<Invisibility> = LazyLock::new(|| Invisibility {});
+
+/// Bestow Curse — level-3 necromancy, concentration. WIS save vs the
+/// caster's spell save DC; on fail, the target has disadvantage on
+/// attack rolls and saving throws (we model via the Baned condition,
+/// which already implements the symmetric -2 to both lanes — close
+/// enough to RAW's "disadvantage on saves vs this caster's spells"
+/// without spinning a per-source debuff lane). Concentration tracks
+/// the curse so dropping it lifts the debuff cleanly.
+pub struct BestowCurse {}
+
+impl Action for BestowCurse {
+    fn name(&self) -> &str {
+        "bestow curse"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bc", "curse"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch — 5 ft = 1 tile.
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(3)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Baned,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Bestow Curse",
+                    vec![(target_id, Condition::Baned)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static BESTOW_CURSE: LazyLock<BestowCurse> = LazyLock::new(|| BestowCurse {});
+
+/// Mind Sliver — enchantment cantrip. INT save vs caster's spell save DC;
+/// on fail, target takes 1d6 psychic AND has a -1d4 penalty (modeled via
+/// the Baned condition, which is -2 to saves / attacks; close enough for
+/// the single-round window). The save-debuff rider lasts one round per
+/// RAW. No damage on a save (cantrip binary).
+pub struct MindSliver {}
+
+impl Action for MindSliver {
+    fn name(&self) -> &str {
+        "mind sliver"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ms", "sliver"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Psychic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Intelligence, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        let dmg = encounter.roll(&Dice::new(1, 6));
+        encounter.log(format!("  mind sliver: 1d6({}) = {} psychic", dmg, dmg));
+        vec![
+            Box::new(DealDamage {
+                actor_id: target_id,
+                amount: dmg,
+                damage_type: DamageType::Psychic,
+            }),
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Baned,
+                timer: ConditionTimer::Rounds(1),
+            }),
+        ]
+    }
+}
+
+pub static MIND_SLIVER: LazyLock<MindSliver> = LazyLock::new(|| MindSliver {});
+
+/// Blur — level-2 illusion, self-buff, concentration. Attacks against the
+/// caster have disadvantage while the spell is up (handled by
+/// `compute_attack_mode` via the Blurred condition). Drops on the usual
+/// concentration triggers; cleanup clears the Blurred flag.
+pub struct Blur {}
+
+impl Action for Blur {
+    fn name(&self) -> &str {
+        "blur"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["blur-spell"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(2)]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::Blurred,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Blur",
+                    vec![(caster_id, Condition::Blurred)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static BLUR: LazyLock<Blur> = LazyLock::new(|| Blur {});
 

@@ -1690,3 +1690,348 @@ impl Action for WispShock {
 }
 
 pub static WISP_SHOCK: LazyLock<WispShock> = LazyLock::new(|| WispShock {});
+
+/// Werewolf claws — 2d4+STR slashing. Pairs with Werewolf bite as a
+/// multiattack option. The bite carries the lycanthropy flavor; claws
+/// are the steady damage lane that doesn't need any rider.
+pub static WEREWOLF_CLAWS: SimpleWeapon = SimpleWeapon {
+    display_name: "werewolf claws",
+    aliases: &["ww-claws"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 4),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Werewolf bite — 1d8+STR piercing. On a hit against a humanoid (we
+/// drop the species gate — every PC pool is humanoid enough), the
+/// target makes a DC 12 CON save or contracts an exhaustion-like
+/// debuff (Poisoned for 3 rounds, modeling the early-stage lycanthropy
+/// fever). The save DC matches the MM stat block; the rider is a
+/// simplification of the full lycanthropy curse so we don't have to
+/// model multi-day transformations.
+pub struct WerewolfBite {}
+
+impl Action for WerewolfBite {
+    fn name(&self) -> &str {
+        "werewolf bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ww-bite"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            self.name(),
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(1, 8),
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        // Lycanthropy bite rider: DC 12 CON save or Poisoned 3 rounds.
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 12);
+        if !save.passed() {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Poisoned,
+                timer: ConditionTimer::Rounds(3),
+            }));
+        }
+        effects
+    }
+}
+
+pub static WEREWOLF_BITE: LazyLock<WerewolfBite> = LazyLock::new(|| WerewolfBite {});
+
+/// Werewolf multiattack: one bite + one claws swing per Action. Pattern
+/// matches Owlbear's multi: two separate `simple_weapon_attack` calls
+/// against the same target, both into one DealDamage list.
+pub struct WerewolfMultiattack {}
+
+impl Action for WerewolfMultiattack {
+    fn name(&self) -> &str {
+        "werewolf multiattack"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ww-multi", "wwma"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Slashing]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // Delegate to WerewolfBite (which carries the lycanthropy rider)
+        // and then layer a claws swing on top. Both calls roll their own
+        // d20 / damage; this is exactly the Owlbear pattern.
+        let mut all = WEREWOLF_BITE.side_effects(
+            encounter,
+            caster_id,
+            target_ids,
+            None,
+            None,
+        );
+        all.extend(simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "werewolf claws",
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(2, 4),
+            DamageType::Slashing,
+            true,
+        ));
+        all
+    }
+}
+
+pub static WEREWOLF_MULTIATTACK: LazyLock<WerewolfMultiattack> =
+    LazyLock::new(|| WerewolfMultiattack {});
+
+/// Mimic adhesive bite — 1d8+STR piercing + 1d8 acid. On hit, the target
+/// is stuck (`Adhered` condition) until they break free; the condition
+/// zeros movement so the AI can't shake free without an explicit
+/// escape action (we don't yet model an escape DC — the duration is
+/// short so it self-resolves). Captures the "object disguise that
+/// snaps shut on adventurers" trope without the lure-mechanic.
+pub struct MimicBite {}
+
+impl Action for MimicBite {
+    fn name(&self) -> &str {
+        "mimic bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mb"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Acid]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            self.name(),
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(1, 8),
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        let acid = encounter.roll(&Dice::new(1, 8));
+        encounter.log(format!("  adhesive acid: 1d8({}) = {} acid", acid, acid));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: acid,
+            damage_type: DamageType::Acid,
+        }));
+        // Stick the victim in place for 2 rounds — short enough that the
+        // mimic can't permanently lock down a single target across a
+        // long fight.
+        effects.push(Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Adhered,
+            timer: ConditionTimer::Rounds(2),
+        }));
+        effects
+    }
+}
+
+pub static MIMIC_BITE: LazyLock<MimicBite> = LazyLock::new(|| MimicBite {});
+
+/// Harpy talons — 2d4+STR slashing. Simple natural-weapon strike with no
+/// rider; the harpy's real threat is the Luring Song.
+pub static HARPY_TALONS: SimpleWeapon = SimpleWeapon {
+    display_name: "harpy talons",
+    aliases: &["talons"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 4),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Luring Song — harpy's AoE charm. Every creature within 12 tiles (30ft)
+/// that can hear the harpy makes a WIS save vs DC 11. On fail, target is
+/// Charmed by the harpy for 3 rounds. Charm-immune creatures (undead /
+/// constructs / etc.) shrug it off automatically — we let the
+/// add_condition guard handle that uniformly. We use SetCharmedBy so the
+/// charmed creature can't make hostile actions against the harpy.
+pub struct LuringSong {}
+
+impl Action for LuringSong {
+    fn name(&self) -> &str {
+        "luring song"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sing", "lure"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::{ApplyCondition, SetCharmedBy};
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let caster_loc = caster.location();
+        let caster_team = caster.team();
+        const SONG_RADIUS: isize = 12;
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        // Sorted-id iteration for deterministic save sequencing.
+        for target_id in encounter.sorted_actor_ids() {
+            let Some(target) = encounter.actors.get(&target_id) else {
+                continue;
+            };
+            if target.team() == caster_team || !target.is_combat_active() {
+                continue;
+            }
+            if target.is_immune_to_condition(Condition::Charmed) {
+                continue;
+            }
+            let dist = crate::engine::util::footprint_chebyshev(
+                target.location(),
+                crate::engine::util::get_tiles_from_size(target.size()),
+                caster_loc,
+                1,
+            );
+            if dist > SONG_RADIUS {
+                continue;
+            }
+            let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, 11);
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Charmed,
+                timer: ConditionTimer::Rounds(3),
+            }));
+            effects.push(Box::new(SetCharmedBy {
+                target_id,
+                charmer: Some(caster_id),
+            }));
+        }
+        effects
+    }
+}
+
+pub static LURING_SONG: LazyLock<LuringSong> = LazyLock::new(|| LuringSong {});

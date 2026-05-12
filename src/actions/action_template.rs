@@ -30,11 +30,8 @@ pub fn resolve_burst_save_damage(
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
     use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
-    let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
-    ids.sort_unstable();
-
     let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-    for target_id in ids {
+    for target_id in encounter.sorted_actor_ids() {
         let Some(target) = encounter.actors.get(&target_id) else {
             continue;
         };

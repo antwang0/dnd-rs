@@ -141,6 +141,21 @@ pub enum Condition {
     /// immunity that mortal humanoids lack) — close enough for our pool of
     /// fiends / undead / etc.
     Warded,
+    /// Hexed by the warlock Hex spell. The hex's caster deals +1d6 necrotic
+    /// on weapon attacks against this target. Tracked as a condition so
+    /// dropping concentration cleans it up automatically — symmetric with
+    /// Hunter's Mark.
+    Hexed,
+    /// Blurred (5e Blur spell, concentration). Attacks against the holder
+    /// have disadvantage unless the attacker can ignore the effect (no
+    /// modeling of blindsight overrides — kept simple). Cleared when the
+    /// caster drops concentration.
+    Blurred,
+    /// Stuck fast (5e Mimic Adhesive on hit). Functionally similar to
+    /// Grappled but the catcher is the mimic itself; we reuse the
+    /// movement-zero mechanic and keep this distinct so the log makes
+    /// the cause obvious.
+    Adhered,
 }
 
 impl Condition {
@@ -179,6 +194,9 @@ impl Condition {
             Condition::Asleep => "asleep",
             Condition::MirroredImages => "mirror imaged",
             Condition::Warded => "warded",
+            Condition::Hexed => "hexed",
+            Condition::Blurred => "blurred",
+            Condition::Adhered => "stuck",
         }
     }
 
@@ -210,6 +228,7 @@ impl Condition {
                 | Condition::Paralyzed
                 | Condition::Unconscious
                 | Condition::Asleep
+                | Condition::Adhered
         )
     }
 }
