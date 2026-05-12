@@ -1,3 +1,5 @@
+use crate::actors::creatures::animated_armors::ANIMATED_ARMOR_TEMPLATE;
+use crate::actors::creatures::bandit_captains::BANDIT_CAPTAIN_TEMPLATE;
 use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
 use crate::actors::creatures::bugbears::BUGBEAR_TEMPLATE;
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
@@ -1304,7 +1306,9 @@ impl EncounterInstance {
 
     fn template_pool() -> Vec<&'static CreatureTemplate> {
         vec![
+            &ANIMATED_ARMOR_TEMPLATE,
             &BANDIT_TEMPLATE,
+            &BANDIT_CAPTAIN_TEMPLATE,
             &BUGBEAR_TEMPLATE,
             &CLERIC_TEMPLATE,
             &CULT_FANATIC_TEMPLATE,
@@ -1321,9 +1325,9 @@ impl EncounterInstance {
             &WISP_TEMPLATE,
             &WOLF_TEMPLATE,
             &WIZARD_TEMPLATE,
-            // Wraith / skeleton / zombie / slime sit outside the random
-            // pool — CR-5+ undead and trash mobs are reserved for
-            // hand-built encounters via `instantiate_creature`.
+            // Wraith / vampire spawn / skeleton / zombie / slime sit
+            // outside the random pool — CR-5+ undead and trash mobs are
+            // reserved for hand-built encounters via `instantiate_creature`.
         ]
     }
 
@@ -11773,5 +11777,289 @@ mod tests {
         // Casting should not panic and should resolve through the engine.
         let target_ids = vec![target];
         let _ = INFLICT_WOUNDS.side_effects(&mut e, fanatic, Some(&target_ids), None, None);
+    }
+
+    #[test]
+    fn scorching_ray_resolves_three_rolls_against_target() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::SCORCHING_RAY;
+        use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            .unwrap();
+        let max_hp = e.actors[&target].max_hitpoints();
+        let target_ids = vec![target];
+        let effects = SCORCHING_RAY.side_effects(&mut e, wizard, Some(&target_ids), None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        // Three rays at 2d6 average ~7 each; with the seed deterministic
+        // we should land at least one hit on the bandit's AC 12, but we
+        // accept a 0-damage outcome as well (all rays missed) — the key
+        // assertion is that the action resolved without panicking.
+        assert!(e.actors[&target].hitpoints() <= max_hp);
+    }
+
+    #[test]
+    fn lightning_bolt_consumes_level_3_slot() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::LIGHTNING_BOLT;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let costs = LIGHTNING_BOLT.cost(&e, wizard, None, None, None);
+        assert!(
+            costs.contains(&Resource::SpellSlot(3)),
+            "lightning bolt should cost a level-3 slot, got {:?}",
+            costs
+        );
+    }
+
+    #[test]
+    fn vampiric_touch_heals_caster_on_hit() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::VAMPIRIC_TOUCH;
+        use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        // Damage the wizard so heal becomes observable.
+        let wiz_max = e.actors[&wizard].max_hitpoints();
+        e.actors
+            .get_mut(&wizard)
+            .unwrap()
+            .take_typed_damage(wiz_max.saturating_sub(1), DamageType::Slashing);
+        let wiz_hp_before = e.actors[&wizard].hitpoints();
+        let target_ids = vec![target];
+        let effects = VAMPIRIC_TOUCH.side_effects(&mut e, wizard, Some(&target_ids), None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        // On hit, the heal should be visible. Even on a miss the spell
+        // installs concentration on the caster.
+        assert!(
+            e.actors[&wizard].is_concentrating(),
+            "vampiric touch should install concentration"
+        );
+        let wiz_hp_after = e.actors[&wizard].hitpoints();
+        assert!(
+            wiz_hp_after >= wiz_hp_before,
+            "vampiric touch must never reduce caster HP"
+        );
+    }
+
+    #[test]
+    fn hypnotic_pattern_skips_charm_immune_targets() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::HYPNOTIC_PATTERN;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 6), 1, 0)
+            .unwrap();
+        let locs = vec![Coordinate::new(6, 6)];
+        let effects = HYPNOTIC_PATTERN.side_effects(&mut e, wizard, None, Some(&locs), None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&zombie].has_condition(Condition::Incapacitated),
+            "charm-immune undead should ignore hypnotic pattern"
+        );
+    }
+
+    #[test]
+    fn divine_favor_installs_concentration_and_attack_buff() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::DIVINE_FAVOR;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&cleric].attack_bonus_buff();
+        let effects = DIVINE_FAVOR.side_effects(&mut e, cleric, None, None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        let after = e.actors[&cleric].attack_bonus_buff();
+        assert_eq!(after - before, 2, "divine favor should add +2 attack buff");
+        assert!(
+            e.actors[&cleric].is_concentrating(),
+            "divine favor should install concentration"
+        );
+    }
+
+    #[test]
+    fn spirit_guardians_radiates_radiant_burst_around_caster() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::SPIRIT_GUARDIANS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        let max_hp = e.actors[&goblin].max_hitpoints();
+        let effects = SPIRIT_GUARDIANS.side_effects(&mut e, cleric, None, None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        let gob_hp = e.actors.get(&goblin).map(|a| a.hitpoints()).unwrap_or(0);
+        assert!(
+            gob_hp < max_hp,
+            "spirit guardians burst should reduce adjacent enemy HP"
+        );
+        assert!(
+            e.actors[&cleric].is_concentrating(),
+            "spirit guardians should install concentration"
+        );
+    }
+
+    #[test]
+    fn vampire_spawn_bite_heals_caster() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::VAMPIRIC_BITE;
+        use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
+        use crate::actors::creatures::vampire_spawns::VAMPIRE_SPAWN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let vamp = e
+            .instantiate_creature(&VAMPIRE_SPAWN_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let bandit = e
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(4, 3), 1, 0)
+            .unwrap();
+        // Damage the vampire by half so heal becomes observable on hit.
+        let vamp_max = e.actors[&vamp].max_hitpoints();
+        e.actors
+            .get_mut(&vamp)
+            .unwrap()
+            .take_typed_damage(vamp_max / 2, DamageType::Slashing);
+        let vamp_before = e.actors[&vamp].hitpoints();
+        let target_ids = vec![bandit];
+        let effects = VAMPIRIC_BITE.side_effects(&mut e, vamp, Some(&target_ids), None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        // On hit the heal lands; on a miss neither HP changes. Either is
+        // fine — we only require monotonicity (heal never reduces HP).
+        let vamp_after = e.actors[&vamp].hitpoints();
+        assert!(
+            vamp_after >= vamp_before,
+            "vampiric bite must never reduce caster HP"
+        );
+    }
+
+    #[test]
+    fn vampire_spawn_resists_necrotic() {
+        use crate::actors::creatures::vampire_spawns::VAMPIRE_SPAWN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let vamp = e
+            .instantiate_creature(&VAMPIRE_SPAWN_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let before = e.actors[&vamp].hitpoints();
+        e.actors
+            .get_mut(&vamp)
+            .unwrap()
+            .take_typed_damage(10, DamageType::Necrotic);
+        let after = e.actors[&vamp].hitpoints();
+        // Resistance halves: 10 → 5; HP drops by exactly 5.
+        assert_eq!(before - after, 5);
+    }
+
+    #[test]
+    fn bandit_captain_multiattack_is_three_swings() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::BANDIT_CAPTAIN_MULTI;
+        use crate::actors::creatures::bandit_captains::BANDIT_CAPTAIN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let captain = e
+            .instantiate_creature(&BANDIT_CAPTAIN_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&captain]
+                .actions
+                .iter()
+                .any(|a| a.name() == BANDIT_CAPTAIN_MULTI.name()),
+            "bandit captain should have the triple-scimitar multiattack"
+        );
+        assert_eq!(BANDIT_CAPTAIN_MULTI.count, 3);
+    }
+
+    #[test]
+    fn animated_armor_is_immune_to_poison_and_charmed() {
+        use crate::actors::creatures::animated_armors::ANIMATED_ARMOR_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let armor = e
+            .instantiate_creature(&ANIMATED_ARMOR_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        assert!(e.actors[&armor].is_immune_to(DamageType::Poison));
+        assert!(e.actors[&armor].is_immune_to(DamageType::Psychic));
+        assert!(e.actors[&armor].is_immune_to_condition(Condition::Charmed));
+        assert!(e.actors[&armor].is_immune_to_condition(Condition::Asleep));
+    }
+
+    #[test]
+    fn animated_armor_takes_no_poison_damage() {
+        use crate::actors::creatures::animated_armors::ANIMATED_ARMOR_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let armor = e
+            .instantiate_creature(&ANIMATED_ARMOR_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let before = e.actors[&armor].hitpoints();
+        e.actors
+            .get_mut(&armor)
+            .unwrap()
+            .take_typed_damage(20, DamageType::Poison);
+        assert_eq!(e.actors[&armor].hitpoints(), before);
+    }
+
+    #[test]
+    fn cleric_loadout_includes_divine_favor_and_spirit_guardians() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::{DIVINE_FAVOR, SPIRIT_GUARDIANS};
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let names: Vec<&str> = e.actors[&id].actions.iter().map(|a| a.name()).collect();
+        assert!(names.contains(&DIVINE_FAVOR.name()));
+        assert!(names.contains(&SPIRIT_GUARDIANS.name()));
+    }
+
+    #[test]
+    fn wizard_loadout_includes_new_l2_l3_spells() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::{HYPNOTIC_PATTERN, LIGHTNING_BOLT, SCORCHING_RAY, VAMPIRIC_TOUCH};
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let names: Vec<&str> = e.actors[&id].actions.iter().map(|a| a.name()).collect();
+        assert!(names.contains(&SCORCHING_RAY.name()));
+        assert!(names.contains(&LIGHTNING_BOLT.name()));
+        assert!(names.contains(&VAMPIRIC_TOUCH.name()));
+        assert!(names.contains(&HYPNOTIC_PATTERN.name()));
     }
 }

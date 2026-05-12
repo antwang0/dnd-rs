@@ -69,26 +69,40 @@ impl Prompt {
             .get(&self.actor_id)
             .ok_or_else(|| ParseError::new(format!("missing actor {}", self.actor_id)))?;
 
-        let mut tokens: VecDeque<&str> = input.split_whitespace().collect();
-        let Some(action_name) = tokens.pop_front() else {
+        let tokens: Vec<&str> = input.split_whitespace().collect();
+        if tokens.is_empty() {
             return Err(ParseError::with_input("empty input", input));
-        };
+        }
 
-        let action: &(dyn Action + Send + Sync) = *self
-            .actions
-            .iter()
-            .find(|e| action_name == e.name() || e.aliases().contains(&action_name))
-            .ok_or_else(|| {
-                ParseError::with_input(
-                    format!("unknown or unavailable action {:?}", action_name),
-                    input,
-                )
-            })?;
+        // Match action by the longest token-prefix that names an action.
+        // We try N tokens, then N-1, etc., so multi-word spell names like
+        // "scorching ray" or "hold person" work alongside single-token
+        // names. Aliases are still single-token (e.g. "sr", "hp").
+        let mut action_opt: Option<(usize, &(dyn Action + Send + Sync))> = None;
+        for n in (1..=tokens.len()).rev() {
+            let candidate = tokens[..n].join(" ");
+            if let Some(act) = self
+                .actions
+                .iter()
+                .find(|e| candidate == e.name() || (n == 1 && e.aliases().contains(&tokens[0])))
+                .copied()
+            {
+                action_opt = Some((n, act));
+                break;
+            }
+        }
+        let Some((consumed, action)) = action_opt else {
+            return Err(ParseError::with_input(
+                format!("unknown or unavailable action {:?}", tokens[0]),
+                input,
+            ));
+        };
 
         let mut target_ids: Vec<usize> = Vec::new();
         let mut target_locations: Vec<Coordinate> = Vec::new();
 
-        while let Some(tok) = tokens.pop_front() {
+        let mut rest: VecDeque<&str> = tokens.into_iter().skip(consumed).collect();
+        while let Some(tok) = rest.pop_front() {
             let token_trimmed = tok.trim();
             match Self::parse_arg(token_trimmed, encounter_instance, actor.location()) {
                 Some(TargetArg::Actor(id)) => target_ids.push(id),
@@ -272,6 +286,56 @@ mod tests {
         let aei = prompt
             .process_input(&format!("trip id:{}", target), &e)
             .expect("id:N should resolve to actor target");
+        assert_eq!(aei.target_ids().and_then(|ids| ids.first().copied()), Some(target));
+    }
+
+    /// Multi-word action names (e.g. "sacred flame", "scorching ray") must
+    /// match across whitespace boundaries — previously the parser only
+    /// consumed the first token and was unreachable for these spells via
+    /// their canonical name (only the short aliases worked).
+    #[test]
+    fn parse_multi_word_action_name_resolves() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::engine::encounter::EncounterInstance;
+        use crate::engine::terrain_gen::TerrainGenParams;
+
+        let tp = TerrainGenParams {
+            width: 20,
+            height: 20,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(0)).unwrap();
+        let wizard = e
+            .instantiate_creature(
+                &WIZARD_TEMPLATE,
+                crate::engine::types::Coordinate::new(5, 5),
+                0,
+                0,
+            )
+            .unwrap();
+        let target = e
+            .instantiate_creature(
+                &ZOMBIE_TEMPLATE,
+                crate::engine::types::Coordinate::new(7, 5),
+                1,
+                0,
+            )
+            .unwrap();
+        use super::Prompt;
+        let prompt = Prompt::new(wizard, e.actors[&wizard].available_actions());
+        // "scorching ray <id>" must parse as the action "scorching ray"
+        // (two tokens) plus a single target id arg.
+        let aei = prompt
+            .process_input(&format!("scorching ray id:{}", target), &e)
+            .expect("scorching ray should parse as a two-token action name");
         assert_eq!(aei.target_ids().and_then(|ids| ids.first().copied()), Some(target));
     }
 }

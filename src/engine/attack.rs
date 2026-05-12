@@ -38,12 +38,25 @@ pub fn resolve_attack(
     encounter: &mut EncounterInstance,
     p: AttackParams,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
+    resolve_attack_outcome(encounter, p).0
+}
+
+/// Result of an attack roll. `damage_dealt` is the post-crit, pre-target-
+/// resistance damage value that will hit the queue — `0` on a miss or when
+/// a Mirror Image absorbed the swing. Use this variant when the caller
+/// needs to chain off the rolled damage (e.g. a self-heal rider equal to
+/// half the damage, or a max-HP drain equal to the damage on a failed
+/// save) without re-rolling and double-consuming the RNG.
+pub fn resolve_attack_outcome(
+    encounter: &mut EncounterInstance,
+    p: AttackParams,
+) -> (Vec<Box<dyn ApplicableSideEffect>>, u32) {
     let Some(target_ac) = encounter
         .actors
         .get(&p.target_id)
         .map(|a| a.armor_class() as i32)
     else {
-        return Vec::new();
+        return (Vec::new(), 0);
     };
 
     let mode = encounter.compute_attack_mode(p.caster_id, p.target_id, p.is_melee);
@@ -95,7 +108,7 @@ pub fn resolve_attack(
         outcome,
     ));
     if !hit {
-        return Vec::new();
+        return (Vec::new(), 0);
     }
     // 5e Mirror Image: a hit may instead strike a decoy. With N duplicates
     // remaining, an extra d20 against the matching threshold (RAW: 6+
@@ -127,7 +140,7 @@ pub fn resolve_attack(
                 "  mirror image: 1d20({}) \u{2265} {} \u{2014} attack strikes a duplicate ({} left)",
                 dup_roll, dup_threshold, remaining
             ));
-            return Vec::new();
+            return (Vec::new(), 0);
         }
         encounter.log(format!(
             "  mirror image: 1d20({}) < {} \u{2014} attack finds the real target",
@@ -172,9 +185,12 @@ pub fn resolve_attack(
             hm_raw, hm_total, p.damage_type
         ));
     }
-    vec![Box::new(DealDamage {
-        actor_id: p.target_id,
-        amount: damage,
-        damage_type: p.damage_type,
-    })]
+    (
+        vec![Box::new(DealDamage {
+            actor_id: p.target_id,
+            amount: damage,
+            damage_type: p.damage_type,
+        })],
+        damage,
+    )
 }

@@ -1,3 +1,5 @@
+pub mod animated_armors;
+pub mod bandit_captains;
 pub mod bandits;
 pub mod bugbears;
 pub mod clerics;
@@ -22,6 +24,7 @@ pub mod slimes;
 pub mod specters;
 pub mod spiders;
 pub mod trolls;
+pub mod vampire_spawns;
 pub mod wisps;
 pub mod wizards;
 pub mod wolves;

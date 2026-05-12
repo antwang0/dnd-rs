@@ -26,7 +26,9 @@ use crate::{
 ///
 /// The default flavor takes no flat damage bonus; for spells that add an
 /// ability modifier to damage (Spiritual Weapon, etc.) call
-/// `spell_attack_with_bonus` instead.
+/// `spell_attack_with_bonus` instead. For spells that need the resolved
+/// damage value (Vampiric Touch's half-as-heal rider), use
+/// `spell_attack_outcome` directly.
 #[allow(clippy::too_many_arguments)]
 fn spell_attack(
     encounter: &mut EncounterInstance,
@@ -38,7 +40,7 @@ fn spell_attack(
     damage_type: DamageType,
     is_melee: bool,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
-    spell_attack_with_bonus(
+    spell_attack_outcome(
         encounter,
         caster_id,
         target_id,
@@ -49,6 +51,7 @@ fn spell_attack(
         damage_type,
         is_melee,
     )
+    .0
 }
 
 /// Same as `spell_attack` but adds a flat `damage_bonus` (e.g. caster's
@@ -66,6 +69,37 @@ fn spell_attack_with_bonus(
     damage_type: DamageType,
     is_melee: bool,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
+    spell_attack_outcome(
+        encounter,
+        caster_id,
+        target_id,
+        action_name,
+        attack_bonus,
+        damage_dice,
+        damage_bonus,
+        damage_type,
+        is_melee,
+    )
+    .0
+}
+
+/// Lower-level spell-attack resolver. Returns both the queued side-effects
+/// (DealDamage on hit, empty on miss) and the post-crit damage value that
+/// will land — `0` on a miss. Useful for spells that need to chain off
+/// the dealt damage value (e.g. Vampiric Touch's half-as-heal rider)
+/// without re-rolling the damage dice and double-consuming the RNG.
+#[allow(clippy::too_many_arguments)]
+fn spell_attack_outcome(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    target_id: usize,
+    action_name: &str,
+    attack_bonus: i32,
+    damage_dice: Dice,
+    damage_bonus: i32,
+    damage_type: DamageType,
+    is_melee: bool,
+) -> (Vec<Box<dyn ApplicableSideEffect>>, u32) {
     let target_ac = encounter
         .actors
         .get(&target_id)
@@ -104,7 +138,7 @@ fn spell_attack_with_bonus(
         outcome,
     ));
     if !hit {
-        return Vec::new();
+        return (Vec::new(), 0);
     }
     let dmg = encounter.roll(&damage_dice) as i32;
     let crit_extra = if is_crit { encounter.roll(&damage_dice) as i32 } else { 0 };
@@ -127,11 +161,14 @@ fn spell_attack_with_bonus(
             String::new()
         }
     ));
-    vec![Box::new(DealDamage {
-        actor_id: target_id,
-        amount: total_dmg,
-        damage_type,
-    })]
+    (
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: total_dmg,
+            damage_type,
+        })],
+        total_dmg,
+    )
 }
 
 /// Sacred Flame — cleric cantrip. Range 60ft (24 tiles), DEX save vs the
@@ -3751,4 +3788,481 @@ impl Action for MagicWeapon {
 }
 
 pub static MAGIC_WEAPON: LazyLock<MagicWeapon> = LazyLock::new(|| MagicWeapon {});
+
+/// Scorching Ray — level-2 evocation. Three independent ranged spell
+/// attack rolls against the same target (or, in 5e RAW, different
+/// targets — we don't yet model multi-target selection so they all
+/// converge on the chosen actor). Each ray deals 2d6 fire on hit. No
+/// save: standard spell attack vs AC per ray. The triple-attack lane
+/// rewards a high spell attack mod and gives wizards a reliable
+/// concentration-free single-target nuke.
+pub struct ScorchingRay {}
+
+impl Action for ScorchingRay {
+    fn name(&self) -> &str {
+        "scorching ray"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sr", "scorch"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120ft = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(2)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
+        let mut all: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        // Three independent rays. Each is its own attack roll → its own
+        // hit/miss/crit. If the target falls between rays the later rays
+        // still queue DealDamage, which no-ops on a dead actor.
+        for i in 0..3 {
+            let label = format!("scorching ray (ray {})", i + 1);
+            let effs = spell_attack(
+                encounter,
+                caster_id,
+                target_id,
+                &label,
+                attack_bonus,
+                Dice::new(2, 6),
+                DamageType::Fire,
+                false,
+            );
+            all.extend(effs);
+        }
+        all
+    }
+}
+
+pub static SCORCHING_RAY: LazyLock<ScorchingRay> = LazyLock::new(|| ScorchingRay {});
+
+/// Lightning Bolt — level-3 evocation. A 100ft line / 5ft wide (RAW); we
+/// approximate as a burst at the target point: every creature in a
+/// 4-tile radius makes a DEX save vs caster's spell save DC for 8d6
+/// lightning. Pass = half, fail = full. Shared damage roll across all
+/// targets. Distinct from Fireball: lightning damage type and same
+/// resource cost — picking between the two is a function of enemy
+/// resistances and party positioning (lightning more linear-flavored
+/// even if our grid approximation is a sphere).
+pub struct LightningBolt {}
+
+impl Action for LightningBolt {
+    fn name(&self) -> &str {
+        "lightning bolt"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["lb", "lightning"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 100ft = 40 tiles.
+        Some(40)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Lightning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(3)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let raw = encounter.roll(&Dice::new(8, 6));
+        encounter.log(format!(
+            "  lightning bolt: 8d6({}) = {} lightning area",
+            raw, raw
+        ));
+        crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            4,
+            AbilityScoreType::Dexterity,
+            dc,
+            raw,
+            DamageType::Lightning,
+        )
+    }
+}
+
+pub static LIGHTNING_BOLT: LazyLock<LightningBolt> = LazyLock::new(|| LightningBolt {});
+
+/// Vampiric Touch — level-3 necromancy, concentration. Melee spell
+/// attack; on hit, target takes 3d6 necrotic and the caster heals half
+/// (rounded down). Concentration is installed so re-cast within an hour
+/// drops the prior buff cleanly. Distinct from Inflict Wounds (1-action
+/// burst nuke, no slot scaling); Vampiric Touch trades single-hit damage
+/// for sustained self-sustain on a beefy caster.
+pub struct VampiricTouch {}
+
+impl Action for VampiricTouch {
+    fn name(&self) -> &str {
+        "vampiric touch"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["vt", "vamp"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Necrotic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(3)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
+        // spell_attack rolls the d20 vs AC and (on hit) the damage dice,
+        // returning a DealDamage we'll merge with the self-heal rider.
+        // `dealt` is the post-crit damage queued onto the target; we use
+        // it to drive the half-as-heal rider without re-rolling.
+        let (mut effs, dealt) = spell_attack_outcome(
+            encounter,
+            caster_id,
+            target_id,
+            "vampiric touch",
+            attack_bonus,
+            Dice::new(3, 6),
+            0,
+            DamageType::Necrotic,
+            true,
+        );
+        // Install concentration regardless of hit/miss — RAW: the spell
+        // is active for its full duration once cast, even if the first
+        // strike misses. Drop on re-cast keeps memory tight.
+        effs.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Vampiric Touch", Vec::new()),
+        }));
+        if dealt > 0 {
+            let heal = (dealt / 2).max(1);
+            encounter.log(format!(
+                "  vampiric touch: caster regains {} HP",
+                heal
+            ));
+            effs.push(Box::new(Heal {
+                actor_id: caster_id,
+                amount: heal,
+            }));
+        }
+        effs
+    }
+}
+
+pub static VAMPIRIC_TOUCH: LazyLock<VampiricTouch> = LazyLock::new(|| VampiricTouch {});
+
+/// Hypnotic Pattern — level-3 illusion. Burst (we use 4-tile radius for
+/// a 30ft cube) of incapacitating fascination. Every creature in the
+/// burst makes a WIS save vs caster's spell save DC. On fail, the
+/// target is Incapacitated for several rounds (we use Rounds(5)) and
+/// concentration tracks the spell so dropping it clears the condition.
+/// Charm-immune creatures (undead, constructs, etc.) save automatically.
+/// No damage — pure crowd control.
+pub struct HypnoticPattern {}
+
+impl Action for HypnoticPattern {
+    fn name(&self) -> &str {
+        "hypnotic pattern"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hyp", "hypnotic"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 30ft cube ≈ 4-tile radius burst on the 2.5ft grid.
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120ft = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(3)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let mut conditions_tracked: Vec<(usize, Condition)> = Vec::new();
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for target_id in encounter.burst_targets(caster_id, point, 4) {
+            // Charm-immune creatures shrug off the pattern. We don't
+            // log per-target immunity for AoE — would be noisy.
+            if encounter
+                .actors
+                .get(&target_id)
+                .is_some_and(|t| t.is_immune_to_condition(Condition::Charmed))
+            {
+                continue;
+            }
+            let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Incapacitated,
+                timer: ConditionTimer::Rounds(5),
+            }));
+            conditions_tracked.push((target_id, Condition::Incapacitated));
+        }
+        if !conditions_tracked.is_empty() {
+            effects.push(Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Hypnotic Pattern",
+                    conditions_tracked,
+                ),
+            }));
+        }
+        effects
+    }
+}
+
+pub static HYPNOTIC_PATTERN: LazyLock<HypnoticPattern> = LazyLock::new(|| HypnoticPattern {});
+
+/// Divine Favor — level-1 evocation, concentration. Self-buff: weapon
+/// attacks deal +1d4 radiant for the duration. We approximate the +1d4
+/// damage rider as a flat +2 attack-buff (the engine doesn't have a
+/// per-attack-extra-damage lane for self-buffs yet). Installed via
+/// concentration so re-casting another concentration drops it cleanly.
+/// Distinct from Bless (allies-only, +1d4 to attack rolls / saves):
+/// Divine Favor is self-only and stacks freely with Bless.
+pub struct DivineFavor {}
+
+impl Action for DivineFavor {
+    fn name(&self) -> &str {
+        "divine favor"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["df", "favor"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::AdjustAttackBuff;
+        // +2 attack buff approximates "+1d4 radiant per hit". The buff
+        // lives on the concentration so it rolls back automatically.
+        let mut data = ConcentrationData::with_conditions("Divine Favor", Vec::new());
+        data.attack_buffs.push((caster_id, 2));
+        vec![
+            Box::new(AdjustAttackBuff {
+                actor_id: caster_id,
+                delta: 2,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data,
+            }),
+        ]
+    }
+}
+
+pub static DIVINE_FAVOR: LazyLock<DivineFavor> = LazyLock::new(|| DivineFavor {});
+
+/// Spirit Guardians — level-3 conjuration, concentration. Caster is
+/// surrounded by a 15ft-radius aura of spectral guardians; each enemy
+/// that starts its turn in the aura makes a WIS save vs the caster's
+/// spell save DC. Pass = half, fail = full of 3d8 radiant. We model the
+/// aura via a one-shot burst centered on the caster at cast time
+/// (immediate damage on cast); the per-turn re-pulse requires
+/// per-actor concentration tick we don't have today, so the spell's
+/// flavor is collapsed to a powerful single-cast radiant burst that
+/// matches a typical first-round application. Concentration tracks the
+/// cast so re-casting drops cleanly.
+pub struct SpiritGuardians {}
+
+impl Action for SpiritGuardians {
+    fn name(&self) -> &str {
+        "spirit guardians"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sg", "spirit"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn requires_los(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Radiant]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(3)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let caster_loc = caster.location();
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let raw = encounter.roll(&Dice::new(3, 8));
+        encounter.log(format!(
+            "  spirit guardians: 3d8({}) = {} radiant area",
+            raw, raw
+        ));
+        // 15ft radius = 3 tiles on the 2.5ft grid.
+        let mut effs = crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            caster_loc,
+            3,
+            AbilityScoreType::Wisdom,
+            dc,
+            raw,
+            DamageType::Radiant,
+        );
+        effs.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Spirit Guardians", Vec::new()),
+        }));
+        effs
+    }
+}
+
+pub static SPIRIT_GUARDIANS: LazyLock<SpiritGuardians> = LazyLock::new(|| SpiritGuardians {});
 

@@ -949,6 +949,15 @@ pub static GOBLIN_BOSS_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiatta
     count: 2,
 });
 
+/// Bandit Captain multiattack: 3 scimitar swings per Action — a tougher
+/// version of the goblin boss's pattern. Pair with a heavy crossbow for
+/// the bonus-action ranged finisher.
+pub static BANDIT_CAPTAIN_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "triple scimitar",
+    sub_attack: &SCIMITAR,
+    count: 3,
+});
+
 /// Imp's poisoned sting — finesse melee, 1d4+DEX piercing on hit plus
 /// a CON save (DC 11) for 2d10 poison rider damage. Showcases the
 /// "weapon attack + ability save rider" pattern using the SimpleWeapon
@@ -1184,68 +1193,30 @@ impl Action for LifeDrain {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        // Resolve the attack inline (rather than via `resolve_attack`)
-        // because we need the rolled damage to mirror into the max-HP
-        // reduction on a failed CON save. Keeps the log shape identical
-        // to the shared resolver.
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
         let attack_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength))
             + caster.proficiency_bonus();
-        let target_ac = encounter
-            .actors
-            .get(&target_id)
-            .map(|a| a.armor_class() as i32)
-            .unwrap_or(10);
-        let mode = encounter.compute_attack_mode(caster_id, target_id, true);
-        let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
-        let is_crit = raw_attack == 20;
-        let buff = encounter
-            .actors
-            .get(&caster_id)
-            .map(|a| a.attack_bonus_buff())
-            .unwrap_or(0);
-        let (bless_die, bless_note) = encounter.bless_bane_attack_die(caster_id);
-        let attack_total = raw_attack + attack_mod + buff + bless_die;
-        let hit = is_crit || attack_total >= target_ac;
-        let outcome = if is_crit {
-            "CRIT!"
-        } else if hit {
-            "hit"
-        } else {
-            "miss"
-        };
-        encounter.log(format!(
-            "  life drain: 1d20({}){:+}{} = {} vs AC {}{} \u{2014} {}",
-            raw_attack,
-            attack_mod + buff,
-            bless_note,
-            attack_total,
-            target_ac,
-            mode.log_suffix(),
-            outcome,
-        ));
-        if !hit {
-            return Vec::new();
+        // resolve_attack_outcome returns the queued DealDamage plus the
+        // resolved damage value — we mirror that value into the max-HP
+        // drain on a failed CON save.
+        let (mut effects, damage) = crate::engine::attack::resolve_attack_outcome(
+            encounter,
+            AttackParams {
+                caster_id,
+                target_id,
+                action_name: "life drain",
+                attack_bonus: attack_mod,
+                damage_dice: Dice::new(4, 8),
+                damage_bonus: 3,
+                damage_type: DamageType::Necrotic,
+                is_melee: true,
+            },
+        );
+        if damage == 0 {
+            return effects;
         }
-        let dice = Dice::new(4, 8);
-        let raw_dmg = encounter.roll(&dice) as i32;
-        let crit_extra = if is_crit { encounter.roll(&dice) as i32 } else { 0 };
-        let damage = (raw_dmg + crit_extra + 3).max(0) as u32;
-        encounter.log(format!(
-            "  life drain: {}({}){:+} = {} necrotic damage{}",
-            dice,
-            raw_dmg,
-            3,
-            damage,
-            if is_crit { " (crit)" } else { "" }
-        ));
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
-            actor_id: target_id,
-            amount: damage,
-            damage_type: DamageType::Necrotic,
-        })];
         // CON save vs DC 14 to avoid max-HP reduction. RAW: the reduction
         // equals the necrotic damage dealt; we use the pre-mitigation
         // amount so resistance to necrotic doesn't double-protect.
@@ -1261,6 +1232,99 @@ impl Action for LifeDrain {
 }
 
 pub static LIFE_DRAIN: LazyLock<LifeDrain> = LazyLock::new(|| LifeDrain {});
+
+/// Vampiric Bite — Vampire Spawn signature attack. Melee weapon attack
+/// (STR + prof to hit), 1d6+STR piercing plus 3d6 necrotic. The Vampire
+/// Spawn regains HP equal to the necrotic damage dealt. Distinct from
+/// Wraith's Life Drain: no max-HP drain rider, but a much larger heal-
+/// per-hit lane. Models the trope of a vampire feeding to top off.
+pub struct VampiricBite {}
+
+impl Action for VampiricBite {
+    fn name(&self) -> &str {
+        "vampiric bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["vb", "feed"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Necrotic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::Heal;
+
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let attack_mod = str_mod + caster.proficiency_bonus();
+        // Piercing portion goes through the shared resolver; we layer the
+        // necrotic rider and self-heal off of the hit/damage result.
+        let (mut effects, piercing_damage) = crate::engine::attack::resolve_attack_outcome(
+            encounter,
+            AttackParams {
+                caster_id,
+                target_id,
+                action_name: "vampiric bite",
+                attack_bonus: attack_mod,
+                damage_dice: Dice::new(1, 6),
+                damage_bonus: str_mod,
+                damage_type: DamageType::Piercing,
+                is_melee: true,
+            },
+        );
+        if piercing_damage == 0 {
+            return effects;
+        }
+        // On hit, 3d6 necrotic rider (no STR bonus, no crit doubling here —
+        // RAW: only the weapon damage doubles; the bite's separate
+        // necrotic die is added as flat extra damage).
+        let necrotic = encounter.roll(&Dice::new(3, 6));
+        encounter.log(format!(
+            "  vampiric bite: 3d6({}) = {} necrotic; vampire regains {} HP",
+            necrotic, necrotic, necrotic
+        ));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: necrotic,
+            damage_type: DamageType::Necrotic,
+        }));
+        // Heal the vampire by the necrotic damage dealt (pre-resistance).
+        effects.push(Box::new(Heal {
+            actor_id: caster_id,
+            amount: necrotic,
+        }));
+        effects
+    }
+}
+
+pub static VAMPIRIC_BITE: LazyLock<VampiricBite> = LazyLock::new(|| VampiricBite {});
 
 /// Ghoul claws. 1d4+2 slashing on hit; on hit *against a non-elf*
 /// (we don't model lineage; we apply the rider unconditionally) the
