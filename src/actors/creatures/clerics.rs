@@ -1,9 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
-    AID, BANE, BLESS, CURE_WOUNDS, FAERIE_FIRE, GUIDING_BOLT, HEALING_WORD, HEROISM, HOLD_PERSON,
-    INFLICT_WOUNDS, LESSER_RESTORATION, MASS_HEALING_WORD, PROTECTION_FROM_EVIL_AND_GOOD,
-    SACRED_BURST, SACRED_FLAME, SHIELD_OF_FAITH, SPARE_THE_DYING, SPIRITUAL_WEAPON, THORN_WHIP,
-    TOLL_THE_DEAD,
+    AID, BANE, BLESS, COMMAND, CURE_WOUNDS, FAERIE_FIRE, GUIDING_BOLT, HEALING_WORD, HEROISM,
+    HOLD_PERSON, INFLICT_WOUNDS, LESSER_RESTORATION, MASS_HEALING_WORD,
+    PROTECTION_FROM_EVIL_AND_GOOD, SACRED_BURST, SACRED_FLAME, SHIELD_OF_FAITH, SPARE_THE_DYING,
+    SPIRITUAL_WEAPON, THORN_WHIP, TOLL_THE_DEAD,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size, SpecialSense};
@@ -36,6 +36,7 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*HEROISM);
     actions.push(&*MASS_HEALING_WORD);
     actions.push(&*PROTECTION_FROM_EVIL_AND_GOOD);
+    actions.push(&*COMMAND);
     CreatureTemplate {
         name: "Cleric",
         glyph: 'C',

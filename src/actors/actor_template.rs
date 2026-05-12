@@ -491,11 +491,6 @@ impl ActorInstance {
         self.temp_hp
     }
 
-    /// Alias for legacy call sites.
-    pub fn temp_hitpoints(&self) -> u32 {
-        self.temp_hp
-    }
-
     /// 5e: a new application replaces the existing pool only if it's
     /// larger. Returns true if temp HP changed.
     pub fn grant_temp_hp(&mut self, amount: u32) -> bool {
@@ -514,11 +509,6 @@ impl ActorInstance {
             self.temp_hp = amount;
         }
         self.temp_hp
-    }
-
-    /// Legacy alias — same semantics.
-    pub fn add_temp_hp(&mut self, amount: u32) {
-        self.gain_temp_hp(amount);
     }
 
     /// Returns the post-modifier damage value (immunity → 0, resistance
@@ -1040,22 +1030,12 @@ impl ActorInstance {
         self.has_condition(Condition::Disengaging)
     }
 
-    /// Legacy alias — same semantics as `is_disengaging`.
-    pub fn is_disengaged(&self) -> bool {
-        self.is_disengaging()
-    }
-
     pub fn set_disengaging(&mut self, on: bool) {
         if on {
             self.add_condition(Condition::Disengaging, ConditionTimer::UntilStartOfNextTurn);
         } else {
             self.remove_condition(Condition::Disengaging);
         }
-    }
-
-    /// Legacy alias — same semantics as `set_disengaging`.
-    pub fn set_disengaged(&mut self, on: bool) {
-        self.set_disengaging(on);
     }
 
     /// Identity of the helper who granted advantage to this actor, if

@@ -69,6 +69,61 @@ pub fn resolve_burst_save_damage(
 /// reach weapons would be 2. Ranged actions return their max range here.
 pub const MELEE_REACH: isize = 1;
 
+/// Sweep targets in a `radius` burst centered on `point` and return their
+/// ids in ascending current-HP order — a target whose current HP exceeds
+/// the running pool stops the sweep (5e Sleep / Color Spray semantics).
+/// `skip_immune_to` filters out actors immune to that condition (the
+/// condition itself doesn't stack, so re-entry would be a no-op anyway —
+/// this is just an early prune so the pool isn't burnt on no-ops).
+///
+/// Returns the ids in the order they should be touched; the caller is
+/// responsible for queueing whatever side-effect (ApplyCondition, etc.).
+pub fn pool_sweep_targets(
+    encounter: &EncounterInstance,
+    caster_id: usize,
+    point: Coordinate,
+    radius: isize,
+    pool: u32,
+    skip_immune_to: crate::conditions::Condition,
+) -> Vec<usize> {
+    use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+    let mut candidates: Vec<(u32, usize)> = encounter
+        .actors
+        .iter()
+        .filter_map(|(id, a)| {
+            if *id == caster_id || !a.is_combat_active() {
+                return None;
+            }
+            if a.is_immune_to_condition(skip_immune_to) {
+                return None;
+            }
+            let dist = footprint_chebyshev(
+                a.location(),
+                get_tiles_from_size(a.size()),
+                point,
+                1,
+            );
+            if dist > radius {
+                return None;
+            }
+            Some((a.hitpoints(), *id))
+        })
+        .collect();
+    candidates.sort_unstable();
+
+    let mut remaining = pool;
+    let mut hit: Vec<usize> = Vec::new();
+    for (hp, id) in candidates {
+        if hp == 0 || hp > remaining {
+            break;
+        }
+        remaining -= hp;
+        hit.push(id);
+    }
+    hit
+}
+
 /// Convenience for `SingleActor` schemas: extract the first id from the
 /// optional id list, returning `None` on empty / missing. Side-effect
 /// builders use this so they can early-return cleanly when the engine

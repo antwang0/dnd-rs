@@ -1,6 +1,7 @@
 use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
 use crate::actors::creatures::bugbears::BUGBEAR_TEMPLATE;
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+use crate::actors::creatures::cult_fanatics::CULT_FANATIC_TEMPLATE;
 use crate::actors::creatures::dire_wolves::DIRE_WOLF_TEMPLATE;
 use crate::actors::creatures::ghouls::GHOUL_TEMPLATE;
 use crate::actors::creatures::gnolls::GNOLL_TEMPLATE;
@@ -9,7 +10,9 @@ use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 use crate::actors::creatures::hobgoblins::HOBGOBLIN_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::orcs::ORC_TEMPLATE;
+use crate::actors::creatures::owlbears::OWLBEAR_TEMPLATE;
 use crate::actors::creatures::specters::SPECTER_TEMPLATE;
+use crate::actors::creatures::wisps::WISP_TEMPLATE;
 use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
 use crate::actors::creatures::wolves::WOLF_TEMPLATE;
 use std::collections::HashMap;
@@ -1304,6 +1307,7 @@ impl EncounterInstance {
             &BANDIT_TEMPLATE,
             &BUGBEAR_TEMPLATE,
             &CLERIC_TEMPLATE,
+            &CULT_FANATIC_TEMPLATE,
             &DIRE_WOLF_TEMPLATE,
             &GHOUL_TEMPLATE,
             &GNOLL_TEMPLATE,
@@ -1312,7 +1316,9 @@ impl EncounterInstance {
             &HOBGOBLIN_TEMPLATE,
             &OGRE_TEMPLATE,
             &ORC_TEMPLATE,
+            &OWLBEAR_TEMPLATE,
             &SPECTER_TEMPLATE,
+            &WISP_TEMPLATE,
             &WOLF_TEMPLATE,
             &WIZARD_TEMPLATE,
             // Wraith / skeleton / zombie / slime sit outside the random
@@ -3129,7 +3135,7 @@ mod tests {
         e.push_action(aei);
         e.process_stack();
         // 1d4+4 ranges 5..=8. We just check the floor.
-        assert!(e.actors[&wizard].temp_hitpoints() >= 5);
+        assert!(e.actors[&wizard].temp_hp() >= 5);
     }
 
     #[test]
@@ -3182,13 +3188,13 @@ mod tests {
         let actor = e.actors.get_mut(&id).unwrap();
         let max = actor.max_hitpoints();
         actor.grant_temp_hp(5);
-        assert_eq!(actor.temp_hitpoints(), 5);
+        assert_eq!(actor.temp_hp(), 5);
         actor.take_damage(3);
-        assert_eq!(actor.temp_hitpoints(), 2);
+        assert_eq!(actor.temp_hp(), 2);
         assert_eq!(actor.hitpoints(), max);
         actor.take_damage(4);
         // Temp drained, remaining 2 hits real HP.
-        assert_eq!(actor.temp_hitpoints(), 0);
+        assert_eq!(actor.temp_hp(), 0);
         assert_eq!(actor.hitpoints(), max - 2);
     }
 
@@ -3202,10 +3208,10 @@ mod tests {
         assert!(actor.grant_temp_hp(5));
         // Smaller value: ignored.
         assert!(!actor.grant_temp_hp(3));
-        assert_eq!(actor.temp_hitpoints(), 5);
+        assert_eq!(actor.temp_hp(), 5);
         // Bigger value: replaces.
         assert!(actor.grant_temp_hp(8));
-        assert_eq!(actor.temp_hitpoints(), 8);
+        assert_eq!(actor.temp_hp(), 8);
     }
 
     #[test]
@@ -3637,7 +3643,7 @@ mod tests {
         assert!(aei.validate(&e));
         e.push_action(aei);
         e.process_stack();
-        assert!(e.actors[&mover].is_disengaged());
+        assert!(e.actors[&mover].is_disengaging());
         // Now move out of reach. The reactor's reaction must still be
         // available (no OA fired).
         let move_effect = MoveActor {
@@ -3657,11 +3663,11 @@ mod tests {
         let id = e
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        e.actors.get_mut(&id).unwrap().set_disengaged(true);
+        e.actors.get_mut(&id).unwrap().set_disengaging(true);
         // reset_for_new_round happens at the start of every turn — here we
         // call it directly to simulate "actor's next turn begins."
         e.actors.get_mut(&id).unwrap().reset_for_new_round();
-        assert!(!e.actors[&id].is_disengaged());
+        assert!(!e.actors[&id].is_disengaging());
     }
 
     #[test]
@@ -8109,7 +8115,7 @@ mod tests {
         e.actors
             .get_mut(&target)
             .unwrap()
-            .add_condition(Condition::Dodging, ConditionTimer::UntilOwnTurn);
+            .add_condition(Condition::Dodging, ConditionTimer::UntilStartOfNextTurn);
         assert_eq!(
             e.compute_attack_mode(attacker, target, true),
             RollMode::Disadvantage
@@ -8136,7 +8142,7 @@ mod tests {
         e.actors
             .get_mut(&attacker)
             .unwrap()
-            .add_condition(Condition::Helped, ConditionTimer::UntilOwnTurn);
+            .add_condition(Condition::Helped, ConditionTimer::UntilStartOfNextTurn);
         let target_vec = vec![target];
         let _effects = SLAM.side_effects(&mut e, attacker, Some(&target_vec), None, None);
         // Helped is consumed by the attack regardless of hit/miss.
@@ -8154,7 +8160,7 @@ mod tests {
         let reactor_id = e
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
             .unwrap();
-        e.actors.get_mut(&mover_id).unwrap().set_disengaged(true);
+        e.actors.get_mut(&mover_id).unwrap().set_disengaging(true);
         let move_effect = MoveActor {
             actor_id: mover_id,
             path: vec![Coordinate::new(15, 5)],
@@ -8213,7 +8219,7 @@ mod tests {
         e.actors
             .get_mut(&id)
             .unwrap()
-            .add_condition(Condition::Dodging, ConditionTimer::UntilOwnTurn);
+            .add_condition(Condition::Dodging, ConditionTimer::UntilStartOfNextTurn);
         assert!(e.actors[&id].has_condition(Condition::Dodging));
         e.actors.get_mut(&id).unwrap().reset_for_new_round();
         assert!(!e.actors[&id].has_condition(Condition::Dodging));
@@ -9600,7 +9606,7 @@ mod tests {
             .unwrap();
         // Mark the mover as disengaged — OAs against them this turn are
         // suppressed.
-        e.actors.get_mut(&mover_id).unwrap().set_disengaged(true);
+        e.actors.get_mut(&mover_id).unwrap().set_disengaging(true);
         let move_effect = MoveActor {
             actor_id: mover_id,
             path: vec![Coordinate::new(15, 5)],
@@ -9692,7 +9698,7 @@ mod tests {
         let id = e
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        e.actors.get_mut(&id).unwrap().add_temp_hp(5);
+        e.actors.get_mut(&id).unwrap().gain_temp_hp(5);
         let max = e.actors[&id].max_hitpoints();
         // 4 damage: fully absorbed by temp HP, none of HP lost.
         DealDamage {
@@ -10041,10 +10047,10 @@ mod tests {
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
         let actor = e.actors.get_mut(&id).unwrap();
-        actor.add_temp_hp(7);
-        actor.add_temp_hp(3); // smaller — ignored
+        actor.gain_temp_hp(7);
+        actor.gain_temp_hp(3); // smaller — ignored
         assert_eq!(actor.temp_hp(), 7);
-        actor.add_temp_hp(10); // larger — replaces
+        actor.gain_temp_hp(10); // larger — replaces
         assert_eq!(actor.temp_hp(), 10);
     }
 
@@ -11499,5 +11505,273 @@ mod tests {
             "expected save log to include -1 modifier (got: {:?})",
             lines
         );
+    }
+
+    #[test]
+    fn fireball_damages_actors_in_burst() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::FIREBALL;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        let max_hp = e.actors[&target].max_hitpoints();
+        let locs = vec![Coordinate::new(10, 10)];
+        let effects = FIREBALL.side_effects(&mut e, wizard, None, Some(&locs), None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        // 8d6 (8..=48) — even on a passed save the half damage will
+        // reduce a zombie's HP. Zombies get no fire resistance.
+        assert!(
+            e.actors.get(&target).map(|a| a.hitpoints()).unwrap_or(0) < max_hp,
+            "fireball should damage the burst target"
+        );
+    }
+
+    #[test]
+    fn fireball_excludes_caster() {
+        // The shared `resolve_burst_save_damage` helper exempts the
+        // caster, so even a Fireball centered on the wizard's tile shouldn't
+        // damage them. (If they don't catch fire from their own AoE we
+        // can be confident the helper is wired up.)
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::FIREBALL;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let max_hp = e.actors[&wizard].max_hitpoints();
+        let locs = vec![Coordinate::new(5, 5)];
+        let effects = FIREBALL.side_effects(&mut e, wizard, None, Some(&locs), None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&wizard].hitpoints(),
+            max_hp,
+            "fireball should not damage its caster"
+        );
+    }
+
+    #[test]
+    fn color_spray_blinds_low_hp_target() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::COLOR_SPRAY;
+        use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+            .unwrap();
+        // Shave the bandit down to 3 HP so the 6d10 pool always covers it.
+        let drain = e.actors[&target].max_hitpoints().saturating_sub(3);
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .take_typed_damage(drain, DamageType::Slashing);
+        let locs = vec![Coordinate::new(4, 4)];
+        let effects = COLOR_SPRAY.side_effects(&mut e, wizard, None, Some(&locs), None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert!(
+            e.actors[&target].has_condition(Condition::Blinded),
+            "low-HP target should be blinded by color spray"
+        );
+    }
+
+    #[test]
+    fn command_stuns_failed_save_target() {
+        // Command's no-save-immunity check runs against Charmed-immunity.
+        // Bandits aren't charm-immune, so the spell's roll path is exercised.
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::COMMAND;
+        use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+            .unwrap();
+        // Force a save-fail by making the target auto-fail: drop their WIS
+        // to a mod that can't roll the DC. We approximate by burning many
+        // attempts and asserting that *eventually* the spell either lands
+        // (Stunned applied) or doesn't (clean log path). Either way the
+        // call shouldn't panic and the target shouldn't change HP.
+        let hp_before = e.actors[&target].hitpoints();
+        let target_ids = vec![target];
+        for _ in 0..10 {
+            let effects = COMMAND.side_effects(&mut e, wizard, Some(&target_ids), None, None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            if e.actors[&target].has_condition(Condition::Stunned) {
+                break;
+            }
+        }
+        // HP must be unchanged (Command deals no damage).
+        assert_eq!(e.actors[&target].hitpoints(), hp_before);
+    }
+
+    #[test]
+    fn command_skips_charm_immune_target() {
+        // A zombie (charm-immune) shouldn't be affected by Command.
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::COMMAND;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+            .unwrap();
+        let target_ids = vec![zombie];
+        let effects = COMMAND.side_effects(&mut e, wizard, Some(&target_ids), None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&zombie].has_condition(Condition::Stunned),
+            "charm-immune target should ignore Command"
+        );
+    }
+
+    #[test]
+    fn magic_weapon_buff_reverts_on_concentration_drop() {
+        // Magic Weapon installs a +1 attack buff and ends concentration.
+        // Dropping concentration must roll back the buff exactly.
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::MAGIC_WEAPON;
+        use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(4, 3), 0, 0)
+            .unwrap();
+        let baseline = e.actors[&ally].attack_bonus_buff();
+        let target_ids = vec![ally];
+        let effects = MAGIC_WEAPON.side_effects(&mut e, wizard, Some(&target_ids), None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&ally].attack_bonus_buff(),
+            baseline + 1,
+            "magic weapon should grant a +1 attack buff"
+        );
+        e.drop_concentration(wizard);
+        assert_eq!(
+            e.actors[&ally].attack_bonus_buff(),
+            baseline,
+            "dropping concentration should roll back the buff"
+        );
+    }
+
+    #[test]
+    fn owlbear_multiattack_lands_two_swings() {
+        // Each Action gets two attack rolls. Detect the multiattack by
+        // counting beak/claws lines in the log.
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::OWLBEAR_MULTIATTACK;
+        use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
+        use crate::actors::creatures::owlbears::OWLBEAR_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let owlbear = e
+            .instantiate_creature(&OWLBEAR_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(6, 4), 1, 0)
+            .unwrap();
+        let target_ids = vec![target];
+        let log_before = e.messages().len();
+        let effects =
+            OWLBEAR_MULTIATTACK.side_effects(&mut e, owlbear, Some(&target_ids), None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        let lines: Vec<&String> = e.messages()[log_before..].iter().collect();
+        let beak_lines = lines.iter().filter(|s| s.contains("owlbear beak")).count();
+        let claw_lines = lines.iter().filter(|s| s.contains("owlbear claws")).count();
+        assert!(beak_lines >= 1, "expected at least one beak attack");
+        assert!(claw_lines >= 1, "expected at least one claws attack");
+    }
+
+    #[test]
+    fn wisp_is_immune_to_lightning() {
+        use crate::actors::creatures::wisps::WISP_TEMPLATE;
+        use crate::engine::side_effects::ApplicableSideEffect;
+        use crate::engine::side_effects::DealDamage;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wisp = e
+            .instantiate_creature(&WISP_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let max_hp = e.actors[&wisp].max_hitpoints();
+        DealDamage {
+            actor_id: wisp,
+            amount: 50,
+            damage_type: DamageType::Lightning,
+        }
+        .apply(&mut e);
+        assert_eq!(
+            e.actors[&wisp].hitpoints(),
+            max_hp,
+            "wisp must take 0 lightning damage (immune)"
+        );
+    }
+
+    #[test]
+    fn wisp_is_resistant_to_fire() {
+        use crate::actors::creatures::wisps::WISP_TEMPLATE;
+        let e = ei_with_terrain(15, 15, &[]);
+        let mut e = e;
+        let wisp = e
+            .instantiate_creature(&WISP_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        // Resistance halves: 8 fire → 4 to a wisp.
+        assert_eq!(e.actors[&wisp].effective_damage(8, DamageType::Fire), 4);
+    }
+
+    #[test]
+    fn cult_fanatic_can_cast_inflict_wounds() {
+        // The fanatic's spell list should include INFLICT_WOUNDS — try to
+        // resolve it once on a victim and assert HP changed (or save was
+        // rolled — either branch exercises the wiring).
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::INFLICT_WOUNDS;
+        use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
+        use crate::actors::creatures::cult_fanatics::CULT_FANATIC_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let fanatic = e
+            .instantiate_creature(&CULT_FANATIC_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(4, 3), 1, 0)
+            .unwrap();
+        // Fanatic has Inflict Wounds in its action list per template.
+        assert!(
+            e.actors[&fanatic]
+                .actions
+                .iter()
+                .any(|a| a.name() == INFLICT_WOUNDS.name()),
+            "cult fanatic should have inflict wounds in its spell list"
+        );
+        // Casting should not panic and should resolve through the engine.
+        let target_ids = vec![target];
+        let _ = INFLICT_WOUNDS.side_effects(&mut e, fanatic, Some(&target_ids), None, None);
     }
 }

@@ -227,10 +227,3 @@ pub enum ConditionTimer {
     UntilStartOfNextTurn,
 }
 
-impl ConditionTimer {
-    /// Legacy alias — pre-existing code spells this `UntilOwnTurn`.
-    /// Same value as `UntilStartOfNextTurn`; kept const so it can be
-    /// dropped into match arms where renaming hasn't yet propagated.
-    #[allow(non_upper_case_globals)]
-    pub const UntilOwnTurn: ConditionTimer = ConditionTimer::UntilStartOfNextTurn;
-}

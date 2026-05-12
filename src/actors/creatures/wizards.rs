@@ -1,8 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
-    ACID_SPLASH, BLINDNESS, BURNING_HANDS, CAUSE_FEAR, CHARM_PERSON, CHILL_TOUCH, FIRE_BOLT,
-    MAGE_ARMOR, MAGIC_MISSILE, MIRROR_IMAGE, MISTY_STEP, POISON_SPRAY, RAY_OF_FROST,
-    RAY_OF_SICKNESS, SHATTER, SHIELD, SHOCKING_GRASP, SLEEP, THUNDERWAVE, TOLL_THE_DEAD, WEB,
+    ACID_SPLASH, BLINDNESS, BURNING_HANDS, CAUSE_FEAR, CHARM_PERSON, CHILL_TOUCH, COLOR_SPRAY,
+    FIRE_BOLT, FIREBALL, MAGE_ARMOR, MAGIC_MISSILE, MAGIC_WEAPON, MIRROR_IMAGE, MISTY_STEP,
+    POISON_SPRAY, RAY_OF_FROST, RAY_OF_SICKNESS, SHATTER, SHIELD, SHOCKING_GRASP, SLEEP,
+    THUNDERWAVE, TOLL_THE_DEAD, WEB,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size, SpecialSense};
@@ -37,6 +38,9 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*SLEEP);
     actions.push(&*CHARM_PERSON);
     actions.push(&*MIRROR_IMAGE);
+    actions.push(&*COLOR_SPRAY);
+    actions.push(&*FIREBALL);
+    actions.push(&*MAGIC_WEAPON);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.
@@ -57,9 +61,9 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         cr: 0.5,
         size: Size::Medium,
         actions,
-        // 4 level-1 slots — typical level-3 wizard loadout. Plus 2
-        // level-2 slots for Web / Blindness.
-        spell_slots_by_level: vec![4, 2],
+        // 4 level-1 / 2 level-2 / 1 level-3 — typical level-5 wizard
+        // loadout. The level-3 slot fuels exactly one Fireball.
+        spell_slots_by_level: vec![4, 2, 1],
         rolls_death_saves: false,
         damage_modifiers: HashMap::new(),
         // Wizards are proficient in INT and WIS saves (5e PHB).

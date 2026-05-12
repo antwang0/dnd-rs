@@ -23,6 +23,10 @@ use crate::{
 /// queued `DealDamage` (or nothing on a miss). Centralized so single-target
 /// damaging spells (Guiding Bolt, Inflict Wounds, future spells) don't
 /// each re-implement attack-roll + crit + log glue.
+///
+/// The default flavor takes no flat damage bonus; for spells that add an
+/// ability modifier to damage (Spiritual Weapon, etc.) call
+/// `spell_attack_with_bonus` instead.
 #[allow(clippy::too_many_arguments)]
 fn spell_attack(
     encounter: &mut EncounterInstance,
@@ -31,6 +35,34 @@ fn spell_attack(
     action_name: &str,
     attack_bonus: i32,
     damage_dice: Dice,
+    damage_type: DamageType,
+    is_melee: bool,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    spell_attack_with_bonus(
+        encounter,
+        caster_id,
+        target_id,
+        action_name,
+        attack_bonus,
+        damage_dice,
+        0,
+        damage_type,
+        is_melee,
+    )
+}
+
+/// Same as `spell_attack` but adds a flat `damage_bonus` (e.g. caster's
+/// WIS modifier for Spiritual Weapon) to the rolled damage. Crit doubles
+/// only the dice — flat bonuses are added once per RAW.
+#[allow(clippy::too_many_arguments)]
+fn spell_attack_with_bonus(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    target_id: usize,
+    action_name: &str,
+    attack_bonus: i32,
+    damage_dice: Dice,
+    damage_bonus: i32,
     damage_type: DamageType,
     is_melee: bool,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
@@ -74,14 +106,19 @@ fn spell_attack(
     if !hit {
         return Vec::new();
     }
-    let dmg = encounter.roll(&damage_dice);
-    let crit_extra = if is_crit { encounter.roll(&damage_dice) } else { 0 };
-    let total_dmg = dmg + crit_extra;
+    let dmg = encounter.roll(&damage_dice) as i32;
+    let crit_extra = if is_crit { encounter.roll(&damage_dice) as i32 } else { 0 };
+    let total_dmg = (dmg + crit_extra + damage_bonus).max(0) as u32;
     encounter.log(format!(
-        "  {}: {}({}) = {} {:?}{}",
+        "  {}: {}({}){} = {} {:?}{}",
         action_name,
         damage_dice,
         dmg,
+        if damage_bonus != 0 {
+            format!("{:+}", damage_bonus)
+        } else {
+            String::new()
+        },
         total_dmg,
         damage_type,
         if is_crit {
@@ -332,26 +369,16 @@ impl Action for SacredBurst {
             "  sacred burst: 2d6({}) = {} radiant area",
             raw, raw
         ));
-
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for target_id in encounter.actors_in_burst(point, radius) {
-            // The caster is exempt — sacred-flavored AoE wouldn't burn its
-            // own caster.
-            if target_id == caster_id {
-                continue;
-            }
-            let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, dc);
-            let dmg = if save.passed() { raw / 2 } else { raw };
-            if dmg == 0 {
-                continue;
-            }
-            effects.push(Box::new(DealDamage {
-                actor_id: target_id,
-                amount: dmg,
-                damage_type: DamageType::Radiant,
-            }));
-        }
-        effects
+        crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            radius,
+            AbilityScoreType::Dexterity,
+            dc,
+            raw,
+            DamageType::Radiant,
+        )
     }
 }
 
@@ -775,8 +802,6 @@ impl Action for BurningHands {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
-
         let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
             return Vec::new();
         };
@@ -791,39 +816,16 @@ impl Action for BurningHands {
 
         let raw = encounter.roll(&Dice::new(3, 6));
         encounter.log(format!("  burning hands: 3d6({}) = {} fire area", raw, raw));
-
-        let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
-        ids.sort_unstable();
-
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for target_id in ids {
-            let Some(target) = encounter.actors.get(&target_id) else {
-                continue;
-            };
-            if target_id == caster_id || !target.is_combat_active() {
-                continue;
-            }
-            let dist = footprint_chebyshev(
-                target.location(),
-                get_tiles_from_size(target.size()),
-                point,
-                1,
-            );
-            if dist > radius {
-                continue;
-            }
-            let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, dc);
-            let dmg = if save.passed() { raw / 2 } else { raw };
-            if dmg == 0 {
-                continue;
-            }
-            effects.push(Box::new(DealDamage {
-                actor_id: target_id,
-                amount: dmg,
-                damage_type: DamageType::Fire,
-            }));
-        }
-        effects
+        crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            radius,
+            AbilityScoreType::Dexterity,
+            dc,
+            raw,
+            DamageType::Fire,
+        )
     }
 }
 
@@ -2071,52 +2073,17 @@ impl Action for SpiritualWeapon {
         };
         let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Wisdom);
         let wis_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
-        // Custom resolver — same pattern as `spell_attack` but adds the
-        // WIS mod to the damage roll.
-        let target_ac = encounter
-            .actors
-            .get(&target_id)
-            .map(|a| a.armor_class() as i32)
-            .unwrap_or(10);
-        let mode = encounter.compute_attack_mode(caster_id, target_id, true);
-        let raw = encounter.roll_d20_with_mode(mode) as i32;
-        let total = raw + attack_bonus;
-        let is_crit = raw == 20;
-        let hit = is_crit || total >= target_ac;
-        let outcome = if is_crit {
-            "CRIT!"
-        } else if hit {
-            "hit"
-        } else {
-            "miss"
-        };
-        encounter.log(format!(
-            "  spiritual weapon: 1d20({}){:+} = {} vs AC {}{} \u{2014} {}",
-            raw,
+        spell_attack_with_bonus(
+            encounter,
+            caster_id,
+            target_id,
+            "spiritual weapon",
             attack_bonus,
-            total,
-            target_ac,
-            mode.log_suffix(),
-            outcome,
-        ));
-        if !hit {
-            return Vec::new();
-        }
-        let raw_dmg = encounter.roll(&Dice::new(1, 8)) as i32;
-        let crit_extra = if is_crit { encounter.roll(&Dice::new(1, 8)) as i32 } else { 0 };
-        let damage = (raw_dmg + crit_extra + wis_mod).max(0) as u32;
-        encounter.log(format!(
-            "  spiritual weapon: 1d8({}){:+} = {} force damage{}",
-            raw_dmg,
+            Dice::new(1, 8),
             wis_mod,
-            damage,
-            if is_crit { " (crit)" } else { "" }
-        ));
-        vec![Box::new(DealDamage {
-            actor_id: target_id,
-            amount: damage,
-            damage_type: DamageType::Force,
-        })]
+            DamageType::Force,
+            true,
+        )
     }
 }
 
@@ -3181,8 +3148,6 @@ impl Action for Sleep {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
-
         let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
             return Vec::new();
         };
@@ -3192,39 +3157,18 @@ impl Action for Sleep {
 
         // Sort eligible targets by ascending current HP (5e RAW). Undead
         // and Charmed-immune creatures are skipped — they don't dream.
-        let mut candidates: Vec<(u32, usize)> = encounter
-            .actors
-            .iter()
-            .filter_map(|(id, a)| {
-                if *id == caster_id || !a.is_combat_active() {
-                    return None;
-                }
-                if a.is_immune_to_condition(Condition::Charmed)
-                    || a.is_immune_to_condition(Condition::Asleep)
-                {
-                    return None;
-                }
-                let dist = footprint_chebyshev(
-                    a.location(),
-                    get_tiles_from_size(a.size()),
-                    point,
-                    1,
-                );
-                if dist > BURST_RADIUS {
-                    return None;
-                }
-                Some((a.hitpoints(), *id))
-            })
-            .collect();
-        candidates.sort_unstable();
-
-        let mut remaining = pool_roll;
+        // The Charmed gate doubles up: in our pool, Charm immunity is
+        // the cleanest "no mind-affecting" proxy.
+        let hit = crate::actions::action_template::pool_sweep_targets(
+            encounter,
+            caster_id,
+            point,
+            BURST_RADIUS,
+            pool_roll,
+            Condition::Charmed,
+        );
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for (hp, id) in candidates {
-            if hp == 0 || hp > remaining {
-                break;
-            }
-            remaining -= hp;
+        for id in hit {
             effects.push(Box::new(ApplyCondition {
                 actor_id: id,
                 condition: Condition::Asleep,
@@ -3508,4 +3452,303 @@ impl Action for ProtectionFromEvilAndGood {
 
 pub static PROTECTION_FROM_EVIL_AND_GOOD: LazyLock<ProtectionFromEvilAndGood> =
     LazyLock::new(|| ProtectionFromEvilAndGood {});
+
+/// Color Spray — level-1 illusion. Roll a 6d10 HP pool; sweep enemies in
+/// a 15ft cone (we approximate with a 2-tile burst centered on the target
+/// point) in ascending current-HP order, blinding each one until the end
+/// of the caster's next turn until the pool is exhausted. Targets immune
+/// to Blinded (constructs, oozes that don't have eyes) are skipped, and a
+/// target with more current HP than the remaining pool stops the sweep.
+/// Distinct from Sleep: shorter timer, blinds instead of asleep, and
+/// undead are *not* exempt — only literal blind-immune creatures are.
+pub struct ColorSpray {}
+
+impl Action for ColorSpray {
+    fn name(&self) -> &str {
+        "color spray"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cs-spell", "color"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 15ft cone — short range, treat the burst origin as the cone's
+        // far edge much like Burning Hands.
+        Some(6)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        const BURST_RADIUS: isize = 2;
+        let pool = encounter.roll(&Dice::new(6, 10));
+        encounter.log(format!(
+            "  color spray: 6d10({}) = {} HP pool",
+            pool, pool
+        ));
+        crate::actions::action_template::pool_sweep_targets(
+            encounter,
+            caster_id,
+            point,
+            BURST_RADIUS,
+            pool,
+            Condition::Blinded,
+        )
+        .into_iter()
+        .map(|id| {
+            Box::new(ApplyCondition {
+                actor_id: id,
+                condition: Condition::Blinded,
+                timer: ConditionTimer::UntilStartOfNextTurn,
+            }) as Box<dyn ApplicableSideEffect>
+        })
+        .collect()
+    }
+}
+
+pub static COLOR_SPRAY: LazyLock<ColorSpray> = LazyLock::new(|| ColorSpray {});
+
+/// Command — level-1 enchantment. The caster barks a one-word command at
+/// a target within 60ft; on a failed WIS save the target spends their
+/// next turn complying (we model the "Halt" / "Grovel" variants as a
+/// simple Stunned for one turn). Save-immune creatures (charm-immune in
+/// our pool: undead, constructs) are unaffected. No concentration; the
+/// effect is short and self-clearing via the UntilStartOfNextTurn timer.
+pub struct Command {}
+
+impl Action for Command {
+    fn name(&self) -> &str {
+        "command"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cmd", "halt"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // 5e Command: undead and creatures that don't understand the
+        // caster's language are immune. Charm immunity is the closest
+        // proxy for "won't be cowed" in our pool.
+        if let Some(target) = encounter.actors.get(&target_id)
+            && target.is_immune_to_condition(Condition::Charmed)
+        {
+            encounter.log("  command: target is immune".to_string());
+            return Vec::new();
+        }
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Stunned,
+            timer: ConditionTimer::UntilStartOfNextTurn,
+        })]
+    }
+}
+
+pub static COMMAND: LazyLock<Command> = LazyLock::new(|| Command {});
+
+/// Fireball — iconic 5e level-3 evocation. 150ft range, 20ft-radius
+/// sphere (radius 4 on the 2.5ft grid). DEX save against the caster's
+/// INT-based DC: failed save takes 8d6 fire, success takes half. Single
+/// shared damage roll for the whole burst (5e shared-roll AoE). Damage
+/// scales by +1d6 per spell level above 3 — our Resource::SpellSlot
+/// model only reports the base level, so the scaling lane is preserved
+/// for the future leveled-cast UI but defaults to 8d6 for now.
+pub struct Fireball {}
+
+impl Action for Fireball {
+    fn name(&self) -> &str {
+        "fireball"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fb-spell", "fire-ball"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 150ft = 60 tiles.
+        Some(60)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(3)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let raw = encounter.roll(&Dice::new(8, 6));
+        encounter.log(format!("  fireball: 8d6({}) = {} fire area", raw, raw));
+        crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            4,
+            AbilityScoreType::Dexterity,
+            dc,
+            raw,
+            DamageType::Fire,
+        )
+    }
+}
+
+pub static FIREBALL: LazyLock<Fireball> = LazyLock::new(|| Fireball {});
+
+/// Magic Weapon — level-2 transmutation, concentration up to 1 hour.
+/// Touch a single weapon-wielding ally; their attack rolls and damage
+/// gain a flat +1 bonus for the duration. We track the buff as an
+/// `attack_bonus_buff` delta installed via concentration so dropping
+/// concentration cleans up automatically. The damage-half of the buff is
+/// lumped into the same +1 attack buff for now (the engine doesn't have
+/// a separate damage-roll buff lane). Targeting is touch (1 tile reach).
+pub struct MagicWeapon {}
+
+impl Action for MagicWeapon {
+    fn name(&self) -> &str {
+        "magic weapon"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mw", "magic-weapon"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction, Resource::SpellSlot(2)]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::AdjustAttackBuff;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // Install a +1 attack buff and register it on the concentration
+        // so dropping the spell rolls back the bonus on the right actor.
+        let mut data = ConcentrationData::with_conditions("Magic Weapon", Vec::new());
+        data.attack_buffs.push((target_id, 1));
+        vec![
+            Box::new(AdjustAttackBuff {
+                actor_id: target_id,
+                delta: 1,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data,
+            }),
+        ]
+    }
+}
+
+pub static MAGIC_WEAPON: LazyLock<MagicWeapon> = LazyLock::new(|| MagicWeapon {});
 

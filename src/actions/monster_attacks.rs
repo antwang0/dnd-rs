@@ -1496,3 +1496,133 @@ pub static DIRE_WOLF_BITE: LazyLock<DireWolfBite> = LazyLock::new(|| DireWolfBit
 /// canonical definition lives with the other spells, this just gives
 /// fire-themed monsters a handle into the same Action.
 pub use crate::actions::spells::FIRE_BOLT;
+
+/// Owlbear's signature multiattack rolled into one Action: a beak (1d10+5
+/// piercing) and a claws (2d8+5 slashing) swing at the same target. We
+/// resolve them sequentially so each rolls independently for hit, crit
+/// and damage; both go into the same `Vec<DealDamage>` so the engine
+/// applies them in order. Cost is a single Action — the multiattack
+/// trade is "spend one Action, get two attack rolls" without a slot.
+pub struct OwlbearMultiattack {}
+
+impl Action for OwlbearMultiattack {
+    fn name(&self) -> &str {
+        "owlbear multiattack"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["om", "owl"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Slashing]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let mut all = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "owlbear beak",
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(1, 10),
+            DamageType::Piercing,
+            true,
+        );
+        all.extend(simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "owlbear claws",
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(2, 8),
+            DamageType::Slashing,
+            true,
+        ));
+        all
+    }
+}
+
+pub static OWLBEAR_MULTIATTACK: LazyLock<OwlbearMultiattack> =
+    LazyLock::new(|| OwlbearMultiattack {});
+
+/// Will-o-Wisp's shock — at-will incorporeal touch attack. DEX-based
+/// melee spell-style swing for 2d8 lightning. The +DEX-to-hit shape
+/// matches the MM stat block (the wisp uses its high DEX as the attack
+/// stat). Lightning damage typing means undead-immune armor doesn't
+/// blunt it; the wisp is fragile but its damage type is unusual.
+pub struct WispShock {}
+
+impl Action for WispShock {
+    fn name(&self) -> &str {
+        "shock"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sh", "wisp-shock"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Lightning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // No DEX-mod added to damage — wisp's stat block lists no damage
+        // ability mod (it's a magical zap, not a weapon swing).
+        simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            self.name(),
+            AbilityScoreType::Dexterity,
+            None,
+            Dice::new(2, 8),
+            DamageType::Lightning,
+            true,
+        )
+    }
+}
+
+pub static WISP_SHOCK: LazyLock<WispShock> = LazyLock::new(|| WispShock {});
