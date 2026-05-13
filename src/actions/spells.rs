@@ -111,22 +111,12 @@ fn spell_attack_outcome(
     // consumed exactly once (matching weapon-attack semantics in
     // resolve_attack).
     let mode = encounter.attack_mode_with_riders(caster_id, target_id, is_melee, true);
-    // Hidden / Helped / Invisibility(caster) drop on attack per RAW. We
-    // pop the conditions here so a follow-up swing in the same turn
-    // doesn't double-dip the advantage. The Invisibility concentration
-    // drop also clears the Invisible condition via drop_concentration.
-    if let Some(attacker) = encounter.actors.get_mut(&caster_id) {
-        attacker.remove_condition(crate::conditions::Condition::Hidden);
-        attacker.remove_condition(crate::conditions::Condition::Helped);
-    }
-    if encounter
-        .actors
-        .get(&caster_id)
-        .and_then(|a| a.concentration())
-        .is_some_and(|c| c.spell_name == "Invisibility")
-    {
-        encounter.drop_concentration(caster_id);
-    }
+    // Burn through the one-shot rider stack (Helped, Hidden, per-target
+    // help grant, Invisibility concentration). Same hook as weapon
+    // attacks — kept identical so a Helped wizard firing Fire Bolt
+    // consumes their help-grant exactly like a Helped fighter swinging
+    // a longsword.
+    encounter.clear_attack_advantage_riders(caster_id, target_id);
     let raw = encounter.roll_d20_with_mode(mode) as i32;
     // Pull through the same caster-side flat buffs (Bless / Bane d4,
     // attack_bonus_buff) that weapon attacks get via `resolve_attack`.
@@ -4706,3 +4696,545 @@ impl Action for Blur {
 
 pub static BLUR: LazyLock<Blur> = LazyLock::new(|| Blur {});
 
+/// Haste — level-3 transmutation, concentration. Target one willing
+/// ally (or self with no args): they gain +2 AC, advantage on DEX saves,
+/// and double walking speed for up to 10 rounds. We don't model the
+/// extra-Action rider (would require a second Action slot the engine
+/// doesn't currently track); the AC + DEX save + speed half is the
+/// load-bearing part for repositioning support casters.
+///
+/// Targeting is `SingleActor` (the AI typically buffs the lead melee
+/// attacker). Cleared cleanly when concentration drops.
+pub struct Haste {}
+
+impl Action for Haste {
+    fn name(&self) -> &str {
+        "haste"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ha"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft = 12 tile gap.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(3)]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Hasted,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Haste",
+                    vec![(target_id, Condition::Hasted)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static HASTE: LazyLock<Haste> = LazyLock::new(|| Haste {});
+
+/// Slow — level-3 transmutation, concentration. Target a 40-ft cube;
+/// every enemy within takes a WIS save vs the caster's spell DC. On
+/// fail: Slowed for up to 10 rounds (−2 AC, halved speed, disadvantage
+/// on DEX saves; we skip the action-economy half of the 5e effect to
+/// keep AI behavior predictable). Hostile-only — allies in the cube
+/// are spared by the caster-team filter.
+///
+/// Like Faerie Fire, this picks the burst origin via SinglePoint and
+/// iterates the radius itself so the friendly-fire filter can run.
+pub struct Slow {}
+
+impl Action for Slow {
+    fn name(&self) -> &str {
+        "slow"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sl"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(3)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let caster_team = caster.team();
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        const RADIUS: isize = 4;
+        const MAX_TARGETS: usize = 6;
+
+        // Enumerate enemy actors in the burst, sort by id for determinism,
+        // cap at 6 targets per RAW.
+        let mut victims: Vec<usize> = encounter
+            .sorted_actor_ids()
+            .into_iter()
+            .filter(|id| {
+                let Some(t) = encounter.actors.get(id) else {
+                    return false;
+                };
+                if !t.is_combat_active() || t.team() == caster_team {
+                    return false;
+                }
+                let dist = footprint_chebyshev(
+                    t.location(),
+                    get_tiles_from_size(t.size()),
+                    point,
+                    1,
+                );
+                dist <= RADIUS
+            })
+            .collect();
+        victims.truncate(MAX_TARGETS);
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut applied: Vec<(usize, Condition)> = Vec::new();
+        for tid in victims {
+            let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, dc);
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Slowed,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            applied.push((tid, Condition::Slowed));
+        }
+        if !applied.is_empty() {
+            effects.push(Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions("Slow", applied),
+            }));
+        }
+        effects
+    }
+}
+
+pub static SLOW: LazyLock<Slow> = LazyLock::new(|| Slow {});
+
+/// Cone of Cold — level-5 evocation. A 60-ft cone of frigid air from
+/// the caster: 8d8 cold damage, CON save for half. We approximate the
+/// cone with a burst of radius 6 centered on the target tile (RAW is a
+/// 60-ft cone — the engine doesn't yet model directional cones, so a
+/// generous radius approximates the area). Damage is rolled once and
+/// shared via `resolve_burst_save_damage`.
+pub struct ConeOfCold {}
+
+impl Action for ConeOfCold {
+    fn name(&self) -> &str {
+        "cone of cold"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["coc", "cone"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 6 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Self-cone, but we cap range at the cone reach (60 ft = 24 tiles)
+        // so the picker doesn't drop pins on the far side of the map.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Cold]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(5)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let raw = encounter.roll(&Dice::new(8, 8));
+        encounter.log(format!(
+            "  cone of cold: 8d8({}) = {} cold area",
+            raw, raw
+        ));
+        crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            6,
+            AbilityScoreType::Constitution,
+            dc,
+            raw,
+            DamageType::Cold,
+        )
+    }
+}
+
+pub static CONE_OF_COLD: LazyLock<ConeOfCold> = LazyLock::new(|| ConeOfCold {});
+
+/// Mass Cure Wounds — cleric level-5 action heal. Up to six creatures
+/// in a 30-ft (12-tile-gap) sphere around a target point regain
+/// `3d8 + WIS` HP. Unlike Mass Healing Word (bonus action, level-3,
+/// 1d4 die), this is the cleric's emergency-button heal: bigger dice,
+/// bigger slot, full Action.
+pub struct MassCureWounds {}
+
+impl Action for MassCureWounds {
+    fn name(&self) -> &str {
+        "mass cure wounds"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mcw", "mass-cure"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // Pick a tile; we sweep that point's burst for allies.
+        TargetingSchema::SinglePoint
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(5)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let caster_team = caster.team();
+        let wis_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
+        let raw = encounter.roll(&Dice::new(3, 8)) as i32;
+        let amount = (raw + wis_mod).max(1) as u32;
+        encounter.log(format!(
+            "  mass cure wounds: 3d8({}){:+} = {} HP each",
+            raw, wis_mod, amount
+        ));
+        const RADIUS: isize = 3;
+        const MAX_TARGETS: usize = 6;
+        // Pick allies inside the burst, sorted by current HP ascending so
+        // the lowest-HP allies get healed first if we exceed the cap.
+        let mut candidates: Vec<(u32, usize)> = encounter
+            .actors
+            .iter()
+            .filter_map(|(id, a)| {
+                if a.team() != caster_team {
+                    return None;
+                }
+                if !a.is_combat_active() && !a.is_dying() {
+                    return None;
+                }
+                let dist = footprint_chebyshev(
+                    a.location(),
+                    get_tiles_from_size(a.size()),
+                    point,
+                    1,
+                );
+                if dist > RADIUS {
+                    return None;
+                }
+                Some((a.hitpoints(), *id))
+            })
+            .collect();
+        candidates.sort_unstable();
+        candidates.truncate(MAX_TARGETS);
+        candidates
+            .into_iter()
+            .map(|(_, id)| {
+                Box::new(Heal {
+                    actor_id: id,
+                    amount,
+                }) as Box<dyn ApplicableSideEffect>
+            })
+            .collect()
+    }
+}
+
+pub static MASS_CURE_WOUNDS: LazyLock<MassCureWounds> = LazyLock::new(|| MassCureWounds {});
+
+/// Stinking Cloud — level-3 conjuration, concentration. A 20-ft sphere
+/// of yellow vapor at a point; every creature inside makes a CON save
+/// vs the caster's spell DC or becomes Incapacitated until the start
+/// of their next turn (RAW: lose your action and your bonus action).
+/// Re-rolls happen each round as the cloud lingers; we model that as
+/// an `UntilStartOfNextTurn` timer, which gives the failed save a
+/// one-round impact and lets the spell hit again next round if the
+/// caster sustains concentration.
+///
+/// Unlike Fireball / Cone of Cold this is non-damaging — it doesn't
+/// trigger concentration saves, it just shuts down enemy turns.
+pub struct StinkingCloud {}
+
+impl Action for StinkingCloud {
+    fn name(&self) -> &str {
+        "stinking cloud"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sc-spell", "stink"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 2 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 90 ft = 36 tiles.
+        Some(36)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(3)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let caster_team = caster.team();
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        const RADIUS: isize = 2;
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut applied: Vec<(usize, Condition)> = Vec::new();
+        for tid in encounter.sorted_actor_ids() {
+            let Some(t) = encounter.actors.get(&tid) else {
+                continue;
+            };
+            if !t.is_combat_active() || t.team() == caster_team {
+                continue;
+            }
+            let dist = footprint_chebyshev(
+                t.location(),
+                get_tiles_from_size(t.size()),
+                point,
+                1,
+            );
+            if dist > RADIUS {
+                continue;
+            }
+            let save = encounter.roll_save(tid, AbilityScoreType::Constitution, dc);
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Incapacitated,
+                timer: ConditionTimer::UntilStartOfNextTurn,
+            }));
+            applied.push((tid, Condition::Incapacitated));
+        }
+        // Even with no failed saves, we still start concentration so the
+        // cloud lingers — but only when at least one enemy is inside the
+        // burst (otherwise the cast was wasted). Without applied targets
+        // there's nothing to clear on concentration drop, but we'd want
+        // re-rolls each round if we modeled cloud persistence. Today the
+        // engine doesn't tick area effects across rounds; install
+        // concentration only when at least one target was caught so
+        // dropping is a clean no-op when the wind blows over.
+        if !applied.is_empty() {
+            effects.push(Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions("Stinking Cloud", applied),
+            }));
+        }
+        effects
+    }
+}
+
+pub static STINKING_CLOUD: LazyLock<StinkingCloud> = LazyLock::new(|| StinkingCloud {});
+
+/// True Strike — divination cantrip. Targets a creature within 30 ft;
+/// the caster gains advantage on their next attack roll against that
+/// target before the end of their next turn. We model the rider by
+/// applying the existing `Helped` condition to the caster — that's the
+/// same one-shot advantage hook the Help action installs (consumed on
+/// next attack, cleared after one swing). Single-target only.
+pub struct TrueStrike {}
+
+impl Action for TrueStrike {
+    fn name(&self) -> &str {
+        "true strike"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ts", "true"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // Cantrip — Action only.
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // The Helped condition gives one-shot advantage on the next
+        // attack made by the holder. RAW True Strike confers advantage
+        // only against the targeted creature; we approximate by giving
+        // a generic advantage flag since the engine's Helped condition
+        // is consumed on the first attack regardless of target.
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::Helped,
+            timer: ConditionTimer::UntilStartOfNextTurn,
+        })]
+    }
+}
+
+pub static TRUE_STRIKE: LazyLock<TrueStrike> = LazyLock::new(|| TrueStrike {});

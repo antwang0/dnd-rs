@@ -1,10 +1,11 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
     ACID_SPLASH, BESTOW_CURSE, BLINDNESS, BLUR, BURNING_HANDS, CAUSE_FEAR, CHARM_PERSON,
-    CHILL_TOUCH, COLOR_SPRAY, FIRE_BOLT, FIREBALL, HOLD_MONSTER, HYPNOTIC_PATTERN, INVISIBILITY,
-    LIGHTNING_BOLT, MAGE_ARMOR, MAGIC_MISSILE, MAGIC_WEAPON, MIND_SLIVER, MIRROR_IMAGE, MISTY_STEP,
-    POISON_SPRAY, RAY_OF_FROST, RAY_OF_SICKNESS, SCORCHING_RAY, SHATTER, SHIELD, SHOCKING_GRASP,
-    SLEEP, THUNDERWAVE, TOLL_THE_DEAD, VAMPIRIC_TOUCH, WEB,
+    CHILL_TOUCH, COLOR_SPRAY, CONE_OF_COLD, FIRE_BOLT, FIREBALL, HASTE, HOLD_MONSTER,
+    HYPNOTIC_PATTERN, INVISIBILITY, LIGHTNING_BOLT, MAGE_ARMOR, MAGIC_MISSILE, MAGIC_WEAPON,
+    MIND_SLIVER, MIRROR_IMAGE, MISTY_STEP, POISON_SPRAY, RAY_OF_FROST, RAY_OF_SICKNESS,
+    SCORCHING_RAY, SHATTER, SHIELD, SHOCKING_GRASP, SLEEP, SLOW, STINKING_CLOUD, THUNDERWAVE,
+    TOLL_THE_DEAD, TRUE_STRIKE, VAMPIRIC_TOUCH, WEB,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size, SpecialSense};
@@ -51,6 +52,11 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*BESTOW_CURSE);
     actions.push(&*MIND_SLIVER);
     actions.push(&*HOLD_MONSTER);
+    actions.push(&*HASTE);
+    actions.push(&*SLOW);
+    actions.push(&*CONE_OF_COLD);
+    actions.push(&*STINKING_CLOUD);
+    actions.push(&*TRUE_STRIKE);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.
@@ -71,9 +77,11 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         cr: 0.5,
         size: Size::Medium,
         actions,
-        // 4 level-1 / 2 level-2 / 1 level-3 — typical level-5 wizard
-        // loadout. The level-3 slot fuels exactly one Fireball.
-        spell_slots_by_level: vec![4, 2, 1],
+        // 4 level-1 / 3 level-2 / 3 level-3 / 1 level-4 / 1 level-5 —
+        // typical level-9 wizard loadout. The level-3 slot fuels exactly
+        // one Fireball / Haste / Slow / Stinking Cloud; the level-5 slot
+        // is reserved for Cone of Cold or Hold Monster.
+        spell_slots_by_level: vec![4, 3, 3, 1, 1],
         rolls_death_saves: false,
         damage_modifiers: HashMap::new(),
         // Wizards are proficient in INT and WIS saves (5e PHB).

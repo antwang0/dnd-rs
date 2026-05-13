@@ -2035,3 +2035,172 @@ impl Action for LuringSong {
 }
 
 pub static LURING_SONG: LazyLock<LuringSong> = LazyLock::new(|| LuringSong {});
+
+/// Longsword — versatile 1d8 slashing melee weapon. STR-based, Action
+/// cost, MELEE_REACH. Workhorse weapon for Knights and other armored
+/// foot soldiers.
+pub static LONGSWORD: SimpleWeapon = SimpleWeapon {
+    display_name: "longsword",
+    aliases: &["ls", "sword"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Lance — 1d12 piercing reach-2 melee weapon. Mounted-only RAW, but we
+/// drop the mount gate so the Knight gets a polearm option to swing from
+/// 10 ft (one tile beyond a standard sword reach).
+pub static LANCE: SimpleWeapon = SimpleWeapon {
+    display_name: "lance",
+    aliases: &["lnc"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 12),
+    damage_type: DamageType::Piercing,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Knight's double-longsword multiattack — two swings per Action,
+/// modeled on top of the existing Multiattack wrapper.
+pub static KNIGHT_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double longsword",
+    sub_attack: &LONGSWORD,
+    count: 2,
+});
+
+/// Gargoyle claws — 1d6+STR slashing, MELEE_REACH. Plain physical
+/// attack; the gargoyle's danger comes from its multiattack and
+/// resistances rather than rider effects.
+pub static GARGOYLE_CLAWS: SimpleWeapon = SimpleWeapon {
+    display_name: "claws",
+    aliases: &["clw"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 6),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Gargoyle multiattack — claws + bite, two swings per Action. Reuses
+/// the generic BITE attack (1d6+STR piercing) since the gargoyle's bite
+/// doesn't have a rider in our model.
+pub static GARGOYLE_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "claws + bite",
+    sub_attack: &GARGOYLE_CLAWS,
+    count: 2,
+});
+
+/// Worg bite — 2d6+STR piercing with a Trip rider (STR save or knocked
+/// Prone on a hit). Identical to a Dire Wolf's bite at a smaller damage
+/// die — Worgs are mid-tier mounts that hit harder than wolves but
+/// without the dire wolf's pack-tactics edge.
+pub struct WorgBite {}
+
+impl Action for WorgBite {
+    fn name(&self) -> &str {
+        "worg bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wbite", "worg"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+        use crate::engine::side_effects::ApplyCondition;
+        use crate::engine::util::modifier_from_score;
+
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let prof = caster.proficiency_bonus();
+        let attack_bonus = str_mod + prof;
+        let (mut effects, dealt) = resolve_attack_outcome(
+            encounter,
+            AttackParams {
+                caster_id,
+                target_id,
+                action_name: self.name(),
+                attack_bonus,
+                damage_dice: Dice::new(2, 6),
+                damage_bonus: str_mod,
+                damage_type: DamageType::Piercing,
+                is_melee: true,
+            },
+        );
+        if dealt == 0 {
+            // Missed — no rider save.
+            return effects;
+        }
+        // STR save vs DC 8 + STR + prof or be knocked Prone.
+        let dc = 8 + str_mod + prof;
+        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, dc);
+        if !save.passed() {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Prone,
+                timer: ConditionTimer::Permanent,
+            }));
+        }
+        effects
+    }
+}
+
+pub static WORG_BITE: LazyLock<WorgBite> = LazyLock::new(|| WorgBite {});
+
+/// Stirge blood-drain proboscis — DEX attack, on a hit attaches to the
+/// target and drains 1d4+1 piercing per turn. We approximate the
+/// "attached" rider as a single 1d4+1 piercing strike per Action, with
+/// a +5 to-hit (matches the MM stat block at +5).
+pub static STIRGE_PROBOSCIS: SimpleWeapon = SimpleWeapon {
+    display_name: "blood drain",
+    aliases: &["proboscis", "drain"],
+    attack_ability: AbilityScoreType::Dexterity,
+    damage_ability: Some(AbilityScoreType::Dexterity),
+    damage_dice: Dice::new(1, 4),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};

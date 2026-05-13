@@ -1,9 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
     AID, BANE, BESTOW_CURSE, BLESS, COMMAND, CURE_WOUNDS, DIVINE_FAVOR, FAERIE_FIRE, GUIDING_BOLT,
-    HEALING_WORD, HEROISM, HOLD_PERSON, INFLICT_WOUNDS, LESSER_RESTORATION, MASS_HEALING_WORD,
-    PROTECTION_FROM_EVIL_AND_GOOD, SACRED_BURST, SACRED_FLAME, SHIELD_OF_FAITH, SPARE_THE_DYING,
-    SPIRIT_GUARDIANS, SPIRITUAL_WEAPON, THORN_WHIP, TOLL_THE_DEAD,
+    HASTE, HEALING_WORD, HEROISM, HOLD_PERSON, INFLICT_WOUNDS, LESSER_RESTORATION,
+    MASS_CURE_WOUNDS, MASS_HEALING_WORD, PROTECTION_FROM_EVIL_AND_GOOD, SACRED_BURST, SACRED_FLAME,
+    SHIELD_OF_FAITH, SPARE_THE_DYING, SPIRIT_GUARDIANS, SPIRITUAL_WEAPON, THORN_WHIP, TOLL_THE_DEAD,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size, SpecialSense};
@@ -40,6 +40,8 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*DIVINE_FAVOR);
     actions.push(&*SPIRIT_GUARDIANS);
     actions.push(&*BESTOW_CURSE);
+    actions.push(&*MASS_CURE_WOUNDS);
+    actions.push(&*HASTE);
     CreatureTemplate {
         name: "Cleric",
         glyph: 'C',
@@ -59,10 +61,11 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         cr: 0.25,
         size: Size::Medium,
         actions,
-        // 4 level-1 slots (Healing Word / Cure Wounds / Bless / Guiding
-        // Bolt) + 2 level-2 slots (Hold Person) + 1 level-3 slot
-        // (Mass Healing Word emergency button).
-        spell_slots_by_level: vec![4, 2, 1],
+        // 4 level-1 / 3 level-2 / 3 level-3 / 1 level-4 / 1 level-5 —
+        // level-9 cleric loadout. Level-5 slot fuels exactly one Mass
+        // Cure Wounds emergency-button heal; level-3 slot covers Mass
+        // Healing Word or Spirit Guardians / Haste.
+        spell_slots_by_level: vec![4, 3, 3, 1, 1],
         rolls_death_saves: false,
         damage_modifiers: HashMap::new(),
         // Clerics are proficient in WIS and CHA saves (5e PHB).

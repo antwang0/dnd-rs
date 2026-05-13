@@ -849,6 +849,12 @@ impl ActorInstance {
         if self.has_condition(Condition::Shielded) {
             bonus += 5;
         }
+        if self.has_condition(Condition::Hasted) {
+            bonus += 2;
+        }
+        if self.has_condition(Condition::Slowed) {
+            bonus -= 2;
+        }
         bonus
     }
 
@@ -893,7 +899,18 @@ impl ActorInstance {
 
     pub fn speed(&self) -> f32 {
         let bonus = self.total_item_bonuses().speed as f32;
-        (self.base_speed + bonus).max(0.0)
+        let raw = (self.base_speed + bonus).max(0.0);
+        // 5e Haste doubles speed; Slow halves it. If both happen to be
+        // active (e.g. cross-cast), they cancel back to base — applying
+        // the factor multiplicatively keeps the math symmetric.
+        let mut factor = 1.0_f32;
+        if self.has_condition(Condition::Hasted) {
+            factor *= 2.0;
+        }
+        if self.has_condition(Condition::Slowed) {
+            factor *= 0.5;
+        }
+        raw * factor
     }
 
     pub fn item_save_bonus(&self) -> i32 {

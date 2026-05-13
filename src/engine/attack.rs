@@ -60,36 +60,12 @@ pub fn resolve_attack_outcome(
     };
 
     let mode = encounter.compute_attack_mode(p.caster_id, p.target_id, p.is_melee);
-    // Help is one-shot: a Helped attacker rolls with advantage on their
-    // first attack, then the condition clears regardless of hit/miss so
-    // a second swing in the same turn doesn't double-dip. We also drain
-    // any matching grant from the help-grant map — both bookkeeping
-    // tracks have to clear together so the AI's mode peek stays honest.
-    //
-    // Hidden also drops here: 5e RAW says making an attack reveals you,
-    // whether or not the attack hits. We pick up the Hidden-attacker
-    // advantage in `compute_attack_mode` above, then clear the condition
-    // so a follow-up swing this turn doesn't double-dip.
-    if let Some(attacker) = encounter.actors.get_mut(&p.caster_id) {
-        attacker.remove_condition(crate::conditions::Condition::Helped);
-        attacker.remove_condition(crate::conditions::Condition::Hidden);
-        attacker.consume_help_for(p.target_id);
-    }
-    // 5e Invisibility: attacking ends the spell. We drop the attacker's
-    // concentration on Invisibility before the d20 so the Invisible
-    // condition disappears from the rider stack (a swing while invisible
-    // still benefits from advantage — that's handled by attack_mode above
-    // — but a *second* swing the same turn shouldn't, and `compute_attack_mode`
-    // already saw the condition before this hook). Matches the spell-
-    // attack drop in `spell_attack_outcome` for symmetry.
-    if encounter
-        .actors
-        .get(&p.caster_id)
-        .and_then(|a| a.concentration())
-        .is_some_and(|c| c.spell_name == "Invisibility")
-    {
-        encounter.drop_concentration(p.caster_id);
-    }
+    // Burn through the one-shot rider stack (Helped, Hidden,
+    // per-target help grant, Invisibility concentration) before the
+    // d20 lands so a second swing this turn doesn't double-dip the
+    // advantage. We pick up the Hidden / Helped / Invisible flags in
+    // `compute_attack_mode` above, then this hook clears them.
+    encounter.clear_attack_advantage_riders(p.caster_id, p.target_id);
     let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
     let is_crit = raw_attack == 20;
     let buff = encounter

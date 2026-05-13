@@ -156,6 +156,20 @@ pub enum Condition {
     /// movement-zero mechanic and keep this distinct so the log makes
     /// the cause obvious.
     Adhered,
+    /// Hasted (5e Haste spell, concentration). +2 AC, advantage on DEX
+    /// saves, doubled walking speed. We don't model the extra-action
+    /// rider (action economy stays one Action per turn) — the AC + DEX
+    /// save half is the load-bearing part for survivability and the
+    /// doubled speed lets the holder reposition aggressively. Cleared
+    /// when the caster's concentration ends.
+    Hasted,
+    /// Slowed (5e Slow spell). Halved walking speed, -2 AC, -2 DEX
+    /// saves. The 5e spell also halves the holder's action economy
+    /// (no reactions, can only cast a 1-action spell *or* attack);
+    /// we model the static half — AC + DEX hit + movement — and skip
+    /// the action-economy clause to avoid surprising the AI. Tracked
+    /// as a condition so it clears cleanly on concentration drop.
+    Slowed,
 }
 
 impl Condition {
@@ -197,6 +211,8 @@ impl Condition {
             Condition::Hexed => "hexed",
             Condition::Blurred => "blurred",
             Condition::Adhered => "stuck",
+            Condition::Hasted => "hasted",
+            Condition::Slowed => "slowed",
         }
     }
 

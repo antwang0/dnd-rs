@@ -5,21 +5,25 @@ use crate::actors::creatures::bugbears::BUGBEAR_TEMPLATE;
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
 use crate::actors::creatures::cult_fanatics::CULT_FANATIC_TEMPLATE;
 use crate::actors::creatures::dire_wolves::DIRE_WOLF_TEMPLATE;
+use crate::actors::creatures::gargoyles::GARGOYLE_TEMPLATE;
 use crate::actors::creatures::ghouls::GHOUL_TEMPLATE;
 use crate::actors::creatures::gnolls::GNOLL_TEMPLATE;
 use crate::actors::creatures::goblin_bosses::GOBLIN_BOSS_TEMPLATE;
 use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 use crate::actors::creatures::harpies::HARPY_TEMPLATE;
 use crate::actors::creatures::hobgoblins::HOBGOBLIN_TEMPLATE;
+use crate::actors::creatures::knights::KNIGHT_TEMPLATE;
 use crate::actors::creatures::mimics::MIMIC_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::orcs::ORC_TEMPLATE;
 use crate::actors::creatures::owlbears::OWLBEAR_TEMPLATE;
 use crate::actors::creatures::specters::SPECTER_TEMPLATE;
+use crate::actors::creatures::stirges::STIRGE_TEMPLATE;
 use crate::actors::creatures::werewolves::WEREWOLF_TEMPLATE;
 use crate::actors::creatures::wisps::WISP_TEMPLATE;
 use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
 use crate::actors::creatures::wolves::WOLF_TEMPLATE;
+use crate::actors::creatures::worgs::WORG_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -514,6 +518,16 @@ impl EncounterInstance {
         // Dodge → advantage on DEX saves (5e).
         if matches!(ability, AbilityScoreType::Dexterity) && actor.is_dodging() {
             mode = mode.combine(RollMode::Advantage);
+        }
+        // Haste → advantage on DEX saves; Slow → disadvantage on DEX
+        // saves. Both clauses are DEX-specific per the 5e PHB.
+        if matches!(ability, AbilityScoreType::Dexterity) {
+            if actor.has_condition(Condition::Hasted) {
+                mode = mode.combine(RollMode::Advantage);
+            }
+            if actor.has_condition(Condition::Slowed) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
         }
         // Frightened → disadvantage on ability checks while you can see
         // the source of fear. Tests expect this to apply to saves too.
@@ -1321,20 +1335,24 @@ impl EncounterInstance {
             &CLERIC_TEMPLATE,
             &CULT_FANATIC_TEMPLATE,
             &DIRE_WOLF_TEMPLATE,
+            &GARGOYLE_TEMPLATE,
             &GHOUL_TEMPLATE,
             &GNOLL_TEMPLATE,
             &GOBLIN_TEMPLATE,
             &GOBLIN_BOSS_TEMPLATE,
             &HARPY_TEMPLATE,
             &HOBGOBLIN_TEMPLATE,
+            &KNIGHT_TEMPLATE,
             &MIMIC_TEMPLATE,
             &OGRE_TEMPLATE,
             &ORC_TEMPLATE,
             &OWLBEAR_TEMPLATE,
             &SPECTER_TEMPLATE,
+            &STIRGE_TEMPLATE,
             &WEREWOLF_TEMPLATE,
             &WISP_TEMPLATE,
             &WOLF_TEMPLATE,
+            &WORG_TEMPLATE,
             &WIZARD_TEMPLATE,
             // Wraith / vampire spawn / skeleton / zombie / slime sit
             // outside the random pool — CR-5+ undead and trash mobs are
@@ -1489,40 +1507,72 @@ impl EncounterInstance {
         }
     }
 
-    /// True iff `caster_id` is concentrating on Hunter's Mark and the
-    /// current target is the marked one. Folded into weapon hits by
-    /// `resolve_attack` to add the +1d6 mark rider.
-    pub fn is_hunters_mark_target(&self, caster_id: usize, target_id: usize) -> bool {
+    /// 5e RAW: making an attack consumes the attacker's one-shot advantage
+    /// stack — Hidden drops (attacking reveals you), Helped drops (Help is
+    /// once-per-target), any per-target help grant is consumed, and
+    /// concentration on Invisibility ends (attacking ends invisibility).
+    /// Symmetric across weapon attacks (`resolve_attack`) and spell
+    /// attacks (`spell_attack_outcome` in spells.rs) so a follow-up swing
+    /// in the same turn doesn't double-dip the rider.
+    pub fn clear_attack_advantage_riders(&mut self, caster_id: usize, target_id: usize) {
+        if let Some(attacker) = self.actors.get_mut(&caster_id) {
+            attacker.remove_condition(Condition::Helped);
+            attacker.remove_condition(Condition::Hidden);
+            attacker.consume_help_for(target_id);
+        }
+        if self
+            .actors
+            .get(&caster_id)
+            .and_then(|a| a.concentration())
+            .is_some_and(|c| c.spell_name == "Invisibility")
+        {
+            self.drop_concentration(caster_id);
+        }
+    }
+
+    /// Shared implementation: true iff `caster_id` is concentrating on the
+    /// spell named `spell_name` and `target_id` is the actor tagged with
+    /// `mark_condition` inside that concentration data. Symmetric across
+    /// every "mark the target, +Xd6 on hits" pattern (Hunter's Mark, Hex,
+    /// future Hex-like spells).
+    pub fn is_concentration_mark_target(
+        &self,
+        caster_id: usize,
+        target_id: usize,
+        spell_name: &str,
+        mark_condition: Condition,
+    ) -> bool {
         let Some(caster) = self.actors.get(&caster_id) else {
             return false;
         };
         let Some(conc) = caster.concentration() else {
             return false;
         };
-        if conc.spell_name != "Hunter's Mark" {
+        if conc.spell_name != spell_name {
             return false;
         }
         conc.conditions
             .iter()
-            .any(|(tid, c)| *tid == target_id && *c == Condition::HuntersMarked)
+            .any(|(tid, c)| *tid == target_id && *c == mark_condition)
+    }
+
+    /// True iff `caster_id` is concentrating on Hunter's Mark and the
+    /// current target is the marked one. Folded into weapon hits by
+    /// `resolve_attack` to add the +1d6 mark rider.
+    pub fn is_hunters_mark_target(&self, caster_id: usize, target_id: usize) -> bool {
+        self.is_concentration_mark_target(
+            caster_id,
+            target_id,
+            "Hunter's Mark",
+            Condition::HuntersMarked,
+        )
     }
 
     /// True if `caster_id` is concentrating on Hex and `target_id` is the
     /// hex'd creature. Symmetric with `is_hunters_mark_target` — the
     /// attack-roll resolver layers an extra 1d6 necrotic per RAW.
     pub fn is_hex_target(&self, caster_id: usize, target_id: usize) -> bool {
-        let Some(caster) = self.actors.get(&caster_id) else {
-            return false;
-        };
-        let Some(conc) = caster.concentration() else {
-            return false;
-        };
-        if conc.spell_name != "Hex" {
-            return false;
-        }
-        conc.conditions
-            .iter()
-            .any(|(tid, c)| *tid == target_id && *c == Condition::Hexed)
+        self.is_concentration_mark_target(caster_id, target_id, "Hex", Condition::Hexed)
     }
 
     /// True if any combat-active actor on a different team is footprint-
@@ -2743,7 +2793,7 @@ mod tests {
         let id = e
             .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        // 4 level-1 slots and 2 level-2 slots per the template.
+        // Level-9 cleric loadout: 4/3/3/1/1.
         assert_eq!(
             e.actors[&id]
                 .spell_slot_manager
@@ -2756,13 +2806,19 @@ mod tests {
                 .spell_slot_manager
                 .spell_slots(2)
                 .spell_slots,
-            2
+            3
         );
-        // Cleric got a level-3 slot when Mass Healing Word was added.
         assert_eq!(
             e.actors[&id]
                 .spell_slot_manager
                 .spell_slots(3)
+                .spell_slots,
+            3
+        );
+        assert_eq!(
+            e.actors[&id]
+                .spell_slot_manager
+                .spell_slots(5)
                 .spell_slots,
             1
         );
@@ -2770,8 +2826,9 @@ mod tests {
         assert!(e.actors[&id].can_consume_resource(Resource::SpellSlot(1)));
         assert!(e.actors[&id].can_consume_resource(Resource::SpellSlot(2)));
         assert!(e.actors[&id].can_consume_resource(Resource::SpellSlot(3)));
-        // Level-4 wasn't given.
-        assert!(!e.actors[&id].can_consume_resource(Resource::SpellSlot(4)));
+        assert!(e.actors[&id].can_consume_resource(Resource::SpellSlot(5)));
+        // Level-6 wasn't given.
+        assert!(!e.actors[&id].can_consume_resource(Resource::SpellSlot(6)));
     }
 
     #[test]
@@ -2826,10 +2883,9 @@ mod tests {
         let zombie = e
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 5), 1, 0)
             .unwrap();
-        // Burn through both level-2 slots so Hold Person can't be cast.
+        // Burn through every level-2 slot so Hold Person can't be cast.
         let mgr = &mut e.actors.get_mut(&cleric).unwrap().spell_slot_manager;
-        assert!(mgr.consume_spell_slot(2));
-        assert!(mgr.consume_spell_slot(2));
+        while mgr.consume_spell_slot(2) {}
         assert!(!e.actors[&cleric].can_consume_resource(Resource::SpellSlot(2)));
 
         // AI should now skip Hold Person and fall through to a damage
@@ -9224,7 +9280,8 @@ mod tests {
         let id = e
             .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        // Wizard ships with 4 level-1 and 2 level-2 slots.
+        // Wizard ships with 4 level-1, 3 level-2, 3 level-3, 1 level-4,
+        // 1 level-5 slots (level-9 wizard loadout).
         assert_eq!(
             e.actors[&id]
                 .spell_slot_manager
@@ -9237,7 +9294,14 @@ mod tests {
                 .spell_slot_manager
                 .spell_slots(2)
                 .spell_slots,
-            2
+            3
+        );
+        assert_eq!(
+            e.actors[&id]
+                .spell_slot_manager
+                .spell_slots(5)
+                .spell_slots,
+            1
         );
         assert!(e.actors[&id].can_consume_resource(Resource::SpellSlot(1)));
     }
@@ -12387,5 +12451,259 @@ mod tests {
             e.actors.get_mut(&target).unwrap().remove_condition(Condition::Baned);
         }
         assert!(saw_baned, "mind sliver should sometimes apply Baned on failed INT save");
+    }
+
+    #[test]
+    fn hasted_doubles_speed_and_buffs_ac() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let id = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base_speed = e.actors[&id].speed();
+        let base_ac = e.actors[&id].armor_class();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Hasted, ConditionTimer::Permanent);
+        assert!((e.actors[&id].speed() - base_speed * 2.0).abs() < 0.001);
+        assert_eq!(e.actors[&id].armor_class(), base_ac + 2);
+    }
+
+    #[test]
+    fn slowed_halves_speed_and_debuffs_ac() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let id = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base_speed = e.actors[&id].speed();
+        let base_ac = e.actors[&id].armor_class() as i32;
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Slowed, ConditionTimer::Permanent);
+        assert!((e.actors[&id].speed() - base_speed / 2.0).abs() < 0.001);
+        assert_eq!(e.actors[&id].armor_class() as i32, base_ac - 2);
+    }
+
+    #[test]
+    fn hasted_and_slowed_cancel_speed() {
+        // Stacking both conditions should leave speed at baseline since
+        // factor = 2.0 * 0.5 = 1.0.
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let id = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base_speed = e.actors[&id].speed();
+        let actor = e.actors.get_mut(&id).unwrap();
+        actor.add_condition(Condition::Hasted, ConditionTimer::Permanent);
+        actor.add_condition(Condition::Slowed, ConditionTimer::Permanent);
+        assert!((e.actors[&id].speed() - base_speed).abs() < 0.001);
+    }
+
+    #[test]
+    fn hasted_dex_save_gets_advantage() {
+        // Hasted → DEX save with advantage; verify the mode picker.
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let id = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Hasted, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_save_mode(id, AbilityScoreType::Dexterity),
+            RollMode::Advantage
+        );
+        // Non-DEX saves untouched.
+        assert_eq!(
+            e.compute_save_mode(id, AbilityScoreType::Wisdom),
+            RollMode::Normal
+        );
+    }
+
+    #[test]
+    fn slowed_dex_save_gets_disadvantage() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let id = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Slowed, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_save_mode(id, AbilityScoreType::Dexterity),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn haste_concentration_drops_clears_hasted() {
+        // Haste hangs on the caster's concentration; dropping the
+        // concentration (e.g. failing the CON save on damage) must clear
+        // the Hasted condition on the target.
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::HASTE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        let tv = vec![target];
+        let effects = HASTE.side_effects(&mut e, caster, Some(&tv), None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert!(e.actors[&target].has_condition(Condition::Hasted));
+        e.drop_concentration(caster);
+        assert!(!e.actors[&target].has_condition(Condition::Hasted));
+    }
+
+    #[test]
+    fn true_strike_applies_helped_on_caster() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::TRUE_STRIKE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            .unwrap();
+        let tv = vec![target];
+        let effects = TRUE_STRIKE.side_effects(&mut e, caster, Some(&tv), None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert!(e.actors[&caster].has_condition(Condition::Helped));
+    }
+
+    #[test]
+    fn cone_of_cold_damages_targets_in_burst() {
+        // 8d8 average ~36; even a CON save halves it. Verify some
+        // damage lands on the zombie at the burst center.
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::CONE_OF_COLD;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(40, 20, &[]);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Give the wizard a level-5 slot (template already has one,
+        // but be explicit so the test is robust to future tuning).
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .spell_slot_manager
+            .increase_max_spell_slot(5, 1);
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        let pre_hp = e.actors[&target].hitpoints();
+        let locs = vec![Coordinate::new(8, 2)];
+        let effects = CONE_OF_COLD.side_effects(&mut e, caster, None, Some(&locs), None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert!(
+            e.actors[&target].hitpoints() < pre_hp,
+            "cone of cold should damage zombies in the burst"
+        );
+    }
+
+    #[test]
+    fn knight_in_pool_and_has_multiattack() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::KNIGHT_MULTI;
+        use crate::actors::creatures::knights::KNIGHT_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let id = e
+            .instantiate_creature(&KNIGHT_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let names: Vec<&str> = e.actors[&id].actions.iter().map(|a| a.name()).collect();
+        assert!(names.contains(&KNIGHT_MULTI.name()));
+        assert_eq!(e.actors[&id].armor_class(), 18);
+    }
+
+    #[test]
+    fn worg_bite_can_knock_prone() {
+        // Worg bite's STR-save rider should sometimes knock a small target
+        // prone. Goblin (STR 8, not proficient) versus DC 8+3+3=14 should
+        // miss enough of the time over 50 trials to see at least one prone.
+        use crate::actions::monster_attacks::WORG_BITE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::worgs::WORG_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::actions::action_template::Action;
+
+        let mut prone_seen = false;
+        for _ in 0..50 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            let worg = e
+                .instantiate_creature(&WORG_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let tv = vec![target];
+            let effects = WORG_BITE.side_effects(&mut e, worg, Some(&tv), None, None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            if e
+                .actors
+                .get(&target)
+                .is_some_and(|a| a.has_condition(Condition::Prone))
+            {
+                prone_seen = true;
+                break;
+            }
+        }
+        assert!(prone_seen, "worg bite should sometimes knock a small target prone");
+    }
+
+    #[test]
+    fn gargoyle_resists_slashing() {
+        use crate::actors::creatures::gargoyles::GARGOYLE_TEMPLATE;
+        use crate::engine::types::{DamageModifier, DamageType};
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let id = e
+            .instantiate_creature(&GARGOYLE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert_eq!(
+            e.actors[&id].damage_modifier(DamageType::Slashing),
+            Some(DamageModifier::Resistance)
+        );
+        // Immune to poison.
+        assert_eq!(
+            e.actors[&id].damage_modifier(DamageType::Poison),
+            Some(DamageModifier::Immunity)
+        );
     }
 }
