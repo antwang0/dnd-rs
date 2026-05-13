@@ -2204,3 +2204,81 @@ pub static STIRGE_PROBOSCIS: SimpleWeapon = SimpleWeapon {
     requires_los: false,
     cost_resource: Resource::Action,
 };
+
+/// Cockatrice bite — DEX-flavored melee that deals 1d4 piercing on hit
+/// and, more importantly, forces a CON save (DC 11) for a "petrify"
+/// rider that applies the Petrified condition for 1 round on a fail.
+/// Mirrors the imp-sting "hit, then save-or-suck" shape: the petty
+/// damage is the hook for the real threat, which is the lockout.
+///
+/// 5e's full petrification is permanent and lethal; we cap the rider at
+/// `Rounds(1)` so a single hit doesn't game-over the target on a missed
+/// save — combined with our action-economy / save-auto-fail clauses on
+/// Petrified the round is already brutal enough.
+pub struct CockatriceBite {}
+
+impl Action for CockatriceBite {
+    fn name(&self) -> &str {
+        "petrifying bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cb", "petrify-bite"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "bite",
+            AbilityScoreType::Dexterity,
+            Some(AbilityScoreType::Dexterity),
+            Dice::new(1, 4),
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 11);
+        if !save.passed() {
+            encounter.log("  petrifying gaze: target turns to stone");
+            effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Petrified,
+                timer: ConditionTimer::Rounds(1),
+            }));
+        }
+        effects
+    }
+}
+
+pub static COCKATRICE_BITE: LazyLock<CockatriceBite> = LazyLock::new(|| CockatriceBite {});

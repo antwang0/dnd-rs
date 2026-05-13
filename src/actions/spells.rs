@@ -5238,3 +5238,377 @@ impl Action for TrueStrike {
 }
 
 pub static TRUE_STRIKE: LazyLock<TrueStrike> = LazyLock::new(|| TrueStrike {});
+
+/// Dispel Magic — level-3 abjuration, action. Touch range in 5e RAW is
+/// 120 ft; we use 24 tiles. Drops the target's concentration outright;
+/// if the target wasn't concentrating, strips one beneficial buff
+/// instead (the engine picks deterministically — see `DispelMagicOn`).
+/// No save: the spell auto-succeeds against effects from a slot of level
+/// ≤ the cast level (which is the only level we track today). No damage.
+pub struct DispelMagic {}
+
+impl Action for DispelMagic {
+    fn name(&self) -> &str {
+        "dispel magic"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dm", "dispel"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        // Dispel against a friendly buffed creature is technically harmful
+        // (it removes their buff), but the AI's harmful-action picker uses
+        // this as "should I target an enemy?" — Dispel is enemy-facing
+        // when targeting concentrators, so true matches the intended use.
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(3)]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::DispelMagicOn;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![Box::new(DispelMagicOn { target_id })]
+    }
+}
+
+pub static DISPEL_MAGIC: LazyLock<DispelMagic> = LazyLock::new(|| DispelMagic {});
+
+/// Greater Invisibility — level-4 illusion, concentration. Functionally
+/// the same as Invisibility (target gains the Invisible condition and
+/// attacks against them have disadvantage, while their attacks have
+/// advantage), but **does NOT drop on attack**. The plain Invisibility
+/// spell's break-on-attack rider lives in
+/// `EncounterInstance::clear_attack_advantage_riders`, which compares
+/// the active concentration name against `"Invisibility"`; Greater
+/// Invisibility uses a distinct concentration name so that hook leaves
+/// it alone — the target stays invisible until concentration drops.
+pub struct GreaterInvisibility {}
+
+impl Action for GreaterInvisibility {
+    fn name(&self) -> &str {
+        "greater invisibility"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ginv", "greater-invis"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch — 1 tile.
+        Some(1)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(4)]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // 10-round concentration — same as the rest of our buff-spells.
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Invisible,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Greater Invisibility",
+                    vec![(target_id, Condition::Invisible)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static GREATER_INVISIBILITY: LazyLock<GreaterInvisibility> =
+    LazyLock::new(|| GreaterInvisibility {});
+
+/// Ice Storm — level-4 evocation. 20-ft radius cylinder (we use a tile
+/// burst, radius 4). Every creature in the area makes a DEX save vs the
+/// caster's INT-based DC: 2d8 bludgeoning + 4d6 cold on a fail, half on a
+/// success. Two damage types means resistance / immunity has to apply
+/// twice to halve / null the full hit; the dual lane is what makes the
+/// spell distinct from Fireball / Lightning Bolt at the same level slot.
+pub struct IceStorm {}
+
+impl Action for IceStorm {
+    fn name(&self) -> &str {
+        "ice storm"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["is", "icestorm"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 300 ft RAW; we cap to a map-realistic 48 tiles (120 ft).
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning, DamageType::Cold]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(4)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let bludg = encounter.roll(&Dice::new(2, 8));
+        let cold = encounter.roll(&Dice::new(4, 6));
+        encounter.log(format!(
+            "  ice storm: 2d8({}) bludgeoning + 4d6({}) cold area",
+            bludg, cold
+        ));
+        // Two passes through resolve_burst_save_damage so each damage
+        // type interacts with target resistance / immunity independently.
+        // The save is rolled once per pass — we accept the small RNG
+        // cost (two save rolls per target) in exchange for keeping the
+        // helper signature simple.
+        let mut all = crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            4,
+            AbilityScoreType::Dexterity,
+            dc,
+            bludg,
+            DamageType::Bludgeoning,
+        );
+        all.extend(crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            4,
+            AbilityScoreType::Dexterity,
+            dc,
+            cold,
+            DamageType::Cold,
+        ));
+        all
+    }
+}
+
+pub static ICE_STORM: LazyLock<IceStorm> = LazyLock::new(|| IceStorm {});
+
+/// Death Ward — level-4 abjuration, action, touch. Applies the
+/// `DeathWarded` condition to one ally. The first time the holder
+/// would drop to 0 HP, they instead drop to 1 HP and the ward clears
+/// (engine hook lives in `ActorInstance::take_damage`). No
+/// concentration — it's a fire-and-forget hard save.
+pub struct DeathWard {}
+
+impl Action for DeathWard {
+    fn name(&self) -> &str {
+        "death ward"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dw", "ward"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch.
+        Some(1)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(4)]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // 5e RAW: 8 hour duration. We cap at a long Rounds timer so the
+        // condition has a definite expiry even if combat drags on.
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::DeathWarded,
+            timer: ConditionTimer::Rounds(100),
+        })]
+    }
+}
+
+pub static DEATH_WARD: LazyLock<DeathWard> = LazyLock::new(|| DeathWard {});
+
+/// Revivify — level-3 necromancy, action, touch. Brings a Dying actor
+/// (rolling death saves at 0 HP) back at 1 HP. Stabilized actors are
+/// already alive at 0 HP and don't need this; vanilla Heal can pick
+/// them back up. Dead actors are gone from the table by the time the
+/// spell could resolve, so we don't try to chase them.
+pub struct Revivify {}
+
+impl Action for Revivify {
+    fn name(&self) -> &str {
+        "revivify"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["rev", "revive"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch.
+        Some(1)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Only valid against a Dying ally — the spell shouldn't be
+        // wasted on healthy targets or actors whose status doesn't need
+        // a revive (Stable / Active actors heal via normal spells).
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| a.is_dying())
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(3)]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ReviveDying;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![Box::new(ReviveDying {
+            actor_id: target_id,
+        })]
+    }
+}
+
+pub static REVIVIFY: LazyLock<Revivify> = LazyLock::new(|| Revivify {});

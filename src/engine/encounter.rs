@@ -3,6 +3,7 @@ use crate::actors::creatures::bandit_captains::BANDIT_CAPTAIN_TEMPLATE;
 use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
 use crate::actors::creatures::bugbears::BUGBEAR_TEMPLATE;
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+use crate::actors::creatures::cockatrices::COCKATRICE_TEMPLATE;
 use crate::actors::creatures::cult_fanatics::CULT_FANATIC_TEMPLATE;
 use crate::actors::creatures::dire_wolves::DIRE_WOLF_TEMPLATE;
 use crate::actors::creatures::gargoyles::GARGOYLE_TEMPLATE;
@@ -455,6 +456,10 @@ impl EncounterInstance {
                 Condition::Paralyzed,
                 Condition::Unconscious,
                 Condition::Outlined,
+                // 5e Petrified: attacks against the target have
+                // advantage (target can't dodge, weave, or even fall
+                // over). Same envelope as Paralyzed for our purposes.
+                Condition::Petrified,
                 // 5e Guiding Bolt: next attack against the target before
                 // the end of the caster's next turn has advantage. We
                 // model "next attack" via a 1-round timer; the condition
@@ -561,7 +566,9 @@ impl EncounterInstance {
         ) {
             return false;
         }
-        actor.has_condition(Condition::Paralyzed) || actor.has_condition(Condition::Stunned)
+        actor.has_condition(Condition::Paralyzed)
+            || actor.has_condition(Condition::Stunned)
+            || actor.has_condition(Condition::Petrified)
     }
 
     /// Roll a saving throw for `actor_id` against `dc` using `ability`.
@@ -1333,6 +1340,7 @@ impl EncounterInstance {
             &BANDIT_CAPTAIN_TEMPLATE,
             &BUGBEAR_TEMPLATE,
             &CLERIC_TEMPLATE,
+            &COCKATRICE_TEMPLATE,
             &CULT_FANATIC_TEMPLATE,
             &DIRE_WOLF_TEMPLATE,
             &GARGOYLE_TEMPLATE,
@@ -12705,5 +12713,396 @@ mod tests {
             e.actors[&id].damage_modifier(DamageType::Poison),
             Some(DamageModifier::Immunity)
         );
+    }
+
+    #[test]
+    fn death_ward_absorbs_killing_blow_and_clears() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        // Tank up to a known HP, then ward.
+        let max = actor.max_hitpoints();
+        actor.add_condition(Condition::DeathWarded, ConditionTimer::Rounds(100));
+        // Apply lethal damage: ward fires, HP set to 1, ward cleared.
+        actor.take_typed_damage(max + 5, DamageType::Slashing);
+        assert_eq!(actor.hitpoints(), 1);
+        assert!(!actor.has_condition(Condition::DeathWarded));
+        assert!(actor.is_combat_active());
+    }
+
+    #[test]
+    fn death_ward_only_fires_on_killing_damage() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        actor.add_condition(Condition::DeathWarded, ConditionTimer::Rounds(100));
+        let hp_before = actor.hitpoints();
+        // Survivable damage shouldn't burn the ward.
+        actor.take_typed_damage(1, DamageType::Slashing);
+        assert_eq!(actor.hitpoints(), hp_before - 1);
+        assert!(actor.has_condition(Condition::DeathWarded));
+    }
+
+    #[test]
+    fn dispel_magic_drops_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::{BLESS, DISPEL_MAGIC};
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let buffer = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        // buffer concentrates on Bless (on themselves).
+        let effects = BLESS.side_effects(&mut e, buffer, Some(&vec![buffer]), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&buffer].is_concentrating());
+        // Cast Dispel Magic at the buffer.
+        let effects =
+            DISPEL_MAGIC.side_effects(&mut e, caster, Some(&vec![buffer]), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(!e.actors[&buffer].is_concentrating());
+    }
+
+    #[test]
+    fn dispel_magic_strips_buff_when_no_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::DISPEL_MAGIC;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        // Apply a dispellable buff without concentration.
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::MageArmored, ConditionTimer::Rounds(100));
+        assert!(e.actors[&target].has_condition(Condition::MageArmored));
+        let effects =
+            DISPEL_MAGIC.side_effects(&mut e, caster, Some(&vec![target]), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(!e.actors[&target].has_condition(Condition::MageArmored));
+    }
+
+    #[test]
+    fn greater_invisibility_persists_after_attack() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::GREATER_INVISIBILITY;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+            .unwrap();
+        // Cast Greater Invisibility on self — the caster gains Invisible
+        // *and* is the one concentrating on the spell.
+        let effects = GREATER_INVISIBILITY.side_effects(
+            &mut e,
+            caster,
+            Some(&vec![caster]),
+            None,
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&caster].has_condition(Condition::Invisible));
+        assert!(e.actors[&caster].is_concentrating());
+        // Caster attacks the enemy — rider hook fires. Plain Invisibility
+        // would drop concentration; Greater Invisibility must persist.
+        e.clear_attack_advantage_riders(caster, enemy);
+        assert!(
+            e.actors[&caster].has_condition(Condition::Invisible),
+            "greater invisibility must not break on attack"
+        );
+        assert!(
+            e.actors[&caster].is_concentrating(),
+            "concentration on Greater Invisibility must persist"
+        );
+    }
+
+    #[test]
+    fn revivify_brings_dying_actor_back_at_one_hp() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::REVIVIFY;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let downed = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        // Drop the fighter to Dying.
+        let max = e.actors[&downed].max_hitpoints();
+        e.actors
+            .get_mut(&downed)
+            .unwrap()
+            .take_damage(max);
+        assert!(e.actors[&downed].is_dying());
+        assert!(e.actors[&downed].has_condition(Condition::Unconscious));
+        // Cast revivify.
+        let effects =
+            REVIVIFY.side_effects(&mut e, caster, Some(&vec![downed]), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&downed].is_combat_active());
+        assert_eq!(e.actors[&downed].hitpoints(), 1);
+        assert!(!e.actors[&downed].has_condition(Condition::Unconscious));
+        assert!(!e.actors[&downed].has_condition(Condition::Prone));
+    }
+
+    #[test]
+    fn revivify_invalid_on_active_target() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::REVIVIFY;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let healthy = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        let valid = REVIVIFY.validate_input(&e, caster, Some(&vec![healthy]), None, None);
+        assert!(!valid, "revivify must reject non-dying targets");
+    }
+
+    #[test]
+    fn petrified_zeros_movement_and_blocks_actions() {
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Petrified, ConditionTimer::Rounds(1));
+        // Movement zeroed.
+        assert_eq!(e.actors[&id].remaining_movement(), 0.0);
+        // Cannot spend Action / BonusAction / Reaction.
+        assert!(!e.actors[&id].can_consume_resource(Resource::Action));
+        assert!(!e.actors[&id].can_consume_resource(Resource::BonusAction));
+        assert!(!e.actors[&id].can_consume_resource(Resource::Reaction));
+    }
+
+    #[test]
+    fn petrified_auto_fails_str_and_dex_saves() {
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Petrified, ConditionTimer::Rounds(1));
+        assert!(e.auto_fail_save(id, AbilityScoreType::Strength));
+        assert!(e.auto_fail_save(id, AbilityScoreType::Dexterity));
+        // WIS save still rolls normally.
+        assert!(!e.auto_fail_save(id, AbilityScoreType::Wisdom));
+    }
+
+    #[test]
+    fn petrified_target_grants_attacker_advantage() {
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Petrified, ConditionTimer::Rounds(1));
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage
+        );
+    }
+
+    #[test]
+    fn ice_storm_damages_in_radius() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::ICE_STORM;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let victim = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        let pre = e.actors[&victim].hitpoints();
+        let effects = ICE_STORM.side_effects(
+            &mut e,
+            caster,
+            None,
+            Some(&vec![Coordinate::new(8, 8)]),
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let post = e.actors.get(&victim).map(|a| a.hitpoints()).unwrap_or(0);
+        assert!(
+            post < pre || !e.actors.contains_key(&victim),
+            "ice storm should damage actors inside the burst (pre {}, post {})",
+            pre,
+            post
+        );
+    }
+
+    #[test]
+    fn cockatrice_bite_can_petrify_target() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::COCKATRICE_BITE;
+        use crate::actors::creatures::cockatrices::COCKATRICE_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+
+        // The bite's petrify rider depends on a failed CON save — loop a
+        // few seeds to demonstrate the condition lands at least once.
+        let mut seen = false;
+        for seed in 0..20u64 {
+            let tp = crate::engine::terrain_gen::TerrainGenParams {
+                width: 15,
+                height: 15,
+                branch_depth: 0,
+                branch_prob: 0.0,
+            };
+            let ap = crate::engine::actor_gen::ActorGenParams {
+                cr_target: 0.0,
+                n_teams: 0,
+                pc_template: None,
+                start_team: 0,
+            };
+            let mut e = EncounterInstance::from_params(&tp, &ap, Some(seed)).unwrap();
+            e.terrain = vec![
+                crate::engine::terrain::TerrainInfo {
+                    terrain_type: TerrainType::Floor,
+                };
+                15 * 15
+            ];
+            let attacker = e
+                .instantiate_creature(&COCKATRICE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let effects = COCKATRICE_BITE.side_effects(
+                &mut e,
+                attacker,
+                Some(&vec![target]),
+                None,
+                None,
+            );
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e
+                .actors
+                .get(&target)
+                .is_some_and(|a| a.has_condition(Condition::Petrified))
+            {
+                seen = true;
+                break;
+            }
+        }
+        assert!(seen, "cockatrice bite should occasionally petrify");
+    }
+
+    #[test]
+    fn dispel_magic_is_in_cleric_loadout() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&id]
+            .actions
+            .iter()
+            .any(|a| a.name() == "dispel magic"));
+        assert!(e.actors[&id]
+            .actions
+            .iter()
+            .any(|a| a.name() == "revivify"));
+        assert!(e.actors[&id]
+            .actions
+            .iter()
+            .any(|a| a.name() == "death ward"));
+    }
+
+    #[test]
+    fn ice_storm_is_in_wizard_loadout() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&id]
+            .actions
+            .iter()
+            .any(|a| a.name() == "ice storm"));
+        assert!(e.actors[&id]
+            .actions
+            .iter()
+            .any(|a| a.name() == "greater invisibility"));
+        assert!(e.actors[&id]
+            .actions
+            .iter()
+            .any(|a| a.name() == "dispel magic"));
     }
 }

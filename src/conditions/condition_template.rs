@@ -170,6 +170,21 @@ pub enum Condition {
     /// the action-economy clause to avoid surprising the AI. Tracked
     /// as a condition so it clears cleanly on concentration drop.
     Slowed,
+    /// Warded by Death Ward — the next time the holder would drop to
+    /// 0 HP, they instead drop to 1 HP and the condition burns off.
+    /// Damage that *would* kill outright (massive damage > max HP at 0)
+    /// is also absorbed by the ward. Implemented in
+    /// `ActorInstance::take_damage` so any damage path benefits — the
+    /// ward intercepts before death-save / Dead transitions, then
+    /// removes itself so a second killing blow lands as normal.
+    DeathWarded,
+    /// Petrified — turned to inanimate stone (5e Cockatrice / Flesh to
+    /// Stone). Movement zero, action economy blocked (same envelope as
+    /// Stunned / Paralyzed). 5e also adds wide damage resistance and
+    /// poison immunity, plus auto-fail STR/DEX saves; we model the
+    /// auto-fail via the existing `auto_fail_save` switch (extended to
+    /// recognize Petrified alongside Paralyzed / Stunned).
+    Petrified,
 }
 
 impl Condition {
@@ -213,6 +228,8 @@ impl Condition {
             Condition::Adhered => "stuck",
             Condition::Hasted => "hasted",
             Condition::Slowed => "slowed",
+            Condition::DeathWarded => "warded against death",
+            Condition::Petrified => "petrified",
         }
     }
 
@@ -227,10 +244,34 @@ impl Condition {
                 | Condition::Paralyzed
                 | Condition::Unconscious
                 | Condition::Asleep
+                | Condition::Petrified
         )
     }
 
     /// True if this condition zeros out movement.
+    /// True if this condition is a beneficial buff that Dispel Magic /
+    /// similar "end one effect" spells should target. Used by the
+    /// Dispel Magic side-effect when the target isn't concentrating —
+    /// the spell falls back to stripping one helpful condition rather
+    /// than failing silently.
+    pub fn is_dispellable_buff(&self) -> bool {
+        matches!(
+            self,
+            Condition::Blessed
+                | Condition::ShieldOfFaith
+                | Condition::MageArmored
+                | Condition::Heroic
+                | Condition::Hasted
+                | Condition::Hidden
+                | Condition::Invisible
+                | Condition::DamageResistant
+                | Condition::MirroredImages
+                | Condition::Blurred
+                | Condition::DeathWarded
+                | Condition::Helped
+        )
+    }
+
     pub fn zeros_movement(&self) -> bool {
         // Note: Prone is NOT in this list. RAW: prone halves movement
         // (you crawl). We don't yet model the half-speed reduction;
@@ -245,6 +286,7 @@ impl Condition {
                 | Condition::Unconscious
                 | Condition::Asleep
                 | Condition::Adhered
+                | Condition::Petrified
         )
     }
 }

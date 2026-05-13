@@ -1176,6 +1176,18 @@ impl ActorInstance {
                 };
                 self.hitpoints = self.hitpoints.saturating_sub(after_temp);
                 if self.hitpoints == 0 {
+                    // 5e Death Ward: when the holder would drop to 0 HP,
+                    // they instead drop to 1 HP and the ward burns off.
+                    // We intercept here (post-HP-bookkeeping) so resistance
+                    // / immunity / temp HP all run normally first — the
+                    // ward only fires when the damage would actually
+                    // floor them. Massive-damage-instant-kill is rare in
+                    // our model so we don't special-case it.
+                    if self.conditions.contains_key(&Condition::DeathWarded) {
+                        self.hitpoints = 1;
+                        self.conditions.remove(&Condition::DeathWarded);
+                        return DamageOutcome::Reduced;
+                    }
                     if self.rolls_death_saves {
                         self.hp_state = HpState::Dying {
                             successes: 0,
@@ -1317,6 +1329,20 @@ impl ActorInstance {
 
     pub fn is_heroic(&self) -> bool {
         self.has_condition(Condition::Heroic)
+    }
+
+    /// True iff the actor is currently `Petrified` — turned to stone.
+    /// Convenience accessor used by the AI / UI to surface the state
+    /// without each call site re-importing `Condition`.
+    pub fn is_petrified(&self) -> bool {
+        self.has_condition(Condition::Petrified)
+    }
+
+    /// True iff the actor holds a Death Ward — the next killing blow
+    /// will be absorbed by `take_damage`. Surfaced for AI heuristics
+    /// (skip dispelling targets without the buff) and UI tagging.
+    pub fn has_death_ward(&self) -> bool {
+        self.has_condition(Condition::DeathWarded)
     }
 
     /// Ability-mod + proficiency bonus for `ability` (the standard 5e

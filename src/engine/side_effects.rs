@@ -623,6 +623,81 @@ impl ApplicableSideEffect for SetMirrorImages {
     }
 }
 
+/// Drop the target's concentration (5e Dispel Magic). No-op if the actor
+/// is missing or not concentrating. Logs the spell name that was dispelled
+/// so the player sees which buff fell. If the target wasn't concentrating
+/// at all, strips the first beneficial buff in `Condition::is_dispellable_buff`
+/// instead — matches the spirit of Dispel Magic's "end one magical effect"
+/// clause on non-concentration buffs.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct DispelMagicOn {
+    pub target_id: usize,
+}
+
+impl ApplicableSideEffect for DispelMagicOn {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        // Concentration first — that's the highest-value cleanse.
+        let concentrating = ei
+            .actors
+            .get(&self.target_id)
+            .map(|a| a.is_concentrating())
+            .unwrap_or(false);
+        if concentrating {
+            ei.drop_concentration(self.target_id);
+            return;
+        }
+        // Otherwise strip one beneficial condition (deterministic order
+        // via the enum's natural variant ordering — we sort the snapshot
+        // by the name string so the choice is stable across builds).
+        let Some(actor) = ei.get_actor(self.target_id) else {
+            return;
+        };
+        let mut buffs: Vec<Condition> = actor
+            .conditions()
+            .keys()
+            .copied()
+            .filter(|c| c.is_dispellable_buff())
+            .collect();
+        buffs.sort_unstable_by_key(|c| c.name());
+        let Some(&c) = buffs.first() else {
+            return;
+        };
+        let name = actor.name().to_string();
+        if actor.remove_condition(c) {
+            ei.log(format!("{} is no longer {} (dispelled).", name, c.name()));
+        }
+    }
+}
+
+/// Pull a Dying actor back to 1 HP, clearing the auxiliary Unconscious /
+/// Prone conditions that come with the Dying state. No-op for Active /
+/// Stable / Dead actors — 5e Revivify only works on creatures that died
+/// in the last minute, but our model can't reach Dead-but-not-removed,
+/// so we restrict to Dying (which covers PCs mid-death-save). Stable
+/// actors are still alive at 0 HP and can be picked up by Heal.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct ReviveDying {
+    pub actor_id: usize,
+}
+
+impl ApplicableSideEffect for ReviveDying {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        if !actor.is_dying() {
+            return;
+        }
+        let name = actor.name().to_string();
+        // Heal lifts the actor out of Dying via the Revived path; it also
+        // clears Unconscious. We strip Prone separately — Heal doesn't
+        // touch it but a revived actor is no longer flopped on the floor.
+        let _ = actor.heal(1);
+        actor.remove_condition(Condition::Prone);
+        ei.log(format!("{} returns to life at 1 HP.", name));
+    }
+}
+
 /// Permanently shift an actor's max HP by `delta`. Negative deltas model
 /// Wraith Life Drain and exhaustion effects; positive deltas model Aid's
 /// hp boost. Current HP rises with the cap on a positive delta (so the

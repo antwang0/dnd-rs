@@ -3,6 +3,7 @@ pub mod bandit_captains;
 pub mod bandits;
 pub mod bugbears;
 pub mod clerics;
+pub mod cockatrices;
 pub mod cult_fanatics;
 pub mod dire_wolves;
 pub mod fighters;
