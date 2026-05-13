@@ -165,54 +165,43 @@ pub fn resolve_attack_outcome(
     }
     // Hunter's Mark rider: attacker concentrating on Hunter's Mark with
     // this target marked deals +1d6 (weapon-typed). Crits double the
-    // mark die per RAW.
+    // mark die per RAW — the rider folds into the weapon's damage type.
     if encounter.is_hunters_mark_target(p.caster_id, p.target_id) {
-        let hm_raw = encounter.roll(&Dice::new(1, 6));
-        let hm_extra = if is_crit { encounter.roll(&Dice::new(1, 6)) } else { 0 };
-        let hm_total = hm_raw + hm_extra;
+        let hm_total = roll_rider_d6(encounter, is_crit);
         damage = damage.saturating_add(hm_total);
         encounter.log(format!(
-            "  hunter's mark: 1d6({}) = {} extra {:?}",
-            hm_raw, hm_total, p.damage_type
+            "  hunter's mark: +{} extra {:?}",
+            hm_total, p.damage_type
         ));
     }
     // Hex rider: 1d6 necrotic on every hit against the Hexed target. Like
     // Hunter's Mark, crits double the rider die. The necrotic typing
     // matters more than HM's weapon-typed rider — it can chip past
-    // physical resistance but bounces off necrotic-resistant undead.
+    // physical resistance but bounces off necrotic-resistant undead. The
+    // necrotic damage is a separate `DealDamage` so the target's typed
+    // resistance / immunity / vulnerability applies to it independently.
+    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
+        actor_id: p.target_id,
+        amount: damage,
+        damage_type: p.damage_type,
+    })];
     if encounter.is_hex_target(p.caster_id, p.target_id) {
-        let hex_raw = encounter.roll(&Dice::new(1, 6));
-        let hex_extra = if is_crit { encounter.roll(&Dice::new(1, 6)) } else { 0 };
-        let hex_total = hex_raw + hex_extra;
-        encounter.log(format!(
-            "  hex: 1d6({}) = {} extra Necrotic",
-            hex_raw, hex_total
-        ));
-        // Necrotic is a separate damage application so target resistances
-        // / immunities apply correctly. The weapon hit still lands via
-        // the DealDamage below.
-        return (
-            vec![
-                Box::new(DealDamage {
-                    actor_id: p.target_id,
-                    amount: damage,
-                    damage_type: p.damage_type,
-                }),
-                Box::new(DealDamage {
-                    actor_id: p.target_id,
-                    amount: hex_total,
-                    damage_type: DamageType::Necrotic,
-                }),
-            ],
-            damage,
-        );
-    }
-    (
-        vec![Box::new(DealDamage {
+        let hex_total = roll_rider_d6(encounter, is_crit);
+        encounter.log(format!("  hex: +{} extra Necrotic", hex_total));
+        effects.push(Box::new(DealDamage {
             actor_id: p.target_id,
-            amount: damage,
-            damage_type: p.damage_type,
-        })],
-        damage,
-    )
+            amount: hex_total,
+            damage_type: DamageType::Necrotic,
+        }));
+    }
+    (effects, damage)
+}
+
+/// Roll a single 1d6 rider die, doubling on crit per 5e RAW. Shared by
+/// Hunter's Mark and Hex (both add a 1d6 to weapon hits and double on
+/// crit) so the d6 + crit-doubling logic lives in one spot.
+fn roll_rider_d6(encounter: &mut EncounterInstance, is_crit: bool) -> u32 {
+    let base = encounter.roll(&Dice::new(1, 6));
+    let crit_extra = if is_crit { encounter.roll(&Dice::new(1, 6)) } else { 0 };
+    base + crit_extra
 }

@@ -1,12 +1,14 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
-    ACID_SPLASH, BESTOW_CURSE, BLINDNESS, BLUR, BURNING_HANDS, CAUSE_FEAR, CHARM_PERSON,
-    CHILL_TOUCH, COLOR_SPRAY, CONE_OF_COLD, DISPEL_MAGIC, FIRE_BOLT, FIREBALL,
-    GREATER_INVISIBILITY, HASTE, HOLD_MONSTER, HYPNOTIC_PATTERN, ICE_STORM, INVISIBILITY,
-    LIGHTNING_BOLT, MAGE_ARMOR, MAGIC_MISSILE, MAGIC_WEAPON, MIND_SLIVER, MIRROR_IMAGE,
-    MISTY_STEP, POISON_SPRAY, RAY_OF_FROST, RAY_OF_SICKNESS, SCORCHING_RAY, SHATTER, SHIELD,
-    SHOCKING_GRASP, SLEEP, SLOW, STINKING_CLOUD, THUNDERWAVE, TOLL_THE_DEAD, TRUE_STRIKE,
-    VAMPIRIC_TOUCH, WEB,
+    ACID_SPLASH, BANISHMENT, BESTOW_CURSE, BLINDNESS, BLUR, BURNING_HANDS, CAUSE_FEAR,
+    CHARM_PERSON, CHILL_TOUCH, CLOUD_OF_DAGGERS, COLOR_SPRAY, CONE_OF_COLD, CROWN_OF_MADNESS,
+    DISINTEGRATE, DISPEL_MAGIC, FINGER_OF_DEATH, FIRE_BOLT, FIREBALL, GREATER_INVISIBILITY,
+    HASTE, HOLD_MONSTER, HYPNOTIC_PATTERN, ICE_STORM, INVISIBILITY, LIGHTNING_BOLT, MAGE_ARMOR,
+    MAGIC_MISSILE, MAGIC_WEAPON, MIND_SLIVER, MIRROR_IMAGE, MISTY_STEP, PHANTASMAL_KILLER,
+    POISON_SPRAY, POWER_WORD_STUN, RAY_OF_FROST, RAY_OF_SICKNESS, SCORCHING_RAY, SHATTER,
+    SHIELD, SHOCKING_GRASP, SLEEP, SLOW, STINKING_CLOUD, STONESKIN, SYNAPTIC_STATIC,
+    TASHAS_HIDEOUS_LAUGHTER, THUNDERWAVE, TOLL_THE_DEAD, TRUE_STRIKE, VAMPIRIC_TOUCH, WEB,
+    WITCH_BOLT,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size, SpecialSense};
@@ -61,6 +63,17 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*DISPEL_MAGIC);
     actions.push(&*GREATER_INVISIBILITY);
     actions.push(&*ICE_STORM);
+    actions.push(&*WITCH_BOLT);
+    actions.push(&*TASHAS_HIDEOUS_LAUGHTER);
+    actions.push(&*CLOUD_OF_DAGGERS);
+    actions.push(&*CROWN_OF_MADNESS);
+    actions.push(&*PHANTASMAL_KILLER);
+    actions.push(&*BANISHMENT);
+    actions.push(&*STONESKIN);
+    actions.push(&*SYNAPTIC_STATIC);
+    actions.push(&*DISINTEGRATE);
+    actions.push(&*FINGER_OF_DEATH);
+    actions.push(&*POWER_WORD_STUN);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.
@@ -81,11 +94,13 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         cr: 0.5,
         size: Size::Medium,
         actions,
-        // 4 level-1 / 3 level-2 / 3 level-3 / 1 level-4 / 1 level-5 —
-        // typical level-9 wizard loadout. The level-3 slot fuels exactly
-        // one Fireball / Haste / Slow / Stinking Cloud; the level-5 slot
-        // is reserved for Cone of Cold or Hold Monster.
-        spell_slots_by_level: vec![4, 3, 3, 1, 1],
+        // 4/3/3/2/2/1/1/1/1 — typical level-17 wizard archmage loadout.
+        // The high-level slots (6+) fuel exactly one Disintegrate / Heal,
+        // Finger of Death, and Power Word Stun apiece — late-game
+        // emergency buttons rather than spam fodder. Mid-level slots
+        // (3-5) still cover Fireball / Haste / Slow / Stinking Cloud /
+        // Cone of Cold / Hold Monster / Synaptic Static.
+        spell_slots_by_level: vec![4, 3, 3, 2, 2, 1, 1, 1, 1],
         rolls_death_saves: false,
         damage_modifiers: HashMap::new(),
         // Wizards are proficient in INT and WIS saves (5e PHB).

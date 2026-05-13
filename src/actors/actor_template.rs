@@ -59,6 +59,10 @@ pub struct ConcentrationData {
     /// Attack-roll buff deltas to roll back on drop.
     pub attack_buffs: Vec<(usize, i32)>,
     pub save_buffs: Vec<(usize, i32)>,
+    /// 5e: making an attack ends Invisibility but not Greater Invisibility.
+    /// Set true for concentration data whose effect ends when the caster
+    /// makes any attack roll (clear_attack_advantage_riders consumes it).
+    pub breaks_on_attack: bool,
 }
 
 /// 5e Help grant — a snapshot of "actor X has helped actor Y get
@@ -80,7 +84,15 @@ impl ConcentrationData {
             conditions,
             attack_buffs: Vec::new(),
             save_buffs: Vec::new(),
+            breaks_on_attack: false,
         }
+    }
+
+    /// Mark this concentration as ending when the caster makes any attack
+    /// roll. Used by Invisibility (vanilla) but not Greater Invisibility.
+    pub fn breaking_on_attack(mut self) -> Self {
+        self.breaks_on_attack = true;
+        self
     }
 }
 

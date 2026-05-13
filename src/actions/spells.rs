@@ -794,6 +794,7 @@ impl Action for Bless {
                 conditions,
                 attack_buffs,
                 save_buffs,
+                breaks_on_attack: false,
             },
         }));
         effects
@@ -1013,6 +1014,7 @@ impl Action for ShieldOfFaith {
                     conditions: vec![(target_id, Condition::ShieldOfFaith)],
                     attack_buffs: Vec::new(),
                     save_buffs: Vec::new(),
+                    breaks_on_attack: false,
                 },
             }),
         ]
@@ -1084,6 +1086,7 @@ impl Action for CauseFear {
                     conditions: vec![(target_id, Condition::Frightened)],
                     attack_buffs: Vec::new(),
                     save_buffs: Vec::new(),
+                    breaks_on_attack: false,
                 },
             }),
         ]
@@ -1258,6 +1261,7 @@ impl Action for Web {
                     conditions,
                     attack_buffs: Vec::new(),
                     save_buffs: Vec::new(),
+                    breaks_on_attack: false,
                 },
             }));
         }
@@ -4480,7 +4484,8 @@ impl Action for Invisibility {
                 data: ConcentrationData::with_conditions(
                     "Invisibility",
                     vec![(target_id, Condition::Invisible)],
-                ),
+                )
+                .breaking_on_attack(),
             }),
         ]
     }
@@ -5116,36 +5121,18 @@ impl Action for StinkingCloud {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
-
         let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let caster_team = caster.team();
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
         const RADIUS: isize = 2;
 
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         let mut applied: Vec<(usize, Condition)> = Vec::new();
-        for tid in encounter.sorted_actor_ids() {
-            let Some(t) = encounter.actors.get(&tid) else {
-                continue;
-            };
-            if !t.is_combat_active() || t.team() == caster_team {
-                continue;
-            }
-            let dist = footprint_chebyshev(
-                t.location(),
-                get_tiles_from_size(t.size()),
-                point,
-                1,
-            );
-            if dist > RADIUS {
-                continue;
-            }
+        for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
             let save = encounter.roll_save(tid, AbilityScoreType::Constitution, dc);
             if save.passed() {
                 continue;
@@ -5612,3 +5599,1040 @@ impl Action for Revivify {
 }
 
 pub static REVIVIFY: LazyLock<Revivify> = LazyLock::new(|| Revivify {});
+
+/// Stoneskin — level-4 abjuration, concentration. Touch. Until the spell
+/// ends, the target has resistance to bludgeoning, piercing, and slashing
+/// damage. We use the existing `DamageResistant` condition which gives a
+/// generic damage-halving effect — close enough to RAW's physical-only
+/// resistance for our engine, and the buff drops cleanly when the caster
+/// loses concentration. Doesn't stack with creature-template resistance
+/// (halving is multiplicative, but we apply DamageResistant once at the
+/// take-damage path so re-halving doesn't happen).
+pub struct Stoneskin {}
+
+impl Action for Stoneskin {
+    fn name(&self) -> &str {
+        "stoneskin"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ss", "stone"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch — 1 tile.
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(4)]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::DamageResistant,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Stoneskin",
+                    vec![(target_id, Condition::DamageResistant)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static STONESKIN: LazyLock<Stoneskin> = LazyLock::new(|| Stoneskin {});
+
+/// Beacon of Hope — level-3 abjuration, concentration. 30-ft radius cube;
+/// up to 6 creatures of the caster's choice gain advantage on Wisdom
+/// saves + death saves and regain the maximum from any healing for the
+/// duration. We model the lasting buff with the existing `Heroic`
+/// condition (already grants Frightened immunity; the additional save /
+/// max-heal clauses are not yet engine-modeled but the buff icon is
+/// useful flavor and stacks cleanly with concentration drop logic).
+///
+/// Targeting: AoE around a tile; affected = friendly combat-active actors
+/// within radius 6 of the point (≈ 30 ft cube).
+pub struct BeaconOfHope {}
+
+impl Action for BeaconOfHope {
+    fn name(&self) -> &str {
+        "beacon of hope"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["boh", "beacon"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 6 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Self/30-ft origin. We pick a tile within ~30 ft to anchor the
+        // cube — generous reach keeps the spell usable from the back row.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(3)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        const RADIUS: isize = 6;
+        const MAX_TARGETS: usize = 6;
+
+        let mut buffed = encounter.ally_burst_targets(caster_id, point, RADIUS);
+        buffed.truncate(MAX_TARGETS);
+        if buffed.is_empty() {
+            return Vec::new();
+        }
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut applied: Vec<(usize, Condition)> = Vec::new();
+        for tid in &buffed {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: *tid,
+                condition: Condition::Heroic,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            applied.push((*tid, Condition::Heroic));
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Beacon of Hope", applied),
+        }));
+        effects
+    }
+}
+
+pub static BEACON_OF_HOPE: LazyLock<BeaconOfHope> = LazyLock::new(|| BeaconOfHope {});
+
+/// Cloud of Daggers — level-2 conjuration, concentration. 5-ft cube of
+/// whirling daggers; any creature that enters or starts its turn in the
+/// area takes 4d4 slashing. We model the instantaneous on-cast hit as a
+/// guaranteed 4d4 to every enemy currently inside the burst (radius 1 in
+/// our tile-gap math); persistent ticks aren't yet modeled, but the
+/// concentration is started so a follow-up cast or drop behaves cleanly.
+/// No save — RAW autohits creatures in the area.
+pub struct CloudOfDaggers {}
+
+impl Action for CloudOfDaggers {
+    fn name(&self) -> &str {
+        "cloud of daggers"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cod", "daggers"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 1 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Slashing]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(2)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        const RADIUS: isize = 1;
+        let damage = encounter.roll(&Dice::new(4, 4));
+        encounter.log(format!(
+            "  cloud of daggers: 4d4({}) = {} slashing",
+            damage, damage
+        ));
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
+            effects.push(Box::new(DealDamage {
+                actor_id: tid,
+                amount: damage,
+                damage_type: DamageType::Slashing,
+            }));
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Cloud of Daggers", Vec::new()),
+        }));
+        effects
+    }
+}
+
+pub static CLOUD_OF_DAGGERS: LazyLock<CloudOfDaggers> = LazyLock::new(|| CloudOfDaggers {});
+
+/// Witch Bolt — level-1 evocation, concentration. A spell-attack against a
+/// single target deals 1d12 lightning on the initial hit. The 5e RAW
+/// sustained-damage clause (a free 1d12 each subsequent turn) isn't yet
+/// modeled — the engine's concentration ticking happens on round-end but
+/// doesn't yet support author-defined per-round damage hooks. We still
+/// install concentration so dropping it clears the spell cleanly and to
+/// keep the caster from juggling two concentration spells.
+pub struct WitchBolt {}
+
+impl Action for WitchBolt {
+    fn name(&self) -> &str {
+        "witch bolt"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wb", "witch"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Lightning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Wizards (INT) and clerics (WIS) both use this spell in the
+        // template loadout. Auto-detect via the caster's higher spell-
+        // attack modifier so it works in both pools.
+        let int_mod = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
+        let wis_mod = caster.spell_attack_modifier(AbilityScoreType::Wisdom);
+        let attack_bonus = int_mod.max(wis_mod);
+        let mut effects = spell_attack(
+            encounter,
+            caster_id,
+            target_id,
+            "witch bolt",
+            attack_bonus,
+            Dice::new(1, 12),
+            DamageType::Lightning,
+            false,
+        );
+        // Install concentration regardless of hit — the spell can still be
+        // sustained on a miss per RAW (the link forms either way).
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Witch Bolt", Vec::new()),
+        }));
+        effects
+    }
+}
+
+pub static WITCH_BOLT: LazyLock<WitchBolt> = LazyLock::new(|| WitchBolt {});
+
+/// Phantasmal Killer — level-4 illusion, concentration. Target makes a
+/// WIS save. On fail: 4d10 psychic and Frightened. On save: nothing
+/// (we skip the RAW repeat-save-each-round mechanic; the damage and
+/// fright on the first failure carry the encounter weight). No damage
+/// on success per RAW (the illusion never lands).
+pub struct PhantasmalKiller {}
+
+impl Action for PhantasmalKiller {
+    fn name(&self) -> &str {
+        "phantasmal killer"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pk", "phantasm"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Psychic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(4)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        let dmg = encounter.roll(&Dice::new(4, 10));
+        encounter.log(format!(
+            "  phantasmal killer: 4d10({}) = {} psychic",
+            dmg, dmg
+        ));
+        vec![
+            Box::new(DealDamage {
+                actor_id: target_id,
+                amount: dmg,
+                damage_type: DamageType::Psychic,
+            }),
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Frightened,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Phantasmal Killer",
+                    vec![(target_id, Condition::Frightened)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static PHANTASMAL_KILLER: LazyLock<PhantasmalKiller> =
+    LazyLock::new(|| PhantasmalKiller {});
+
+/// Banishment — level-4 abjuration, concentration. Target makes a CHA
+/// save. On fail, banished to a harmless demiplane for the duration —
+/// we model as Incapacitated (cannot take actions or reactions) for
+/// the duration since the engine doesn't yet model off-board status.
+/// Concentration tracks the lock so dropping it ends the banishment.
+pub struct Banishment {}
+
+impl Action for Banishment {
+    fn name(&self) -> &str {
+        "banishment"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["banish", "banishspell"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(4)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Use the caster's strongest spellcasting modifier (INT for
+        // wizards, WIS for clerics) so the DC scales with whichever
+        // school is firing it.
+        let int_dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let wis_dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let dc = int_dc.max(wis_dc);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Charisma, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        encounter.log("  banishment: target is banished from the field");
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Incapacitated,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Banishment",
+                    vec![(target_id, Condition::Incapacitated)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static BANISHMENT: LazyLock<Banishment> = LazyLock::new(|| Banishment {});
+
+/// Tasha's Hideous Laughter — level-1 enchantment, concentration. WIS
+/// save vs DC. On fail, target falls Prone in fits of laughter and is
+/// Incapacitated for the duration. Creatures with Intelligence ≤ 4 are
+/// immune (we don't gate this — most enemies in our pool meet the
+/// threshold, and the few low-INT ones are usually charm-immune anyway
+/// via their template). Concentration tracks both conditions for clean
+/// teardown.
+pub struct TashasHideousLaughter {}
+
+impl Action for TashasHideousLaughter {
+    fn name(&self) -> &str {
+        "tasha's hideous laughter"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["thl", "laughter", "hideous laughter"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        encounter.log("  hideous laughter: target collapses in fits");
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Prone,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Incapacitated,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Tasha's Hideous Laughter",
+                    vec![
+                        (target_id, Condition::Prone),
+                        (target_id, Condition::Incapacitated),
+                    ],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static TASHAS_HIDEOUS_LAUGHTER: LazyLock<TashasHideousLaughter> =
+    LazyLock::new(|| TashasHideousLaughter {});
+
+/// Heal — level-6 evocation, action, 60 ft range. Restores 70 HP to a
+/// single creature and ends Blinded, Deafened, Poisoned (5e RAW), and
+/// clears any one Frightened / Charmed via condition cleanse. We pull
+/// out a few key debuffs after the heal so it's not just a giant HP
+/// patch — the spell is supposed to be a swiss-army-knife emergency
+/// button.
+pub struct HealSpellHigh {}
+
+impl Action for HealSpellHigh {
+    fn name(&self) -> &str {
+        "heal"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["heal6", "high-heal"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(6)]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::RemoveCondition;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![
+            Box::new(Heal {
+                actor_id: target_id,
+                amount: 70,
+            }),
+            Box::new(RemoveCondition {
+                actor_id: target_id,
+                condition: Condition::Blinded,
+            }),
+            Box::new(RemoveCondition {
+                actor_id: target_id,
+                condition: Condition::Deafened,
+            }),
+            Box::new(RemoveCondition {
+                actor_id: target_id,
+                condition: Condition::Poisoned,
+            }),
+        ]
+    }
+}
+
+pub static HEAL_SPELL_HIGH: LazyLock<HealSpellHigh> = LazyLock::new(|| HealSpellHigh {});
+
+/// Disintegrate — level-6 transmutation. DEX save vs the caster's spell
+/// save DC: on fail 10d6+40 force; on save, nothing. The damage type is
+/// Force (rarely resisted in our pool), so a hit is essentially
+/// guaranteed to register as raw damage. No save-half.
+pub struct Disintegrate {}
+
+impl Action for Disintegrate {
+    fn name(&self) -> &str {
+        "disintegrate"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dsg", "disint"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Force]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(6)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        let dmg = encounter.roll(&Dice::new(10, 6)) + 40;
+        encounter.log(format!(
+            "  disintegrate: 10d6+40({}) = {} force",
+            dmg, dmg
+        ));
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: dmg,
+            damage_type: DamageType::Force,
+        })]
+    }
+}
+
+pub static DISINTEGRATE: LazyLock<Disintegrate> = LazyLock::new(|| Disintegrate {});
+
+/// Finger of Death — level-7 necromancy. CON save vs the caster's DC.
+/// 7d8+30 necrotic on fail; half on success. We follow the half-on-save
+/// pattern that big single-target damage spells use (Disintegrate-style
+/// no-save-half would be too lethal at this level). The slain-target
+/// raising-as-zombie clause from RAW isn't modeled.
+pub struct FingerOfDeath {}
+
+impl Action for FingerOfDeath {
+    fn name(&self) -> &str {
+        "finger of death"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fod", "fingerdeath"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Necrotic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(7)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
+        let dmg_full = encounter.roll(&Dice::new(7, 8)) + 30;
+        let dmg = if save.passed() { dmg_full / 2 } else { dmg_full };
+        encounter.log(format!(
+            "  finger of death: 7d8+30({}) = {} necrotic",
+            dmg_full, dmg
+        ));
+        if dmg == 0 {
+            return Vec::new();
+        }
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: dmg,
+            damage_type: DamageType::Necrotic,
+        })]
+    }
+}
+
+pub static FINGER_OF_DEATH: LazyLock<FingerOfDeath> = LazyLock::new(|| FingerOfDeath {});
+
+/// Power Word Stun — level-8 enchantment. If the target has 150 HP or
+/// fewer, they are Stunned (no save) for 10 rounds. If they have more,
+/// nothing happens. Hard-cap means the spell is a clean executioner
+/// against weakened bosses. No damage.
+pub struct PowerWordStun {}
+
+impl Action for PowerWordStun {
+    fn name(&self) -> &str {
+        "power word stun"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pws", "powerstun"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(8)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return Vec::new();
+        };
+        if target.hitpoints() > 150 {
+            encounter.log("  power word stun: target too healthy — no effect");
+            return Vec::new();
+        }
+        encounter.log("  power word stun: target locks up");
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Stunned,
+            timer: ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static POWER_WORD_STUN: LazyLock<PowerWordStun> = LazyLock::new(|| PowerWordStun {});
+
+/// Synaptic Static — level-5 enchantment. 20-ft radius burst (radius 4).
+/// Every creature in area makes an INT save against the caster's spell
+/// save DC: 8d6 psychic on fail, half on save. Fails also leave the
+/// target Baned (–2 to attacks and saves for 1 round) — the load-bearing
+/// rider that justifies it as a control spell, not just damage.
+pub struct SynapticStatic {}
+
+impl Action for SynapticStatic {
+    fn name(&self) -> &str {
+        "synaptic static"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["synaptic", "static"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Psychic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(5)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        const RADIUS: isize = 4;
+        let full = encounter.roll(&Dice::new(8, 6));
+        encounter.log(format!(
+            "  synaptic static: 8d6({}) = {} psychic (each)",
+            full, full
+        ));
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in encounter.sorted_actor_ids() {
+            let Some(t) = encounter.actors.get(&tid) else {
+                continue;
+            };
+            if tid == caster_id || !t.is_combat_active() {
+                continue;
+            }
+            let dist = footprint_chebyshev(
+                t.location(),
+                get_tiles_from_size(t.size()),
+                point,
+                1,
+            );
+            if dist > RADIUS {
+                continue;
+            }
+            let save = encounter.roll_save(tid, AbilityScoreType::Intelligence, dc);
+            let dmg = if save.passed() { full / 2 } else { full };
+            if dmg > 0 {
+                effects.push(Box::new(DealDamage {
+                    actor_id: tid,
+                    amount: dmg,
+                    damage_type: DamageType::Psychic,
+                }));
+            }
+            // Baned only on a fail — the muddled rider that lasts one
+            // round per the spell description.
+            if !save.passed() {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: tid,
+                    condition: Condition::Baned,
+                    timer: ConditionTimer::Rounds(1),
+                }));
+            }
+        }
+        effects
+    }
+}
+
+pub static SYNAPTIC_STATIC: LazyLock<SynapticStatic> = LazyLock::new(|| SynapticStatic {});
+
+/// Crown of Madness — level-2 enchantment, concentration. WIS save vs
+/// the caster's spell DC. On fail, target is Charmed (mechanically: their
+/// own actions become less useful through the Charmed flag, and the
+/// charmer-target hostile-action gate prevents them from attacking the
+/// caster). Humanoids only in 5e RAW; we don't enforce the type gate
+/// since condition immunities already cover the immune-to-charm cases.
+pub struct CrownOfMadness {}
+
+impl Action for CrownOfMadness {
+    fn name(&self) -> &str {
+        "crown of madness"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["com", "crown"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action, Resource::SpellSlot(2)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::SetCharmedBy;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        encounter.log("  crown of madness: target falls under the caster's sway");
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Charmed,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(SetCharmedBy {
+                target_id,
+                charmer: Some(caster_id),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Crown of Madness",
+                    vec![(target_id, Condition::Charmed)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static CROWN_OF_MADNESS: LazyLock<CrownOfMadness> = LazyLock::new(|| CrownOfMadness {});

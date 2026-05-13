@@ -2282,3 +2282,318 @@ impl Action for CockatriceBite {
 }
 
 pub static COCKATRICE_BITE: LazyLock<CockatriceBite> = LazyLock::new(|| CockatriceBite {});
+
+/// Wight Life Drain — melee attack, +4 to hit, 1d6+2 necrotic on hit and
+/// on a failed CON save vs DC 13, the target's max HP drops by the
+/// damage dealt. Distinct from the Wraith's Life Drain in stats (lower
+/// damage / lower DC / lower attack mod) but mechanically symmetric;
+/// reusing the same AdjustMaxHp side-effect so the long-term drain
+/// behaves identically.
+pub struct WightLifeDrain {}
+
+impl Action for WightLifeDrain {
+    fn name(&self) -> &str {
+        "life drain"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wld", "wight-drain"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Necrotic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::AdjustMaxHp;
+
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength))
+            + caster.proficiency_bonus();
+        let damage_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let (mut effects, damage) = crate::engine::attack::resolve_attack_outcome(
+            encounter,
+            AttackParams {
+                caster_id,
+                target_id,
+                action_name: "life drain",
+                attack_bonus: attack_mod,
+                damage_dice: Dice::new(1, 6),
+                damage_bonus: damage_mod,
+                damage_type: DamageType::Necrotic,
+                is_melee: true,
+            },
+        );
+        if damage == 0 {
+            return effects;
+        }
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 13);
+        if !save.passed() {
+            effects.push(Box::new(AdjustMaxHp {
+                actor_id: target_id,
+                delta: -(damage as i32),
+            }));
+        }
+        effects
+    }
+}
+
+pub static WIGHT_LIFE_DRAIN: LazyLock<WightLifeDrain> = LazyLock::new(|| WightLifeDrain {});
+
+/// Minotaur Gore — melee attack, STR-based, 2d8+4 piercing on hit. The
+/// minotaur's marquee charge attack — a single big slam that benefits
+/// from a normal STR attack-mod but lands a notable d8 damage swing.
+/// Used as the action option alongside Greataxe in the template.
+pub struct MinotaurGore {}
+
+impl Action for MinotaurGore {
+    fn name(&self) -> &str {
+        "gore"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["gor", "horn"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "gore",
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(2, 8),
+            DamageType::Piercing,
+            true,
+        )
+    }
+}
+
+pub static MINOTAUR_GORE: LazyLock<MinotaurGore> = LazyLock::new(|| MinotaurGore {});
+
+/// Banshee Wail — bonus-action AoE, no-target. Every non-undead creature
+/// within 30 ft (radius 12) makes a CON save vs DC 13 or takes 3d6
+/// psychic damage and is Frightened for 3 rounds on a fail; half
+/// damage on a save (no fright). Banshees are undead so their wail
+/// can't catch themselves; we filter by team to keep ally-banshees
+/// (rare but possible) from chain-wailing each other.
+pub struct BansheeWail {}
+
+impl Action for BansheeWail {
+    fn name(&self) -> &str {
+        "wail"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wl", "scream"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Psychic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+
+        const RADIUS: isize = 12;
+        const DC: i32 = 13;
+
+        let caster_loc = match encounter.actors.get(&caster_id) {
+            Some(a) => a.location(),
+            None => return Vec::new(),
+        };
+
+        encounter.log("  wail: a chilling shriek tears the air");
+        let damage = encounter.roll(&Dice::new(3, 6));
+        encounter.log(format!(
+            "  wail: 3d6({}) = {} psychic (failed save) / {} half",
+            damage,
+            damage,
+            damage / 2
+        ));
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in encounter.enemy_burst_targets(caster_id, caster_loc, RADIUS) {
+            let Some(t) = encounter.actors.get(&tid) else {
+                continue;
+            };
+            // Undead are immune to the wail (RAW: "any creature that
+            // is not undead"). We proxy by checking for necrotic
+            // immunity — matches the wraith / specter / wight pool.
+            if t.is_immune_to(DamageType::Necrotic) {
+                continue;
+            }
+            let save = encounter.roll_save(tid, AbilityScoreType::Constitution, DC);
+            let dmg = if save.passed() { damage / 2 } else { damage };
+            if dmg > 0 {
+                effects.push(Box::new(DealDamage {
+                    actor_id: tid,
+                    amount: dmg,
+                    damage_type: DamageType::Psychic,
+                }));
+            }
+            if !save.passed() {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: tid,
+                    condition: Condition::Frightened,
+                    timer: ConditionTimer::Rounds(3),
+                }));
+            }
+        }
+        effects
+    }
+}
+
+pub static BANSHEE_WAIL: LazyLock<BansheeWail> = LazyLock::new(|| BansheeWail {});
+
+/// Banshee Corrupting Touch — melee attack, +4 to hit, 3d6+2 necrotic.
+/// The "I'm a ghost up close" basic attack — distinct from the
+/// signature wail since the banshee's primary loop is to wail first
+/// then close for finisher touches.
+pub static CORRUPTING_TOUCH: SimpleWeapon = SimpleWeapon {
+    display_name: "corrupting touch",
+    aliases: &["ct", "touch"],
+    attack_ability: AbilityScoreType::Charisma,
+    damage_ability: Some(AbilityScoreType::Charisma),
+    damage_dice: Dice::new(3, 6),
+    damage_type: DamageType::Necrotic,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Hippogriff Beak — melee, STR-based, 1d10+3 piercing. The bigger
+/// half of the hippogriff multiattack — single-strike-feels-meaty stat
+/// line tuned to deliver one solid hit per swing.
+pub static HIPPOGRIFF_BEAK: SimpleWeapon = SimpleWeapon {
+    display_name: "beak",
+    aliases: &["bk", "peck"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 10),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Hippogriff Talons — melee, STR-based, 2d6+3 slashing. Companion
+/// half of the multiattack — moderately bigger dice spread for the
+/// second swing per turn.
+pub static HIPPOGRIFF_TALONS: SimpleWeapon = SimpleWeapon {
+    display_name: "talons",
+    aliases: &["tl", "claws-h"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Hippogriff multiattack — beak + talons in a single action (we
+/// approximate by doubling beak; talons routed via a separate Action
+/// so the AI alternates). Same `Multiattack` shape used by zombies and
+/// other multi-strike creatures.
+pub static HIPPOGRIFF_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "beak + talons",
+    sub_attack: &HIPPOGRIFF_BEAK,
+    count: 2,
+});
+
+/// Doppelganger Slam — melee, STR-based, 1d6+4 bludgeoning. Used as
+/// the basic at-will attack; pairs with the multiattack for the
+/// signature double-slam pattern.
+pub static DOPPELGANGER_SLAM: SimpleWeapon = SimpleWeapon {
+    display_name: "slam",
+    aliases: &["dslam"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 6),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Doppelganger multiattack — 2 slams per Action. Vanilla shape, but
+/// the doppelganger's high DEX (and template-side Charm immunity in
+/// the creature file) gives the encounter a different feel from a
+/// zombie multislam.
+pub static DOPPELGANGER_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double slam",
+    sub_attack: &DOPPELGANGER_SLAM,
+    count: 2,
+});

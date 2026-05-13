@@ -1033,6 +1033,85 @@ mod tests {
         }
     }
 
+    /// Exercise the new spells / creatures in an AI-driven encounter so the
+    /// rule changes (Stoneskin / Beacon of Hope / Heal in cleric loadout,
+    /// Synaptic Static / Disintegrate / Banishment in wizard loadout,
+    /// Wight / Minotaur / Banshee / Hippogriff / Doppelganger in the
+    /// monster pool) don't crash the AI's action picker or stall the
+    /// process_stack loop.
+    #[test]
+    fn ai_vs_ai_terminates_with_new_content() {
+        use crate::actors::creatures::banshees::BANSHEE_TEMPLATE;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::doppelgangers::DOPPELGANGER_TEMPLATE;
+        use crate::actors::creatures::hippogriffs::HIPPOGRIFF_TEMPLATE;
+        use crate::actors::creatures::minotaurs::MINOTAUR_TEMPLATE;
+        use crate::actors::creatures::wights::WIGHT_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::types::Coordinate;
+
+        for seed in [3u64, 11, 71] {
+            let tp = TerrainGenParams {
+                width: 30,
+                height: 20,
+                branch_depth: 0,
+                branch_prob: 0.0,
+            };
+            let ap = ActorGenParams {
+                cr_target: 0.0,
+                n_teams: 0,
+                pc_template: None,
+                start_team: 0,
+            };
+            let mut e = EncounterInstance::from_params(&tp, &ap, Some(seed)).unwrap();
+            // Hand-place a representative party of the new content on
+            // both teams.
+            let _ = e.instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0);
+            let _ = e.instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 4), 0, 1);
+            let _ = e.instantiate_creature(&HIPPOGRIFF_TEMPLATE, Coordinate::new(4, 2), 0, 2);
+            let _ = e.instantiate_creature(&WIGHT_TEMPLATE, Coordinate::new(27, 17), 1, 0);
+            let _ = e.instantiate_creature(&MINOTAUR_TEMPLATE, Coordinate::new(27, 15), 1, 1);
+            let _ = e.instantiate_creature(&BANSHEE_TEMPLATE, Coordinate::new(25, 17), 1, 2);
+            let _ = e.instantiate_creature(&DOPPELGANGER_TEMPLATE, Coordinate::new(25, 15), 1, 3);
+            // `from_params` already initialised the encounter; instantiate_creature
+            // wires the new actors into the initiative queue itself.
+            let ai = SimpleAi;
+            let total_hp = |e: &EncounterInstance| -> u32 {
+                e.actors.values().map(|a| a.hitpoints()).sum()
+            };
+            let mut last_total = total_hp(&e);
+            let mut idle_streak = 0usize;
+            let stalemate_window = 4 * e.actors.len().max(1);
+            for _ in 0..50_000 {
+                e.process_stack();
+                if e.is_complete() {
+                    break;
+                }
+                let Some(prompt) = e.peek_prompt() else { break };
+                let actor_id = prompt.actor_id();
+                match ai.decide(&e, actor_id) {
+                    ControllerDecision::AwaitInput => {
+                        panic!("SimpleAi returned AwaitInput unexpectedly");
+                    }
+                    ControllerDecision::Act(aei) => {
+                        e.pop_prompt();
+                        e.push_action(aei);
+                    }
+                }
+                let cur = total_hp(&e);
+                if cur == last_total {
+                    idle_streak += 1;
+                    if idle_streak >= stalemate_window {
+                        break;
+                    }
+                } else {
+                    last_total = cur;
+                    idle_streak = 0;
+                }
+            }
+        }
+    }
+
     /// Build a no-actors encounter we can hand-place creatures into.
     fn empty_arena() -> EncounterInstance {
         let tp = TerrainGenParams {
