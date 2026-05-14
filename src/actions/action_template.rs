@@ -129,6 +129,15 @@ pub fn first_target_id(ids: Option<&Vec<usize>>) -> Option<usize> {
     ids.and_then(|v| v.first().copied())
 }
 
+/// Standard leveled-spell cost shape: one Action plus a level-`lvl` slot.
+/// Used by ~60 leveled-spell impls; the helper keeps the cost block to
+/// one line at the call site and gives us a single chokepoint for any
+/// future cross-cutting change (e.g. a "verbal-component blocked while
+/// Silenced" gate would slot in here).
+pub fn action_and_slot(lvl: u32) -> Vec<Resource> {
+    vec![Resource::Action, Resource::SpellSlot(lvl)]
+}
+
 pub enum TargetingSchema {
     NoArgs,
     SinglePoint,

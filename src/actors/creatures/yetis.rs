@@ -1,0 +1,53 @@
+use crate::actions::default_actions::DEFAULT_ACTIONS;
+use crate::actions::monster_attacks::{CHILLING_GAZE, YETI_MULTI};
+use crate::actors::actor_template::CreatureTemplate;
+use crate::engine::types::{DamageModifier, DamageType, Size, SpecialSense};
+use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
+
+/// Yeti — CR 3 monstrosity. A frozen-mountains predator with two
+/// signature plays: a 2x claw multiattack (slashing + cold rider on
+/// each hit) for adjacent enemies, or a chilling gaze (CON save vs
+/// 3d6 cold + paralysis) for ranged crowd-control. Immune to cold,
+/// vulnerable to fire — the natural counter is a fire spell.
+pub static YETI_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&*YETI_MULTI);
+    actions.push(&*CHILLING_GAZE);
+    CreatureTemplate {
+        name: "Yeti",
+        // 'Y' — currently free.
+        glyph: 'Y',
+        ac: 12,
+        // 7d10+14 = 51 average per MM.
+        hitpoints: "7d10+14".parse().unwrap(),
+        speed: 40.,
+        strength: 18,
+        intelligence: 8,
+        dexterity: 13,
+        wisdom: 12,
+        constitution: 15,
+        charisma: 7,
+        skills: HashSet::new(),
+        items: Vec::new(),
+        // Yetis have keen smell (60 ft) — closest engine analogue is
+        // Blindsight, which lets them locate within a short radius.
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
+        languages: HashSet::new(),
+        cr: 3.0,
+        size: Size::Large,
+        actions,
+        spell_slots_by_level: Vec::new(),
+        rolls_death_saves: false,
+        damage_modifiers: HashMap::from([
+            (DamageType::Cold, DamageModifier::Immunity),
+            (DamageType::Fire, DamageModifier::Vulnerability),
+        ]),
+        // 5e MM Yeti has no save proficiencies.
+        proficient_saves: HashSet::new(),
+        condition_immunities: HashSet::new(),
+        features: HashSet::new(),
+        regen_per_round: 0,
+        regen_suppressors: HashSet::new(),
+    }
+});

@@ -2,7 +2,9 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use crate::{
-    actions::action_template::{first_target_id, Action, TargetingSchema},
+    actions::action_template::{
+        action_and_slot, first_target_id, Action, TargetingSchema,
+    },
     actors::actor_template::ConcentrationData,
     conditions::{Condition, ConditionTimer},
     engine::{
@@ -6636,3 +6638,730 @@ impl Action for CrownOfMadness {
 }
 
 pub static CROWN_OF_MADNESS: LazyLock<CrownOfMadness> = LazyLock::new(|| CrownOfMadness {});
+
+/// Word of Radiance — cleric cantrip. 5-ft burst centered on the caster
+/// (radius 1 in tile-gap). Every creature in the area except the caster
+/// makes a CON save vs the caster's WIS-based spell DC: 1d6 radiant on
+/// fail, nothing on success. Pure cantrip — no spell slot.
+pub struct WordOfRadiance {}
+
+impl Action for WordOfRadiance {
+    fn name(&self) -> &str {
+        "word of radiance"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wor", "radiance"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn requires_los(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Radiant]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let center = caster.location();
+        let damage = encounter.roll(&Dice::new(1, 6));
+        encounter.log(format!(
+            "  word of radiance: 1d6({}) = {} radiant (each)",
+            damage, damage
+        ));
+        crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            center,
+            1,
+            AbilityScoreType::Constitution,
+            dc,
+            damage,
+            DamageType::Radiant,
+        )
+    }
+}
+
+pub static WORD_OF_RADIANCE: LazyLock<WordOfRadiance> = LazyLock::new(|| WordOfRadiance {});
+
+/// Calm Emotions — level-2 enchantment. 60-ft range, 20-ft radius sphere
+/// (radius 4 in tile-gap). Every humanoid in the area makes a CHA save
+/// against the caster's spell DC; on fail, the target is suppressed of
+/// Charmed and Frightened (5e RAW: "suppress" — we model by removing
+/// the conditions, which is the practical equivalent for our model).
+/// Concentration in 5e for re-arming the dispelled conditions if it
+/// drops — we apply once, no concentration needed for the simple cleanse.
+///
+/// The spell affects friend and foe alike by RAW; we approximate the
+/// caster's intent by aiming the cleanse at every actor in radius,
+/// which gives the cleric a tool against enemy fear/charm spells.
+pub struct CalmEmotions {}
+
+impl Action for CalmEmotions {
+    fn name(&self) -> &str {
+        "calm emotions"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ce", "calm"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::RemoveCondition;
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        const RADIUS: isize = 4;
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in encounter.sorted_actor_ids() {
+            let Some(t) = encounter.actors.get(&tid) else {
+                continue;
+            };
+            if !t.is_combat_active() {
+                continue;
+            }
+            let dist = footprint_chebyshev(
+                t.location(),
+                get_tiles_from_size(t.size()),
+                point,
+                1,
+            );
+            if dist > RADIUS {
+                continue;
+            }
+            // 5e: no save = no effect. The save is *against* the cleanse
+            // (a fey trying to keep its charm). On fail, the charm /
+            // frighten is stripped.
+            let save = encounter.roll_save(tid, AbilityScoreType::Charisma, dc);
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(RemoveCondition {
+                actor_id: tid,
+                condition: Condition::Charmed,
+            }));
+            effects.push(Box::new(RemoveCondition {
+                actor_id: tid,
+                condition: Condition::Frightened,
+            }));
+        }
+        effects
+    }
+}
+
+pub static CALM_EMOTIONS: LazyLock<CalmEmotions> = LazyLock::new(|| CalmEmotions {});
+
+/// Suggestion — level-2 enchantment, concentration. 30-ft range, single
+/// target. Target makes a WIS save vs the caster's spell DC; on fail, it
+/// is Charmed by the caster for up to 8 hours (we use 10 rounds). The
+/// charm enforces the "cannot attack the charmer" gate from action
+/// validation, mirroring Charm Person / Crown of Madness.
+pub struct Suggestion {}
+
+impl Action for Suggestion {
+    fn name(&self) -> &str {
+        "suggestion"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sug", "suggest"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::SetCharmedBy;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        encounter.log("  suggestion: target's mind is bent to the caster's words");
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Charmed,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(SetCharmedBy {
+                target_id,
+                charmer: Some(caster_id),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Suggestion",
+                    vec![(target_id, Condition::Charmed)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static SUGGESTION: LazyLock<Suggestion> = LazyLock::new(|| Suggestion {});
+
+/// Mass Suggestion — level-6 enchantment. 60-ft range, 30-ft radius
+/// sphere (radius 6). Up to 12 creatures of the caster's choice in the
+/// area each make a WIS save vs the caster's spell DC; failures are
+/// Charmed by the caster for an extended duration (we use 10 rounds).
+/// Unlike Suggestion this does NOT require concentration (RAW: "for up
+/// to 24 hours" — no concentration line), so the caster keeps their
+/// concentration slot free for other rope-a-dope effects.
+pub struct MassSuggestion {}
+
+impl Action for MassSuggestion {
+    fn name(&self) -> &str {
+        "mass suggestion"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["msug", "mass-suggest"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 6 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::SetCharmedBy;
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
+        const RADIUS: isize = 6;
+        const MAX_TARGETS: usize = 12;
+
+        // RAW lets the caster pick targets; the burst-targets helper
+        // already filters to enemies (the only useful charm victims).
+        let candidates = encounter.enemy_burst_targets(caster_id, point, RADIUS);
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in candidates.into_iter().take(MAX_TARGETS) {
+            let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, dc);
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Charmed,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            effects.push(Box::new(SetCharmedBy {
+                target_id: tid,
+                charmer: Some(caster_id),
+            }));
+        }
+        effects
+    }
+}
+
+pub static MASS_SUGGESTION: LazyLock<MassSuggestion> = LazyLock::new(|| MassSuggestion {});
+
+/// Sunburst — level-8 evocation. 60-ft range, 60-ft radius sphere of
+/// brilliant sunlight (we cap the radius at 12 tile-gap for engine
+/// sanity). Every creature in the area makes a CON save vs the caster's
+/// spell DC: 12d6 radiant on fail, half on success. Failures are also
+/// Blinded for 1 minute (10 rounds). Undead and oozes take the burst as
+/// normal; the spell's "bright sunlight" tag isn't engine-modeled.
+pub struct Sunburst {}
+
+impl Action for Sunburst {
+    fn name(&self) -> &str {
+        "sunburst"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sun", "sunb"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 12 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 150 ft per RAW = 60 tiles. We cap at 40 since the map is
+        // typically that wide.
+        Some(40)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Radiant]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(8)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        const RADIUS: isize = 12;
+        let full = encounter.roll(&Dice::new(12, 6));
+        encounter.log(format!(
+            "  sunburst: 12d6({}) = {} radiant (each)",
+            full, full
+        ));
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in encounter.sorted_actor_ids() {
+            let Some(t) = encounter.actors.get(&tid) else {
+                continue;
+            };
+            if tid == caster_id || !t.is_combat_active() {
+                continue;
+            }
+            let dist = footprint_chebyshev(
+                t.location(),
+                get_tiles_from_size(t.size()),
+                point,
+                1,
+            );
+            if dist > RADIUS {
+                continue;
+            }
+            let save = encounter.roll_save(tid, AbilityScoreType::Constitution, dc);
+            let dmg = if save.passed() { full / 2 } else { full };
+            if dmg > 0 {
+                effects.push(Box::new(DealDamage {
+                    actor_id: tid,
+                    amount: dmg,
+                    damage_type: DamageType::Radiant,
+                }));
+            }
+            if !save.passed() {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: tid,
+                    condition: Condition::Blinded,
+                    timer: ConditionTimer::Rounds(10),
+                }));
+            }
+        }
+        effects
+    }
+}
+
+pub static SUNBURST: LazyLock<Sunburst> = LazyLock::new(|| Sunburst {});
+
+/// Mass Heal — level-9 conjuration, action. A pool of 700 HP is divided
+/// among any number of allies within range; each chosen ally regains HP
+/// up to the pool. We model this by sorting allies by missing HP (most
+/// hurt first) and pouring the pool until it's empty or every ally is
+/// topped off. Also ends Blinded, Deafened, Poisoned on each target —
+/// mirroring the Heal spell's status cleanse.
+pub struct MassHeal {}
+
+impl Action for MassHeal {
+    fn name(&self) -> &str {
+        "mass heal"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mh", "mass-heal"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // Self-targeted: the pool sweeps every ally in line-of-sight.
+        TargetingSchema::NoArgs
+    }
+    fn requires_los(&self) -> bool {
+        false
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(9)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::{RemoveCondition, ReviveDying};
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let team = caster.team();
+        // Allies who are alive (or merely dying — Mass Heal lifts them
+        // out) and not already at max HP.
+        let mut candidates: Vec<(i64, usize)> = encounter
+            .actors
+            .iter()
+            .filter_map(|(id, a)| {
+                if a.team() != team {
+                    return None;
+                }
+                if !a.is_combat_active() && !a.is_dying() {
+                    return None;
+                }
+                let missing = a.max_hitpoints() as i64 - a.hitpoints() as i64;
+                if missing <= 0 {
+                    return None;
+                }
+                // Sort key: most missing HP first (negate so .sort is ascending).
+                Some((-missing, *id))
+            })
+            .collect();
+        candidates.sort_unstable();
+
+        encounter.log("  mass heal: a 700-HP pool washes over the caster's allies");
+        let mut pool: u32 = 700;
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for (neg_missing, id) in candidates {
+            if pool == 0 {
+                break;
+            }
+            let need = (-neg_missing) as u32;
+            let give = need.min(pool);
+            pool -= give;
+            // Revive first so dying allies are lifted out of Dying (which
+            // also clears their auto-Prone) before the bulk heal tops
+            // them up. ReviveDying is a no-op for live allies, so the
+            // unconditional queue is safe.
+            effects.push(Box::new(ReviveDying { actor_id: id }));
+            effects.push(Box::new(Heal {
+                actor_id: id,
+                amount: give,
+            }));
+            for c in [Condition::Blinded, Condition::Deafened, Condition::Poisoned] {
+                effects.push(Box::new(RemoveCondition {
+                    actor_id: id,
+                    condition: c,
+                }));
+            }
+        }
+        effects
+    }
+}
+
+pub static MASS_HEAL: LazyLock<MassHeal> = LazyLock::new(|| MassHeal {});
+
+/// Power Word Kill — level-9 enchantment. Single target with 100 HP or
+/// fewer is killed outright (no save, no attack roll). Targets above
+/// 100 HP are unaffected. We model "killed outright" as a direct
+/// damage hit of `current_hp` necrotic so the standard death path runs
+/// (death save start for PCs that die outright per RAW; instant Dead
+/// for monsters). Range 60 ft.
+pub struct PowerWordKill {}
+
+impl Action for PowerWordKill {
+    fn name(&self) -> &str {
+        "power word kill"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pwk", "kill"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Necrotic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(9)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return Vec::new();
+        };
+        let hp = target.hitpoints();
+        if hp > 100 {
+            encounter.log(format!(
+                "  power word kill: target has {} HP (>100) \u{2014} unaffected",
+                hp
+            ));
+            return Vec::new();
+        }
+        encounter.log(format!(
+            "  power word kill: target has {} HP \u{2264} 100 \u{2014} struck down",
+            hp
+        ));
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: hp,
+            damage_type: DamageType::Necrotic,
+        })]
+    }
+}
+
+pub static POWER_WORD_KILL: LazyLock<PowerWordKill> = LazyLock::new(|| PowerWordKill {});
+
+/// Meteor Swarm — level-9 evocation. 20-ft radius burst (radius 4 in
+/// tile-gap; RAW it's four 40-ft spheres, we collapse to one big sphere
+/// for engine simplicity). Every creature in the area makes a DEX save
+/// vs the caster's spell DC: 20d6 fire + 20d6 bludgeoning on fail, half
+/// on save. The two damage rolls share a single save outcome (RAW: one
+/// save vs both packets), but they apply independently so resistance to
+/// one type (a fire-resistant elemental) still eats the other half.
+pub struct MeteorSwarm {}
+
+impl Action for MeteorSwarm {
+    fn name(&self) -> &str {
+        "meteor swarm"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ms", "meteor"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 1 mile per RAW; we cap at the map edge (40 tiles).
+        Some(40)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire, DamageType::Bludgeoning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(9)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        const RADIUS: isize = 4;
+        let fire = encounter.roll(&Dice::new(20, 6));
+        let bludge = encounter.roll(&Dice::new(20, 6));
+        encounter.log(format!(
+            "  meteor swarm: 20d6({}) fire + 20d6({}) bludgeoning (each)",
+            fire, bludge
+        ));
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in encounter.sorted_actor_ids() {
+            let Some(t) = encounter.actors.get(&tid) else {
+                continue;
+            };
+            if tid == caster_id || !t.is_combat_active() {
+                continue;
+            }
+            let dist = footprint_chebyshev(
+                t.location(),
+                get_tiles_from_size(t.size()),
+                point,
+                1,
+            );
+            if dist > RADIUS {
+                continue;
+            }
+            let save = encounter.roll_save(tid, AbilityScoreType::Dexterity, dc);
+            let (f_dmg, b_dmg) = if save.passed() {
+                (fire / 2, bludge / 2)
+            } else {
+                (fire, bludge)
+            };
+            if f_dmg > 0 {
+                effects.push(Box::new(DealDamage {
+                    actor_id: tid,
+                    amount: f_dmg,
+                    damage_type: DamageType::Fire,
+                }));
+            }
+            if b_dmg > 0 {
+                effects.push(Box::new(DealDamage {
+                    actor_id: tid,
+                    amount: b_dmg,
+                    damage_type: DamageType::Bludgeoning,
+                }));
+            }
+        }
+        effects
+    }
+}
+
+pub static METEOR_SWARM: LazyLock<MeteorSwarm> = LazyLock::new(|| MeteorSwarm {});

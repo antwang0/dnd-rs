@@ -1,11 +1,11 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
-    AID, BANE, BEACON_OF_HOPE, BESTOW_CURSE, BLESS, COMMAND, CURE_WOUNDS, DEATH_WARD,
-    DISPEL_MAGIC, DIVINE_FAVOR, FAERIE_FIRE, GUIDING_BOLT, HASTE, HEAL_SPELL_HIGH, HEALING_WORD,
-    HEROISM, HOLD_PERSON, INFLICT_WOUNDS, LESSER_RESTORATION, MASS_CURE_WOUNDS,
-    MASS_HEALING_WORD, PROTECTION_FROM_EVIL_AND_GOOD, REVIVIFY, SACRED_BURST, SACRED_FLAME,
-    SHIELD_OF_FAITH, SPARE_THE_DYING, SPIRIT_GUARDIANS, SPIRITUAL_WEAPON, STONESKIN, THORN_WHIP,
-    TOLL_THE_DEAD,
+    AID, BANE, BEACON_OF_HOPE, BESTOW_CURSE, BLESS, CALM_EMOTIONS, COMMAND, CURE_WOUNDS,
+    DEATH_WARD, DISPEL_MAGIC, DIVINE_FAVOR, FAERIE_FIRE, GUIDING_BOLT, HASTE, HEAL_SPELL_HIGH,
+    HEALING_WORD, HEROISM, HOLD_PERSON, INFLICT_WOUNDS, LESSER_RESTORATION, MASS_CURE_WOUNDS,
+    MASS_HEAL, MASS_HEALING_WORD, PROTECTION_FROM_EVIL_AND_GOOD, REVIVIFY, SACRED_BURST,
+    SACRED_FLAME, SHIELD_OF_FAITH, SPARE_THE_DYING, SPIRIT_GUARDIANS, SPIRITUAL_WEAPON,
+    STONESKIN, SUGGESTION, SUNBURST, THORN_WHIP, TOLL_THE_DEAD, WORD_OF_RADIANCE,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size, SpecialSense};
@@ -50,6 +50,11 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*BEACON_OF_HOPE);
     actions.push(&*STONESKIN);
     actions.push(&*HEAL_SPELL_HIGH);
+    actions.push(&*WORD_OF_RADIANCE);
+    actions.push(&*CALM_EMOTIONS);
+    actions.push(&*SUGGESTION);
+    actions.push(&*SUNBURST);
+    actions.push(&*MASS_HEAL);
     CreatureTemplate {
         name: "Cleric",
         glyph: 'C',
@@ -69,12 +74,16 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         cr: 0.25,
         size: Size::Medium,
         actions,
-        // 4/3/3/2/2/1 — cleric loadout extended to level-6 to support
-        // the high-level emergency-button Heal. Level-3 slot covers Mass
+        // 4/3/3/2/2/1/0/1/1 — cleric loadout extended to level-9 to
+        // support the new high-level slots. Level-3 slot covers Mass
         // Healing Word / Spirit Guardians / Beacon of Hope / Haste;
         // level-4 slot covers Stoneskin / Death Ward; level-5 covers
-        // Mass Cure Wounds; level-6 fuels exactly one Heal.
-        spell_slots_by_level: vec![4, 3, 3, 2, 2, 1],
+        // Mass Cure Wounds; level-6 fuels exactly one Heal; the new
+        // level-8 slot powers a single Sunburst; the level-9 slot
+        // fuels exactly one Mass Heal. We keep the level-7 row at 0
+        // since the cleric doesn't have a level-7 spell in their kit
+        // — adding the slot would mean spent prep with no payoff.
+        spell_slots_by_level: vec![4, 3, 3, 2, 2, 1, 0, 1, 1],
         rolls_death_saves: false,
         damage_modifiers: HashMap::new(),
         // Clerics are proficient in WIS and CHA saves (5e PHB).

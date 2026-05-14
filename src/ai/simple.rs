@@ -1036,18 +1036,22 @@ mod tests {
     /// Exercise the new spells / creatures in an AI-driven encounter so the
     /// rule changes (Stoneskin / Beacon of Hope / Heal in cleric loadout,
     /// Synaptic Static / Disintegrate / Banishment in wizard loadout,
-    /// Wight / Minotaur / Banshee / Hippogriff / Doppelganger in the
-    /// monster pool) don't crash the AI's action picker or stall the
-    /// process_stack loop.
+    /// Wight / Minotaur / Banshee / Hippogriff / Doppelganger / Mummy /
+    /// Berserker / Veteran / Yeti in the monster pool) don't crash the
+    /// AI's action picker or stall the process_stack loop.
     #[test]
     fn ai_vs_ai_terminates_with_new_content() {
         use crate::actors::creatures::banshees::BANSHEE_TEMPLATE;
+        use crate::actors::creatures::berserkers::BERSERKER_TEMPLATE;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::doppelgangers::DOPPELGANGER_TEMPLATE;
         use crate::actors::creatures::hippogriffs::HIPPOGRIFF_TEMPLATE;
         use crate::actors::creatures::minotaurs::MINOTAUR_TEMPLATE;
+        use crate::actors::creatures::mummies::MUMMY_TEMPLATE;
+        use crate::actors::creatures::veterans::VETERAN_TEMPLATE;
         use crate::actors::creatures::wights::WIGHT_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::actors::creatures::yetis::YETI_TEMPLATE;
         use crate::engine::types::Coordinate;
 
         for seed in [3u64, 11, 71] {
@@ -1069,10 +1073,14 @@ mod tests {
             let _ = e.instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0);
             let _ = e.instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 4), 0, 1);
             let _ = e.instantiate_creature(&HIPPOGRIFF_TEMPLATE, Coordinate::new(4, 2), 0, 2);
+            let _ = e.instantiate_creature(&VETERAN_TEMPLATE, Coordinate::new(4, 4), 0, 3);
             let _ = e.instantiate_creature(&WIGHT_TEMPLATE, Coordinate::new(27, 17), 1, 0);
             let _ = e.instantiate_creature(&MINOTAUR_TEMPLATE, Coordinate::new(27, 15), 1, 1);
             let _ = e.instantiate_creature(&BANSHEE_TEMPLATE, Coordinate::new(25, 17), 1, 2);
             let _ = e.instantiate_creature(&DOPPELGANGER_TEMPLATE, Coordinate::new(25, 15), 1, 3);
+            let _ = e.instantiate_creature(&MUMMY_TEMPLATE, Coordinate::new(25, 13), 1, 4);
+            let _ = e.instantiate_creature(&BERSERKER_TEMPLATE, Coordinate::new(23, 17), 1, 5);
+            let _ = e.instantiate_creature(&YETI_TEMPLATE, Coordinate::new(23, 15), 1, 6);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

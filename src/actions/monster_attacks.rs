@@ -2597,3 +2597,419 @@ pub static DOPPELGANGER_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiatt
     sub_attack: &DOPPELGANGER_SLAM,
     count: 2,
 });
+
+/// Mummy Rotting Fist — STR-based melee, +5 to hit, 2d6+3 bludgeoning
+/// plus 3d6 necrotic on hit. The necrotic packet rides regardless of
+/// damage-type resistance on the bludgeoning core, so resistant targets
+/// still feel the rot. Doesn't carry the mummy-rot disease (we don't
+/// model long-form curses) — the necrotic packet is the load-bearing
+/// rider.
+pub struct MummyRottingFist {}
+
+impl Action for MummyRottingFist {
+    fn name(&self) -> &str {
+        "rotting fist"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["rf", "rot"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning, DamageType::Necrotic]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength))
+            + caster.proficiency_bonus();
+        let damage_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let (mut effects, damage) = crate::engine::attack::resolve_attack_outcome(
+            encounter,
+            AttackParams {
+                caster_id,
+                target_id,
+                action_name: "rotting fist",
+                attack_bonus: attack_mod,
+                damage_dice: Dice::new(2, 6),
+                damage_bonus: damage_mod,
+                damage_type: DamageType::Bludgeoning,
+                is_melee: true,
+            },
+        );
+        if damage == 0 {
+            return effects;
+        }
+        // Necrotic rider: 3d6 typed separately so resistance is checked
+        // independently. No additional roll vs AC — the rider rides the
+        // hit.
+        let necrotic = encounter.roll(&Dice::new(3, 6));
+        encounter.log(format!(
+            "  rotting fist: 3d6({}) = {} necrotic rider",
+            necrotic, necrotic
+        ));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: necrotic,
+            damage_type: DamageType::Necrotic,
+        }));
+        effects
+    }
+}
+
+pub static MUMMY_ROTTING_FIST: LazyLock<MummyRottingFist> =
+    LazyLock::new(|| MummyRottingFist {});
+
+/// Dreadful Glare — mummy's signature gaze attack. Targets every enemy
+/// within radius 8 (40 ft) that has line-of-sight to the mummy: WIS
+/// save vs DC 11 or be Frightened of the mummy for 1 minute (10
+/// rounds). Action cost. Undead are unaffected (we filter by necrotic
+/// immunity, the standard undead proxy).
+pub struct MummyDreadfulGlare {}
+
+impl Action for MummyDreadfulGlare {
+    fn name(&self) -> &str {
+        "dreadful glare"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dg", "glare"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        const RADIUS: isize = 8;
+        const DC: i32 = 11;
+
+        let caster_loc = match encounter.actors.get(&caster_id) {
+            Some(a) => a.location(),
+            None => return Vec::new(),
+        };
+        encounter.log("  dreadful glare: the mummy fixes its hollow eyes on the living");
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in encounter.enemy_burst_targets(caster_id, caster_loc, RADIUS) {
+            let Some(t) = encounter.actors.get(&tid) else {
+                continue;
+            };
+            if t.is_immune_to(DamageType::Necrotic) {
+                continue;
+            }
+            // Requires line-of-sight — a gaze can't bend around corners.
+            if !encounter.actor_has_line_of_sight(caster_id, tid) {
+                continue;
+            }
+            let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, DC);
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Frightened,
+                timer: ConditionTimer::Rounds(10),
+            }));
+        }
+        effects
+    }
+}
+
+pub static MUMMY_DREADFUL_GLARE: LazyLock<MummyDreadfulGlare> =
+    LazyLock::new(|| MummyDreadfulGlare {});
+
+/// Berserker Greataxe — STR-based melee with 1d12+STR slashing. Distinct
+/// from the bare GREATAXE in that it's wrapped in an Action impl so the
+/// berserker can pair it with its self-buffing "Reckless" stance in
+/// future work. Today this is a vanilla greataxe; left as a wrapper
+/// for symmetry with the rest of the per-creature attack files.
+pub static BERSERKER_GREATAXE: SimpleWeapon = SimpleWeapon {
+    display_name: "berserker greataxe",
+    aliases: &["bgx", "berserker-axe"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 12),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Reckless Attack — berserker class feature. Free no-cost self-flag:
+/// applies the `Helped` condition to the caster (granting advantage on
+/// their next melee attack roll this turn), but at the cost of every
+/// attacker against them getting `Outlined` for one round (granting
+/// advantage on attacks vs the berserker). Models 5e barbarian
+/// recklessness — advantage trades for being easier to hit until
+/// the start of their next turn.
+///
+/// Bonus action so the berserker can still swing their greataxe with
+/// the resulting Helped advantage on the same turn.
+pub struct RecklessAttack {}
+
+impl Action for RecklessAttack {
+    fn name(&self) -> &str {
+        "reckless attack"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["reck", "reckless"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        // Helped expires on use (clear_attack_advantage_riders), so the
+        // next melee swing this turn benefits. Outlined gives attackers
+        // advantage vs the berserker until the start of their next turn.
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::Helped,
+                timer: ConditionTimer::UntilStartOfNextTurn,
+            }),
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::Outlined,
+                timer: ConditionTimer::UntilStartOfNextTurn,
+            }),
+        ]
+    }
+}
+
+pub static RECKLESS_ATTACK: LazyLock<RecklessAttack> = LazyLock::new(|| RecklessAttack {});
+
+/// Veteran Longsword — STR-based 1d8 slashing. The veteran's primary
+/// melee weapon, paired with a shortsword in multiattack.
+pub static VETERAN_LONGSWORD: SimpleWeapon = SimpleWeapon {
+    display_name: "longsword",
+    aliases: &["ls"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Veteran multiattack — 2 longsword swings per Action. The veteran
+/// is the workhorse human soldier: two big swings of a 1d8 weapon
+/// outperform the bandit captain's three scimitar swings on average
+/// (8.5 vs ~3.5 per swing), without a rider.
+pub static VETERAN_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double longsword",
+    sub_attack: &VETERAN_LONGSWORD,
+    count: 2,
+});
+
+/// Yeti Claws — STR-based melee, 1d6+STR slashing + 1d6 cold rider on
+/// hit. The cold rider plays through resistance separately, like the
+/// mummy's necrotic rider, so a fire-resistant target still eats the
+/// chill.
+pub struct YetiClaws {}
+
+impl Action for YetiClaws {
+    fn name(&self) -> &str {
+        "yeti claws"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["yc", "yeti"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Slashing, DamageType::Cold]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength))
+            + caster.proficiency_bonus();
+        let damage_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let (mut effects, damage) = crate::engine::attack::resolve_attack_outcome(
+            encounter,
+            AttackParams {
+                caster_id,
+                target_id,
+                action_name: "yeti claws",
+                attack_bonus: attack_mod,
+                damage_dice: Dice::new(1, 6),
+                damage_bonus: damage_mod,
+                damage_type: DamageType::Slashing,
+                is_melee: true,
+            },
+        );
+        if damage == 0 {
+            return effects;
+        }
+        let cold = encounter.roll(&Dice::new(1, 6));
+        encounter.log(format!(
+            "  yeti claws: 1d6({}) = {} cold rider",
+            cold, cold
+        ));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: cold,
+            damage_type: DamageType::Cold,
+        }));
+        effects
+    }
+}
+
+pub static YETI_CLAWS: LazyLock<YetiClaws> = LazyLock::new(|| YetiClaws {});
+
+/// Yeti multiattack — two claw swings per Action. With the cold rider
+/// on each hit, this is comparable to a small-ice-elemental loop —
+/// punchy on bare-skin targets but blunted by cold resistance.
+pub static YETI_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double claws",
+    sub_attack: &*YETI_CLAWS,
+    count: 2,
+});
+
+/// Chilling Gaze — yeti's signature gaze attack. Targets a single
+/// creature within radius 6 (30 ft); CON save vs DC 13 or take 3d6 cold
+/// damage *and* be Paralyzed for 1 minute (10 rounds). Cold-immune or
+/// blindfolded creatures are immune to the gaze (we proxy "blindfolded"
+/// by checking the Blinded condition on the target). Action cost.
+pub struct ChillingGaze {}
+
+impl Action for ChillingGaze {
+    fn name(&self) -> &str {
+        "chilling gaze"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cg", "gaze"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(6)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Cold]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        const DC: i32 = 13;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // Blinded targets can't be affected by gaze attacks (their eyes
+        // are squeezed shut). Cold-immune ones shrug off the rider.
+        if let Some(t) = encounter.actors.get(&target_id) {
+            if t.has_condition(Condition::Blinded) {
+                encounter.log("  chilling gaze: target's eyes are shut \u{2014} no effect");
+                return Vec::new();
+            }
+            if t.is_immune_to(DamageType::Cold) {
+                encounter.log("  chilling gaze: target is immune to cold \u{2014} no effect");
+                return Vec::new();
+            }
+        } else {
+            return Vec::new();
+        }
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, DC);
+        if save.passed() {
+            return Vec::new();
+        }
+        let damage = encounter.roll(&Dice::new(3, 6));
+        encounter.log(format!(
+            "  chilling gaze: 3d6({}) = {} cold + paralyzed",
+            damage, damage
+        ));
+        vec![
+            Box::new(DealDamage {
+                actor_id: target_id,
+                amount: damage,
+                damage_type: DamageType::Cold,
+            }),
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Paralyzed,
+                timer: ConditionTimer::Rounds(10),
+            }),
+        ]
+    }
+}
+
+pub static CHILLING_GAZE: LazyLock<ChillingGaze> = LazyLock::new(|| ChillingGaze {});
