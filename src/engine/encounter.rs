@@ -9,15 +9,19 @@ use crate::actors::creatures::cockatrices::COCKATRICE_TEMPLATE;
 use crate::actors::creatures::cult_fanatics::CULT_FANATIC_TEMPLATE;
 use crate::actors::creatures::dire_wolves::DIRE_WOLF_TEMPLATE;
 use crate::actors::creatures::doppelgangers::DOPPELGANGER_TEMPLATE;
+use crate::actors::creatures::fire_elementals::FIRE_ELEMENTAL_TEMPLATE;
 use crate::actors::creatures::gargoyles::GARGOYLE_TEMPLATE;
+use crate::actors::creatures::gelatinous_cubes::GELATINOUS_CUBE_TEMPLATE;
 use crate::actors::creatures::ghouls::GHOUL_TEMPLATE;
 use crate::actors::creatures::gnolls::GNOLL_TEMPLATE;
 use crate::actors::creatures::goblin_bosses::GOBLIN_BOSS_TEMPLATE;
 use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 use crate::actors::creatures::harpies::HARPY_TEMPLATE;
+use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
 use crate::actors::creatures::hippogriffs::HIPPOGRIFF_TEMPLATE;
 use crate::actors::creatures::hobgoblins::HOBGOBLIN_TEMPLATE;
 use crate::actors::creatures::knights::KNIGHT_TEMPLATE;
+use crate::actors::creatures::manticores::MANTICORE_TEMPLATE;
 use crate::actors::creatures::mimics::MIMIC_TEMPLATE;
 use crate::actors::creatures::minotaurs::MINOTAUR_TEMPLATE;
 use crate::actors::creatures::mummies::MUMMY_TEMPLATE;
@@ -26,6 +30,7 @@ use crate::actors::creatures::orcs::ORC_TEMPLATE;
 use crate::actors::creatures::owlbears::OWLBEAR_TEMPLATE;
 use crate::actors::creatures::specters::SPECTER_TEMPLATE;
 use crate::actors::creatures::stirges::STIRGE_TEMPLATE;
+use crate::actors::creatures::treants::TREANT_TEMPLATE;
 use crate::actors::creatures::veterans::VETERAN_TEMPLATE;
 use crate::actors::creatures::werewolves::WEREWOLF_TEMPLATE;
 use crate::actors::creatures::wights::WIGHT_TEMPLATE;
@@ -1104,16 +1109,18 @@ impl EncounterInstance {
         ids
     }
 
-    /// Sorted ids of combat-active actors inside the burst that are *not*
-    /// on the caster's team. Stinking Cloud / Cloud of Daggers / Synaptic
-    /// Static and similar enemy-only AoEs use this so allies inside the
-    /// blast don't catch friendly fire. Caster is implicitly excluded
-    /// via the team match.
-    pub fn enemy_burst_targets(
+    /// Sorted ids of combat-active actors inside the burst, filtered by
+    /// team relation to the caster. `same_team = true` returns allies
+    /// (including the caster if they sit in the blast); `same_team = false`
+    /// returns enemies and implicitly excludes the caster via the team
+    /// mismatch. Shared body for `enemy_burst_targets` / `ally_burst_targets`
+    /// — both used to duplicate this loop verbatim with one comparison flip.
+    fn team_burst_targets(
         &self,
         caster_id: usize,
         point: Coordinate,
         radius: isize,
+        same_team: bool,
     ) -> Vec<usize> {
         let Some(caster) = self.actors.get(&caster_id) else {
             return Vec::new();
@@ -1123,7 +1130,10 @@ impl EncounterInstance {
             .actors
             .iter()
             .filter_map(|(id, a)| {
-                if a.team() == caster_team || !a.is_combat_active() {
+                if !a.is_combat_active() {
+                    return None;
+                }
+                if (a.team() == caster_team) != same_team {
                     return None;
                 }
                 let dist = footprint_chebyshev(
@@ -1139,6 +1149,20 @@ impl EncounterInstance {
         ids
     }
 
+    /// Sorted ids of combat-active actors inside the burst that are *not*
+    /// on the caster's team. Stinking Cloud / Cloud of Daggers / Synaptic
+    /// Static and similar enemy-only AoEs use this so allies inside the
+    /// blast don't catch friendly fire. Caster is implicitly excluded
+    /// via the team match.
+    pub fn enemy_burst_targets(
+        &self,
+        caster_id: usize,
+        point: Coordinate,
+        radius: isize,
+    ) -> Vec<usize> {
+        self.team_burst_targets(caster_id, point, radius, false)
+    }
+
     /// Sorted ids of combat-active actors inside the burst that *are* on
     /// the caster's team. Beacon of Hope / Mass Cure Wounds use this for
     /// the friendly-only target list. Caster is implicitly included if
@@ -1149,28 +1173,7 @@ impl EncounterInstance {
         point: Coordinate,
         radius: isize,
     ) -> Vec<usize> {
-        let Some(caster) = self.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let caster_team = caster.team();
-        let mut ids: Vec<usize> = self
-            .actors
-            .iter()
-            .filter_map(|(id, a)| {
-                if a.team() != caster_team || !a.is_combat_active() {
-                    return None;
-                }
-                let dist = footprint_chebyshev(
-                    a.location(),
-                    get_tiles_from_size(a.size()),
-                    point,
-                    1,
-                );
-                if dist <= radius { Some(*id) } else { None }
-            })
-            .collect();
-        ids.sort_unstable();
-        ids
+        self.team_burst_targets(caster_id, point, radius, true)
     }
 
     /// Footprint-Chebyshev distance between two living actors, or `None` if
@@ -1424,15 +1427,19 @@ impl EncounterInstance {
             &CULT_FANATIC_TEMPLATE,
             &DIRE_WOLF_TEMPLATE,
             &DOPPELGANGER_TEMPLATE,
+            &FIRE_ELEMENTAL_TEMPLATE,
             &GARGOYLE_TEMPLATE,
+            &GELATINOUS_CUBE_TEMPLATE,
             &GHOUL_TEMPLATE,
             &GNOLL_TEMPLATE,
             &GOBLIN_TEMPLATE,
             &GOBLIN_BOSS_TEMPLATE,
             &HARPY_TEMPLATE,
+            &HILL_GIANT_TEMPLATE,
             &HIPPOGRIFF_TEMPLATE,
             &HOBGOBLIN_TEMPLATE,
             &KNIGHT_TEMPLATE,
+            &MANTICORE_TEMPLATE,
             &MIMIC_TEMPLATE,
             &MINOTAUR_TEMPLATE,
             &MUMMY_TEMPLATE,
@@ -1441,6 +1448,7 @@ impl EncounterInstance {
             &OWLBEAR_TEMPLATE,
             &SPECTER_TEMPLATE,
             &STIRGE_TEMPLATE,
+            &TREANT_TEMPLATE,
             &VETERAN_TEMPLATE,
             &WEREWOLF_TEMPLATE,
             &WIGHT_TEMPLATE,
@@ -2933,8 +2941,10 @@ mod tests {
         assert!(e.actors[&id].can_consume_resource(Resource::SpellSlot(3)));
         assert!(e.actors[&id].can_consume_resource(Resource::SpellSlot(5)));
         assert!(e.actors[&id].can_consume_resource(Resource::SpellSlot(6)));
-        // Level-7 wasn't given.
-        assert!(!e.actors[&id].can_consume_resource(Resource::SpellSlot(7)));
+        // Level-7 was added to fuel Resurrection (one slot per long rest).
+        assert!(e.actors[&id].can_consume_resource(Resource::SpellSlot(7)));
+        // Level-10 doesn't exist for any caster in our model.
+        assert!(!e.actors[&id].can_consume_resource(Resource::SpellSlot(10)));
     }
 
     #[test]
@@ -14483,5 +14493,527 @@ mod tests {
         if e.actors.contains_key(&goblin) {
             assert!(e.actors[&goblin].hitpoints() <= pre);
         }
+    }
+
+    /// Prayer of Healing: 2d8+WIS HP to up to 6 allies in 30 ft. A bashed
+    /// fighter sitting next to a cleric should be topped up by some
+    /// amount on cast.
+    #[test]
+    fn prayer_of_healing_heals_nearby_allies() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::PRAYER_OF_HEALING;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 1)
+            .unwrap();
+        // Bash the fighter so the heal has somewhere to land.
+        let max = e.actors[&ally].max_hitpoints();
+        e.actors.get_mut(&ally).unwrap().take_damage(max / 2 + 1);
+        let before = e.actors[&ally].hitpoints();
+        let effects = PRAYER_OF_HEALING.side_effects(&mut e, cleric, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        // Heal should restore at least 1 HP (2d8 + WIS mod ≥ 3 worst-case).
+        assert!(e.actors[&ally].hitpoints() > before);
+    }
+
+    /// Prayer of Healing skips allies who are out of range — the cleric's
+    /// 30-ft (6-tile) radius shouldn't reach an ally 25 tiles away.
+    #[test]
+    fn prayer_of_healing_skips_distant_allies() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::PRAYER_OF_HEALING;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(40, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+            .unwrap();
+        let far_ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(35, 5), 0, 1)
+            .unwrap();
+        let max = e.actors[&far_ally].max_hitpoints();
+        e.actors.get_mut(&far_ally).unwrap().take_damage(max - 1);
+        let before = e.actors[&far_ally].hitpoints();
+        let effects = PRAYER_OF_HEALING.side_effects(&mut e, cleric, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert_eq!(e.actors[&far_ally].hitpoints(), before);
+    }
+
+    /// Sunbeam: single-target spell attack vs AC, on hit deals 6d8 radiant
+    /// and Blinds the target until the start of their next turn.
+    /// Use a low-AC goblin so the hit lands most seeds; we sweep a small
+    /// seed window for stability.
+    #[test]
+    fn sunbeam_damages_and_blinds_on_hit() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::SUNBEAM;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::Condition;
+
+        for seed in 0..20u64 {
+            let tp = crate::engine::terrain_gen::TerrainGenParams {
+                width: 20,
+                height: 20,
+                branch_depth: 0,
+                branch_prob: 0.0,
+            };
+            let ap = crate::engine::actor_gen::ActorGenParams {
+                cr_target: 0.0,
+                n_teams: 0,
+                pc_template: None,
+                start_team: 0,
+            };
+            let mut e =
+                EncounterInstance::from_params(&tp, &ap, Some(seed)).unwrap();
+            e.terrain = vec![
+                crate::engine::terrain::TerrainInfo {
+                    terrain_type: crate::engine::terrain::TerrainType::Floor,
+                };
+                20 * 20
+            ];
+            let cleric = e
+                .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            // Bump goblin HP so a single Sunbeam isn't guaranteed to kill,
+            // letting us observe the Blinded condition on a hit.
+            e.actors
+                .get_mut(&target)
+                .unwrap()
+                .bump_max_hp(100);
+            let _ = e.actors.get_mut(&target).unwrap().heal(100);
+            let effects = SUNBEAM.side_effects(
+                &mut e,
+                cleric,
+                Some(&vec![target]),
+                None,
+                None,
+            );
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            // If the attack hit, Blinded should be applied; verify across
+            // any seed that lands a hit.
+            if e.actors.contains_key(&target)
+                && e.actors[&target].has_condition(Condition::Blinded)
+            {
+                return;
+            }
+        }
+        panic!("expected at least one Sunbeam hit to blind across seeds");
+    }
+
+    /// Sunbeam installs concentration on the caster so the spell lights
+    /// up the standard concentration drop-on-damage path.
+    #[test]
+    fn sunbeam_starts_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::SUNBEAM;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+            .unwrap();
+        let effects = SUNBEAM.side_effects(
+            &mut e,
+            cleric,
+            Some(&vec![target]),
+            None,
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&cleric].is_concentrating());
+    }
+
+    /// Power Word Heal: target regains all HP and the captivating
+    /// conditions (Charmed, Frightened, Paralyzed, Stunned) plus Prone
+    /// are stripped.
+    #[test]
+    fn power_word_heal_full_heal_and_cleanse() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::POWER_WORD_HEAL;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 1)
+            .unwrap();
+        let max = e.actors[&ally].max_hitpoints();
+        e.actors.get_mut(&ally).unwrap().take_damage(max - 1);
+        // Layer some control conditions on so we can verify the cleanse.
+        e.actors
+            .get_mut(&ally)
+            .unwrap()
+            .add_condition(Condition::Stunned, ConditionTimer::Rounds(5));
+        e.actors
+            .get_mut(&ally)
+            .unwrap()
+            .add_condition(Condition::Prone, ConditionTimer::Permanent);
+        let effects = POWER_WORD_HEAL.side_effects(
+            &mut e,
+            cleric,
+            Some(&vec![ally]),
+            None,
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert_eq!(e.actors[&ally].hitpoints(), max);
+        assert!(!e.actors[&ally].has_condition(Condition::Stunned));
+        assert!(!e.actors[&ally].has_condition(Condition::Prone));
+    }
+
+    /// Resurrection: target Dying ally is lifted out of Dying and topped
+    /// up to full HP.
+    #[test]
+    fn resurrection_revives_dying_to_full() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::RESURRECTION;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let dying_ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        let max = e.actors[&dying_ally].max_hitpoints();
+        // Drop the fighter to 0 HP (Dying — PCs roll death saves).
+        e.actors
+            .get_mut(&dying_ally)
+            .unwrap()
+            .take_damage(max);
+        assert!(e.actors[&dying_ally].is_dying());
+
+        let effects = RESURRECTION.side_effects(
+            &mut e,
+            cleric,
+            Some(&vec![dying_ally]),
+            None,
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(!e.actors[&dying_ally].is_dying());
+        assert_eq!(e.actors[&dying_ally].hitpoints(), max);
+    }
+
+    /// Resurrection's validation: not valid on a healthy ally — the
+    /// `custom_validate_input` gate should reject the target so the
+    /// 7th-level slot isn't burnt.
+    #[test]
+    fn resurrection_rejects_healthy_target() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::RESURRECTION;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 1)
+            .unwrap();
+        assert!(!RESURRECTION.validate_input(
+            &e,
+            cleric,
+            Some(&vec![ally]),
+            None,
+            None,
+        ));
+    }
+
+    /// Manticore Tail Spikes: ranged-style attack, +DEX to hit and damage
+    /// at reach 12 (≈30 ft). Verify a 3d8 piercing hit lands SOME damage
+    /// on a goblin across a seed sweep.
+    #[test]
+    fn manticore_tail_spikes_hit_at_range() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::MANTICORE_SPIKES;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::manticores::MANTICORE_TEMPLATE;
+
+        for seed in 0..20u64 {
+            let tp = crate::engine::terrain_gen::TerrainGenParams {
+                width: 30,
+                height: 15,
+                branch_depth: 0,
+                branch_prob: 0.0,
+            };
+            let ap = crate::engine::actor_gen::ActorGenParams {
+                cr_target: 0.0,
+                n_teams: 0,
+                pc_template: None,
+                start_team: 0,
+            };
+            let mut e =
+                EncounterInstance::from_params(&tp, &ap, Some(seed)).unwrap();
+            e.terrain = vec![
+                crate::engine::terrain::TerrainInfo {
+                    terrain_type: crate::engine::terrain::TerrainType::Floor,
+                };
+                30 * 15
+            ];
+            let manticore = e
+                .instantiate_creature(&MANTICORE_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 5), 1, 0)
+                .unwrap();
+            let pre = e.actors[&target].hitpoints();
+            let effects = MANTICORE_SPIKES.side_effects(
+                &mut e,
+                manticore,
+                Some(&vec![target]),
+                None,
+                None,
+            );
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            e.cleanup_dead_actors();
+            if !e.actors.contains_key(&target)
+                || e.actors[&target].hitpoints() < pre
+            {
+                return;
+            }
+        }
+        panic!("expected at least one manticore spikes hit across seeds");
+    }
+
+    /// Treant is vulnerable to fire (RAW plant resistance/vulnerability
+    /// envelope) and resistant to physical damage types.
+    #[test]
+    fn treant_vulnerabilities_and_resistances() {
+        use crate::actors::creatures::treants::TREANT_TEMPLATE;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let treant = e
+            .instantiate_creature(&TREANT_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&treant).unwrap();
+        assert!(actor.is_vulnerable_to(DamageType::Fire));
+        assert!(actor.is_resistant_to(DamageType::Bludgeoning));
+        assert!(actor.is_resistant_to(DamageType::Piercing));
+    }
+
+    /// Fire Elemental is immune to fire and poison; resistant to the
+    /// physical damage trio.
+    #[test]
+    fn fire_elemental_immunities_and_resistances() {
+        use crate::actors::creatures::fire_elementals::FIRE_ELEMENTAL_TEMPLATE;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let el = e
+            .instantiate_creature(&FIRE_ELEMENTAL_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&el).unwrap();
+        assert!(actor.is_immune_to(DamageType::Fire));
+        assert!(actor.is_immune_to(DamageType::Poison));
+        assert!(actor.is_resistant_to(DamageType::Bludgeoning));
+        assert!(actor.is_resistant_to(DamageType::Piercing));
+        assert!(actor.is_resistant_to(DamageType::Slashing));
+    }
+
+    /// Fire Elemental Touch: on hit, applies Burning unless the target is
+    /// fire-immune. Verify a non-immune goblin picks up the Burning DOT
+    /// across a seed sweep that lands the attack.
+    #[test]
+    fn fire_elemental_touch_ignites_target() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::FIRE_ELEMENTAL_TOUCH;
+        use crate::actors::creatures::fire_elementals::FIRE_ELEMENTAL_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::Condition;
+
+        for seed in 0..20u64 {
+            let tp = crate::engine::terrain_gen::TerrainGenParams {
+                width: 20,
+                height: 20,
+                branch_depth: 0,
+                branch_prob: 0.0,
+            };
+            let ap = crate::engine::actor_gen::ActorGenParams {
+                cr_target: 0.0,
+                n_teams: 0,
+                pc_template: None,
+                start_team: 0,
+            };
+            let mut e =
+                EncounterInstance::from_params(&tp, &ap, Some(seed)).unwrap();
+            e.terrain = vec![
+                crate::engine::terrain::TerrainInfo {
+                    terrain_type: crate::engine::terrain::TerrainType::Floor,
+                };
+                20 * 20
+            ];
+            let el = e
+                .instantiate_creature(&FIRE_ELEMENTAL_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+                .unwrap();
+            // Pad HP so the attack doesn't kill before Burning shows.
+            e.actors.get_mut(&target).unwrap().bump_max_hp(50);
+            let _ = e.actors.get_mut(&target).unwrap().heal(50);
+            let effects = FIRE_ELEMENTAL_TOUCH.side_effects(
+                &mut e,
+                el,
+                Some(&vec![target]),
+                None,
+                None,
+            );
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e.actors.contains_key(&target)
+                && e.actors[&target].has_condition(Condition::Burning)
+            {
+                return;
+            }
+        }
+        panic!("expected fire elemental touch to ignite target across seeds");
+    }
+
+    /// Gelatinous Cube Pseudopod: on hit + failed STR save, target is
+    /// Restrained. Across seeds, at least one run should land the
+    /// restraint.
+    #[test]
+    fn gelatinous_cube_engulfs_target() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::GELATINOUS_CUBE_ENGULF;
+        use crate::actors::creatures::gelatinous_cubes::GELATINOUS_CUBE_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::Condition;
+
+        for seed in 0..20u64 {
+            let tp = crate::engine::terrain_gen::TerrainGenParams {
+                width: 20,
+                height: 20,
+                branch_depth: 0,
+                branch_prob: 0.0,
+            };
+            let ap = crate::engine::actor_gen::ActorGenParams {
+                cr_target: 0.0,
+                n_teams: 0,
+                pc_template: None,
+                start_team: 0,
+            };
+            let mut e =
+                EncounterInstance::from_params(&tp, &ap, Some(seed)).unwrap();
+            e.terrain = vec![
+                crate::engine::terrain::TerrainInfo {
+                    terrain_type: crate::engine::terrain::TerrainType::Floor,
+                };
+                20 * 20
+            ];
+            let cube = e
+                .instantiate_creature(&GELATINOUS_CUBE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+                .unwrap();
+            // Pad HP so the attack doesn't outright kill.
+            e.actors.get_mut(&target).unwrap().bump_max_hp(50);
+            let _ = e.actors.get_mut(&target).unwrap().heal(50);
+            let effects = GELATINOUS_CUBE_ENGULF.side_effects(
+                &mut e,
+                cube,
+                Some(&vec![target]),
+                None,
+                None,
+            );
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e.actors.contains_key(&target)
+                && e.actors[&target].has_condition(Condition::Restrained)
+            {
+                return;
+            }
+        }
+        panic!("expected gelatinous cube to engulf target across seeds");
+    }
+
+    /// Hill Giant has access to a melee club (3d8 bludgeoning, reach 2)
+    /// and a thrown boulder (3d10 bludgeoning, reach 24). Verify both
+    /// actions appear in the giant's available action list.
+    #[test]
+    fn hill_giant_has_club_and_boulder() {
+        use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let giant = e
+            .instantiate_creature(&HILL_GIANT_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let names: Vec<&str> = e.actors[&giant]
+            .available_actions()
+            .iter()
+            .map(|a| a.name())
+            .collect();
+        assert!(names.contains(&"giant greatclub"));
+        assert!(names.contains(&"boulder"));
+    }
+
+    /// Engine helper: enemy_burst_targets filters to non-team-mates, and
+    /// ally_burst_targets filters to team-mates. Both wrap the same
+    /// `team_burst_targets` body — verify the team flip cleanly.
+    #[test]
+    fn burst_target_helpers_partition_by_team() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 1)
+            .unwrap();
+        let foe = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 5), 1, 0)
+            .unwrap();
+        let point = Coordinate::new(5, 5);
+        let allies = e.ally_burst_targets(caster, point, 3);
+        let enemies = e.enemy_burst_targets(caster, point, 3);
+        assert!(allies.contains(&caster));
+        assert!(allies.contains(&ally));
+        assert!(!allies.contains(&foe));
+        assert!(enemies.contains(&foe));
+        assert!(!enemies.contains(&caster));
+        assert!(!enemies.contains(&ally));
     }
 }

@@ -7365,3 +7365,364 @@ impl Action for MeteorSwarm {
 }
 
 pub static METEOR_SWARM: LazyLock<MeteorSwarm> = LazyLock::new(|| MeteorSwarm {});
+
+/// Prayer of Healing — level-2 evocation. Pick up to six allies within
+/// 30 ft (12 tiles) of the caster; each regains 2d8 + WIS HP. RAW has a
+/// 10-minute cast time (so it's strictly out-of-combat per book); we keep
+/// it as a one-action in-combat heal because (a) our encounter loop has
+/// no out-of-combat phase and (b) it slots cleanly into the cleric's
+/// level-2 healing toolkit between Cure Wounds and Mass Cure Wounds.
+/// Same dying-allies-included logic as Mass Cure Wounds — a dying ally
+/// would just regain HP from the heal and exit the dying state on the
+/// next HP roll, but allowing them as targets lets the cleric stabilize
+/// a downed party member in bulk with a single 2nd-level slot.
+pub struct PrayerOfHealing {}
+
+impl Action for PrayerOfHealing {
+    fn name(&self) -> &str {
+        "prayer of healing"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["poh", "prayer"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let caster_loc = caster.location();
+        let wis_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
+        // 30-ft range centered on the caster — reuse the burst helper
+        // with the caster's own footprint as the anchor so distance math
+        // matches every other ally-burst spell.
+        const RADIUS: isize = 6;
+        const MAX_TARGETS: usize = 6;
+        let raw = encounter.roll(&Dice::new(2, 8)) as i32;
+        let amount = (raw + wis_mod).max(1) as u32;
+        encounter.log(format!(
+            "  prayer of healing: 2d8({}){:+} = {} HP each",
+            raw, wis_mod, amount
+        ));
+        let mut targets = encounter.ally_burst_targets(caster_id, caster_loc, RADIUS);
+        targets.truncate(MAX_TARGETS);
+        targets
+            .into_iter()
+            .map(|id| {
+                Box::new(Heal {
+                    actor_id: id,
+                    amount,
+                }) as Box<dyn ApplicableSideEffect>
+            })
+            .collect()
+    }
+}
+
+pub static PRAYER_OF_HEALING: LazyLock<PrayerOfHealing> = LazyLock::new(|| PrayerOfHealing {});
+
+/// Sunbeam — level-6 evocation, concentration. RAW is a 60-ft line that
+/// blinds + damages each creature inside on a failed CON save (6d8
+/// radiant on fail, half on save). Modelled as a single-target ranged
+/// spell attack for engine simplicity (line targeting isn't yet a schema)
+/// — 6d8 radiant on hit, and the target is Blinded for one round.
+/// Concentration lets the caster sustain the spell to fire it on
+/// subsequent turns (we don't yet model the action-per-turn repeat
+/// rider, but the conc slot prevents stacking with other conc spells
+/// and clears on damage like every other concentration effect).
+pub struct Sunbeam {}
+
+impl Action for Sunbeam {
+    fn name(&self) -> &str {
+        "sunbeam"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sun", "beam"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60-ft line ≈ 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Radiant]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Caster ability-mod choice: clerics get WIS, wizards get INT.
+        // Pick whichever yields the bigger save DC so cross-class users
+        // (e.g. a multi-class wizard/cleric) still get their best attack.
+        let int_mod = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
+        let wis_mod = caster.spell_attack_modifier(AbilityScoreType::Wisdom);
+        let attack_bonus = int_mod.max(wis_mod);
+        let (effs, dealt) = spell_attack_outcome(
+            encounter,
+            caster_id,
+            target_id,
+            "sunbeam",
+            attack_bonus,
+            Dice::new(6, 8),
+            0,
+            DamageType::Radiant,
+            false,
+        );
+        let mut effects = effs;
+        // On hit, target is also Blinded for one round (until start of
+        // their next turn) — the sun-flare clause from RAW.
+        if dealt > 0 {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Blinded,
+                timer: ConditionTimer::UntilStartOfNextTurn,
+            }));
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Sunbeam", Vec::new()),
+        }));
+        effects
+    }
+}
+
+pub static SUNBEAM: LazyLock<Sunbeam> = LazyLock::new(|| Sunbeam {});
+
+/// Resurrection — level-7 necromancy. Touch a creature that has been
+/// dead no more than a century (in our engine: a Dying actor — Dead
+/// actors get removed from `actors` so they can't be targeted). Restores
+/// the target to full HP, cures Blinded / Deafened / Poisoned, and
+/// strips all conditions that came with the Dying state (Unconscious,
+/// Prone). One step beyond Revivify (which restores them to 1 HP) — the
+/// cleric pays a 7th-level slot for a full top-up.
+pub struct Resurrection {}
+
+impl Action for Resurrection {
+    fn name(&self) -> &str {
+        "resurrection"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["res", "resurrect"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Same dying-only gate as Revivify — the spell shouldn't be wasted
+        // on healthy targets.
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| a.is_dying())
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(7)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::{RemoveCondition, ReviveDying};
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let max = encounter
+            .actors
+            .get(&target_id)
+            .map(|a| a.max_hitpoints())
+            .unwrap_or(0);
+        // Revive first (lifts the Dying state to 1 HP, cleans Prone /
+        // Unconscious) and then top up to max with a regular heal —
+        // ReviveDying is a no-op for non-Dying actors, so the chained
+        // queue stays safe even if the gate above passes a borderline
+        // case.
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![
+            Box::new(ReviveDying { actor_id: target_id }),
+            Box::new(Heal {
+                actor_id: target_id,
+                amount: max,
+            }),
+        ];
+        for c in [Condition::Blinded, Condition::Deafened, Condition::Poisoned] {
+            effects.push(Box::new(RemoveCondition {
+                actor_id: target_id,
+                condition: c,
+            }));
+        }
+        effects
+    }
+}
+
+pub static RESURRECTION: LazyLock<Resurrection> = LazyLock::new(|| Resurrection {});
+
+/// Power Word Heal — level-9 evocation. Single touch target regains all
+/// HP, then the spell cleanses every captivating / control condition
+/// (Charmed, Frightened, Paralyzed, Stunned) and stands them up from
+/// Prone. The 5e RAW also lets the target use a reaction to stand and
+/// remove the charmed/frightened/paralyzed/stunned riders; we collapse
+/// the reaction step into the heal's side effects since we don't yet
+/// have a "trigger reaction on heal" hook. Symmetric counterpart to
+/// Power Word Kill — top of the heal tree at the same slot cost.
+pub struct PowerWordHeal {}
+
+impl Action for PowerWordHeal {
+    fn name(&self) -> &str {
+        "power word heal"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pwh", "wordheal"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch.
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(9)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::{RemoveCondition, ReviveDying};
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let max = encounter
+            .actors
+            .get(&target_id)
+            .map(|a| a.max_hitpoints())
+            .unwrap_or(0);
+        // ReviveDying first (idempotent for non-Dying actors); then heal
+        // to full; then strip the captivating conditions plus Prone (the
+        // RAW reaction lets the target stand up).
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![
+            Box::new(ReviveDying { actor_id: target_id }),
+            Box::new(Heal {
+                actor_id: target_id,
+                amount: max,
+            }),
+        ];
+        for c in [
+            Condition::Charmed,
+            Condition::Frightened,
+            Condition::Paralyzed,
+            Condition::Stunned,
+            Condition::Prone,
+        ] {
+            effects.push(Box::new(RemoveCondition {
+                actor_id: target_id,
+                condition: c,
+            }));
+        }
+        effects
+    }
+}
+
+pub static POWER_WORD_HEAL: LazyLock<PowerWordHeal> = LazyLock::new(|| PowerWordHeal {});

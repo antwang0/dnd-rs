@@ -7,8 +7,8 @@ use crate::actions::spells::{
     MAGIC_MISSILE, MAGIC_WEAPON, MASS_SUGGESTION, METEOR_SWARM, MIND_SLIVER, MIRROR_IMAGE,
     MISTY_STEP, PHANTASMAL_KILLER, POISON_SPRAY, POWER_WORD_KILL, POWER_WORD_STUN, RAY_OF_FROST,
     RAY_OF_SICKNESS, SCORCHING_RAY, SHATTER, SHIELD, SHOCKING_GRASP, SLEEP, SLOW, STINKING_CLOUD,
-    STONESKIN, SUGGESTION, SYNAPTIC_STATIC, TASHAS_HIDEOUS_LAUGHTER, THUNDERWAVE, TOLL_THE_DEAD,
-    TRUE_STRIKE, VAMPIRIC_TOUCH, WEB, WITCH_BOLT,
+    STONESKIN, SUGGESTION, SUNBEAM, SYNAPTIC_STATIC, TASHAS_HIDEOUS_LAUGHTER, THUNDERWAVE,
+    TOLL_THE_DEAD, TRUE_STRIKE, VAMPIRIC_TOUCH, WEB, WITCH_BOLT,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size, SpecialSense};
@@ -78,6 +78,7 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*MASS_SUGGESTION);
     actions.push(&*POWER_WORD_KILL);
     actions.push(&*METEOR_SWARM);
+    actions.push(&*SUNBEAM);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

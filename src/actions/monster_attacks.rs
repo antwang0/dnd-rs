@@ -3013,3 +3013,403 @@ impl Action for ChillingGaze {
 }
 
 pub static CHILLING_GAZE: LazyLock<ChillingGaze> = LazyLock::new(|| ChillingGaze {});
+
+/// Manticore Tail Spikes — ranged attack, 6 spike volley collapsed into
+/// a single 3d8 piercing roll with +DEX to hit and damage. RAW the
+/// manticore can fire up to four spikes per Action; we model the volley
+/// as a single attack roll with combined damage to keep the action
+/// economy tight (one Action → one rolled outcome) while preserving the
+/// "ranged threat at high CR" flavor. Reach 12 tiles (≈30 ft); not melee,
+/// requires LOS like every other ranged attack.
+pub struct ManticoreSpikes {}
+
+impl Action for ManticoreSpikes {
+    fn name(&self) -> &str {
+        "tail spikes"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ts", "spikes"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "tail spikes",
+            AbilityScoreType::Dexterity,
+            Some(AbilityScoreType::Dexterity),
+            Dice::new(3, 8),
+            DamageType::Piercing,
+            false,
+        )
+    }
+}
+
+pub static MANTICORE_SPIKES: LazyLock<ManticoreSpikes> = LazyLock::new(|| ManticoreSpikes {});
+
+/// Manticore Multiattack — Action: bite (1d8 piercing) + two claws
+/// (1d6 slashing each). All strikes share the same target. This is the
+/// melee half of the manticore's kit — the ranged Tail Spikes covers the
+/// stand-off lane.
+pub struct ManticoreMultiattack {}
+
+impl Action for ManticoreMultiattack {
+    fn name(&self) -> &str {
+        "manticore multiattack"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mm", "claws"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Slashing]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let mut all = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "manticore bite",
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(1, 8),
+            DamageType::Piercing,
+            true,
+        );
+        for _ in 0..2 {
+            all.extend(simple_weapon_attack(
+                encounter,
+                caster_id,
+                target_ids,
+                "manticore claw",
+                AbilityScoreType::Strength,
+                Some(AbilityScoreType::Strength),
+                Dice::new(1, 6),
+                DamageType::Slashing,
+                true,
+            ));
+        }
+        all
+    }
+}
+
+pub static MANTICORE_MULTIATTACK: LazyLock<ManticoreMultiattack> =
+    LazyLock::new(|| ManticoreMultiattack {});
+
+/// Hill Giant Greatclub — STR-based 3d8 bludgeoning, reach 2 tiles
+/// (10 ft). Mirrors the ogre's club but bumped to giant-tier dice; the
+/// extra reach is the hill giant's signature spacing advantage.
+pub static HILL_GIANT_GREATCLUB: SimpleWeapon = SimpleWeapon {
+    display_name: "giant greatclub",
+    aliases: &["ggc", "giant-club"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(3, 8),
+    damage_type: DamageType::Bludgeoning,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Hill Giant Boulder — STR-based 3d10 bludgeoning thrown rock with
+/// reach 24 (60 ft). Ranged STR throw is unusual but matches the 5e
+/// stat block: giants chuck rocks for big damage at long range.
+pub static HILL_GIANT_BOULDER: SimpleWeapon = SimpleWeapon {
+    display_name: "boulder",
+    aliases: &["bld", "rock"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(3, 10),
+    damage_type: DamageType::Bludgeoning,
+    reach: 24,
+    is_melee: false,
+    requires_los: true,
+    cost_resource: Resource::Action,
+};
+
+/// Treant Slam — STR-based 3d6 bludgeoning, reach 2 (10 ft). The treant
+/// is a slow CR-9 wall of HP that swings massive trunks; 3d6+STR per
+/// strike, no rider, but the Treant template attaches the Multiattack
+/// wrapper to swing twice per Action.
+pub static TREANT_SLAM: SimpleWeapon = SimpleWeapon {
+    display_name: "treant slam",
+    aliases: &["tslam"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(3, 6),
+    damage_type: DamageType::Bludgeoning,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Treant Multiattack — Action: two Treant Slam swings against the same
+/// target. The pair of 3d6+STR slams averages ~25 damage at the treant's
+/// stat block — eats through PCs in a couple of rounds and gives the
+/// CR-9 frame a believable threat profile.
+pub struct TreantMultiattack {}
+
+impl Action for TreantMultiattack {
+    fn name(&self) -> &str {
+        "treant multiattack"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["tm", "double-slam"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(2)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let mut all = Vec::new();
+        for _ in 0..2 {
+            all.extend(simple_weapon_attack(
+                encounter,
+                caster_id,
+                target_ids,
+                "treant slam",
+                AbilityScoreType::Strength,
+                Some(AbilityScoreType::Strength),
+                Dice::new(3, 6),
+                DamageType::Bludgeoning,
+                true,
+            ));
+        }
+        all
+    }
+}
+
+pub static TREANT_MULTIATTACK: LazyLock<TreantMultiattack> =
+    LazyLock::new(|| TreantMultiattack {});
+
+/// Fire Elemental Touch — melee, +DEX to hit, 2d6 fire damage and the
+/// target is ignited (Burning, 3 rounds). The elemental's whole-body
+/// touch is the signature "stand next to me and you'll cook" mechanic.
+/// Fire-immune targets take no damage and skip the ignition; we let the
+/// DealDamage path's modifier handle the immunity and apply the Burning
+/// condition gated on whether the target is fire-immune (so a fire
+/// elemental brushing another fire creature doesn't burst it into
+/// flames).
+pub struct FireElementalTouch {}
+
+impl Action for FireElementalTouch {
+    fn name(&self) -> &str {
+        "fire touch"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ft", "burn"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "fire touch",
+            AbilityScoreType::Dexterity,
+            Some(AbilityScoreType::Dexterity),
+            Dice::new(2, 6),
+            DamageType::Fire,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        // No ignition for fire-immune targets — the Burning DOT is also
+        // fire-typed and would tick to 0 anyway, but skipping the
+        // ApplyCondition keeps the log clean.
+        let immune = encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| a.is_immune_to(DamageType::Fire));
+        if !immune {
+            effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Burning,
+                timer: ConditionTimer::Rounds(3),
+            }));
+        }
+        effects
+    }
+}
+
+pub static FIRE_ELEMENTAL_TOUCH: LazyLock<FireElementalTouch> =
+    LazyLock::new(|| FireElementalTouch {});
+
+/// Gelatinous Cube Pseudopod — melee, slow attack, 3d6 acid on hit and
+/// on a failed DC 12 STR save the target is Restrained (the cube has
+/// engulfed them). The Restrained ends when the cube dies or the target
+/// breaks free — modeled by a 5-round timer here, long enough to mimic
+/// the engulf duration without locking the target forever if the cube
+/// can't be killed in time.
+pub struct GelatinousCubeEngulf {}
+
+impl Action for GelatinousCubeEngulf {
+    fn name(&self) -> &str {
+        "pseudopod"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["gp", "engulf"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Acid]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "pseudopod",
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(3, 6),
+            DamageType::Acid,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, 12);
+        if !save.passed() {
+            encounter.log("  pseudopod: target is engulfed and restrained");
+            effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Restrained,
+                timer: ConditionTimer::Rounds(5),
+            }));
+        }
+        effects
+    }
+}
+
+pub static GELATINOUS_CUBE_ENGULF: LazyLock<GelatinousCubeEngulf> =
+    LazyLock::new(|| GelatinousCubeEngulf {});

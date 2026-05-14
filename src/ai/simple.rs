@@ -1034,20 +1034,25 @@ mod tests {
     }
 
     /// Exercise the new spells / creatures in an AI-driven encounter so the
-    /// rule changes (Stoneskin / Beacon of Hope / Heal in cleric loadout,
-    /// Synaptic Static / Disintegrate / Banishment in wizard loadout,
-    /// Wight / Minotaur / Banshee / Hippogriff / Doppelganger / Mummy /
-    /// Berserker / Veteran / Yeti in the monster pool) don't crash the
-    /// AI's action picker or stall the process_stack loop.
+    /// rule changes (Sunbeam / Prayer of Healing / Power Word Heal /
+    /// Resurrection in cleric+wizard loadouts; Manticore / Hill Giant /
+    /// Treant / Fire Elemental / Gelatinous Cube in the monster pool)
+    /// don't crash the AI's action picker or stall the process_stack
+    /// loop. Also keeps the prior "new content" coverage on the lineup.
     #[test]
     fn ai_vs_ai_terminates_with_new_content() {
         use crate::actors::creatures::banshees::BANSHEE_TEMPLATE;
         use crate::actors::creatures::berserkers::BERSERKER_TEMPLATE;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::doppelgangers::DOPPELGANGER_TEMPLATE;
+        use crate::actors::creatures::fire_elementals::FIRE_ELEMENTAL_TEMPLATE;
+        use crate::actors::creatures::gelatinous_cubes::GELATINOUS_CUBE_TEMPLATE;
+        use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
         use crate::actors::creatures::hippogriffs::HIPPOGRIFF_TEMPLATE;
+        use crate::actors::creatures::manticores::MANTICORE_TEMPLATE;
         use crate::actors::creatures::minotaurs::MINOTAUR_TEMPLATE;
         use crate::actors::creatures::mummies::MUMMY_TEMPLATE;
+        use crate::actors::creatures::treants::TREANT_TEMPLATE;
         use crate::actors::creatures::veterans::VETERAN_TEMPLATE;
         use crate::actors::creatures::wights::WIGHT_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -1081,6 +1086,11 @@ mod tests {
             let _ = e.instantiate_creature(&MUMMY_TEMPLATE, Coordinate::new(25, 13), 1, 4);
             let _ = e.instantiate_creature(&BERSERKER_TEMPLATE, Coordinate::new(23, 17), 1, 5);
             let _ = e.instantiate_creature(&YETI_TEMPLATE, Coordinate::new(23, 15), 1, 6);
+            let _ = e.instantiate_creature(&MANTICORE_TEMPLATE, Coordinate::new(23, 13), 1, 7);
+            let _ = e.instantiate_creature(&HILL_GIANT_TEMPLATE, Coordinate::new(21, 17), 1, 8);
+            let _ = e.instantiate_creature(&TREANT_TEMPLATE, Coordinate::new(21, 15), 1, 9);
+            let _ = e.instantiate_creature(&FIRE_ELEMENTAL_TEMPLATE, Coordinate::new(21, 13), 1, 10);
+            let _ = e.instantiate_creature(&GELATINOUS_CUBE_TEMPLATE, Coordinate::new(19, 17), 1, 11);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;
@@ -1613,18 +1623,24 @@ mod tests {
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(15, 5), 1, 0)
             .unwrap();
 
-        // Drain every level-1 slot the wizard owns so Magic Missile is
-        // unavailable. best_attack_against should now pick Fire Bolt.
-        let max_slots = e.actors[&wizard]
-            .spell_slot_manager
-            .spell_slots(1)
-            .max_spell_slots;
-        for _ in 0..max_slots {
-            e.actors
-                .get_mut(&wizard)
-                .unwrap()
+        // Drain every spell slot the wizard owns at every level so all
+        // leveled spells (Magic Missile, Fireball, Sunbeam, ...) become
+        // unavailable. `best_attack_against` should now fall back to the
+        // at-will Fire Bolt cantrip. Drain a generous 1..=9 range since
+        // the wizard's loadout can grow over time without invalidating
+        // this assertion.
+        for lvl in 1u32..=9 {
+            let max_slots = e.actors[&wizard]
                 .spell_slot_manager
-                .consume_spell_slot(1);
+                .spell_slots(lvl)
+                .max_spell_slots;
+            for _ in 0..max_slots {
+                e.actors
+                    .get_mut(&wizard)
+                    .unwrap()
+                    .spell_slot_manager
+                    .consume_spell_slot(lvl);
+            }
         }
 
         let ai = SimpleAi;

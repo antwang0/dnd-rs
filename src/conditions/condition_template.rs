@@ -83,7 +83,6 @@ pub enum Condition {
     Burning,
     /// Took the Disengage action this turn: their movement doesn't
     /// provoke opportunity attacks. Cleared by `UntilStartOfNextTurn`.
-    /// Alias kept for legacy call sites; `Disengaging` is preferred.
     Disengaging,
     /// Knocked unconscious (HP 0 or magical sleep). Stronger than
     /// Incapacitated: drops prone, fails STR/DEX saves, and melee crits
@@ -248,7 +247,6 @@ impl Condition {
         )
     }
 
-    /// True if this condition zeros out movement.
     /// True if this condition is a beneficial buff that Dispel Magic /
     /// similar "end one effect" spells should target. Used by the
     /// Dispel Magic side-effect when the target isn't concentrating —
@@ -272,6 +270,9 @@ impl Condition {
         )
     }
 
+    /// True if this condition zeros out movement. Read by
+    /// `ActorInstance::remaining_movement` to gate motion-blocking
+    /// conditions in one place.
     pub fn zeros_movement(&self) -> bool {
         // Note: Prone is NOT in this list. RAW: prone halves movement
         // (you crawl). We don't yet model the half-speed reduction;
