@@ -1,0 +1,111 @@
+use crate::actions::default_actions::DEFAULT_ACTIONS;
+use crate::actions::monster_attacks::LICH_PARALYZING_TOUCH;
+use crate::actions::spells::{
+    BANISHMENT, BESTOW_CURSE, CHILL_TOUCH, CLOUDKILL, CONE_OF_COLD, DISINTEGRATE, FINGER_OF_DEATH,
+    FIREBALL, FIRE_BOLT, HOLD_MONSTER, ICE_STORM, LIGHTNING_BOLT, MAGIC_MISSILE, MIND_SLIVER,
+    MIRROR_IMAGE, POWER_WORD_KILL, POWER_WORD_STUN, SCORCHING_RAY, SHIELD, SYNAPTIC_STATIC,
+    TOLL_THE_DEAD, VAMPIRIC_TOUCH,
+};
+use crate::actors::actor_template::CreatureTemplate;
+use crate::conditions::Condition;
+use crate::engine::types::{
+    AbilityScoreType, DamageModifier, DamageType, Language, Size, SpecialSense,
+};
+use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
+
+/// Lich — CR 21 undead spellcaster. The marquee boss caster: huge spell
+/// list, paralyzing touch as a fallback melee, and a wide envelope of
+/// damage / condition immunities. Spells span the entire wizard list at
+/// boss-tier slot counts (4/3/3/3/3/2/2/2/2 — late-game archmage with
+/// double-coverage on the killer level-7/8/9 lane). Doesn't roll death
+/// saves (creature, not PC), but Toll the Dead + Chill Touch keep the
+/// at-will damage rolling even after the slot pool drains.
+pub static LICH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&*LICH_PARALYZING_TOUCH);
+    // Cantrips — free damage option once slots run dry.
+    actions.push(&*FIRE_BOLT);
+    actions.push(&*CHILL_TOUCH);
+    actions.push(&*MIND_SLIVER);
+    actions.push(&*TOLL_THE_DEAD);
+    // Level-1 / 2 / 3 — clean ramp from MM and shield is the iconic
+    // reaction-budget defense.
+    actions.push(&*SHIELD);
+    actions.push(&*MAGIC_MISSILE);
+    actions.push(&*MIRROR_IMAGE);
+    actions.push(&*SCORCHING_RAY);
+    actions.push(&*VAMPIRIC_TOUCH);
+    actions.push(&*FIREBALL);
+    actions.push(&*LIGHTNING_BOLT);
+    actions.push(&*BESTOW_CURSE);
+    // Level 4 / 5 — control + damage curve.
+    actions.push(&*ICE_STORM);
+    actions.push(&*BANISHMENT);
+    actions.push(&*HOLD_MONSTER);
+    actions.push(&*CLOUDKILL);
+    actions.push(&*CONE_OF_COLD);
+    // Level 6 / 7 / 8 — finishing power.
+    actions.push(&*DISINTEGRATE);
+    actions.push(&*FINGER_OF_DEATH);
+    actions.push(&*SYNAPTIC_STATIC);
+    actions.push(&*POWER_WORD_STUN);
+    // Level 9 — the lich's signature panic button.
+    actions.push(&*POWER_WORD_KILL);
+    CreatureTemplate {
+        name: "Lich",
+        // 'L' is taken in some content; use 'l' (lowercase L) for lich.
+        glyph: 'l',
+        ac: 17,
+        // 18d8+54 = 135 average per MM CR 21.
+        hitpoints: "18d8+54".parse().unwrap(),
+        speed: 30.,
+        strength: 11,
+        intelligence: 20, // primary spellcasting ability
+        dexterity: 16,
+        wisdom: 14,
+        constitution: 16,
+        charisma: 16,
+        skills: HashSet::new(),
+        items: Vec::new(),
+        senses: HashSet::from([SpecialSense::Truesight(120), SpecialSense::Darkvision(120)]),
+        languages: HashSet::from([Language::Common, Language::Draconic, Language::Infernal]),
+        cr: 21.0,
+        size: Size::Medium,
+        actions,
+        // Boss-tier loadout: 4/3/3/3/3/2/2/2/2.
+        spell_slots_by_level: vec![4, 3, 3, 3, 3, 2, 2, 2, 2],
+        rolls_death_saves: false,
+        // 5e Lich: necrotic / poison immunity, resistance to cold /
+        // lightning / non-magical physical (we use straight resistance
+        // for the three physical types to keep parity with the rest of
+        // our undead pool).
+        damage_modifiers: HashMap::from([
+            (DamageType::Necrotic, DamageModifier::Immunity),
+            (DamageType::Poison, DamageModifier::Immunity),
+            (DamageType::Cold, DamageModifier::Resistance),
+            (DamageType::Lightning, DamageModifier::Resistance),
+            (DamageType::Bludgeoning, DamageModifier::Resistance),
+            (DamageType::Piercing, DamageModifier::Resistance),
+            (DamageType::Slashing, DamageModifier::Resistance),
+        ]),
+        // Lich save profile: prof in CON / INT / WIS (Legendary Resistance-
+        // adjacent in 5e RAW, but we approximate with proficient saves).
+        proficient_saves: HashSet::from([
+            AbilityScoreType::Constitution,
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+        ]),
+        // Standard undead condition immunities + Frightened / Paralyzed
+        // (a lich's mind doesn't break under fear or paralysis effects).
+        condition_immunities: HashSet::from([
+            Condition::Poisoned,
+            Condition::Charmed,
+            Condition::Frightened,
+            Condition::Paralyzed,
+        ]),
+        features: HashSet::new(),
+        regen_per_round: 0,
+        regen_suppressors: HashSet::new(),
+    }
+});

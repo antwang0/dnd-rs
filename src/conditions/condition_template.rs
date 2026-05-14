@@ -184,6 +184,41 @@ pub enum Condition {
     /// auto-fail via the existing `auto_fail_save` switch (extended to
     /// recognize Petrified alongside Paralyzed / Stunned).
     Petrified,
+    /// Sanctuary (5e Sanctuary spell, level-1 abjuration, bonus action).
+    /// Any creature targeting the warded actor with an attack or harmful
+    /// spell must succeed on a WIS save vs the caster's spell DC or the
+    /// effect fails (and the attacker can't target the warded for the
+    /// rest of the turn). We model this by gating hostile actions inside
+    /// `Action::validate_input`: the attacker rolls a one-shot WIS save
+    /// at attack-roll time; on fail, the action silently no-ops. The
+    /// warded actor loses the buff the moment they themselves attack or
+    /// cast a damaging spell — the engine clears the condition on the
+    /// holder's first hostile action.
+    Sanctuary,
+    /// Fire Shield — warm version (5e Fire Shield spell, level-4
+    /// evocation). The holder gains resistance to cold damage (we
+    /// approximate with the generic `DamageResistant` model — see
+    /// `Stoneskin`). Any creature within reach that hits the holder
+    /// takes 2d8 fire damage in retaliation (handled in
+    /// `EncounterInstance::resolve_attack` via the fire-shield reflect
+    /// hook). Concentration-free — fire shields are short-duration
+    /// auto-clear via the Rounds timer.
+    FireShielded,
+    /// Daylit (5e Daylight spell, level-3 evocation). The actor sits
+    /// inside a 60-foot sphere of bright light. We model this as a
+    /// passive buff that gives undead / fiends (proxied by Necrotic /
+    /// Poison immunity) disadvantage on attacks targeting the holder —
+    /// mirroring `Warded` (Protection from Evil and Good) but for an
+    /// area-buff rather than a single-target buff. Lasts for the spell's
+    /// duration (1 hour RAW; we cap to a long Rounds timer).
+    Daylit,
+    /// Spike Growth (5e level-2 transmutation, concentration). The target
+    /// is standing in spiked terrain — any movement they make this turn
+    /// will deal 2d4 piercing damage per 5ft moved. We approximate by
+    /// tagging the holder with the condition; the damage rider lives on
+    /// the `MoveActor` apply path which reads this flag and bills the
+    /// caster's spike damage once per step.
+    Spiked,
 }
 
 impl Condition {
@@ -229,6 +264,10 @@ impl Condition {
             Condition::Slowed => "slowed",
             Condition::DeathWarded => "warded against death",
             Condition::Petrified => "petrified",
+            Condition::Sanctuary => "sanctified",
+            Condition::FireShielded => "fire shielded",
+            Condition::Daylit => "lit by daylight",
+            Condition::Spiked => "in spiked growth",
         }
     }
 
@@ -267,6 +306,9 @@ impl Condition {
                 | Condition::Blurred
                 | Condition::DeathWarded
                 | Condition::Helped
+                | Condition::Sanctuary
+                | Condition::FireShielded
+                | Condition::Daylit
         )
     }
 

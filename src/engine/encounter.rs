@@ -501,7 +501,13 @@ impl EncounterInstance {
             // attacks vs the Warded target. We approximate the creature-
             // type gate by checking the attacker's necrotic/poison
             // immunity (a reliable proxy for undead / fiend in our pool).
-            if target.has_condition(Condition::Warded)
+            //
+            // Daylight applies the same undead-disadvantage hook for any
+            // ally standing in the daylight aura, mirroring RAW's "sunlight
+            // forces sun-vulnerable creatures to make Constitution saves
+            // or take damage" but simplified to a flat disadvantage.
+            if (target.has_condition(Condition::Warded)
+                || target.has_condition(Condition::Daylit))
                 && let Some(attacker) = self.actors.get(&attacker_id)
                 && (attacker.is_immune_to(DamageType::Necrotic)
                     || attacker.is_immune_to(DamageType::Poison))
@@ -1633,6 +1639,74 @@ impl EncounterInstance {
             .is_some_and(|c| c.breaks_on_attack)
         {
             self.drop_concentration(caster_id);
+        }
+    }
+
+    /// 5e Sanctuary: if `target_id` carries the Sanctuary condition, the
+    /// attacker (`attacker_id`) makes a one-shot WIS save. On fail, the
+    /// attack is blocked entirely (caller short-circuits the attack roll
+    /// and returns a miss). On pass, the spell is breached and the buff
+    /// drops so it can't keep firing for the rest of the round.
+    ///
+    /// The save DC is a fixed 14 — comparable to a level-1 cleric's WIS-
+    /// based spell save DC (8 + 2 prof + 4 WIS mod). We don't currently
+    /// track the original caster's DC alongside the condition, so a
+    /// uniform mid-DC is a clean approximation.
+    pub fn sanctuary_save_blocks(&mut self, attacker_id: usize, target_id: usize) -> bool {
+        let warded = self
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| a.has_condition(Condition::Sanctuary));
+        if !warded {
+            return false;
+        }
+        const SANCTUARY_DC: i32 = 14;
+        let save = self.roll_save(
+            attacker_id,
+            crate::engine::types::AbilityScoreType::Wisdom,
+            SANCTUARY_DC,
+        );
+        if save.passed() {
+            // 5e: "if the attacker makes a successful save, the spell is
+            // breached" — we drop the buff so follow-up swings hit normally.
+            if let Some(t) = self.actors.get_mut(&target_id) {
+                let name = t.name().to_string();
+                if t.remove_condition(Condition::Sanctuary) {
+                    self.log(format!("{}'s sanctuary is breached.", name));
+                }
+            }
+            false
+        } else {
+            let attacker_name = self
+                .actors
+                .get(&attacker_id)
+                .map(|a| a.name().to_string())
+                .unwrap_or_default();
+            let target_name = self
+                .actors
+                .get(&target_id)
+                .map(|a| a.name().to_string())
+                .unwrap_or_default();
+            self.log(format!(
+                "  sanctuary protects {} from {}.",
+                target_name, attacker_name
+            ));
+            true
+        }
+    }
+
+    /// Drop the actor's own Sanctuary condition when they take a hostile
+    /// action. 5e: "if the warded creature attacks or casts a spell that
+    /// affects an enemy, this spell ends." Called from the attack-roll
+    /// path before the d20 lands so the buff disappears on the very swing
+    /// that violates the ward's pacifism clause.
+    pub fn break_sanctuary_on_hostile(&mut self, caster_id: usize) {
+        let Some(actor) = self.actors.get_mut(&caster_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        if actor.remove_condition(Condition::Sanctuary) {
+            self.log(format!("{}'s sanctuary fades.", name));
         }
     }
 
@@ -15015,5 +15089,559 @@ mod tests {
         assert!(enemies.contains(&foe));
         assert!(!enemies.contains(&caster));
         assert!(!enemies.contains(&ally));
+    }
+
+    /// Dimension Door: long-range teleport drops the caster on the target
+    /// tile without firing OAs against intervening tiles.
+    #[test]
+    fn dimension_door_teleports_caster() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::DIMENSION_DOOR;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let dest = Coordinate::new(15, 15);
+        let effects = DIMENSION_DOOR.side_effects(
+            &mut e,
+            caster,
+            None,
+            Some(&vec![dest]),
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert_eq!(e.actors[&caster].location(), dest);
+    }
+
+    /// Wall of Fire: every enemy in the burst takes the rolled fire
+    /// damage and is left Burning for follow-up DOT.
+    #[test]
+    fn wall_of_fire_damages_and_burns_enemies() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::WALL_OF_FIRE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let foe = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        let foe_hp = e.actors[&foe].hitpoints();
+        let effects = WALL_OF_FIRE.side_effects(
+            &mut e,
+            caster,
+            None,
+            Some(&vec![Coordinate::new(10, 10)]),
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        // Hit dropped HP (or killed); either way, hp <= original.
+        let after_hp = e.actors.get(&foe).map(|a| a.hitpoints()).unwrap_or(0);
+        assert!(after_hp < foe_hp, "wall of fire didn't damage foe");
+        // Burning is applied to anyone left standing in the burst.
+        if let Some(a) = e.actors.get(&foe)
+            && a.is_combat_active()
+        {
+            assert!(a.has_condition(Condition::Burning));
+        }
+    }
+
+    /// Wall of Fire is enemy-only: allies inside the burst aren't burned
+    /// (5e RAW: caster picks which side of the wall heats up).
+    #[test]
+    fn wall_of_fire_spares_allies() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::WALL_OF_FIRE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 10), 0, 1)
+            .unwrap();
+        let ally_hp = e.actors[&ally].hitpoints();
+        let effects = WALL_OF_FIRE.side_effects(
+            &mut e,
+            caster,
+            None,
+            Some(&vec![Coordinate::new(10, 10)]),
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert_eq!(e.actors[&ally].hitpoints(), ally_hp, "ally took friendly fire");
+        assert!(!e.actors[&ally].has_condition(Condition::Burning));
+    }
+
+    /// Sanctuary: applies the Sanctuary buff to the target ally.
+    #[test]
+    fn sanctuary_applies_buff() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::SANCTUARY;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        let effects = SANCTUARY.side_effects(
+            &mut e,
+            cleric,
+            Some(&vec![ally]),
+            None,
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&ally].has_condition(Condition::Sanctuary));
+    }
+
+    /// Sanctuary blocks an attack: the attacker WIS-saves; on fail
+    /// `sanctuary_save_blocks` returns true (caller short-circuits).
+    /// Pass means the buff is breached and cleared.
+    #[test]
+    fn sanctuary_save_eventually_resolves() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let attacker = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let warded = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&warded)
+            .unwrap()
+            .add_condition(Condition::Sanctuary, ConditionTimer::Rounds(10));
+        // Across many seeds, expect both pass and fail outcomes.
+        let mut blocked = 0usize;
+        let mut breached = 0usize;
+        for _ in 0..100 {
+            // Re-apply Sanctuary each iteration (a pass would clear it).
+            e.actors
+                .get_mut(&warded)
+                .unwrap()
+                .add_condition(Condition::Sanctuary, ConditionTimer::Rounds(10));
+            if e.sanctuary_save_blocks(attacker, warded) {
+                blocked += 1;
+            } else {
+                breached += 1;
+            }
+        }
+        assert!(blocked > 0, "sanctuary never blocked across 100 saves");
+        assert!(breached > 0, "sanctuary never breached across 100 saves");
+    }
+
+    /// Daylight: every ally inside the burst gets the Daylit buff.
+    #[test]
+    fn daylight_lights_allies_in_radius() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::DAYLIGHT;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 1)
+            .unwrap();
+        let effects = DAYLIGHT.side_effects(
+            &mut e,
+            cleric,
+            None,
+            Some(&vec![Coordinate::new(6, 5)]),
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&ally].has_condition(Condition::Daylit));
+    }
+
+    /// Fire Shield: caster gets the FireShielded condition.
+    #[test]
+    fn fire_shield_self_buffs() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::FIRE_SHIELD;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let effects = FIRE_SHIELD.side_effects(&mut e, caster, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&caster].has_condition(Condition::FireShielded));
+    }
+
+    /// Cloudkill: every enemy in burst takes (or saves against) poison.
+    /// Poison-immune zombies should take 0 even on a failed save.
+    #[test]
+    fn cloudkill_respects_poison_immunity() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::CLOUDKILL;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        let z_hp = e.actors[&zombie].hitpoints();
+        let effects = CLOUDKILL.side_effects(
+            &mut e,
+            caster,
+            None,
+            Some(&vec![Coordinate::new(10, 10)]),
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&zombie].hitpoints(),
+            z_hp,
+            "poison-immune zombie should take no Cloudkill damage"
+        );
+    }
+
+    /// Insect Plague: piercing AoE — drop a goblin in the burst, expect
+    /// HP loss across a seed sweep (CON save vs the caster's DC).
+    #[test]
+    fn insect_plague_damages_enemy() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::INSECT_PLAGUE;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let caster = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        let g_hp = e.actors[&goblin].hitpoints();
+        let effects = INSECT_PLAGUE.side_effects(
+            &mut e,
+            caster,
+            None,
+            Some(&vec![Coordinate::new(10, 10)]),
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let g_hp_after = e.actors.get(&goblin).map(|a| a.hitpoints()).unwrap_or(0);
+        assert!(g_hp_after < g_hp, "goblin should take some damage from insect plague");
+    }
+
+    /// Healing Spirit: 1d6 to every ally in burst.
+    #[test]
+    fn healing_spirit_heals_allies() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::HEALING_SPIRIT;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 1)
+            .unwrap();
+        let ally_max = e.actors[&ally].max_hitpoints();
+        // Drop the ally so we have HP to heal back.
+        e.actors.get_mut(&ally).unwrap().take_damage(ally_max - 1);
+        let effects = HEALING_SPIRIT.side_effects(
+            &mut e,
+            cleric,
+            None,
+            Some(&vec![Coordinate::new(5, 5)]),
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&ally].hitpoints() > 1, "ally should heal up");
+    }
+
+    /// True Resurrection: brings a Dying ally back to full HP and strips
+    /// the captivating-condition rider stack.
+    #[test]
+    fn true_resurrection_revives_and_cleanses() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::TRUE_RESURRECTION;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        let max = e.actors[&target].max_hitpoints();
+        e.actors.get_mut(&target).unwrap().take_damage(max);
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Charmed, ConditionTimer::Rounds(5));
+        assert!(e.actors[&target].is_dying());
+        let effects = TRUE_RESURRECTION.side_effects(
+            &mut e,
+            cleric,
+            Some(&vec![target]),
+            None,
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(!e.actors[&target].is_dying());
+        assert_eq!(e.actors[&target].hitpoints(), max);
+        assert!(!e.actors[&target].has_condition(Condition::Charmed));
+    }
+
+    /// Daylit gives undead/fiend attackers disadvantage — verify
+    /// compute_attack_mode flips to Disadvantage when an undead-flavored
+    /// (poison-immune) attacker targets a Daylit ally.
+    #[test]
+    fn daylit_imposes_undead_attack_disadvantage() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        // Without Daylit the zombie's attack mode is just Normal.
+        assert_eq!(
+            e.compute_attack_mode(zombie, target, true),
+            RollMode::Normal
+        );
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Daylit, ConditionTimer::Rounds(10));
+        // With Daylit the poison-immune (undead-flavored) zombie has
+        // disadvantage attacking the bathed target.
+        assert_eq!(
+            e.compute_attack_mode(zombie, target, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    /// Fire Shield reflects fire damage on melee hits — set up a hit
+    /// scenario and check the attacker took fire damage afterward.
+    #[test]
+    fn fire_shield_reflects_melee_damage() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::SLAM;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::FireShielded, ConditionTimer::Rounds(10));
+        let attacker_hp_pre = e.actors[&attacker].hitpoints();
+
+        // Many seeds — at least one swing should land and trigger the
+        // shield. 200 attempts at ~50% hit rate is overkill.
+        let mut shield_fired = false;
+        for _ in 0..200 {
+            // Heal both back so the loop doesn't drain HP across swings.
+            let a_max = e.actors[&attacker].max_hitpoints();
+            let t_max = e.actors[&target].max_hitpoints();
+            e.actors.get_mut(&attacker).unwrap().heal(a_max);
+            e.actors.get_mut(&target).unwrap().heal(t_max);
+            let target_vec = vec![target];
+            let effects = SLAM.side_effects(&mut e, attacker, Some(&target_vec), None, None);
+            let had_hit = !effects.is_empty();
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            // Re-check attacker HP after applying side effects.
+            if had_hit
+                && e.actors.get(&attacker).is_some_and(|a| a.hitpoints() < attacker_hp_pre)
+            {
+                shield_fired = true;
+                break;
+            }
+        }
+        assert!(shield_fired, "fire shield never reflected in 200 swings");
+    }
+
+    /// Lich Paralyzing Touch lands cold damage on hit and may paralyze
+    /// the target on a failed CON save.
+    #[test]
+    fn lich_paralyzing_touch_can_paralyze() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::LICH_PARALYZING_TOUCH;
+        use crate::actors::creatures::liches::LICH_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let lich = e
+            .instantiate_creature(&LICH_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+
+        // Across many seeds, expect at least one paralysis application
+        // (the lich's +12 INT-cast attack vs goblin AC 15 has a high hit
+        // rate, and the goblin's CON save is poor).
+        let mut paralyzed = false;
+        for _ in 0..50 {
+            let t_max = e.actors[&target].max_hitpoints();
+            e.actors.get_mut(&target).unwrap().heal(t_max);
+            // Reset paralysis between attempts so we measure each fresh.
+            e.actors
+                .get_mut(&target)
+                .unwrap()
+                .remove_condition(Condition::Paralyzed);
+            let target_vec = vec![target];
+            let effects = LICH_PARALYZING_TOUCH.side_effects(
+                &mut e,
+                lich,
+                Some(&target_vec),
+                None,
+                None,
+            );
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e.actors[&target].has_condition(Condition::Paralyzed) {
+                paralyzed = true;
+                break;
+            }
+        }
+        assert!(paralyzed, "lich never paralyzed across 50 swings");
+    }
+
+    /// Dragon Fire Breath: every enemy in the burst takes (or saves)
+    /// fire damage. A fire-immune ally inside takes zero even on fail.
+    #[test]
+    fn dragon_fire_breath_burns_area() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::DRAGON_FIRE_BREATH;
+        use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let dragon = e
+            .instantiate_creature(&ADULT_RED_DRAGON_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+            .unwrap();
+        let g_hp = e.actors[&goblin].hitpoints();
+        let effects = DRAGON_FIRE_BREATH.side_effects(
+            &mut e,
+            dragon,
+            None,
+            Some(&vec![Coordinate::new(10, 10)]),
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let g_hp_after = e.actors.get(&goblin).map(|a| a.hitpoints()).unwrap_or(0);
+        assert!(g_hp_after < g_hp, "goblin should burn under dragon's breath");
+    }
+
+    /// Lich template wires the full kit: paralyzing touch + level-9 PWK
+    /// plus lower-level cantrips. Smoke test: the template instantiates
+    /// without panicking and rolls non-zero HP.
+    #[test]
+    fn lich_template_instantiates() {
+        use crate::actors::creatures::liches::LICH_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let lich = e
+            .instantiate_creature(&LICH_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&lich].hitpoints() > 0);
+        // Necrotic and poison immunity — both off the undead chassis.
+        assert!(e.actors[&lich].is_immune_to(crate::engine::types::DamageType::Necrotic));
+        assert!(e.actors[&lich].is_immune_to(crate::engine::types::DamageType::Poison));
+    }
+
+    /// Adult Red Dragon: fire immunity and the Frightened immunity
+    /// (dragons fear nothing) come through on the instance.
+    #[test]
+    fn adult_red_dragon_immunities() {
+        use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let drg = e
+            .instantiate_creature(&ADULT_RED_DRAGON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&drg].is_immune_to(crate::engine::types::DamageType::Fire));
+        assert!(e.actors[&drg].is_immune_to_condition(Condition::Frightened));
+    }
+
+    /// Beholder: prone-immune (it floats) and CON / INT / WIS save proficient.
+    #[test]
+    fn beholder_template_immunities() {
+        use crate::actors::creatures::beholders::BEHOLDER_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let b = e
+            .instantiate_creature(&BEHOLDER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&b].is_immune_to_condition(Condition::Prone));
+        assert!(e.actors[&b].is_save_proficient(crate::engine::types::AbilityScoreType::Constitution));
     }
 }

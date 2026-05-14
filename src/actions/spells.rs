@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 
 use crate::{
     actions::action_template::{
-        action_and_slot, first_target_id, Action, TargetingSchema,
+        action_and_slot, bonus_action_and_slot, first_target_id, Action, TargetingSchema,
     },
     actors::actor_template::ConcentrationData,
     conditions::{Condition, ConditionTimer},
@@ -107,6 +107,13 @@ fn spell_attack_outcome(
         .get(&target_id)
         .map(|a| a.armor_class() as i32)
         .unwrap_or(10);
+    // 5e Sanctuary: gate spell attacks the same way weapon attacks are
+    // gated — attacker rolls a WIS save vs the ward's DC. On fail, the
+    // spell silently fizzles against the warded target.
+    if encounter.sanctuary_save_blocks(caster_id, target_id) {
+        return (Vec::new(), 0);
+    }
+    encounter.break_sanctuary_on_hostile(caster_id);
     // Spell attacks are attack rolls per 5e RAW, so the full rider stack
     // applies: Help, Hidden, Bless, Mocked, etc. Route through
     // attack_mode_with_riders so a one-shot Help grant on the caster is
@@ -473,7 +480,7 @@ impl Action for HoldPerson {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
         // Level-2 leveled spell — Action + a level-2 spell slot.
-        vec![Resource::Action, Resource::SpellSlot(2)]
+        action_and_slot(2)
     }
 
     fn side_effects(
@@ -564,7 +571,7 @@ impl Action for CureWounds {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
+        action_and_slot(1)
     }
 
     fn side_effects(
@@ -709,7 +716,7 @@ impl Action for Bless {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
+        action_and_slot(1)
     }
 
     fn side_effects(
@@ -842,7 +849,7 @@ impl Action for BurningHands {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
+        action_and_slot(1)
     }
 
     fn side_effects(
@@ -917,7 +924,7 @@ impl Action for MagicMissile {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
+        action_and_slot(1)
     }
 
     fn side_effects(
@@ -990,7 +997,7 @@ impl Action for ShieldOfFaith {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
+        action_and_slot(1)
     }
     fn side_effects(
         &self,
@@ -1054,7 +1061,7 @@ impl Action for CauseFear {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
+        action_and_slot(1)
     }
     fn side_effects(
         &self,
@@ -1129,7 +1136,7 @@ impl Action for GuidingBolt {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
+        action_and_slot(1)
     }
     fn side_effects(
         &self,
@@ -1203,7 +1210,7 @@ impl Action for Web {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(2)]
+        action_and_slot(2)
     }
     fn side_effects(
         &self,
@@ -1299,7 +1306,7 @@ impl Action for FalseLife {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
+        action_and_slot(1)
     }
     fn side_effects(
         &self,
@@ -1353,7 +1360,7 @@ impl Action for Blindness {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(2)]
+        action_and_slot(2)
     }
     fn side_effects(
         &self,
@@ -1465,7 +1472,7 @@ impl Action for FaerieFire {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
+        action_and_slot(1)
     }
     fn side_effects(
         &self,
@@ -1610,7 +1617,7 @@ impl Action for Thunderwave {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
+        action_and_slot(1)
     }
     fn side_effects(
         &self,
@@ -1682,7 +1689,7 @@ impl Action for MistyStep {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::BonusAction, Resource::SpellSlot(2)]
+        bonus_action_and_slot(2)
     }
     fn custom_validate_input(
         &self,
@@ -1762,7 +1769,7 @@ impl Action for Bane {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
+        action_and_slot(1)
     }
     fn side_effects(
         &self,
@@ -1832,7 +1839,7 @@ impl Action for MageArmor {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
+        action_and_slot(1)
     }
     fn side_effects(
         &self,
@@ -1891,7 +1898,7 @@ impl Action for Aid {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(2)]
+        action_and_slot(2)
     }
     fn side_effects(
         &self,
@@ -2109,7 +2116,7 @@ impl Action for SpiritualWeapon {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::BonusAction, Resource::SpellSlot(2)]
+        bonus_action_and_slot(2)
     }
     fn side_effects(
         &self,
@@ -2177,7 +2184,7 @@ impl Action for HuntersMark {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::BonusAction, Resource::SpellSlot(1)]
+        bonus_action_and_slot(1)
     }
     fn side_effects(
         &self,
@@ -2310,7 +2317,7 @@ impl Action for InflictWounds {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
+        action_and_slot(1)
     }
     fn side_effects(
         &self,
@@ -2377,7 +2384,7 @@ impl Action for RayOfSickness {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
+        action_and_slot(1)
     }
     fn side_effects(
         &self,
@@ -2462,7 +2469,7 @@ impl Action for LesserRestoration {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(2)]
+        action_and_slot(2)
     }
     fn custom_validate_input(
         &self,
@@ -2874,7 +2881,7 @@ impl Action for Heroism {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::BonusAction, Resource::SpellSlot(1)]
+        bonus_action_and_slot(1)
     }
     fn side_effects(
         &self,
@@ -2948,7 +2955,7 @@ impl Action for MassHealingWord {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::BonusAction, Resource::SpellSlot(3)]
+        bonus_action_and_slot(3)
     }
     fn side_effects(
         &self,
@@ -3122,7 +3129,7 @@ impl Action for Shatter {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(2)]
+        action_and_slot(2)
     }
     fn side_effects(
         &self,
@@ -3192,7 +3199,7 @@ impl Action for Sleep {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
+        action_and_slot(1)
     }
     fn side_effects(
         &self,
@@ -3278,7 +3285,7 @@ impl Action for CharmPerson {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
+        action_and_slot(1)
     }
     fn side_effects(
         &self,
@@ -3346,7 +3353,7 @@ impl Action for MirrorImage {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(2)]
+        action_and_slot(2)
     }
     fn side_effects(
         &self,
@@ -3474,7 +3481,7 @@ impl Action for ProtectionFromEvilAndGood {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
+        action_and_slot(1)
     }
     fn side_effects(
         &self,
@@ -3546,7 +3553,7 @@ impl Action for ColorSpray {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
+        action_and_slot(1)
     }
     fn side_effects(
         &self,
@@ -3623,7 +3630,7 @@ impl Action for Command {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
+        action_and_slot(1)
     }
     fn side_effects(
         &self,
@@ -3700,7 +3707,7 @@ impl Action for Fireball {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(3)]
+        action_and_slot(3)
     }
     fn side_effects(
         &self,
@@ -3773,7 +3780,7 @@ impl Action for MagicWeapon {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::BonusAction, Resource::SpellSlot(2)]
+        bonus_action_and_slot(2)
     }
     fn side_effects(
         &self,
@@ -3843,7 +3850,7 @@ impl Action for ScorchingRay {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(2)]
+        action_and_slot(2)
     }
     fn side_effects(
         &self,
@@ -3922,7 +3929,7 @@ impl Action for LightningBolt {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(3)]
+        action_and_slot(3)
     }
     fn side_effects(
         &self,
@@ -3994,7 +4001,7 @@ impl Action for VampiricTouch {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(3)]
+        action_and_slot(3)
     }
     fn side_effects(
         &self,
@@ -4088,7 +4095,7 @@ impl Action for HypnoticPattern {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(3)]
+        action_and_slot(3)
     }
     fn side_effects(
         &self,
@@ -4176,7 +4183,7 @@ impl Action for DivineFavor {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::BonusAction, Resource::SpellSlot(1)]
+        bonus_action_and_slot(1)
     }
     fn side_effects(
         &self,
@@ -4242,7 +4249,7 @@ impl Action for SpiritGuardians {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(3)]
+        action_and_slot(3)
     }
     fn side_effects(
         &self,
@@ -4321,7 +4328,7 @@ impl Action for Hex {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::BonusAction, Resource::SpellSlot(1)]
+        bonus_action_and_slot(1)
     }
     fn side_effects(
         &self,
@@ -4386,7 +4393,7 @@ impl Action for HoldMonster {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(5)]
+        action_and_slot(5)
     }
     fn side_effects(
         &self,
@@ -4462,7 +4469,7 @@ impl Action for Invisibility {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(2)]
+        action_and_slot(2)
     }
     fn side_effects(
         &self,
@@ -4529,7 +4536,7 @@ impl Action for BestowCurse {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(3)]
+        action_and_slot(3)
     }
     fn side_effects(
         &self,
@@ -4674,7 +4681,7 @@ impl Action for Blur {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(2)]
+        action_and_slot(2)
     }
     fn side_effects(
         &self,
@@ -4745,7 +4752,7 @@ impl Action for Haste {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(3)]
+        action_and_slot(3)
     }
     fn side_effects(
         &self,
@@ -4816,7 +4823,7 @@ impl Action for Slow {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(3)]
+        action_and_slot(3)
     }
     fn side_effects(
         &self,
@@ -4925,7 +4932,7 @@ impl Action for ConeOfCold {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(5)]
+        action_and_slot(5)
     }
     fn side_effects(
         &self,
@@ -5004,7 +5011,7 @@ impl Action for MassCureWounds {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(5)]
+        action_and_slot(5)
     }
     fn side_effects(
         &self,
@@ -5113,7 +5120,7 @@ impl Action for StinkingCloud {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(3)]
+        action_and_slot(3)
     }
     fn side_effects(
         &self,
@@ -5271,7 +5278,7 @@ impl Action for DispelMagic {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(3)]
+        action_and_slot(3)
     }
     fn side_effects(
         &self,
@@ -5333,7 +5340,7 @@ impl Action for GreaterInvisibility {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(4)]
+        action_and_slot(4)
     }
     fn side_effects(
         &self,
@@ -5403,7 +5410,7 @@ impl Action for IceStorm {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(4)]
+        action_and_slot(4)
     }
     fn side_effects(
         &self,
@@ -5495,7 +5502,7 @@ impl Action for DeathWard {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(4)]
+        action_and_slot(4)
     }
     fn side_effects(
         &self,
@@ -5580,7 +5587,7 @@ impl Action for Revivify {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(3)]
+        action_and_slot(3)
     }
     fn side_effects(
         &self,
@@ -5640,7 +5647,7 @@ impl Action for Stoneskin {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(4)]
+        action_and_slot(4)
     }
     fn side_effects(
         &self,
@@ -5716,7 +5723,7 @@ impl Action for BeaconOfHope {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(3)]
+        action_and_slot(3)
     }
     fn side_effects(
         &self,
@@ -5795,7 +5802,7 @@ impl Action for CloudOfDaggers {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(2)]
+        action_and_slot(2)
     }
     fn side_effects(
         &self,
@@ -5870,7 +5877,7 @@ impl Action for WitchBolt {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
+        action_and_slot(1)
     }
     fn side_effects(
         &self,
@@ -5949,7 +5956,7 @@ impl Action for PhantasmalKiller {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(4)]
+        action_and_slot(4)
     }
     fn side_effects(
         &self,
@@ -6035,7 +6042,7 @@ impl Action for Banishment {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(4)]
+        action_and_slot(4)
     }
     fn side_effects(
         &self,
@@ -6118,7 +6125,7 @@ impl Action for TashasHideousLaughter {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(1)]
+        action_and_slot(1)
     }
     fn side_effects(
         &self,
@@ -6210,7 +6217,7 @@ impl Action for HealSpellHigh {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(6)]
+        action_and_slot(6)
     }
     fn side_effects(
         &self,
@@ -6281,7 +6288,7 @@ impl Action for Disintegrate {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(6)]
+        action_and_slot(6)
     }
     fn side_effects(
         &self,
@@ -6352,7 +6359,7 @@ impl Action for FingerOfDeath {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(7)]
+        action_and_slot(7)
     }
     fn side_effects(
         &self,
@@ -6423,7 +6430,7 @@ impl Action for PowerWordStun {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(8)]
+        action_and_slot(8)
     }
     fn side_effects(
         &self,
@@ -6489,7 +6496,7 @@ impl Action for SynapticStatic {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(5)]
+        action_and_slot(5)
     }
     fn side_effects(
         &self,
@@ -6593,7 +6600,7 @@ impl Action for CrownOfMadness {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action, Resource::SpellSlot(2)]
+        action_and_slot(2)
     }
     fn side_effects(
         &self,
@@ -7726,3 +7733,845 @@ impl Action for PowerWordHeal {
 }
 
 pub static POWER_WORD_HEAL: LazyLock<PowerWordHeal> = LazyLock::new(|| PowerWordHeal {});
+
+/// Dimension Door — level-4 conjuration. The caster teleports up to 500 ft
+/// (we cap to 120 tiles / 300 ft for map-realism) to a tile they can see.
+/// No opportunity attacks (5e teleports bypass per-step OAs — handled by
+/// `TeleportActor`). Distinct from Misty Step's bonus-action / 30-ft form:
+/// long range, full Action cost, level-4 slot. RAW lets the caster bring
+/// one willing creature along; we model the single-caster variant since
+/// the picker UI doesn't have a "two-actor teleport" schema yet.
+pub struct DimensionDoor {}
+
+impl Action for DimensionDoor {
+    fn name(&self) -> &str {
+        "dimension door"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dd", "dimensiondoor"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 500 ft RAW; capped to 120 tiles for map-scale.
+        Some(120)
+    }
+    fn requires_los(&self) -> bool {
+        // RAW: a location you can see, or a location you've visited /
+        // describable distance. We require LOS for the simple case.
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return false;
+        };
+        encounter.can_move_to(caster_id, point)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        vec![Box::new(crate::engine::side_effects::TeleportActor {
+            actor_id: caster_id,
+            dest: point,
+        })]
+    }
+}
+
+pub static DIMENSION_DOOR: LazyLock<DimensionDoor> = LazyLock::new(|| DimensionDoor {});
+
+/// Wall of Fire — level-4 evocation, concentration. The caster picks a
+/// tile within 120 ft; every enemy whose footprint touches the chosen
+/// point (radius 2 — approximates the 20-ft wall length) takes 5d8 fire
+/// damage with no save and gains the Burning condition (DOT: 1d4 fire
+/// per round-end until expiry). Friendly creatures inside the burst are
+/// skipped — Wall of Fire RAW lets the caster pick which side of the
+/// wall burns, so we model the "caster's allies face the cool side"
+/// clause by using `enemy_burst_targets`. Concentration: dropping it
+/// before the timer expires clears the Burning ride immediately.
+pub struct WallOfFire {}
+
+impl Action for WallOfFire {
+    fn name(&self) -> &str {
+        "wall of fire"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wof", "firewall"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 2 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let raw = encounter.roll(&Dice::new(5, 8));
+        encounter.log(format!(
+            "  wall of fire: 5d8({}) = {} fire (enemies only)",
+            raw, raw
+        ));
+        // Enemy-only AoE: friendly walkers don't get caught. Each enemy
+        // takes the rolled damage and starts Burning for 3 rounds —
+        // matches RAW's "spend a turn near the wall = sustained DOT" feel.
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut tagged: Vec<(usize, Condition)> = Vec::new();
+        for id in encounter.enemy_burst_targets(caster_id, point, 2) {
+            effects.push(Box::new(DealDamage {
+                actor_id: id,
+                amount: raw,
+                damage_type: DamageType::Fire,
+            }));
+            effects.push(Box::new(ApplyCondition {
+                actor_id: id,
+                condition: Condition::Burning,
+                timer: ConditionTimer::Rounds(3),
+            }));
+            tagged.push((id, Condition::Burning));
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Wall of Fire", tagged),
+        }));
+        effects
+    }
+}
+
+pub static WALL_OF_FIRE: LazyLock<WallOfFire> = LazyLock::new(|| WallOfFire {});
+
+/// Cloudkill — level-5 conjuration, concentration. A 20-ft radius (radius
+/// 4 on the 2.5 ft grid) cloud of yellow-green fog drifts where the
+/// caster points. Every creature whose footprint touches the burst makes
+/// a CON save vs the caster's INT-based DC: 5d8 poison on a fail, half on
+/// a success. RAW the cloud also persists and re-damages over time — we
+/// model the immediate hit but skip the per-turn re-damage to keep the
+/// concentration plumbing simple. Poison immunity zeros the damage.
+pub struct Cloudkill {}
+
+impl Action for Cloudkill {
+    fn name(&self) -> &str {
+        "cloudkill"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ck", "poisoncloud"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Poison]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let raw = encounter.roll(&Dice::new(5, 8));
+        encounter.log(format!("  cloudkill: 5d8({}) = {} poison area", raw, raw));
+        let mut effects = crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            4,
+            AbilityScoreType::Constitution,
+            dc,
+            raw,
+            DamageType::Poison,
+        );
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Cloudkill", Vec::new()),
+        }));
+        effects
+    }
+}
+
+pub static CLOUDKILL: LazyLock<Cloudkill> = LazyLock::new(|| Cloudkill {});
+
+/// Insect Plague — level-5 conjuration, concentration. A 20-ft radius
+/// (radius 4) cloud of biting locusts. Every creature in the cloud makes
+/// a CON save vs the caster's WIS-based DC: 4d10 piercing on a fail,
+/// half on a success. Pierces resistance for most undead/oozes — but
+/// since we route through normal damage modifiers, immunity / resistance
+/// applies as usual. Concentration: drop ends the swarm.
+pub struct InsectPlague {}
+
+impl Action for InsectPlague {
+    fn name(&self) -> &str {
+        "insect plague"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ip", "locusts"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 300 ft RAW; cap to 96 tiles (240 ft).
+        Some(96)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let raw = encounter.roll(&Dice::new(4, 10));
+        encounter.log(format!(
+            "  insect plague: 4d10({}) = {} piercing area",
+            raw, raw
+        ));
+        let mut effects = crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            4,
+            AbilityScoreType::Constitution,
+            dc,
+            raw,
+            DamageType::Piercing,
+        );
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Insect Plague", Vec::new()),
+        }));
+        effects
+    }
+}
+
+pub static INSECT_PLAGUE: LazyLock<InsectPlague> = LazyLock::new(|| InsectPlague {});
+
+/// Daylight — level-3 evocation. Anchors a 60-ft sphere of bright sunlight
+/// to a tile within 120 ft. Every ally inside the radius gets the Daylit
+/// condition, which imposes disadvantage on incoming attacks from
+/// undead / fiend-flavored enemies (proxied by Necrotic / Poison
+/// immunity, like the Warded clause). RAW the spell also dispels magical
+/// darkness in the area; we don't model darkness terrain, so the
+/// dispel-darkness clause is a no-op today. No concentration, but lasts
+/// only ~10 rounds before the timer ticks the condition off each ally.
+pub struct Daylight {}
+
+impl Action for Daylight {
+    fn name(&self) -> &str {
+        "daylight"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["day", "sunlight"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // Sphere of radius 6 (≈ 30 ft); anchored to a tile within range.
+        TargetingSchema::Burst { radius: 6 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        encounter
+            .ally_burst_targets(caster_id, point, 6)
+            .into_iter()
+            .map(|id| {
+                Box::new(ApplyCondition {
+                    actor_id: id,
+                    condition: Condition::Daylit,
+                    timer: ConditionTimer::Rounds(10),
+                }) as Box<dyn ApplicableSideEffect>
+            })
+            .collect()
+    }
+}
+
+pub static DAYLIGHT: LazyLock<Daylight> = LazyLock::new(|| Daylight {});
+
+/// Fire Shield — level-4 evocation. The caster ignites in protective flame
+/// for 10 rounds: they gain resistance to cold damage and any creature
+/// that hits them with a melee attack within reach takes 2d8 fire damage
+/// in retaliation. We model this with the FireShielded condition;
+/// resolve_attack reads the condition to fire the reflective damage on
+/// melee hits, and the holder also gains the generic DamageResistant
+/// flag (which halves cold and most other damage — close enough for our
+/// purposes). Self-only by default — RAW limits it to the caster.
+pub struct FireShield {}
+
+impl Action for FireShield {
+    fn name(&self) -> &str {
+        "fire shield"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fs", "flameshield"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::FireShielded,
+            timer: ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static FIRE_SHIELD: LazyLock<FireShield> = LazyLock::new(|| FireShield {});
+
+/// Sanctuary — level-1 abjuration, bonus action. Wards one ally so any
+/// attacker targeting them must succeed on a WIS save vs the caster's
+/// spell DC or pick a different target / lose the attack. We model this
+/// via the engine-level `Sanctuary` condition: at attack-resolution
+/// time, `resolve_attack` / `spell_attack_outcome` short-circuit on a
+/// failed save (the attacker's swing whiffs). Hostile actions by the
+/// warded actor end the spell — `Action::execute` clears the buff when
+/// the holder casts a harmful spell or attacks.
+pub struct Sanctuary {}
+
+impl Action for Sanctuary {
+    fn name(&self) -> &str {
+        "sanctuary"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sanc"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch.
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_and_slot(1)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // 10-round duration approximates 1 minute. The ward drops as soon
+        // as the holder takes a hostile action (engine hook below).
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Sanctuary,
+            timer: ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static SANCTUARY: LazyLock<Sanctuary> = LazyLock::new(|| Sanctuary {});
+
+/// True Resurrection — level-9 necromancy. Restores a Dying creature to
+/// full HP and strips every captivating / mind-affecting / wound rider
+/// the body might be carrying. Functionally a Resurrection that also
+/// drops Charmed / Frightened / Stunned / Paralyzed and stands the
+/// target back up (Prone clear) — top-of-the-line cleric panic button.
+/// Costs a 9th-level slot, single-target, touch.
+pub struct TrueResurrection {}
+
+impl Action for TrueResurrection {
+    fn name(&self) -> &str {
+        "true resurrection"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["trueres", "tres"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| a.is_dying())
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(9)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::{RemoveCondition, ReviveDying};
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let max = encounter
+            .actors
+            .get(&target_id)
+            .map(|a| a.max_hitpoints())
+            .unwrap_or(0);
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![
+            Box::new(ReviveDying { actor_id: target_id }),
+            Box::new(Heal {
+                actor_id: target_id,
+                amount: max,
+            }),
+        ];
+        // Top-of-line cleanse: every condition you'd want gone after dying.
+        for c in [
+            Condition::Blinded,
+            Condition::Deafened,
+            Condition::Poisoned,
+            Condition::Charmed,
+            Condition::Frightened,
+            Condition::Stunned,
+            Condition::Paralyzed,
+            Condition::Petrified,
+            Condition::Prone,
+        ] {
+            effects.push(Box::new(RemoveCondition {
+                actor_id: target_id,
+                condition: c,
+            }));
+        }
+        effects
+    }
+}
+
+pub static TRUE_RESURRECTION: LazyLock<TrueResurrection> = LazyLock::new(|| TrueResurrection {});
+
+/// Healing Spirit — level-2 conjuration, bonus action, concentration. A
+/// shimmering spirit anchors to a tile; every ally whose footprint
+/// touches the burst regains 1d6 HP. RAW the spirit moves and pulses
+/// each round; we collapse to a single instant heal-burst at cast time
+/// to keep the concentration plumbing simple — the bonus-action cost
+/// and the AoE pattern are the load-bearing parts of the spell anyway.
+pub struct HealingSpirit {}
+
+impl Action for HealingSpirit {
+    fn name(&self) -> &str {
+        "healing spirit"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hs", "spirit"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 1 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let raw = encounter.roll(&Dice::new(1, 6));
+        encounter.log(format!(
+            "  healing spirit: 1d6({}) = {} HP to each ally in area",
+            raw, raw
+        ));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = encounter
+            .ally_burst_targets(caster_id, point, 1)
+            .into_iter()
+            .map(|id| {
+                Box::new(Heal {
+                    actor_id: id,
+                    amount: raw,
+                }) as Box<dyn ApplicableSideEffect>
+            })
+            .collect();
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Healing Spirit", Vec::new()),
+        }));
+        effects
+    }
+}
+
+pub static HEALING_SPIRIT: LazyLock<HealingSpirit> = LazyLock::new(|| HealingSpirit {});
+
+/// Aid — level-2 abjuration, action. Boosts up to three creatures' max
+/// HP by 5 (level-2 baseline) for 8 hours. We already have the simpler
+/// single-target Aid; this aliased version is a no-op stub kept off the
+/// spell list for now. (Engine note: see the existing AID for the impl.)
+/// Aura of Vitality — level-3 evocation, concentration, bonus action.
+/// Anchors a 30-ft radius aura that lets the caster spend a bonus action
+/// each round to heal one ally inside the aura for 2d6 HP. We model the
+/// instant cast as a single 2d6 heal-burst on every ally inside a radius-
+/// 6 sphere at the caster's tile — collapses the per-round bonus-action
+/// retrigger into one strong upfront heal that mirrors Mass Healing Word
+/// at a slightly lower slot cost.
+pub struct AuraOfVitality {}
+
+impl Action for AuraOfVitality {
+    fn name(&self) -> &str {
+        "aura of vitality"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["aov", "vitality"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(caster_loc) = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.location())
+        else {
+            return Vec::new();
+        };
+        let raw = encounter.roll(&Dice::new(2, 6));
+        encounter.log(format!(
+            "  aura of vitality: 2d6({}) = {} HP to allies in aura",
+            raw, raw
+        ));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = encounter
+            .ally_burst_targets(caster_id, caster_loc, 6)
+            .into_iter()
+            .map(|id| {
+                Box::new(Heal {
+                    actor_id: id,
+                    amount: raw,
+                }) as Box<dyn ApplicableSideEffect>
+            })
+            .collect();
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Aura of Vitality", Vec::new()),
+        }));
+        effects
+    }
+}
+
+pub static AURA_OF_VITALITY: LazyLock<AuraOfVitality> = LazyLock::new(|| AuraOfVitality {});
+
+/// Wall of Force — level-5 evocation, concentration. Drops a panel of
+/// invisible force at a tile within 120 ft. Anyone footprint-adjacent to
+/// the panel at cast time is shoved one tile away (we approximate with a
+/// `PullActor` *away from* the wall via negative max_tiles — no, just
+/// pick a direction and use TeleportActor). Concrete effect today:
+/// everyone in the burst takes 0 damage but is moved one tile away from
+/// the anchor. Lasts 10 rounds. Concentration: dropping it doesn't
+/// recall the moved actors.
+pub struct WallOfForce {}
+
+impl Action for WallOfForce {
+    fn name(&self) -> &str {
+        "wall of force"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["woforce", "force-wall"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 1 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        // Approximate the panel by knocking enemies adjacent to the anchor
+        // prone (no save) — a stand-in for "blocked by an invisible wall."
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = encounter
+            .enemy_burst_targets(caster_id, point, 1)
+            .into_iter()
+            .map(|id| {
+                Box::new(ApplyCondition {
+                    actor_id: id,
+                    condition: Condition::Prone,
+                    timer: ConditionTimer::Permanent,
+                }) as Box<dyn ApplicableSideEffect>
+            })
+            .collect();
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Wall of Force", Vec::new()),
+        }));
+        effects
+    }
+}
+
+pub static WALL_OF_FORCE: LazyLock<WallOfForce> = LazyLock::new(|| WallOfForce {});

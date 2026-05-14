@@ -3413,3 +3413,328 @@ impl Action for GelatinousCubeEngulf {
 
 pub static GELATINOUS_CUBE_ENGULF: LazyLock<GelatinousCubeEngulf> =
     LazyLock::new(|| GelatinousCubeEngulf {});
+
+/// Dragon Fire Breath — Adult Red Dragon signature. Cone-shaped 60 ft
+/// (radius 6 burst on our grid) of searing flame. Every creature in the
+/// area makes a DEX save vs DC 21: failed save takes 18d6 fire, success
+/// halves. Resists / immunities apply via the standard pipeline so a
+/// fire-immune ally walking through is unhurt. Recharge dice (5e RAW)
+/// are skipped — the breath fires on demand to keep the AI integration
+/// simple; the limiting factor is that it consumes the dragon's Action.
+pub struct DragonFireBreath {}
+
+impl Action for DragonFireBreath {
+    fn name(&self) -> &str {
+        "fire breath"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fb", "breath"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 6 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft cone — same as the burst radius (cone's far edge).
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        const DC: i32 = 21;
+        let raw = encounter.roll(&Dice::new(18, 6));
+        encounter.log(format!(
+            "  fire breath: 18d6({}) = {} fire area",
+            raw, raw
+        ));
+        crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            6,
+            AbilityScoreType::Dexterity,
+            DC,
+            raw,
+            DamageType::Fire,
+        )
+    }
+}
+
+pub static DRAGON_FIRE_BREATH: LazyLock<DragonFireBreath> =
+    LazyLock::new(|| DragonFireBreath {});
+
+/// Dragon Bite — Adult Red Dragon's signature melee. d20 + 14 vs AC
+/// (STR+prof at CR 17), on hit 2d10+8 piercing + 4d6 fire. The fire
+/// rider is a separate `DealDamage` so per-target resistance / immunity
+/// applies to it independently from the piercing.
+pub struct DragonBite {}
+
+impl Action for DragonBite {
+    fn name(&self) -> &str {
+        "dragon bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bite-d", "dbite"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 10 ft reach (Large dragon) — 2 tiles.
+        Some(2)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Fire]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // Piercing bite first; on hit, layer 4d6 fire as a separate
+        // DealDamage so immunity / resistance applies to each pass.
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_mod =
+            modifier_from_score(caster.ability_score(AbilityScoreType::Strength))
+                + caster.proficiency_bonus();
+        let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let (mut effects, damage) = crate::engine::attack::resolve_attack_outcome(
+            encounter,
+            AttackParams {
+                caster_id,
+                target_id,
+                action_name: "dragon bite",
+                attack_bonus: attack_mod,
+                damage_dice: Dice::new(2, 10),
+                damage_bonus: str_mod,
+                damage_type: DamageType::Piercing,
+                is_melee: true,
+            },
+        );
+        if damage == 0 {
+            return effects;
+        }
+        let fire = encounter.roll(&Dice::new(4, 6));
+        encounter.log(format!("  dragon bite: 4d6({}) = {} fire rider", fire, fire));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: fire,
+            damage_type: DamageType::Fire,
+        }));
+        effects
+    }
+}
+
+pub static DRAGON_BITE: LazyLock<DragonBite> = LazyLock::new(|| DragonBite {});
+
+/// Dragon Claw — Adult Red Dragon's swipe. Identical resolution to a
+/// `SimpleWeapon` (no rider), tuned to 2d6+8 slashing at the dragon's
+/// hit modifier. Two claws + bite = the dragon multiattack; we issue
+/// the data-only SimpleWeapon variant so the AI picks Bite for the
+/// fire rider and Claw as fallback.
+pub static DRAGON_CLAW: SimpleWeapon = SimpleWeapon {
+    display_name: "dragon claw",
+    aliases: &["dclaw", "claw-d"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Slashing,
+    is_melee: true,
+    reach: 2,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Lich Paralyzing Touch — touch attack with a paralysis rider. d20 +
+/// 12 (INT-cast attack mod at CR 21) vs AC. On hit: 3d6 cold and the
+/// target makes a CON save vs DC 18 or is Paralyzed for 5 rounds.
+/// Pairs with the rest of the lich kit (Power Word Kill, Finger of
+/// Death) for a high-control boss profile.
+pub struct LichParalyzingTouch {}
+
+impl Action for LichParalyzingTouch {
+    fn name(&self) -> &str {
+        "paralyzing touch"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pt", "lichtouch"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Cold]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Lich uses INT for attack mod (caster bonus action stat).
+        let attack_mod =
+            modifier_from_score(caster.ability_score(AbilityScoreType::Intelligence))
+                + caster.proficiency_bonus();
+        let (mut effects, damage) = crate::engine::attack::resolve_attack_outcome(
+            encounter,
+            AttackParams {
+                caster_id,
+                target_id,
+                action_name: "paralyzing touch",
+                attack_bonus: attack_mod,
+                damage_dice: Dice::new(3, 6),
+                damage_bonus: 0,
+                damage_type: DamageType::Cold,
+                is_melee: true,
+            },
+        );
+        if damage == 0 {
+            return effects;
+        }
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 18);
+        if !save.passed() {
+            effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Paralyzed,
+                timer: ConditionTimer::Rounds(5),
+            }));
+        }
+        effects
+    }
+}
+
+pub static LICH_PARALYZING_TOUCH: LazyLock<LichParalyzingTouch> =
+    LazyLock::new(|| LichParalyzingTouch {});
+
+/// Beholder Eye Ray — generic 4d8 force eye-ray. Range 120 ft (48
+/// tiles). Single target; spell-attack-style roll vs AC at +9 (INT-prof
+/// at CR 13). Light wrapper around `simple_weapon_attack` with a longer
+/// reach so the AI considers it a ranged option in addition to bites.
+pub struct BeholderEyeRay {}
+
+impl Action for BeholderEyeRay {
+    fn name(&self) -> &str {
+        "eye ray"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["er", "eye"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Force]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "eye ray",
+            AbilityScoreType::Intelligence,
+            None,
+            Dice::new(4, 8),
+            DamageType::Force,
+            false,
+        )
+    }
+}
+
+pub static BEHOLDER_EYE_RAY: LazyLock<BeholderEyeRay> = LazyLock::new(|| BeholderEyeRay {});
+
+/// Dragon Multiattack — 3 claw swings in one turn at a single target
+/// (a tight stand-in for the Adult Red Dragon's "Bite + 2 Claws" RAW
+/// pattern using the existing single-sub-attack Multiattack scaffold).
+/// The dragon also has a separate Bite action and Fire Breath option
+/// the AI picks between, so the multiattack is the bursty melee lane.
+pub static DRAGON_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "dragon multiattack",
+    sub_attack: &DRAGON_CLAW,
+    count: 3,
+});

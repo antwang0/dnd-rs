@@ -1042,13 +1042,16 @@ mod tests {
     #[test]
     fn ai_vs_ai_terminates_with_new_content() {
         use crate::actors::creatures::banshees::BANSHEE_TEMPLATE;
+        use crate::actors::creatures::beholders::BEHOLDER_TEMPLATE;
         use crate::actors::creatures::berserkers::BERSERKER_TEMPLATE;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::doppelgangers::DOPPELGANGER_TEMPLATE;
+        use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
         use crate::actors::creatures::fire_elementals::FIRE_ELEMENTAL_TEMPLATE;
         use crate::actors::creatures::gelatinous_cubes::GELATINOUS_CUBE_TEMPLATE;
         use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
         use crate::actors::creatures::hippogriffs::HIPPOGRIFF_TEMPLATE;
+        use crate::actors::creatures::liches::LICH_TEMPLATE;
         use crate::actors::creatures::manticores::MANTICORE_TEMPLATE;
         use crate::actors::creatures::minotaurs::MINOTAUR_TEMPLATE;
         use crate::actors::creatures::mummies::MUMMY_TEMPLATE;
@@ -1091,6 +1094,13 @@ mod tests {
             let _ = e.instantiate_creature(&TREANT_TEMPLATE, Coordinate::new(21, 15), 1, 9);
             let _ = e.instantiate_creature(&FIRE_ELEMENTAL_TEMPLATE, Coordinate::new(21, 13), 1, 10);
             let _ = e.instantiate_creature(&GELATINOUS_CUBE_TEMPLATE, Coordinate::new(19, 17), 1, 11);
+            // New boss-tier content: Lich (CR 21 caster), Adult Red Dragon
+            // (CR 17 multiattack + breath), Beholder (CR 13 eye-ray + bite)
+            // — the action picker needs to handle the boss spell list and
+            // the dragon's burst breath without stalling.
+            let _ = e.instantiate_creature(&LICH_TEMPLATE, Coordinate::new(19, 15), 1, 12);
+            let _ = e.instantiate_creature(&ADULT_RED_DRAGON_TEMPLATE, Coordinate::new(15, 17), 1, 13);
+            let _ = e.instantiate_creature(&BEHOLDER_TEMPLATE, Coordinate::new(15, 14), 1, 14);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

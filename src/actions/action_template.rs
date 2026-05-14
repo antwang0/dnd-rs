@@ -138,6 +138,13 @@ pub fn action_and_slot(lvl: u32) -> Vec<Resource> {
     vec![Resource::Action, Resource::SpellSlot(lvl)]
 }
 
+/// Bonus-action variant of `action_and_slot` for quickened-style spells
+/// (Healing Word, Mass Healing Word, Healing Spirit, Sanctuary, etc.).
+/// Same chokepoint benefit as the Action variant.
+pub fn bonus_action_and_slot(lvl: u32) -> Vec<Resource> {
+    vec![Resource::BonusAction, Resource::SpellSlot(lvl)]
+}
+
 pub enum TargetingSchema {
     NoArgs,
     SinglePoint,

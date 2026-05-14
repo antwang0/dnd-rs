@@ -1372,11 +1372,7 @@ impl ActorInstance {
         self.help_grants.values().any(|t| *t == target_id)
     }
 
-    pub fn add_help_grant(&mut self, helper_id: usize, target_id: usize) {
-        self.help_grants.insert(helper_id, target_id);
-    }
-
-    /// Set or clear a Help grant on this actor (legacy single-grant API).
+    /// Set or clear a Help grant on this actor.
     /// `Some(g)` overwrites any prior grant; `None` clears all grants.
     pub fn set_help_grant(&mut self, grant: Option<HelpGrant>) {
         self.help_grants.clear();

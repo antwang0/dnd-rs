@@ -59,6 +59,19 @@ pub fn resolve_attack_outcome(
         return (Vec::new(), 0);
     };
 
+    // 5e Sanctuary: if the target is sanctified, the attacker first makes
+    // a WIS save vs the warding caster's DC. On fail, the attack silently
+    // misses (no AC roll, no rider consumption). Pass-through behavior
+    // matches RAW's "the attacker must choose a new target or lose the
+    // attack" clause — we choose the latter to avoid auto-retargeting.
+    if encounter.sanctuary_save_blocks(p.caster_id, p.target_id) {
+        return (Vec::new(), 0);
+    }
+    // Casting a harmful action revokes the holder's own Sanctuary buff.
+    // We tag the clear after we know the attack is going through (the
+    // sanctuary_save_blocks branch returns early on fail).
+    encounter.break_sanctuary_on_hostile(p.caster_id);
+
     let mode = encounter.compute_attack_mode(p.caster_id, p.target_id, p.is_melee);
     // Burn through the one-shot rider stack (Helped, Hidden,
     // per-target help grant, Invisibility concentration) before the
@@ -192,6 +205,24 @@ pub fn resolve_attack_outcome(
             actor_id: p.target_id,
             amount: hex_total,
             damage_type: DamageType::Necrotic,
+        }));
+    }
+    // 5e Fire Shield: if the target is fire-shielded and this was a melee
+    // attack, the attacker takes 2d8 fire damage in retaliation. We tag
+    // the reflective DealDamage onto the attacker — resolves through the
+    // standard damage pipeline (immunity / resistance respected).
+    if p.is_melee
+        && encounter
+            .actors
+            .get(&p.target_id)
+            .is_some_and(|a| a.has_condition(crate::conditions::Condition::FireShielded))
+    {
+        let reflect = encounter.roll(&Dice::new(2, 8));
+        encounter.log(format!("  fire shield: 2d8({}) fire reflected", reflect));
+        effects.push(Box::new(DealDamage {
+            actor_id: p.caster_id,
+            amount: reflect,
+            damage_type: DamageType::Fire,
         }));
     }
     (effects, damage)
