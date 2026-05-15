@@ -296,6 +296,11 @@ pub struct ActorInstance {
     /// validation site knows who to block. Cleared when the Charmed
     /// condition is removed.
     charmed_by: Option<usize>,
+    /// 5e Fighter Indomitable — one-shot "reroll the next failed save"
+    /// marker. Set by the Indomitable action; consumed at the save
+    /// site (`EncounterInstance::roll_save`) on a fail. Refreshed by
+    /// long rest along with the feature pool.
+    indomitable_pending: bool,
 }
 
 impl ActorInstance {
@@ -368,6 +373,7 @@ impl ActorInstance {
             regen_suppressed: false,
             mirror_images: 0,
             charmed_by: None,
+            indomitable_pending: false,
         })
     }
 
@@ -497,6 +503,7 @@ impl ActorInstance {
         self.attack_bonus_buff = 0;
         self.save_bonus_buff = 0;
         self.features_remaining = self.features_max.clone();
+        self.indomitable_pending = false;
     }
 
     pub fn temp_hp(&self) -> u32 {
@@ -535,6 +542,21 @@ impl ActorInstance {
         if self.has_condition(Condition::DamageResistant) {
             amt /= 2;
         }
+        // 5e Barbarian Rage: resistance to bludgeoning / piercing / slashing.
+        if self.has_condition(Condition::Raging)
+            && matches!(
+                dt,
+                DamageType::Bludgeoning | DamageType::Piercing | DamageType::Slashing
+            )
+        {
+            amt /= 2;
+        }
+        // Globe of Invulnerability: generic damage halving (we approximate
+        // the spell-level immunity with a blanket resistance — see the
+        // Globed condition docs for the full RAW-vs-impl note).
+        if self.has_condition(Condition::Globed) {
+            amt /= 2;
+        }
         amt
     }
 
@@ -569,10 +591,11 @@ impl ActorInstance {
 
     /// 5e proficiency bonus: +2 at L1-4, +3 at L5-8, +4 at L9-12, etc.
     /// Both PCs (driven by `level`) and monsters (whose CR is roughly
-    /// equivalent to a player level) read from the same scale.
+    /// equivalent to a player level) read from the same scale via
+    /// `proficiency_bonus_for_level` so the curve lives in one place.
     pub fn proficiency_bonus(&self) -> i32 {
         let effective_level = self.level.max(self.cr.floor().max(1.0) as u32);
-        2 + ((effective_level.saturating_sub(1)) / 4) as i32
+        crate::engine::util::proficiency_bonus_for_level(effective_level)
     }
 
     /// Linear XP value: CR × 200. Linear is good enough for the dungeon
@@ -1327,6 +1350,22 @@ impl ActorInstance {
 
     pub fn mark_sneak_attack_used(&mut self) {
         self.sneak_attack_used = true;
+    }
+
+    /// True if this actor has an Indomitable reroll pending — set by
+    /// the Indomitable action, consumed at the next failed save.
+    pub fn indomitable_pending(&self) -> bool {
+        self.indomitable_pending
+    }
+
+    pub fn mark_indomitable_pending(&mut self) {
+        self.indomitable_pending = true;
+    }
+
+    pub fn consume_indomitable(&mut self) -> bool {
+        let pending = self.indomitable_pending;
+        self.indomitable_pending = false;
+        pending
     }
 
     /// Convenience: check Bless condition without callers having to

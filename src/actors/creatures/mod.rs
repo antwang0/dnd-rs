@@ -2,6 +2,7 @@ pub mod animated_armors;
 pub mod bandit_captains;
 pub mod bandits;
 pub mod banshees;
+pub mod barbarians;
 pub mod beholders;
 pub mod berserkers;
 pub mod bugbears;

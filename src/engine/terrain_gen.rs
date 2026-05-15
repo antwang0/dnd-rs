@@ -22,6 +22,20 @@ pub struct TerrainGenParams {
     pub branch_prob: f32,
 }
 
+impl TerrainGenParams {
+    /// Open-floor `width × height` map with no procedural branching —
+    /// every tile is Floor. Used as a clean baseline by tests that want
+    /// to control placement without any random walls in the way.
+    pub fn open(width: usize, height: usize) -> Self {
+        Self {
+            width,
+            height,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        }
+    }
+}
+
 fn collect_leaves<'a>(node: &'a mut BSPNode, leaves: &mut Vec<&'a mut BSPNode>) {
     let is_leaf = node.children.is_none();
 

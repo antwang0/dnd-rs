@@ -3,11 +3,12 @@ use std::sync::LazyLock;
 
 use crate::{
     actions::action_template::{Action, TargetingSchema},
+    conditions::{Condition, ConditionTimer},
     engine::{
         action_overrides::ActionOverride,
         dice::Dice,
         encounter::EncounterInstance,
-        side_effects::{ApplicableSideEffect, GiveResource, Heal, Resource},
+        side_effects::{ApplicableSideEffect, ApplyCondition, GiveResource, Heal, Resource},
         types::Coordinate,
     },
 };
@@ -283,3 +284,211 @@ impl Action for CunningDisengage {
 }
 
 pub static CUNNING_DISENGAGE: LazyLock<CunningDisengage> = LazyLock::new(|| CunningDisengage {});
+
+/// Rogue Cunning Hide — bonus-action Hide. Same condition as the regular
+/// Hide action (Hidden flag for one-shot attack-advantage), at the
+/// cheaper bonus-action cost. Keeps the rogue's signature cunning-action
+/// trio symmetric (Dash / Disengage / Hide).
+pub struct CunningHide {}
+
+impl Action for CunningHide {
+    fn name(&self) -> &str {
+        "cunning hide"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["chide", "ca-hide"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction]
+    }
+
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // Hidden lasts until the rogue's next attack — same one-shot
+        // attack-advantage rider as the Hide Action. Tracked via the
+        // existing `Hidden` condition.
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::Hidden,
+            timer: ConditionTimer::Permanent,
+        })]
+    }
+}
+
+pub static CUNNING_HIDE: LazyLock<CunningHide> = LazyLock::new(|| CunningHide {});
+
+/// Tag for Fighter's Indomitable — once per long rest.
+pub const INDOMITABLE_TAG: &str = "fighter.indomitable";
+
+/// Fighter Indomitable — free no-cost self-flag. Sets a one-shot "reroll
+/// the next failed save" marker on the actor via `mark_indomitable_pending`.
+/// The reroll lives at the save site (`EncounterInstance::roll_save`):
+/// if the marker is set and the save fails, the engine re-rolls once and
+/// keeps the better result, then clears the marker. Once per long rest
+/// (consumed eagerly here so a duplicate queued use can't double-dip).
+pub struct Indomitable {}
+
+impl Action for Indomitable {
+    fn name(&self) -> &str {
+        "indomitable"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["indom", "indo"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // No action / bonus action cost — RAW: "no action required",
+        // just spend the feature.
+        Vec::new()
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_combat_active() && a.feature_available(INDOMITABLE_TAG))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(INDOMITABLE_TAG);
+            actor.mark_indomitable_pending();
+        }
+        encounter.log("  indomitable: next failed save will be re-rolled.".to_string());
+        Vec::new()
+    }
+}
+
+pub static INDOMITABLE: LazyLock<Indomitable> = LazyLock::new(|| Indomitable {});
+
+/// Class-feature tag for Barbarian's Rage — once per long rest.
+pub const RAGE_TAG: &str = "barbarian.rage";
+
+/// Rage — barbarian feature, bonus action. Applies the `Raging` condition
+/// to the caster: resistance to bludgeoning / piercing / slashing damage
+/// (folded into `effective_damage`), and advantage on STR checks / saves
+/// (read by `compute_save_mode`). Lasts 10 rounds (approximation of the
+/// 5e 1-minute duration). Once-per-long-rest gated on the `RAGE_TAG`
+/// feature flag.
+pub struct Rage {}
+
+impl Action for Rage {
+    fn name(&self) -> &str {
+        "rage"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["rg", "anger"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction]
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_combat_active() && a.feature_available(RAGE_TAG))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(RAGE_TAG);
+        }
+        encounter.log("  rage: barbarian enters a battle frenzy.".to_string());
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::Raging,
+            timer: ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static RAGE: LazyLock<Rage> = LazyLock::new(|| Rage {});

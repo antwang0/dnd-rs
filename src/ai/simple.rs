@@ -75,6 +75,15 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3c. Rage — barbarian's bonus-action damage-resistance + STR
+        //     advantage. Fire as soon as an enemy is in reach so the
+        //     physical resistance lands before incoming swings. Once
+        //     per long rest; gated on the feature flag so a duplicate
+        //     call doesn't double-spend the resource.
+        if let Some(aei) = try_rage(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 4. Bless — round 1 self+ally buff. Only valid before we're
         //    already concentrating on something.
         if let Some(aei) = try_bless(encounter, actor_id) {
@@ -332,6 +341,46 @@ fn try_self_buff_mage_armor(
         .find(|a| a.name() == "mage armor")
         .copied()?;
     let aei = ActionExecutionInfo::new(spell, actor_id, None, None, None);
+    if aei.validate(encounter) {
+        Some(aei)
+    } else {
+        None
+    }
+}
+
+/// Barbarian Rage trigger: a barbarian who isn't already Raging fires
+/// the rage spell as soon as any hostile actor is in attack reach,
+/// trading the bonus action for resistance + STR advantage. Validation
+/// gates on the feature being available and the action being affordable.
+fn try_rage(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.has_condition(Condition::Raging) {
+        return None;
+    }
+    let rage = actor.actions.iter().find(|a| a.name() == "rage").copied()?;
+    // Skip if no hostile actor is in 30ft (12 tiles) — saving the
+    // 10-round duration buff for when it matters.
+    let my_team = actor.team();
+    let my_loc = actor.location();
+    let my_size = get_tiles_from_size(actor.size());
+    let any_close_enemy = encounter.actors.iter().any(|(id, a)| {
+        *id != actor_id
+            && a.team() != my_team
+            && a.is_combat_active()
+            && footprint_chebyshev(
+                my_loc,
+                my_size,
+                a.location(),
+                get_tiles_from_size(a.size()),
+            ) <= 12
+    });
+    if !any_close_enemy {
+        return None;
+    }
+    let aei = ActionExecutionInfo::new(rage, actor_id, None, None, None);
     if aei.validate(encounter) {
         Some(aei)
     } else {
@@ -1042,6 +1091,7 @@ mod tests {
     #[test]
     fn ai_vs_ai_terminates_with_new_content() {
         use crate::actors::creatures::banshees::BANSHEE_TEMPLATE;
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
         use crate::actors::creatures::beholders::BEHOLDER_TEMPLATE;
         use crate::actors::creatures::berserkers::BERSERKER_TEMPLATE;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
@@ -1082,6 +1132,9 @@ mod tests {
             let _ = e.instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 4), 0, 1);
             let _ = e.instantiate_creature(&HIPPOGRIFF_TEMPLATE, Coordinate::new(4, 2), 0, 2);
             let _ = e.instantiate_creature(&VETERAN_TEMPLATE, Coordinate::new(4, 4), 0, 3);
+            // Barbarian on team 0 so the AI exercises the new Rage /
+            // Reckless Attack feature stack mid-encounter.
+            let _ = e.instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(6, 2), 0, 4);
             let _ = e.instantiate_creature(&WIGHT_TEMPLATE, Coordinate::new(27, 17), 1, 0);
             let _ = e.instantiate_creature(&MINOTAUR_TEMPLATE, Coordinate::new(27, 15), 1, 1);
             let _ = e.instantiate_creature(&BANSHEE_TEMPLATE, Coordinate::new(25, 17), 1, 2);

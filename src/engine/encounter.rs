@@ -564,6 +564,12 @@ impl EncounterInstance {
         if actor.has_condition(Condition::Blessed) {
             mode = mode.combine(RollMode::Advantage);
         }
+        // 5e Barbarian Rage: advantage on STR checks / saves while raging.
+        if matches!(ability, AbilityScoreType::Strength)
+            && actor.has_condition(Condition::Raging)
+        {
+            mode = mode.combine(RollMode::Advantage);
+        }
         mode
     }
 
@@ -660,6 +666,36 @@ impl EncounterInstance {
             mode.log_suffix(),
             if outcome.passed() { "pass" } else { "fail" }
         ));
+        // 5e Fighter Indomitable: on a fail, if the actor has the
+        // marker set, re-roll once and keep the better outcome. The
+        // marker is consumed regardless of whether the reroll helps.
+        if !outcome.passed()
+            && self
+                .actors
+                .get_mut(&actor_id)
+                .is_some_and(|a| a.consume_indomitable())
+        {
+            let reroll = self.roll_d20_with_mode(mode);
+            let reroll_total = reroll as i32 + modifier + extra;
+            let reroll_outcome = if reroll_total >= dc {
+                SaveOutcome::Pass
+            } else {
+                SaveOutcome::Fail
+            };
+            self.log(format!(
+                "  indomitable reroll: 1d20({}){:+}{} = {} \u{2014} {}",
+                reroll,
+                modifier,
+                extra_suffix,
+                reroll_total,
+                if reroll_outcome.passed() {
+                    "pass"
+                } else {
+                    "fail"
+                }
+            ));
+            return reroll_outcome;
+        }
         outcome
     }
 
@@ -15643,5 +15679,306 @@ mod tests {
             .unwrap();
         assert!(e.actors[&b].is_immune_to_condition(Condition::Prone));
         assert!(e.actors[&b].is_save_proficient(crate::engine::types::AbilityScoreType::Constitution));
+    }
+
+    /// Barbarian Rage: applies Raging, eats Bonus Action + the feature
+    /// flag, and confers BPS resistance via the damage pipeline.
+    #[test]
+    fn barbarian_rage_grants_resistance_and_consumes_feature() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{RAGE, RAGE_TAG};
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let bid = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&bid).unwrap().reset_for_new_round();
+        assert!(e.actors[&bid].feature_available(RAGE_TAG));
+        let effects = RAGE.side_effects(&mut e, bid, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&bid].has_condition(Condition::Raging));
+        assert!(!e.actors[&bid].feature_available(RAGE_TAG));
+        // Resistance check: 10 slashing scales to 5 while raging.
+        assert_eq!(e.actors[&bid].effective_damage(10, DamageType::Slashing), 5);
+        // Non-BPS damage is unaffected.
+        assert_eq!(e.actors[&bid].effective_damage(10, DamageType::Fire), 10);
+    }
+
+    /// Rogue Cunning Hide: bonus-action Hide that drops the Hidden flag.
+    #[test]
+    fn cunning_hide_applies_hidden() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::CUNNING_HIDE;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let effects = CUNNING_HIDE.side_effects(&mut e, id, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&id].has_condition(Condition::Hidden));
+        let cost = CUNNING_HIDE.cost(&e, id, None, None, None);
+        assert!(cost.contains(&Resource::BonusAction));
+    }
+
+    /// Fighter Indomitable: setting the pending flag and watching
+    /// `roll_save` re-roll once on a fail. We force a fail by using a
+    /// high DC; the marker is consumed regardless of whether the
+    /// reroll lifts the result.
+    #[test]
+    fn indomitable_rerolls_failed_save_once() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&id).unwrap().mark_indomitable_pending();
+        assert!(e.actors[&id].indomitable_pending());
+        // DC 40 — impossible to pass even with a 20 + every modifier,
+        // so the reroll path runs deterministically.
+        let _ = e.roll_save(id, AbilityScoreType::Dexterity, 40);
+        // The marker is consumed either way (no infinite rerolls).
+        assert!(!e.actors[&id].indomitable_pending());
+    }
+
+    /// Spike Growth applies Spiked to enemies in the burst and
+    /// starts concentration.
+    #[test]
+    fn spike_growth_marks_enemies_and_concentrates() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::SPIKE_GROWTH;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        let effects = SPIKE_GROWTH.side_effects(
+            &mut e,
+            wiz,
+            None,
+            Some(&vec![Coordinate::new(8, 8)]),
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&goblin].has_condition(Condition::Spiked));
+        assert!(e.actors[&wiz].is_concentrating());
+    }
+
+    /// Spiked + move: walking over spike growth deals 2d4 piercing per
+    /// step. We move a step and check HP decreased.
+    #[test]
+    fn moving_while_spiked_deals_damage() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let gob = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&gob)
+            .unwrap()
+            .add_condition(Condition::Spiked, ConditionTimer::Permanent);
+        let before = e.actors[&gob].hitpoints();
+        MoveActor {
+            actor_id: gob,
+            path: vec![Coordinate::new(6, 5)],
+        }
+        .apply(&mut e);
+        let after = e.actors.get(&gob).map(|a| a.hitpoints()).unwrap_or(0);
+        // Spike damage is 2d4 piercing; min 2, max 8. HP must have dropped.
+        assert!(after < before, "spike damage should chip HP ({} → {})", before, after);
+    }
+
+    /// Telekinesis: pulls the failed-save target and lifts them, also
+    /// starts concentration.
+    #[test]
+    fn telekinesis_lifts_and_pulls() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::TELEKINESIS;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::Condition;
+        // Use enough trials that one save fails — goblin has a low STR.
+        let mut lifted = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            // Vary the RNG path across attempts by burning `seed` rolls.
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+                .unwrap();
+            let tv = vec![g];
+            let effects =
+                TELEKINESIS.side_effects(&mut e, wiz, Some(&tv), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e.actors[&g].has_condition(Condition::Lifted) {
+                lifted = true;
+                assert!(e.actors[&wiz].is_concentrating());
+                break;
+            }
+        }
+        assert!(lifted, "telekinesis never landed across 30 attempts");
+    }
+
+    /// Globe of Invulnerability: applies Globed (halves incoming damage)
+    /// and starts concentration on the caster.
+    #[test]
+    fn globe_of_invulnerability_halves_damage() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::GLOBE_OF_INVULNERABILITY;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let effects = GLOBE_OF_INVULNERABILITY.side_effects(&mut e, wiz, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&wiz].has_condition(Condition::Globed));
+        assert!(e.actors[&wiz].is_concentrating());
+        assert_eq!(e.actors[&wiz].effective_damage(10, DamageType::Fire), 5);
+    }
+
+    /// Polymorph: applies Polymorphed + a 30 temp HP buff on an enemy
+    /// after a failed save. We pick a low-WIS goblin to spam casts
+    /// until at least one transformation lands.
+    #[test]
+    fn polymorph_transforms_target() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::POLYMORPH;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut transformed = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            // Vary the RNG path across attempts by burning `seed` rolls.
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+                .unwrap();
+            let tv = vec![g];
+            let effects = POLYMORPH.side_effects(&mut e, wiz, Some(&tv), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e.actors[&g].has_condition(Condition::Polymorphed) {
+                assert!(e.actors[&g].temp_hp() >= 30);
+                transformed = true;
+                break;
+            }
+        }
+        assert!(transformed, "polymorph never transformed the target");
+    }
+
+    /// Counterspell: invalid against a non-concentrating target, valid
+    /// against one and yanks their concentration on cast.
+    #[test]
+    fn counterspell_only_targets_concentrating_enemies() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::{BLESS, COUNTERSPELL};
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let cler = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // No concentration yet → invalid target.
+        let tv = vec![cler];
+        assert!(!COUNTERSPELL.custom_validate_input(&e, wiz, Some(&tv), None, None));
+        // Cleric casts Bless on itself → concentrating.
+        let bless_target = vec![cler];
+        let effects = BLESS.side_effects(&mut e, cler, Some(&bless_target), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&cler].is_concentrating());
+        assert!(COUNTERSPELL.custom_validate_input(&e, wiz, Some(&tv), None, None));
+        // Casting Counterspell strips the concentration.
+        let effects = COUNTERSPELL.side_effects(&mut e, wiz, Some(&tv), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(!e.actors[&cler].is_concentrating());
+    }
+
+    /// Rage advantage on STR saves: a raging actor rolls advantage when
+    /// the engine computes the save mode.
+    #[test]
+    fn rage_advantage_on_str_saves() {
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Raging, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_save_mode(id, AbilityScoreType::Strength),
+            RollMode::Advantage
+        );
+        // No edge on non-STR saves.
+        assert_eq!(
+            e.compute_save_mode(id, AbilityScoreType::Wisdom),
+            RollMode::Normal
+        );
+    }
+
+    /// Lifted condition zeros out the holder's movement budget.
+    #[test]
+    fn lifted_zeros_movement() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&id).unwrap().reset_for_new_round();
+        assert!(e.actors[&id].remaining_movement() > 0.0);
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Lifted, ConditionTimer::Permanent);
+        assert_eq!(e.actors[&id].remaining_movement(), 0.0);
     }
 }

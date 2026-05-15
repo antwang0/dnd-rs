@@ -1,4 +1,6 @@
-use crate::actions::class_features::{ACTION_SURGE, ACTION_SURGE_TAG, SECOND_WIND, SECOND_WIND_TAG};
+use crate::actions::class_features::{
+    ACTION_SURGE, ACTION_SURGE_TAG, INDOMITABLE, INDOMITABLE_TAG, SECOND_WIND, SECOND_WIND_TAG,
+};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::SCIMITAR;
 use crate::actors::actor_template::CreatureTemplate;
@@ -20,6 +22,7 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&SCIMITAR);
     actions.push(&*SECOND_WIND);
     actions.push(&*ACTION_SURGE);
+    actions.push(&*INDOMITABLE);
     CreatureTemplate {
         name: "Fighter",
         glyph: 'F',
@@ -45,7 +48,7 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Fighters are proficient in STR and CON saves (5e PHB).
         proficient_saves: HashSet::from([AbilityScoreType::Strength, AbilityScoreType::Constitution]),
         condition_immunities: HashSet::new(),
-        features: HashSet::from([SECOND_WIND_TAG, ACTION_SURGE_TAG]),
+        features: HashSet::from([SECOND_WIND_TAG, ACTION_SURGE_TAG, INDOMITABLE_TAG]),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),
     }

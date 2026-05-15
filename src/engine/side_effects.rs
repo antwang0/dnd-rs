@@ -117,6 +117,29 @@ impl ApplicableSideEffect for MoveActor {
             // Walk-over auto-pickup: any items at the destination tile
             // get added to the actor's inventory. Logged inside.
             ei.pickup_items_at(self.actor_id, dest);
+            // 5e Spike Growth: a Spiked actor takes 2d4 piercing per 5ft
+            // (one tile in our grid) of movement. The damage rolls through
+            // the standard pipeline so resistance / immunity is honored.
+            // We resolve mid-loop so a creature with low HP can be downed
+            // by spike damage and stop the walk via the is_combat_active
+            // check at the top of the next iteration.
+            let spiked = ei
+                .actors
+                .get(&self.actor_id)
+                .is_some_and(|a| a.has_condition(Condition::Spiked));
+            if spiked {
+                let dmg = ei.roll(&crate::engine::dice::Dice::new(2, 4));
+                ei.log(format!(
+                    "  spike growth: 2d4({}) piercing as they step through",
+                    dmg
+                ));
+                DealDamage {
+                    actor_id: self.actor_id,
+                    amount: dmg,
+                    damage_type: DamageType::Piercing,
+                }
+                .apply(ei);
+            }
         }
     }
 }

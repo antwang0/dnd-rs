@@ -219,6 +219,35 @@ pub enum Condition {
     /// the `MoveActor` apply path which reads this flag and bills the
     /// caster's spike damage once per step.
     Spiked,
+    /// Raging (5e Barbarian feature). +2 melee damage on STR-based attacks,
+    /// resistance to bludgeoning / piercing / slashing damage (we use the
+    /// generic `DamageResistant` model in parallel), and advantage on STR
+    /// checks / saves. Active for 10 rounds (an approximation of the
+    /// 5e 1-minute duration). Bonus action to enter; ends early if the
+    /// barbarian falls unconscious or doesn't attack / take damage on
+    /// a round — we just let the timer run for simplicity.
+    Raging,
+    /// Polymorphed (5e level-4 transmutation, concentration). The target
+    /// is transformed into a beast form — we model only the load-bearing
+    /// mechanical change: their max HP is replaced by a buff pool (we
+    /// approximate with +25 max HP, plus filling current HP to that cap)
+    /// while the condition is up. On drop, max HP returns to base. The
+    /// transformation also halts spellcasting (we don't enforce that
+    /// gate). Cleared on concentration drop.
+    Polymorphed,
+    /// Globe of Invulnerability (5e level-6 abjuration, concentration).
+    /// The holder gains immunity to damaging spells of level 5 or lower.
+    /// We approximate by giving the holder a flat damage-resistant buff
+    /// (halving incoming damage) — distinct from the `DamageResistant`
+    /// condition so the two stack cleanly (Stoneskin + Globe halves
+    /// damage twice). Concentration-bound on the caster.
+    Globed,
+    /// Lifted (5e Telekinesis spell, level 5, concentration). Target is
+    /// suspended in the air. Mechanically: zero movement (we add this to
+    /// `zeros_movement`), disadvantage on attacks made by the lifted
+    /// creature (helpless dangling), and the caster can re-position them
+    /// each round. We model only the movement-zero half for simplicity.
+    Lifted,
 }
 
 impl Condition {
@@ -268,6 +297,10 @@ impl Condition {
             Condition::FireShielded => "fire shielded",
             Condition::Daylit => "lit by daylight",
             Condition::Spiked => "in spiked growth",
+            Condition::Raging => "raging",
+            Condition::Polymorphed => "polymorphed",
+            Condition::Globed => "globed in invulnerability",
+            Condition::Lifted => "lifted by telekinesis",
         }
     }
 
@@ -309,6 +342,9 @@ impl Condition {
                 | Condition::Sanctuary
                 | Condition::FireShielded
                 | Condition::Daylit
+                | Condition::Raging
+                | Condition::Polymorphed
+                | Condition::Globed
         )
     }
 
@@ -330,6 +366,7 @@ impl Condition {
                 | Condition::Asleep
                 | Condition::Adhered
                 | Condition::Petrified
+                | Condition::Lifted
         )
     }
 }

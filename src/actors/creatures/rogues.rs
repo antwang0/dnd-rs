@@ -1,5 +1,5 @@
 use crate::actions::class_attacks::ROGUE_SHORTSWORD;
-use crate::actions::class_features::{CUNNING_DASH, CUNNING_DISENGAGE};
+use crate::actions::class_features::{CUNNING_DASH, CUNNING_DISENGAGE, CUNNING_HIDE};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size};
@@ -16,6 +16,7 @@ pub static ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*ROGUE_SHORTSWORD);
     actions.push(&*CUNNING_DASH);
     actions.push(&*CUNNING_DISENGAGE);
+    actions.push(&*CUNNING_HIDE);
     CreatureTemplate {
         name: "Rogue",
         glyph: 'R',

@@ -8575,3 +8575,413 @@ impl Action for WallOfForce {
 }
 
 pub static WALL_OF_FORCE: LazyLock<WallOfForce> = LazyLock::new(|| WallOfForce {});
+
+/// Spike Growth — level-2 transmutation, concentration, action. Plants
+/// spikes across a 20-ft radius (we use radius-3 in our 2.5ft grid).
+/// Enemies in the area get the `Spiked` condition; whenever they move,
+/// the `MoveActor` side-effect rolls 2d4 piercing damage per step
+/// against them (the rider lives in side_effects.rs to keep the damage
+/// roll consistent across every motion source — walks, Pulls, etc.).
+/// Concentration: ending the spell clears Spiked from every target.
+pub struct SpikeGrowth {}
+
+impl Action for SpikeGrowth {
+    fn name(&self) -> &str {
+        "spike growth"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["spikes", "spike"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 3 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 150 ft = 60 tiles.
+        Some(60)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        // Damage is movement-triggered, not on-cast. Surfacing
+        // deals_damage=false keeps the AI's focus-fire pipeline from
+        // picking this as a "first-strike" damage spell.
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        const RADIUS: isize = 3;
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut applied: Vec<(usize, Condition)> = Vec::new();
+        for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Spiked,
+                timer: ConditionTimer::Permanent,
+            }));
+            applied.push((tid, Condition::Spiked));
+        }
+        // Always start concentration: even with no current targets the
+        // spike field exists and could catch a creature that walks in
+        // later. We don't model "actors entering the area get Spiked"
+        // (would need a positional re-check tick), but the concentration
+        // marker keeps the slot in use.
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Spike Growth", applied),
+        }));
+        effects
+    }
+}
+
+pub static SPIKE_GROWTH: LazyLock<SpikeGrowth> = LazyLock::new(|| SpikeGrowth {});
+
+/// Telekinesis — level-5 transmutation, concentration, action. Targets a
+/// single creature within 60 ft; on a failed STR save vs the caster's
+/// spell DC, the target is hoisted into the air — we apply the `Lifted`
+/// condition (zeros movement) and pull them one tile toward the caster.
+/// Concentration: dropping the spell clears Lifted. Each round the
+/// caster could re-hoist a fresh target, but we collapse that into the
+/// initial cast for now.
+pub struct Telekinesis {}
+
+impl Action for Telekinesis {
+    fn name(&self) -> &str {
+        "telekinesis"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["tk", "lift"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::PullActor;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let caster_loc = caster.location();
+        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Lifted,
+                timer: ConditionTimer::Permanent,
+            }) as Box<dyn ApplicableSideEffect>,
+            // Drag them one tile toward the caster — telekinetic grab.
+            Box::new(PullActor {
+                actor_id: target_id,
+                toward: caster_loc,
+                max_tiles: 1,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Telekinesis",
+                    vec![(target_id, Condition::Lifted)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static TELEKINESIS: LazyLock<Telekinesis> = LazyLock::new(|| Telekinesis {});
+
+/// Polymorph — level-4 transmutation, concentration, action. Targets a
+/// creature within 60 ft; on a failed WIS save the target is transformed
+/// into a beast form. We model the load-bearing mechanical changes:
+/// (1) apply the `Polymorphed` condition (cosmetic; tracked for narrative)
+/// and (2) grant a fixed `30` temp HP pool representing the beast form's
+/// HP — damage drains the beast pool first, dropping it ends the
+/// transformation when concentration ends. Allies targeted with the
+/// spell get a +30 temp HP buff (5e RAW: caster picks the beast); we
+/// apply uniformly regardless of allegiance for simplicity.
+///
+/// Concentration: ending the spell strips `Polymorphed` from the target;
+/// the temp HP pool is left to natural attrition (we don't reset it on
+/// drop — matches 5e where the target reverts to their previous form
+/// with their own HP, but the beast pool isn't refunded).
+pub struct Polymorph {}
+
+impl Action for Polymorph {
+    fn name(&self) -> &str {
+        "polymorph"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["poly", "morph"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let caster_team = caster.team();
+        let target_team = encounter
+            .actors
+            .get(&target_id)
+            .map(|a| a.team())
+            .unwrap_or(caster_team);
+        // Enemies get a WIS save; willing allies auto-fail (5e RAW).
+        if target_team != caster_team {
+            let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+            let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+            if save.passed() {
+                return Vec::new();
+            }
+        }
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Polymorphed,
+                timer: ConditionTimer::Permanent,
+            }),
+            Box::new(GainTempHp {
+                actor_id: target_id,
+                amount: 30,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Polymorph",
+                    vec![(target_id, Condition::Polymorphed)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static POLYMORPH: LazyLock<Polymorph> = LazyLock::new(|| Polymorph {});
+
+/// Globe of Invulnerability — level-6 abjuration, concentration, action.
+/// Self-buff: while the caster concentrates, they have generic damage
+/// resistance (we approximate the 5e "immune to spells of level 5 or
+/// lower" clause with a flat half-damage rider via the `Globed` condition
+/// — the condition's `effective_damage` hook halves all incoming damage).
+/// Pure self-defense — drops on concentration loss.
+pub struct GlobeOfInvulnerability {}
+
+impl Action for GlobeOfInvulnerability {
+    fn name(&self) -> &str {
+        "globe of invulnerability"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["globe", "invuln"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::Globed,
+                timer: ConditionTimer::Permanent,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Globe of Invulnerability",
+                    vec![(caster_id, Condition::Globed)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static GLOBE_OF_INVULNERABILITY: LazyLock<GlobeOfInvulnerability> =
+    LazyLock::new(|| GlobeOfInvulnerability {});
+
+/// Counterspell — level-3 abjuration, reaction. When another creature
+/// casts a spell of level 3 or lower within 60 ft, the counterspeller
+/// interrupts the cast and the spell fails. We approximate the reaction
+/// timing by exposing Counterspell as an Action (not a Reaction trigger)
+/// that targets a *currently concentrating* enemy — on cast, the target
+/// loses their concentration (the most common "I'm running an active
+/// spell" handle in our model). This collapses Counterspell's
+/// interrupt-on-cast clause into a "rip the buff" effect since we don't
+/// have spell-cast triggers wired into the reaction bus. Slot cost is
+/// the level-3 default; targeting an unconcentrating enemy fizzles the
+/// cast (validation gate).
+pub struct Counterspell {}
+
+impl Action for Counterspell {
+    fn name(&self) -> &str {
+        "counterspell"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cs", "counter"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // Spell slot only — Counterspell is RAW a reaction, but we don't
+        // have a spell-cast trigger to fire from yet, so it gates on
+        // Action availability and the level-3 slot to keep the gating
+        // symmetric with other slotted spells.
+        action_and_slot(3)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Valid against any target that is either concentrating or
+        // holding a dispellable buff — otherwise the cast does nothing
+        // useful and we'd be wasting the slot.
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return false;
+        };
+        target.is_concentrating()
+            || target
+                .conditions()
+                .keys()
+                .any(|c| c.is_dispellable_buff())
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::DispelMagicOn;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![Box::new(DispelMagicOn {
+            target_id,
+        })]
+    }
+}
+
+pub static COUNTERSPELL: LazyLock<Counterspell> = LazyLock::new(|| Counterspell {});
