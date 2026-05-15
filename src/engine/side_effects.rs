@@ -140,6 +140,32 @@ impl ApplicableSideEffect for MoveActor {
                 }
                 .apply(ei);
             }
+            // 5e Booming Blade: the mark fires the *first* time the marked
+            // creature moves voluntarily, dealing the rider damage and
+            // burning off the mark (single-shot). We trip on any walked
+            // step — bursts from forced movement (Telekinesis pull,
+            // Thorn Whip) route through `TeleportActor` / `PullActor`
+            // which skip this hook by RAW.
+            let booming = ei
+                .actors
+                .get(&self.actor_id)
+                .is_some_and(|a| a.has_condition(Condition::BoomingBladeMarked));
+            if booming {
+                let dmg = ei.roll(&crate::engine::dice::Dice::new(1, 8));
+                ei.log(format!(
+                    "  booming blade: 1d8({}) thunder as they step away",
+                    dmg
+                ));
+                if let Some(a) = ei.actors.get_mut(&self.actor_id) {
+                    a.remove_condition(Condition::BoomingBladeMarked);
+                }
+                DealDamage {
+                    actor_id: self.actor_id,
+                    amount: dmg,
+                    damage_type: DamageType::Thunder,
+                }
+                .apply(ei);
+            }
         }
     }
 }

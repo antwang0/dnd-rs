@@ -1097,6 +1097,7 @@ mod tests {
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::doppelgangers::DOPPELGANGER_TEMPLATE;
         use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
+        use crate::actors::creatures::drow::DROW_TEMPLATE;
         use crate::actors::creatures::fire_elementals::FIRE_ELEMENTAL_TEMPLATE;
         use crate::actors::creatures::gelatinous_cubes::GELATINOUS_CUBE_TEMPLATE;
         use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
@@ -1154,6 +1155,9 @@ mod tests {
             let _ = e.instantiate_creature(&LICH_TEMPLATE, Coordinate::new(19, 15), 1, 12);
             let _ = e.instantiate_creature(&ADULT_RED_DRAGON_TEMPLATE, Coordinate::new(15, 17), 1, 13);
             let _ = e.instantiate_creature(&BEHOLDER_TEMPLATE, Coordinate::new(15, 14), 1, 14);
+            // Drow on the enemy team so the action picker exercises the
+            // new poisoned-hand-crossbow CON-save rider.
+            let _ = e.instantiate_creature(&DROW_TEMPLATE, Coordinate::new(13, 17), 1, 15);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

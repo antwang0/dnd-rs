@@ -248,6 +248,49 @@ pub enum Condition {
     /// creature (helpless dangling), and the caster can re-position them
     /// each round. We model only the movement-zero half for simplicity.
     Lifted,
+    /// Booming-Blade-marked (5e cantrip rider). The blade caster touched
+    /// this target on a hit; if they voluntarily move before the start of
+    /// the caster's next turn, they take an extra 1d8 thunder damage. We
+    /// track this as a tick-down condition on the target; the
+    /// movement-damage rider lives on the `MoveActor` apply path (next
+    /// to the Spike Growth rider) and consumes the mark on trigger.
+    BoomingBladeMarked,
+    /// Crusader's Mantle aura (5e level-3 paladin, concentration). The
+    /// holder (an ally of the caster, including the caster themselves)
+    /// rolls +1d4 radiant on every weapon attack hit. We layer this on
+    /// `resolve_attack` as a small radiant rider, mirroring Hunter's
+    /// Mark / Hex but typed Radiant. Dispelled when the caster drops
+    /// concentration.
+    CrusadersMantled,
+    /// Mind-Whipped (5e Tasha's Mind Whip, level-2). On a failed INT save
+    /// the target takes 3d6 psychic and loses one of their action /
+    /// bonus-action / reaction on their next turn. We model the
+    /// reaction-loss half via the existing `NoReaction` rider; the action
+    /// / bonus-action loss is folded in by zeroing those resources at the
+    /// start of the holder's next turn (we tag this condition and
+    /// `reset_for_new_round` consumes it). Cleared on tick.
+    MindWhipped,
+    /// Time Stopped (5e Time Stop, level-9). The caster is given an extra
+    /// Action and Bonus Action immediately on cast — we collapse the
+    /// 5e "1d4+1 extra turns" clause into a single burst of action
+    /// economy that resolves this turn. The condition is a marker only
+    /// (it tags the caster so re-cast is detectable / dispel-prunable);
+    /// no per-tick mechanics ride it.
+    TimeStopped,
+    /// Caged by Forcecage (5e level-7, CHA save). The target is sealed in
+    /// an impassable cage of force. Mechanically: zero movement (joins
+    /// `zeros_movement`). The 5e cage also blocks teleportation and
+    /// passwall — neither is modeled here. Lasts the spell's duration
+    /// (1 hour RAW; capped here to a long Rounds timer).
+    Caged,
+    /// Surrounded by a Crown of Stars (5e level-7 evocation). The caster
+    /// has 7 motes of radiant light orbiting them; using a Bonus Action
+    /// to fling one at a target deals 4d12 radiant. We collapse the
+    /// "7 charges over the duration" RAW into a flat damage-rider buff:
+    /// the holder rolls +1d8 radiant on every weapon attack while the
+    /// crown is up. Mirrors Crusader's Mantle but is self-only and
+    /// concentration-free (a flat Rounds timer suffices).
+    CrownOfStars,
 }
 
 impl Condition {
@@ -301,6 +344,12 @@ impl Condition {
             Condition::Polymorphed => "polymorphed",
             Condition::Globed => "globed in invulnerability",
             Condition::Lifted => "lifted by telekinesis",
+            Condition::BoomingBladeMarked => "thunder-marked",
+            Condition::CrusadersMantled => "crusader's mantled",
+            Condition::MindWhipped => "mind-whipped",
+            Condition::TimeStopped => "time-stopped",
+            Condition::Caged => "caged in force",
+            Condition::CrownOfStars => "haloed by stars",
         }
     }
 
@@ -345,6 +394,9 @@ impl Condition {
                 | Condition::Raging
                 | Condition::Polymorphed
                 | Condition::Globed
+                | Condition::CrusadersMantled
+                | Condition::CrownOfStars
+                | Condition::TimeStopped
         )
     }
 
@@ -367,6 +419,7 @@ impl Condition {
                 | Condition::Adhered
                 | Condition::Petrified
                 | Condition::Lifted
+                | Condition::Caged
         )
     }
 }

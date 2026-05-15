@@ -203,13 +203,6 @@ pub trait Action {
         false
     }
 
-    /// Legacy alias — same semantics as `is_heal`. Some older tests
-    /// call this name; both delegate to `is_heal` so impls only need
-    /// to override one method.
-    fn heals(&self) -> bool {
-        self.is_heal()
-    }
-
     /// Damage types this action can deal (for actor-side resistance /
     /// immunity hints in the prompt UI). Empty for non-damaging actions
     /// or those whose typing depends on runtime data.

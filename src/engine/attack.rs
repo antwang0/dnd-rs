@@ -180,7 +180,7 @@ pub fn resolve_attack_outcome(
     // this target marked deals +1d6 (weapon-typed). Crits double the
     // mark die per RAW — the rider folds into the weapon's damage type.
     if encounter.is_hunters_mark_target(p.caster_id, p.target_id) {
-        let hm_total = roll_rider_d6(encounter, is_crit);
+        let hm_total = roll_rider(encounter, Dice::new(1, 6), is_crit);
         damage = damage.saturating_add(hm_total);
         encounter.log(format!(
             "  hunter's mark: +{} extra {:?}",
@@ -199,13 +199,35 @@ pub fn resolve_attack_outcome(
         damage_type: p.damage_type,
     })];
     if encounter.is_hex_target(p.caster_id, p.target_id) {
-        let hex_total = roll_rider_d6(encounter, is_crit);
+        let hex_total = roll_rider(encounter, Dice::new(1, 6), is_crit);
         encounter.log(format!("  hex: +{} extra Necrotic", hex_total));
         effects.push(Box::new(DealDamage {
             actor_id: p.target_id,
             amount: hex_total,
             damage_type: DamageType::Necrotic,
         }));
+    }
+    // 5e Crusader's Mantle (+1d4 radiant) and Crown of Stars (+1d8
+    // radiant): both are caster-side concentration buffs that layer a
+    // bonus-damage die on every weapon hit. Same shape — one table here
+    // gates both with a single helper call to roll the rider die.
+    for (cond, dice, label) in [
+        (crate::conditions::Condition::CrusadersMantled, Dice::new(1, 4), "crusader's mantle"),
+        (crate::conditions::Condition::CrownOfStars, Dice::new(1, 8), "crown of stars"),
+    ] {
+        if encounter
+            .actors
+            .get(&p.caster_id)
+            .is_some_and(|a| a.has_condition(cond))
+        {
+            let total = roll_rider(encounter, dice, is_crit);
+            encounter.log(format!("  {}: +{} radiant", label, total));
+            effects.push(Box::new(DealDamage {
+                actor_id: p.target_id,
+                amount: total,
+                damage_type: DamageType::Radiant,
+            }));
+        }
     }
     // 5e Fire Shield: if the target is fire-shielded and this was a melee
     // attack, the attacker takes 2d8 fire damage in retaliation. We tag
@@ -228,11 +250,12 @@ pub fn resolve_attack_outcome(
     (effects, damage)
 }
 
-/// Roll a single 1d6 rider die, doubling on crit per 5e RAW. Shared by
-/// Hunter's Mark and Hex (both add a 1d6 to weapon hits and double on
-/// crit) so the d6 + crit-doubling logic lives in one spot.
-fn roll_rider_d6(encounter: &mut EncounterInstance, is_crit: bool) -> u32 {
-    let base = encounter.roll(&Dice::new(1, 6));
-    let crit_extra = if is_crit { encounter.roll(&Dice::new(1, 6)) } else { 0 };
+/// Roll a single rider die for an on-hit bonus, doubling on crit per
+/// 5e RAW. Used by every "per-hit weapon-bonus damage" effect — Hex /
+/// Hunter's Mark (1d6), Crusader's Mantle (1d4), Crown of Stars (1d8).
+/// Keeps the crit-doubling rule in one place.
+fn roll_rider(encounter: &mut EncounterInstance, dice: Dice, is_crit: bool) -> u32 {
+    let base = encounter.roll(&dice);
+    let crit_extra = if is_crit { encounter.roll(&dice) } else { 0 };
     base + crit_extra
 }

@@ -153,7 +153,7 @@ pub struct SpellSlotManager {
 
 impl SpellSlotManager {
     fn idx(lvl: u32) -> Option<usize> {
-        if lvl == 0 { None } else { Some((lvl - 1) as usize) }
+        lvl.checked_sub(1).map(|n| n as usize)
     }
 
     pub fn spell_slots(&self, lvl: u32) -> SpellSlotInfo {
@@ -511,18 +511,10 @@ impl ActorInstance {
     }
 
     /// 5e: a new application replaces the existing pool only if it's
-    /// larger. Returns true if temp HP changed.
-    pub fn grant_temp_hp(&mut self, amount: u32) -> bool {
-        if amount > self.temp_hp {
-            self.temp_hp = amount;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Same semantics as `grant_temp_hp`, but returns the resulting pool
-    /// size for callers that prefer reading the post-state value directly.
+    /// larger. Returns the resulting pool size — callers that want a
+    /// "did it change?" boolean can diff against `temp_hp()` from before
+    /// the call, or compare against `amount` (a no-op leaves the prior
+    /// pool, which is `>= amount`).
     pub fn gain_temp_hp(&mut self, amount: u32) -> u32 {
         if amount > self.temp_hp {
             self.temp_hp = amount;
@@ -1041,6 +1033,15 @@ impl ActorInstance {
         self.action_slots = 1;
         self.bonus_action_slots = 1;
         self.reaction_slots = 1;
+        // 5e Tasha's Mind Whip: on the holder's next turn, they lose one
+        // of action / bonus action / reaction. We zero the action slot
+        // (most-impactful pick) and burn the condition the moment it
+        // gates the next turn. The NoReaction rider was applied
+        // separately on the cast for the reaction-loss half; the
+        // start-of-turn cleanup is the action-loss half.
+        if self.conditions.remove(&Condition::MindWhipped).is_some() {
+            self.action_slots = 0;
+        }
         // Once-per-turn flags reset at start of turn. Sneak Attack:
         // available again. Help grants from this actor live with the
         // helped actor, so we don't clear them here.
@@ -1485,11 +1486,10 @@ mod tests {
     #[test]
     fn temp_hp_does_not_stack() {
         let mut s = make(&SKELETON_TEMPLATE);
-        assert!(s.grant_temp_hp(5));
-        assert_eq!(s.temp_hp(), 5);
-        assert!(!s.grant_temp_hp(3));
-        assert_eq!(s.temp_hp(), 5);
-        assert!(s.grant_temp_hp(8));
-        assert_eq!(s.temp_hp(), 8);
+        assert_eq!(s.gain_temp_hp(5), 5);
+        // Smaller grant is ignored: pool stays at 5.
+        assert_eq!(s.gain_temp_hp(3), 5);
+        // Larger grant replaces.
+        assert_eq!(s.gain_temp_hp(8), 8);
     }
 }

@@ -8985,3 +8985,576 @@ impl Action for Counterspell {
 }
 
 pub static COUNTERSPELL: LazyLock<Counterspell> = LazyLock::new(|| Counterspell {});
+
+/// Booming Blade — cantrip. Make a melee attack against a target within 5ft;
+/// on hit, weapon damage as normal plus the target is marked with
+/// `BoomingBladeMarked` — they take an extra 1d8 thunder the *next* time
+/// they move voluntarily before the start of the caster's next turn. We
+/// reuse the spell-attack pipeline with a 0d0 damage roll for the cantrip
+/// itself (the weapon-attack half is folded in via the rider — at cantrip
+/// scaling, the headline is the thunder rider, not the swing's main
+/// damage). On hit the mark applies with a 1-round timer so it ticks off
+/// the holder's turn cleanly. Misses do nothing.
+pub struct BoomingBlade {}
+
+impl Action for BoomingBlade {
+    fn name(&self) -> &str {
+        "booming blade"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bb", "boom"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Thunder]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
+        // 1d8 thunder on the touch itself (cantrip "weapon" damage at
+        // base scaling). The rider hits on movement via the
+        // BoomingBladeMarked condition.
+        let mut effects = spell_attack(
+            encounter,
+            caster_id,
+            target_id,
+            "booming blade",
+            attack_bonus,
+            Dice::new(1, 8),
+            DamageType::Thunder,
+            true,
+        );
+        // Mark on hit only (empty effect list = miss).
+        if !effects.is_empty() {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::BoomingBladeMarked,
+                timer: ConditionTimer::Rounds(1),
+            }));
+        }
+        effects
+    }
+}
+
+pub static BOOMING_BLADE: LazyLock<BoomingBlade> = LazyLock::new(|| BoomingBlade {});
+
+/// Tasha's Mind Whip — level-2 enchantment. Target within 90ft makes an INT
+/// save vs the caster's spell DC: pass = half, fail = full 3d6 psychic and
+/// the target loses one of action / bonus action / reaction on their next
+/// turn. We model the reaction-loss via the `NoReaction` rider and the
+/// action-loss via the `MindWhipped` condition (consumed at the start of
+/// the next turn by `reset_for_new_round`, zeroing the action slot).
+pub struct MindWhip {}
+
+impl Action for MindWhip {
+    fn name(&self) -> &str {
+        "mind whip"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mw", "whip"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 90 ft = 36 tiles.
+        Some(36)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Psychic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let raw = encounter.roll(&Dice::new(3, 6));
+        let save = encounter.roll_save(target_id, AbilityScoreType::Intelligence, dc);
+        let dmg = if save.passed() { raw / 2 } else { raw };
+        encounter.log(format!(
+            "  mind whip: 3d6({}) = {} psychic",
+            raw, dmg
+        ));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        if dmg > 0 {
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: dmg,
+                damage_type: DamageType::Psychic,
+            }));
+        }
+        // Action-economy debuff lands only on a fail per RAW.
+        if !save.passed() {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::MindWhipped,
+                timer: ConditionTimer::Permanent,
+            }));
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::NoReaction,
+                timer: ConditionTimer::Rounds(1),
+            }));
+        }
+        effects
+    }
+}
+
+pub static MIND_WHIP: LazyLock<MindWhip> = LazyLock::new(|| MindWhip {});
+
+/// Crusader's Mantle — level-3 evocation, concentration. Self-buff aura that
+/// makes every weapon hit by the caster (and, RAW, allies within 30ft) deal
+/// +1d4 radiant. We model the load-bearing self-cast version: the caster
+/// gains the `CrusadersMantled` condition for the duration. The +1d4
+/// radiant rider lives on the `resolve_attack` path. We skip the aura-
+/// extend-to-allies clause because the aura-tick infrastructure isn't in
+/// place; for simplicity any willing caster gets the buff and concentration
+/// holds the spell.
+pub struct CrusadersMantle {}
+
+impl Action for CrusadersMantle {
+    fn name(&self) -> &str {
+        "crusader's mantle"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cm", "mantle", "crusader"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::CrusadersMantled,
+                timer: ConditionTimer::Permanent,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Crusader's Mantle",
+                    vec![(caster_id, Condition::CrusadersMantled)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static CRUSADERS_MANTLE: LazyLock<CrusadersMantle> = LazyLock::new(|| CrusadersMantle {});
+
+/// Earthquake — level-8 evocation, concentration. Burst at a point within
+/// 500ft; every enemy in a 20ft radius (= 4-tile gap) makes a STR save vs
+/// the caster's spell DC: fail = knocked Prone and takes 5d6 bludgeoning,
+/// pass = no damage / no prone. Allies are spared (caster picks the safe
+/// arc, per the spell's RAW "ground rupture" flavor). Damage is rolled
+/// once and shared across all victims (matches 5e shared-roll AoE
+/// semantics). Concentration so re-casting drops cleanly.
+pub struct Earthquake {}
+
+impl Action for Earthquake {
+    fn name(&self) -> &str {
+        "earthquake"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["eq", "quake"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 500 ft RAW, capped to 120 tiles for our map scale.
+        Some(120)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(8)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        const RADIUS: isize = 4;
+        let raw = encounter.roll(&Dice::new(5, 6));
+        encounter.log(format!(
+            "  earthquake: 5d6({}) shared bludgeoning",
+            raw
+        ));
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
+            let save = encounter.roll_save(tid, AbilityScoreType::Strength, dc);
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(DealDamage {
+                actor_id: tid,
+                amount: raw,
+                damage_type: DamageType::Bludgeoning,
+            }));
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Prone,
+                timer: ConditionTimer::Permanent,
+            }));
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Earthquake", Vec::new()),
+        }));
+        effects
+    }
+}
+
+pub static EARTHQUAKE: LazyLock<Earthquake> = LazyLock::new(|| Earthquake {});
+
+/// Time Stop — level-9 transmutation. Caster gets an extra Action and an
+/// extra Bonus Action *immediately* (the 5e "1d4+1 turns of solo activity"
+/// is collapsed to a one-turn burst of action economy). The TimeStopped
+/// condition is a flag for the dispel pipeline / UI; the action-economy
+/// boost is the load-bearing mechanical effect, delivered via two
+/// `GiveResource` side-effects. Self-only; no save / no targeting.
+pub struct TimeStop {}
+
+impl Action for TimeStop {
+    fn name(&self) -> &str {
+        "time stop"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ts", "timestop"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(9)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::GiveResource;
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::TimeStopped,
+                timer: ConditionTimer::UntilStartOfNextTurn,
+            }),
+            Box::new(GiveResource {
+                actor_id: caster_id,
+                resource: Resource::Action,
+            }),
+            Box::new(GiveResource {
+                actor_id: caster_id,
+                resource: Resource::BonusAction,
+            }),
+        ]
+    }
+}
+
+pub static TIME_STOP: LazyLock<TimeStop> = LazyLock::new(|| TimeStop {});
+
+/// Wish — level-9 conjuration. The 5e RAW spell can mimic any sub-9 spell or
+/// produce one of a small set of canonical effects. We model the "restore
+/// up to twenty creatures to full HP" wish: every ally within 60ft is
+/// healed to full HP. Self-only cast, no save, no targeting beyond the
+/// implicit ally radius.
+pub struct Wish {}
+
+impl Action for Wish {
+    fn name(&self) -> &str {
+        "wish"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec![]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(9)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let center = caster.location();
+        // 60ft = 24 tiles. Includes the caster.
+        let allies = encounter.ally_burst_targets(caster_id, center, 24);
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in allies {
+            let Some(ally) = encounter.actors.get(&tid) else {
+                continue;
+            };
+            // Full heal: the "missing HP" delta seeded as the Heal value.
+            let missing = ally.max_hitpoints().saturating_sub(ally.hitpoints());
+            if missing == 0 {
+                continue;
+            }
+            effects.push(Box::new(Heal {
+                actor_id: tid,
+                amount: missing,
+            }));
+        }
+        encounter.log(format!(
+            "  wish: blessing {} ally(ies) to full HP",
+            effects.len()
+        ));
+        effects
+    }
+}
+
+pub static WISH: LazyLock<Wish> = LazyLock::new(|| Wish {});
+
+/// Forcecage — level-7 evocation. Target within 100ft makes a CHA save vs
+/// the caster's spell DC (RAW: no save if the cage is set up as the
+/// "solid cage" variant, but we keep one save for symmetry with other
+/// imprisonment spells). On fail the target gains the `Caged` condition
+/// for 10 rounds (≈1 minute RAW). Caged zeros movement and blocks
+/// reactions via the existing condition wiring.
+pub struct Forcecage {}
+
+impl Action for Forcecage {
+    fn name(&self) -> &str {
+        "forcecage"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fc", "cage"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 100 ft = 40 tiles.
+        Some(40)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(7)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Charisma, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Caged,
+            timer: ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static FORCECAGE: LazyLock<Forcecage> = LazyLock::new(|| Forcecage {});
+
+/// Crown of Stars — level-7 evocation. Self-cast that grants the caster a
+/// halo of seven motes for the duration. Each weapon hit by the caster
+/// rolls +1d8 radiant — we model the per-mote charge clause as a flat
+/// per-hit rider via `resolve_attack`'s `CrownOfStars` lookup. Lasts
+/// 10 rounds (≈1 hour RAW, capped here to a long Rounds timer). Doesn't
+/// require concentration.
+pub struct CrownOfStarsSpell {}
+
+impl Action for CrownOfStarsSpell {
+    fn name(&self) -> &str {
+        "crown of stars"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cos", "crown"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(7)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::CrownOfStars,
+            timer: ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static CROWN_OF_STARS: LazyLock<CrownOfStarsSpell> = LazyLock::new(|| CrownOfStarsSpell {});

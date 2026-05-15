@@ -3738,3 +3738,92 @@ pub static DRAGON_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
     sub_attack: &DRAGON_CLAW,
     count: 3,
 });
+
+/// Drow Poisoned Hand Crossbow — DEX-based 1d6 piercing ranged shot with
+/// 30/120 ft range (≈12 tiles), Action cost. On hit, the target makes a
+/// CON save DC 13: fail = additional 2d4 poison damage and Poisoned for
+/// 2 rounds (we collapse the 5e "unconscious for 1 hour on fail-by-5"
+/// clause into a simple Poisoned). Mirrors the Drow's signature
+/// crossbow-and-venom pattern from the Monster Manual.
+pub struct DrowPoisonedCrossbow {}
+
+impl Action for DrowPoisonedCrossbow {
+    fn name(&self) -> &str {
+        "poisoned hand crossbow"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["phcb", "drowbow"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Poison]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            self.name(),
+            AbilityScoreType::Dexterity,
+            Some(AbilityScoreType::Dexterity),
+            Dice::new(1, 6),
+            DamageType::Piercing,
+            false,
+        );
+        // Miss = no rider.
+        if effects.is_empty() {
+            return effects;
+        }
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 13);
+        if !save.passed() {
+            let poison = encounter.roll(&Dice::new(2, 4));
+            encounter.log(format!(
+                "  drow poison: 2d4({}) = {} poison",
+                poison, poison
+            ));
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: poison,
+                damage_type: DamageType::Poison,
+            }));
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Poisoned,
+                timer: ConditionTimer::Rounds(2),
+            }));
+        }
+        effects
+    }
+}
+
+pub static DROW_POISONED_CROSSBOW: LazyLock<DrowPoisonedCrossbow> =
+    LazyLock::new(|| DrowPoisonedCrossbow {});

@@ -3502,7 +3502,7 @@ mod tests {
             .unwrap();
         let actor = e.actors.get_mut(&id).unwrap();
         let max = actor.max_hitpoints();
-        actor.grant_temp_hp(5);
+        actor.gain_temp_hp(5);
         assert_eq!(actor.temp_hp(), 5);
         actor.take_damage(3);
         assert_eq!(actor.temp_hp(), 2);
@@ -3520,12 +3520,12 @@ mod tests {
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
         let actor = e.actors.get_mut(&id).unwrap();
-        assert!(actor.grant_temp_hp(5));
-        // Smaller value: ignored.
-        assert!(!actor.grant_temp_hp(3));
+        assert_eq!(actor.gain_temp_hp(5), 5);
+        // Smaller value: ignored (pool stays at the larger of the two).
+        assert_eq!(actor.gain_temp_hp(3), 5);
         assert_eq!(actor.temp_hp(), 5);
         // Bigger value: replaces.
-        assert!(actor.grant_temp_hp(8));
+        assert_eq!(actor.gain_temp_hp(8), 8);
         assert_eq!(actor.temp_hp(), 8);
     }
 
@@ -4376,7 +4376,7 @@ mod tests {
             .unwrap();
         let actor = e.actors.get_mut(&id).unwrap();
         let max = actor.max_hitpoints();
-        actor.grant_temp_hp(5);
+        actor.gain_temp_hp(5);
         assert_eq!(actor.temp_hp(), 5);
         // 3 damage burns part of the temp pool; real HP intact.
         actor.take_damage(3);
@@ -4395,12 +4395,12 @@ mod tests {
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
         let actor = e.actors.get_mut(&id).unwrap();
-        actor.grant_temp_hp(5);
+        actor.gain_temp_hp(5);
         // Smaller application leaves the pool alone.
-        assert!(!actor.grant_temp_hp(3));
+        assert_eq!(actor.gain_temp_hp(3), 5);
         assert_eq!(actor.temp_hp(), 5);
         // Larger application replaces.
-        assert!(actor.grant_temp_hp(8));
+        assert_eq!(actor.gain_temp_hp(8), 8);
         assert_eq!(actor.temp_hp(), 8);
     }
 
@@ -5625,7 +5625,7 @@ mod tests {
             .unwrap();
         let max = e.actors[&id].max_hitpoints();
         let actor = e.actors.get_mut(&id).unwrap();
-        assert!(actor.grant_temp_hp(5));
+        assert_eq!(actor.gain_temp_hp(5), 5);
 
         // 3 damage to 5 temp HP — only the temp pool drops.
         actor.take_damage(3);
@@ -5645,12 +5645,12 @@ mod tests {
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
         let actor = e.actors.get_mut(&id).unwrap();
-        assert!(actor.grant_temp_hp(5));
+        assert_eq!(actor.gain_temp_hp(5), 5);
         // Smaller pool — no replacement.
-        assert!(!actor.grant_temp_hp(3));
+        assert_eq!(actor.gain_temp_hp(3), 5);
         assert_eq!(actor.temp_hp(), 5);
         // Larger pool — replaces.
-        assert!(actor.grant_temp_hp(8));
+        assert_eq!(actor.gain_temp_hp(8), 8);
         assert_eq!(actor.temp_hp(), 8);
     }
 
@@ -5660,7 +5660,7 @@ mod tests {
         let id = e
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        e.actors.get_mut(&id).unwrap().grant_temp_hp(10);
+        e.actors.get_mut(&id).unwrap().gain_temp_hp(10);
         assert_eq!(e.actors[&id].temp_hp(), 10);
         e.long_rest();
         assert_eq!(e.actors[&id].temp_hp(), 0);
@@ -9541,10 +9541,10 @@ mod tests {
         let bless: &dyn Action = &*BLESS;
         let attack: &dyn Action = &*SACRED_FLAME;
         let potion: &dyn Action = &DRINK_HEALING_POTION;
-        assert!(heal.heals());
-        assert!(potion.heals());
-        assert!(!bless.heals(), "bless is a buff, not a heal");
-        assert!(!attack.heals());
+        assert!(heal.is_heal());
+        assert!(potion.is_heal());
+        assert!(!bless.is_heal(), "bless is a buff, not a heal");
+        assert!(!attack.is_heal());
     }
 
     #[test]
@@ -15980,5 +15980,318 @@ mod tests {
             .unwrap()
             .add_condition(Condition::Lifted, ConditionTimer::Permanent);
         assert_eq!(e.actors[&id].remaining_movement(), 0.0);
+    }
+
+    /// Caged condition zeros out movement (Forcecage) and the same
+    /// rule that blocks reactions while NoReaction is up doesn't apply
+    /// here — only the movement clause is load-bearing for this test.
+    #[test]
+    fn caged_zeros_movement() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&id).unwrap().reset_for_new_round();
+        assert!(e.actors[&id].remaining_movement() > 0.0);
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Caged, ConditionTimer::Rounds(10));
+        assert_eq!(e.actors[&id].remaining_movement(), 0.0);
+    }
+
+    /// Time Stop: gives the caster an extra Action and Bonus Action
+    /// immediately, on top of the slot consumption.
+    #[test]
+    fn time_stop_grants_extra_actions() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::TIME_STOP;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Top-of-turn: 1 Action + 1 BonusAction.
+        e.actors.get_mut(&wiz).unwrap().reset_for_new_round();
+        let action_before = e.actors[&wiz].action_slots();
+        let bonus_before = e.actors[&wiz].bonus_action_slots();
+        let effects = TIME_STOP.side_effects(&mut e, wiz, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let action_after = e.actors[&wiz].action_slots();
+        let bonus_after = e.actors[&wiz].bonus_action_slots();
+        assert_eq!(action_after, action_before + 1);
+        assert_eq!(bonus_after, bonus_before + 1);
+    }
+
+    /// Wish (mass-heal variant): heals every wounded ally within 60ft to
+    /// full HP. Distant allies / enemies are untouched.
+    #[test]
+    fn wish_heals_nearby_allies() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::WISH;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(40, 10, &[]);
+        let cler = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 2), 0, 1)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        // Wound everyone so the heal lands.
+        for &id in &[cler, ally, enemy] {
+            let _ = e.actors.get_mut(&id).unwrap().take_damage(1);
+        }
+        let max_ally = e.actors[&ally].max_hitpoints();
+        let max_enemy = e.actors[&enemy].max_hitpoints();
+        let effects = WISH.side_effects(&mut e, cler, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        // Cleric heals themselves and the ally to full HP; the enemy is
+        // skipped (different team).
+        assert_eq!(e.actors[&ally].hitpoints(), max_ally);
+        assert_eq!(e.actors[&enemy].hitpoints(), max_enemy - 1);
+    }
+
+    /// Earthquake: damages and knocks Prone every enemy in the burst
+    /// who fails their STR save. Allies in the burst are spared.
+    #[test]
+    fn earthquake_drops_enemies_in_burst() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::EARTHQUAKE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::Condition;
+        // Try a handful of seeds — a goblin with low STR will fail its
+        // save in most variants.
+        let mut dropped = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(30, 10, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 2), 1, 0)
+                .unwrap();
+            let point_tile = vec![Coordinate::new(12, 2)];
+            let effects = EARTHQUAKE.side_effects(&mut e, wiz, None, Some(&point_tile), None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e.actors[&g].has_condition(Condition::Prone) {
+                dropped = true;
+                break;
+            }
+        }
+        assert!(dropped, "earthquake never knocked the goblin Prone");
+    }
+
+    /// Crusader's Mantle: self-buff that layers a +1d4 radiant rider on
+    /// every weapon hit by the caster. The condition flag is the
+    /// load-bearing piece; the rider damage is exercised in attack.rs.
+    #[test]
+    fn crusaders_mantle_applies_to_caster() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::CRUSADERS_MANTLE;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cler = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let effects = CRUSADERS_MANTLE.side_effects(&mut e, cler, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&cler].has_condition(Condition::CrusadersMantled));
+        assert!(e.actors[&cler].is_concentrating());
+    }
+
+    /// Mind Whip: failed INT save deals psychic damage and tags the
+    /// target with `MindWhipped` (action-loss next turn) + `NoReaction`.
+    #[test]
+    fn mind_whip_debuffs_on_fail() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::MIND_WHIP;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut whipped = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+                .unwrap();
+            let tv = vec![g];
+            let effects = MIND_WHIP.side_effects(&mut e, wiz, Some(&tv), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e.actors[&g].has_condition(Condition::MindWhipped) {
+                assert!(e.actors[&g].has_condition(Condition::NoReaction));
+                whipped = true;
+                break;
+            }
+        }
+        assert!(whipped, "mind whip never debuffed the goblin");
+    }
+
+    /// MindWhipped condition: at the start of the holder's next turn,
+    /// reset_for_new_round zeroes their action slot and clears the
+    /// condition. The action-economy clause is the load-bearing half of
+    /// the spell's mechanical effect.
+    #[test]
+    fn mind_whipped_zeros_action_on_next_turn() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        actor.add_condition(Condition::MindWhipped, ConditionTimer::Permanent);
+        actor.reset_for_new_round();
+        assert_eq!(actor.action_slots(), 0);
+        assert!(!actor.has_condition(Condition::MindWhipped));
+    }
+
+    /// Booming Blade mark: a marked actor that walks one tile takes the
+    /// thunder rider and loses the mark (single-shot).
+    #[test]
+    fn booming_blade_mark_burns_on_move() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Pad HP so the rider doesn't down the goblin mid-step.
+        for _ in 0..40 {
+            let _ = e.actors.get_mut(&g).unwrap().heal(1);
+        }
+        e.actors.get_mut(&g).unwrap().reset_for_new_round();
+        e.actors
+            .get_mut(&g)
+            .unwrap()
+            .add_condition(Condition::BoomingBladeMarked, ConditionTimer::Rounds(1));
+        let before = e.actors[&g].hitpoints();
+        MoveActor {
+            actor_id: g,
+            path: vec![Coordinate::new(3, 2)],
+        }
+        .apply(&mut e);
+        let after = e.actors.get(&g).map(|a| a.hitpoints()).unwrap_or(0);
+        assert!(after < before, "booming blade should chip HP on move");
+        assert!(!e.actors[&g].has_condition(Condition::BoomingBladeMarked));
+    }
+
+    /// Forcecage: failed CHA save applies Caged for 10 rounds.
+    #[test]
+    fn forcecage_imprisons_on_fail() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::FORCECAGE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut caged = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+                .unwrap();
+            let tv = vec![g];
+            let effects = FORCECAGE.side_effects(&mut e, wiz, Some(&tv), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e.actors[&g].has_condition(Condition::Caged) {
+                caged = true;
+                break;
+            }
+        }
+        assert!(caged, "forcecage never trapped the goblin");
+    }
+
+    /// Crown of Stars: applies the CrownOfStars condition (rider buff)
+    /// to the caster for the duration. Doesn't require concentration.
+    #[test]
+    fn crown_of_stars_self_buffs() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::CROWN_OF_STARS;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let effects = CROWN_OF_STARS.side_effects(&mut e, wiz, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&wiz].has_condition(Condition::CrownOfStars));
+        // No concentration — symmetric with Fire Shield.
+        assert!(!e.actors[&wiz].is_concentrating());
+    }
+
+    /// Drow poisoned hand crossbow: on a hit + failed CON save, the
+    /// target picks up Poisoned + extra poison damage.
+    #[test]
+    fn drow_poisoned_crossbow_poisons_target() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::DROW_POISONED_CROSSBOW;
+        use crate::actors::creatures::drow::DROW_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut poisoned = false;
+        for seed in 0..50 {
+            let mut e = ei_with_terrain(20, 10, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let drow = e
+                .instantiate_creature(&DROW_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+                .unwrap();
+            // Pad HP so the goblin survives the bolt.
+            for _ in 0..40 {
+                let _ = e.actors.get_mut(&g).unwrap().heal(1);
+            }
+            let tv = vec![g];
+            let effects = DROW_POISONED_CROSSBOW.side_effects(&mut e, drow, Some(&tv), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e.actors[&g].has_condition(Condition::Poisoned) {
+                poisoned = true;
+                break;
+            }
+        }
+        assert!(poisoned, "drow bolt never poisoned the goblin");
     }
 }

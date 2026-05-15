@@ -12,6 +12,7 @@ pub mod cult_fanatics;
 pub mod dire_wolves;
 pub mod doppelgangers;
 pub mod dragons;
+pub mod drow;
 pub mod fighters;
 pub mod fire_elementals;
 pub mod fire_imps;
