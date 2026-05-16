@@ -431,6 +431,19 @@ impl EncounterInstance {
                     mode = mode.combine(RollMode::Disadvantage);
                 }
             }
+            // 5e Compelled Duel: an attacker tagged as Dueled is locked
+            // onto their duelist — attacks against anyone *else* eat
+            // disadvantage. We honor the link via `dueled_by`: same
+            // target as the duelist? No effect. Different target?
+            // Disadvantage. The duelist themselves is unaffected (they
+            // get a normal swing).
+            if attacker.has_condition(Condition::Dueled)
+                && attacker
+                    .dueled_by()
+                    .is_some_and(|duelist| duelist != target_id)
+            {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
             // Advantage clauses.
             if attacker.has_condition(Condition::Invisible) {
                 mode = mode.combine(RollMode::Advantage);
@@ -16293,5 +16306,341 @@ mod tests {
             }
         }
         assert!(poisoned, "drow bolt never poisoned the goblin");
+    }
+
+    /// Fear: each enemy in the cone makes a WIS save; on fail they pick
+    /// up the Frightened condition. The caster installs concentration so
+    /// dropping it cleans the whole pool.
+    #[test]
+    fn fear_frightens_enemies_in_cone() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::FEAR;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut frightened_any = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+                .unwrap();
+            let locs = vec![Coordinate::new(4, 4)];
+            let effects = FEAR.side_effects(&mut e, wiz, None, Some(&locs), None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e.actors[&g].has_condition(Condition::Frightened) {
+                frightened_any = true;
+                assert!(
+                    e.actors[&wiz].is_concentrating(),
+                    "fear should install concentration after a hit"
+                );
+                break;
+            }
+        }
+        assert!(frightened_any, "fear never frightened the goblin");
+    }
+
+    /// Greater Restoration: cleanses one heavyweight condition from the
+    /// target and heals 4d8 + WIS HP. Distinct from Lesser Restoration
+    /// in covering the lockdown conditions (Paralyzed / Stunned / etc.).
+    #[test]
+    fn greater_restoration_cleanses_and_heals() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::GREATER_RESTORATION;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        // Paralyze the fighter and chip their HP.
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .add_condition(Condition::Paralyzed, ConditionTimer::Rounds(5));
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .take_typed_damage(10, DamageType::Slashing);
+        let before = e.actors[&fighter].hitpoints();
+        let tv = vec![fighter];
+        let effects = GREATER_RESTORATION.side_effects(&mut e, cleric, Some(&tv), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&fighter].has_condition(Condition::Paralyzed),
+            "greater restoration should lift Paralyzed"
+        );
+        assert!(
+            e.actors[&fighter].hitpoints() > before,
+            "greater restoration should also heal"
+        );
+    }
+
+    /// Compelled Duel: target fails a WIS save → Dueled, and the
+    /// `dueled_by` link points to the paladin so future attack-mode
+    /// computations can apply the off-target disadvantage.
+    #[test]
+    fn compelled_duel_locks_target_to_paladin() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::COMPELLED_DUEL;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut hooked = false;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let pal = e
+                .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+                .unwrap();
+            let tv = vec![g];
+            let effects = COMPELLED_DUEL.side_effects(&mut e, pal, Some(&tv), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e.actors[&g].has_condition(Condition::Dueled) {
+                assert_eq!(
+                    e.actors[&g].dueled_by(),
+                    Some(pal),
+                    "dueled_by must link to the casting paladin"
+                );
+                hooked = true;
+                break;
+            }
+        }
+        assert!(hooked, "compelled duel never hooked the goblin");
+    }
+
+    /// Dueled imposes disadvantage when the target attacks anyone other
+    /// than the duelist. Attacks against the duelist themselves run at
+    /// the default mode.
+    #[test]
+    fn dueled_disadvantage_only_vs_non_duelist() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        let other = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&g)
+            .unwrap()
+            .add_condition(Condition::Dueled, ConditionTimer::Rounds(5));
+        e.actors.get_mut(&g).unwrap().set_dueled_by(Some(pal));
+        let mode_vs_duelist = e.compute_attack_mode(g, pal, true);
+        let mode_vs_other = e.compute_attack_mode(g, other, true);
+        assert_eq!(mode_vs_duelist, RollMode::Normal);
+        assert_eq!(mode_vs_other, RollMode::Disadvantage);
+    }
+
+    /// Divine Smite: paladin spends a slot via the action to apply the
+    /// Smiting flag. The next melee hit consumes the flag and adds 2d8
+    /// radiant to the damage queue.
+    #[test]
+    fn divine_smite_primes_and_consumes_on_hit() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::DIVINE_SMITE;
+        use crate::actions::monster_attacks::GREATSWORD;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut consumed = false;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let pal = e
+                .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            // Prime smite.
+            let effects = DIVINE_SMITE.side_effects(&mut e, pal, None, None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            assert!(
+                e.actors[&pal].has_condition(Condition::Smiting),
+                "divine smite should prime the Smiting condition"
+            );
+            // Swing.
+            let tv = vec![g];
+            let _ = GREATSWORD.side_effects(&mut e, pal, Some(&tv), None, None);
+            if !e.actors[&pal].has_condition(Condition::Smiting) {
+                consumed = true;
+                break;
+            }
+        }
+        assert!(consumed, "smite was never consumed by a successful hit");
+    }
+
+    /// Channel Divinity: Sacred Weapon — apply via the action, +CHA
+    /// flows into the attack-bonus lane through condition_attack_bonus.
+    #[test]
+    fn sacred_weapon_adds_cha_to_attack_bonus() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::SACRED_WEAPON;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&pal].condition_attack_bonus();
+        let effects = SACRED_WEAPON.side_effects(&mut e, pal, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&pal].has_condition(Condition::Sacred));
+        // CHA 14 → mod +2.
+        assert_eq!(e.actors[&pal].condition_attack_bonus(), before + 2);
+    }
+
+    /// Lay on Hands: once-per-rest action, heals the target for
+    /// `5 * level + CHA` HP and burns the feature flag.
+    #[test]
+    fn lay_on_hands_heals_and_consumes_feature() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{LAY_ON_HANDS, LAY_ON_HANDS_TAG};
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        // Chip the fighter so the heal is observable.
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .take_typed_damage(15, DamageType::Slashing);
+        let before = e.actors[&fighter].hitpoints();
+        assert!(e.actors[&pal].feature_available(LAY_ON_HANDS_TAG));
+        let tv = vec![fighter];
+        let effects = LAY_ON_HANDS.side_effects(&mut e, pal, Some(&tv), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&fighter].hitpoints() > before,
+            "lay on hands should heal the target"
+        );
+        assert!(
+            !e.actors[&pal].feature_available(LAY_ON_HANDS_TAG),
+            "the feature should be spent after use"
+        );
+    }
+
+    /// Vampire has the regen profile (20 HP per round, suppressed by
+    /// radiant damage), the lifesteal multiattack, and the standard
+    /// undead immunity set.
+    #[test]
+    fn vampire_template_has_regen_and_charm_gaze() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::{VAMPIRE_CHARMING_GAZE, VAMPIRE_MULTIATTACK};
+        use crate::actors::creatures::vampires::VAMPIRE_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let v = e
+            .instantiate_creature(&VAMPIRE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = &e.actors[&v];
+        assert_eq!(actor.regen_per_round(), 20);
+        // Action list contains both the gaze and the multiattack.
+        let names: std::collections::HashSet<_> = actor
+            .actions
+            .iter()
+            .map(|a| a.name().to_string())
+            .collect();
+        assert!(names.contains(VAMPIRE_CHARMING_GAZE.name()));
+        assert!(names.contains(VAMPIRE_MULTIATTACK.name()));
+        // Poison immunity (5e MM Vampire).
+        assert!(actor.is_immune_to(DamageType::Poison));
+    }
+
+    /// Vampire charm gaze: failed WIS save Charms the target with the
+    /// `charmed_by` link pointing back at the vampire.
+    #[test]
+    fn vampire_charm_gaze_links_target() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::VAMPIRE_CHARMING_GAZE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::vampires::VAMPIRE_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut charmed_any = false;
+        for seed in 0..50 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let v = e
+                .instantiate_creature(&VAMPIRE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+                .unwrap();
+            let tv = vec![g];
+            let effects = VAMPIRE_CHARMING_GAZE.side_effects(&mut e, v, Some(&tv), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e.actors[&g].has_condition(Condition::Charmed) {
+                assert_eq!(e.actors[&g].charmed_by(), Some(v));
+                charmed_any = true;
+                break;
+            }
+        }
+        assert!(charmed_any, "vampire never charmed the goblin");
+    }
+
+    /// Frost Giant template has cold immunity and the greataxe + rock
+    /// attack pair. Sanity-check the canonical CR-8 stat shape.
+    #[test]
+    fn frost_giant_template_has_cold_immunity() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::{FROST_GIANT_GREATAXE, FROST_GIANT_ROCK};
+        use crate::actors::creatures::frost_giants::FROST_GIANT_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let g = e
+            .instantiate_creature(&FROST_GIANT_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = &e.actors[&g];
+        assert!(actor.is_immune_to(DamageType::Cold));
+        let names: std::collections::HashSet<_> = actor
+            .actions
+            .iter()
+            .map(|a| a.name().to_string())
+            .collect();
+        assert!(names.contains(FROST_GIANT_GREATAXE.name()));
+        assert!(names.contains(FROST_GIANT_ROCK.name()));
     }
 }

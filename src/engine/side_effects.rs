@@ -644,6 +644,26 @@ impl ApplicableSideEffect for SetCharmedBy {
     }
 }
 
+/// Record which paladin has tagged the target with Compelled Duel.
+/// Pairs with ApplyCondition (Dueled): `compute_attack_mode` reads this
+/// to apply disadvantage on attacks against anyone *other* than the
+/// duelist. `set_dueled_by(None)` clears the link explicitly; the
+/// engine also clears it automatically when the Dueled condition is
+/// removed via `remove_condition`.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct SetDueledBy {
+    pub target_id: usize,
+    pub duelist: Option<usize>,
+}
+
+impl ApplicableSideEffect for SetDueledBy {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        if let Some(actor) = ei.get_actor(self.target_id) {
+            actor.set_dueled_by(self.duelist);
+        }
+    }
+}
+
 /// Grant `count` Mirror Image decoys to the target. Re-application
 /// overwrites the existing pool (5e: recasting refreshes the duplicates).
 /// Pair with ApplyCondition (MirroredImages) so the engine knows the

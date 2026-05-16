@@ -9558,3 +9558,279 @@ impl Action for CrownOfStarsSpell {
 }
 
 pub static CROWN_OF_STARS: LazyLock<CrownOfStarsSpell> = LazyLock::new(|| CrownOfStarsSpell {});
+
+/// Fear — level-3 illusion, concentration. 30-foot cone of dread (4-tile
+/// burst). Each enemy in the burst makes a WIS save vs the caster's DC:
+/// fail = Frightened for the spell's duration; pass = no effect. We use
+/// the shared `enemy_burst_targets` partition so allies in the blast are
+/// spared. Concentration so a re-cast / damage drop cleans up the entire
+/// Frightened pool in one shot.
+pub struct Fear {}
+
+impl Action for Fear {
+    fn name(&self) -> &str {
+        "fear"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fr", "terror"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Self-origin cone; the burst point sits right in front of the
+        // caster. Cap the targeting tile to the caster's footprint so
+        // the cone always engulfs them as the cone's origin.
+        Some(6)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        const RADIUS: isize = 4;
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut applied = Vec::new();
+        for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
+            let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, dc);
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Frightened,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            applied.push((tid, Condition::Frightened));
+        }
+        if !applied.is_empty() {
+            effects.push(Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions("Fear", applied),
+            }));
+        }
+        effects
+    }
+}
+
+pub static FEAR: LazyLock<Fear> = LazyLock::new(|| Fear {});
+
+/// Greater Restoration — level-5 abjuration. Touch-range cleanse + heal.
+/// Removes one of: Charmed / Petrified / Paralyzed / Stunned / one
+/// exhaustion level (we don't model exhaustion). Then heals 4d8 + caster's
+/// spellcasting modifier. Distinct from Lesser Restoration: GR can lift
+/// the heavyweight lockdown conditions LR can't touch, and pairs the
+/// cleanse with a real heal — paired action-economy efficiency. RAW
+/// requires a 100gp diamond as material; we don't model components.
+pub struct GreaterRestoration {}
+
+impl Action for GreaterRestoration {
+    fn name(&self) -> &str {
+        "greater restoration"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["gr", "grestore"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let mod_bonus = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
+        let raw = encounter.roll(&Dice::new(4, 8));
+        let amount = (raw as i32 + mod_bonus).max(0) as u32;
+        encounter.log(format!(
+            "  greater restoration: 4d8({}){:+} = {} HP",
+            raw, mod_bonus, amount
+        ));
+        vec![
+            Box::new(crate::engine::side_effects::RemoveOneOfConditions {
+                actor_id: target_id,
+                candidates: Self::CANDIDATES.to_vec(),
+            }),
+            Box::new(Heal {
+                actor_id: target_id,
+                amount,
+            }),
+        ]
+    }
+}
+
+impl GreaterRestoration {
+    /// Heavyweight conditions Greater Restoration is allowed to lift, in
+    /// priority order. Distinct from the Lesser Restoration list — GR
+    /// targets the lockdown set (Paralyzed, Stunned, Petrified, Charmed)
+    /// that LR can't touch. Includes Lesser-Restoration's targets too so
+    /// a stuck-with-only-GR caster can still cleanse Poisoned / etc.
+    const CANDIDATES: [Condition; 8] = [
+        Condition::Petrified,
+        Condition::Paralyzed,
+        Condition::Stunned,
+        Condition::Charmed,
+        Condition::Frightened,
+        Condition::Poisoned,
+        Condition::Blinded,
+        Condition::Deafened,
+    ];
+}
+
+pub static GREATER_RESTORATION: LazyLock<GreaterRestoration> =
+    LazyLock::new(|| GreaterRestoration {});
+
+/// Compelled Duel — level-1 enchantment, concentration. The paladin
+/// challenges a target to a duel: the target makes a WIS save vs the
+/// caster's spell DC. Fail = target is `Dueled` (attacks against anyone
+/// other than the caster are at disadvantage — see `compute_attack_mode`).
+/// Pass = no effect. The duel is tracked via `dueled_by` so the engine
+/// knows the anchor. Caster picks the toughest enemy in melee range so
+/// the paladin uses themselves as a tank.
+///
+/// We use the existing Charm save-immunity gate (undead / constructs)
+/// here: a creature that can't be enchanted shrugs off the duel.
+pub struct CompelledDuel {}
+
+impl Action for CompelledDuel {
+    fn name(&self) -> &str {
+        "compelled duel"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cd-spell", "duel"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30ft RAW = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // Bonus action + level-1 slot — RAW Compelled Duel is bonus-action
+        // economy so the paladin can still swing their greatsword on the
+        // same turn they open the challenge.
+        bonus_action_and_slot(1)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // Charm-immune creatures (undead / constructs in our pool) shrug
+        // off the enchantment by RAW — no save needed.
+        if let Some(target) = encounter.actors.get(&target_id)
+            && target.is_immune_to_condition(Condition::Charmed)
+        {
+            encounter.log("  compelled duel: target resists enchantment".to_string());
+            return Vec::new();
+        }
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Dueled,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(crate::engine::side_effects::SetDueledBy {
+                target_id,
+                duelist: Some(caster_id),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Compelled Duel",
+                    vec![(target_id, Condition::Dueled)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static COMPELLED_DUEL: LazyLock<CompelledDuel> = LazyLock::new(|| CompelledDuel {});

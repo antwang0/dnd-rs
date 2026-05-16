@@ -492,3 +492,259 @@ impl Action for Rage {
 }
 
 pub static RAGE: LazyLock<Rage> = LazyLock::new(|| Rage {});
+
+/// Class-feature tag for Paladin's Lay on Hands — once per long rest.
+/// We collapse 5e's "pool of HP equal to 5 × level" healing well into a
+/// single chunky use per rest so the once-per-rest gating pattern stays
+/// uniform with the rest of the codebase (Second Wind, Action Surge,
+/// Indomitable, Rage). The flat heal value is bigger than Cure Wounds
+/// to compensate for the loss of pool flexibility.
+pub const LAY_ON_HANDS_TAG: &str = "paladin.lay_on_hands";
+
+/// Lay on Hands — paladin feature, touch range. Spend the once-per-rest
+/// feature to heal an ally (or self) for `5 × level + CHA` HP. RAW's
+/// pool mechanic lets the paladin split the heal across many casts; we
+/// collapse to a single big chunk per rest so the feature follows the
+/// same once-per-rest pattern as Second Wind. Plenty of healing for a
+/// melee class that doesn't have spammable Cure Wounds slots.
+pub struct LayOnHands {}
+
+impl Action for LayOnHands {
+    fn name(&self) -> &str {
+        "lay on hands"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["loh", "hands"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch — same tile as the target, footprint-adjacent.
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_combat_active() && a.feature_available(LAY_ON_HANDS_TAG))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        use crate::engine::types::AbilityScoreType;
+        use crate::engine::util::modifier_from_score;
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let level = actor.level();
+        let cha_mod = modifier_from_score(actor.ability_score(AbilityScoreType::Charisma));
+        // 5 HP per paladin level + CHA modifier. At level 3 with CHA 16
+        // (+3), that's 18 HP — beats Cure Wounds at 1d8+3 (avg 7) and
+        // makes the once-per-rest gate worth the slot.
+        let amount = (5 * level as i32 + cha_mod).max(1) as u32;
+        if let Some(paladin) = encounter.actors.get_mut(&caster_id) {
+            paladin.spend_feature(LAY_ON_HANDS_TAG);
+        }
+        encounter.log(format!(
+            "  lay on hands: 5*{}{:+} = {} HP",
+            level, cha_mod, amount
+        ));
+        vec![Box::new(Heal {
+            actor_id: target_id,
+            amount,
+        })]
+    }
+}
+
+pub static LAY_ON_HANDS: LazyLock<LayOnHands> = LazyLock::new(|| LayOnHands {});
+
+/// Divine Smite — paladin feature, bonus action. Spends a level-1 spell
+/// slot to prime the next successful melee weapon hit with +2d8 radiant
+/// damage (consumed at the hit site in `resolve_attack`). RAW lets the
+/// paladin spend higher-level slots for more radiant dice; we collapse
+/// to the flat 2d8 lane to keep the resource model clean and avoid an
+/// override-style level picker. The Smiting condition acts as the
+/// primed flag — short timer (2 rounds) so a swing-less smite expires
+/// rather than dangling indefinitely.
+pub struct DivineSmite {}
+
+impl Action for DivineSmite {
+    fn name(&self) -> &str {
+        "divine smite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ds", "smite"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        // Indirectly: the rider damage lands on the next hit, not on
+        // this action's resolution. Returning false keeps the AI's
+        // focus-fire pipeline from picking it as a damage option.
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // Bonus action + level-1 spell slot. Burning the slot is the
+        // load-bearing resource cost; the bonus action just prevents the
+        // paladin from chaining smites with other bonus actions.
+        vec![Resource::BonusAction, Resource::SpellSlot(1)]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Don't double-prime: re-casting Divine Smite while already
+        // primed is a waste of a slot. The AI's pipeline doesn't deeply
+        // model this; the gate is here for symmetry with other
+        // self-buff actions (Mage Armor / Rage / Sacred Weapon).
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_combat_active() && !a.has_condition(Condition::Smiting))
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::Smiting,
+            // 2-round window so a primed paladin who can't connect on
+            // their own turn still has one more attack to land it on the
+            // following round (e.g. a reaction-attack-of-opportunity).
+            timer: ConditionTimer::Rounds(2),
+        })]
+    }
+}
+
+pub static DIVINE_SMITE: LazyLock<DivineSmite> = LazyLock::new(|| DivineSmite {});
+
+/// Class-feature tag for Paladin's Channel Divinity: Sacred Weapon —
+/// once per long rest. The Channel Divinity *resource* is shared between
+/// multiple paladin sub-feature variants in RAW (Oath of Devotion's
+/// Sacred Weapon + Turn the Unholy etc.); we only model Sacred Weapon so
+/// the tag is sub-feature-specific.
+pub const SACRED_WEAPON_TAG: &str = "paladin.sacred_weapon";
+
+/// Channel Divinity: Sacred Weapon — paladin action. The paladin's
+/// weapon glows with divine light: attack rolls gain a flat +CHA bonus
+/// (read by `condition_attack_bonus`) for up to 10 rounds (1 minute
+/// RAW). Once per long rest. We use a regular condition timer rather
+/// than concentration so it stacks with the paladin's own spell
+/// concentration (e.g. Compelled Duel + Sacred Weapon).
+pub struct SacredWeapon {}
+
+impl Action for SacredWeapon {
+    fn name(&self) -> &str {
+        "sacred weapon"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sw-pal", "cd-sacred", "consecrate"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_combat_active() && a.feature_available(SACRED_WEAPON_TAG))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(SACRED_WEAPON_TAG);
+        }
+        encounter.log("  sacred weapon: paladin's blade glows with divine light.".to_string());
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::Sacred,
+            timer: ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static SACRED_WEAPON: LazyLock<SacredWeapon> = LazyLock::new(|| SacredWeapon {});

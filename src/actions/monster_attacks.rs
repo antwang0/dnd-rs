@@ -2052,6 +2052,23 @@ pub static LONGSWORD: SimpleWeapon = SimpleWeapon {
     cost_resource: Resource::Action,
 };
 
+/// Greatsword — STR-based 2d6 slashing melee weapon. The paladin's
+/// signature heavy weapon: bigger dice than the longsword (1d8) at the
+/// cost of two-handed use, which we don't model explicitly. Pairs with
+/// Divine Smite for the load-bearing burst damage.
+pub static GREATSWORD: SimpleWeapon = SimpleWeapon {
+    display_name: "greatsword",
+    aliases: &["gs", "great-sword"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
 /// Lance — 1d12 piercing reach-2 melee weapon. Mounted-only RAW, but we
 /// drop the mount gate so the Knight gets a polearm option to swing from
 /// 10 ft (one tile beyond a standard sword reach).
@@ -3827,3 +3844,131 @@ impl Action for DrowPoisonedCrossbow {
 
 pub static DROW_POISONED_CROSSBOW: LazyLock<DrowPoisonedCrossbow> =
     LazyLock::new(|| DrowPoisonedCrossbow {});
+
+/// Frost Giant Greataxe — STR-based 3d12 slashing melee, reach 2 (10 ft).
+/// One of the heaviest single-swing weapons in the bestiary: dice on par
+/// with the Hill Giant's club but cycled into slashing damage to keep
+/// damage-type variety on the giant tier. CR-8 numbers.
+pub static FROST_GIANT_GREATAXE: SimpleWeapon = SimpleWeapon {
+    display_name: "frost giant greataxe",
+    aliases: &["fgx", "frost-axe"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(3, 12),
+    damage_type: DamageType::Slashing,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Frost Giant Rock — STR-based 4d10 bludgeoning thrown rock at reach
+/// 24 (60 ft). Frost Giants chuck boulders like Hill Giants but harder
+/// — the extra die is the CR-8 vs CR-5 step. Same template as the Hill
+/// Giant Boulder.
+pub static FROST_GIANT_ROCK: SimpleWeapon = SimpleWeapon {
+    display_name: "frost rock",
+    aliases: &["frock"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(4, 10),
+    damage_type: DamageType::Bludgeoning,
+    reach: 24,
+    is_melee: false,
+    requires_los: true,
+    cost_resource: Resource::Action,
+};
+
+/// Vampire Charming Gaze — Action. Target within 30ft makes a WIS save
+/// vs DC 17 (vampire's CHA-based spell DC). Fail = Charmed for 1 minute
+/// (10 rounds in our model), and the SetCharmedBy linkage points the
+/// target back at the vampire so they can't attack their charmer.
+/// Mirrors the structure of MummyDreadfulGlare but Charmed instead of
+/// Frightened, single-target (the vampire picks a juicy victim) instead
+/// of AoE. RAW gives a "no save again until damaged" clause; we honor
+/// it via the 10-round duration and let damage / dispel break the
+/// condition naturally.
+pub struct VampireCharmingGaze {}
+
+impl Action for VampireCharmingGaze {
+    fn name(&self) -> &str {
+        "charming gaze"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cg", "gaze"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30ft RAW = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::{ApplyCondition, SetCharmedBy};
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // Charm-immune creatures (undead / constructs) shrug it off.
+        if let Some(target) = encounter.actors.get(&target_id)
+            && target.is_immune_to_condition(Condition::Charmed)
+        {
+            encounter.log("  charming gaze: target is immune".to_string());
+            return Vec::new();
+        }
+        const DC: i32 = 17;
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, DC);
+        if save.passed() {
+            return Vec::new();
+        }
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Charmed,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(SetCharmedBy {
+                target_id,
+                charmer: Some(caster_id),
+            }),
+        ]
+    }
+}
+
+pub static VAMPIRE_CHARMING_GAZE: LazyLock<VampireCharmingGaze> =
+    LazyLock::new(|| VampireCharmingGaze {});
+
+/// Vampire Multiattack — Action: two vampiric bites at the same target.
+/// Re-uses the generic `Multiattack` wrapper around the existing
+/// VAMPIRIC_BITE so the lifesteal payoff layers twice without a bespoke
+/// Action impl. The vampire's tempo is "charm one ally, then drink from
+/// the held victim"; the gaze stays a separate action so the AI can
+/// interleave the lockdown.
+pub static VAMPIRE_MULTIATTACK: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "vampire multiattack",
+    sub_attack: &*VAMPIRIC_BITE,
+    count: 2,
+});

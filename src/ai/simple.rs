@@ -84,6 +84,15 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3d. Divine Smite — paladin bonus action that primes the next
+        //     melee hit with +2d8 radiant. Fire when an enemy is in
+        //     melee reach so the prime is consumed this turn (the
+        //     Smiting condition's short Rounds(2) timer covers
+        //     reaction-attack edge cases but we don't lean on it).
+        if let Some(aei) = try_divine_smite(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 4. Bless — round 1 self+ally buff. Only valid before we're
         //    already concentrating on something.
         if let Some(aei) = try_bless(encounter, actor_id) {
@@ -335,12 +344,52 @@ fn try_self_buff_mage_armor(
     if actor.has_condition(Condition::MageArmored) {
         return None;
     }
-    let spell = actor
+    try_self_action(encounter, actor_id, "mage armor")
+}
+
+/// True if any combat-active hostile actor's footprint sits within
+/// `max_gap` tiles of `actor_id`'s footprint. Shared helper for
+/// proximity-gated self-buff heuristics (Rage at gap 12, Divine Smite
+/// at gap 0). Returns false when `actor_id` is missing.
+fn any_enemy_within(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    max_gap: isize,
+) -> bool {
+    let Some(actor) = encounter.actors.get(&actor_id) else {
+        return false;
+    };
+    let my_team = actor.team();
+    let my_loc = actor.location();
+    let my_size = get_tiles_from_size(actor.size());
+    encounter.actors.iter().any(|(id, a)| {
+        *id != actor_id
+            && a.team() != my_team
+            && a.is_combat_active()
+            && footprint_chebyshev(
+                my_loc,
+                my_size,
+                a.location(),
+                get_tiles_from_size(a.size()),
+            ) <= max_gap
+    })
+}
+
+/// Wrap "find action by name → ActionExecutionInfo if validates".
+/// Stays tight on the surface area for buff-style self-target actions
+/// that take no args.
+fn try_self_action(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    action_name: &str,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor
         .actions
         .iter()
-        .find(|a| a.name() == "mage armor")
+        .find(|a| a.name() == action_name)
         .copied()?;
-    let aei = ActionExecutionInfo::new(spell, actor_id, None, None, None);
+    let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
     if aei.validate(encounter) {
         Some(aei)
     } else {
@@ -360,32 +409,25 @@ fn try_rage(
     if actor.has_condition(Condition::Raging) {
         return None;
     }
-    let rage = actor.actions.iter().find(|a| a.name() == "rage").copied()?;
-    // Skip if no hostile actor is in 30ft (12 tiles) — saving the
-    // 10-round duration buff for when it matters.
-    let my_team = actor.team();
-    let my_loc = actor.location();
-    let my_size = get_tiles_from_size(actor.size());
-    let any_close_enemy = encounter.actors.iter().any(|(id, a)| {
-        *id != actor_id
-            && a.team() != my_team
-            && a.is_combat_active()
-            && footprint_chebyshev(
-                my_loc,
-                my_size,
-                a.location(),
-                get_tiles_from_size(a.size()),
-            ) <= 12
-    });
-    if !any_close_enemy {
+    // 30ft = 12 tiles — save the 10-round buff for when it matters.
+    if !any_enemy_within(encounter, actor_id, 12) {
         return None;
     }
-    let aei = ActionExecutionInfo::new(rage, actor_id, None, None, None);
-    if aei.validate(encounter) {
-        Some(aei)
-    } else {
-        None
+    try_self_action(encounter, actor_id, "rage")
+}
+
+/// Paladin Divine Smite — bonus-action prime that lays a +2d8 radiant
+/// rider on the next melee hit. Fires only when an enemy is footprint-
+/// adjacent so the prime doesn't tick out without a target to land on.
+/// Validation handles the "already primed" and "no level-1 slot" gates.
+fn try_divine_smite(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    if !any_enemy_within(encounter, actor_id, 0) {
+        return None;
     }
+    try_self_action(encounter, actor_id, "divine smite")
 }
 
 fn try_bless(
@@ -396,7 +438,6 @@ fn try_bless(
     if actor.is_concentrating() {
         return None;
     }
-    let bless = actor.actions.iter().find(|a| a.name() == "bless").copied()?;
     // Only worth casting if at least one other allied combatant exists.
     let my_team = actor.team();
     let has_ally = encounter.actors.iter().any(|(id, a)| {
@@ -405,12 +446,7 @@ fn try_bless(
     if !has_ally {
         return None;
     }
-    let aei = ActionExecutionInfo::new(bless, actor_id, None, None, None);
-    if aei.validate(encounter) {
-        Some(aei)
-    } else {
-        None
-    }
+    try_self_action(encounter, actor_id, "bless")
 }
 
 /// Take the Dodge action when we're below half HP and an enemy still
@@ -1099,6 +1135,7 @@ mod tests {
         use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
         use crate::actors::creatures::drow::DROW_TEMPLATE;
         use crate::actors::creatures::fire_elementals::FIRE_ELEMENTAL_TEMPLATE;
+        use crate::actors::creatures::frost_giants::FROST_GIANT_TEMPLATE;
         use crate::actors::creatures::gelatinous_cubes::GELATINOUS_CUBE_TEMPLATE;
         use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
         use crate::actors::creatures::hippogriffs::HIPPOGRIFF_TEMPLATE;
@@ -1106,7 +1143,9 @@ mod tests {
         use crate::actors::creatures::manticores::MANTICORE_TEMPLATE;
         use crate::actors::creatures::minotaurs::MINOTAUR_TEMPLATE;
         use crate::actors::creatures::mummies::MUMMY_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
         use crate::actors::creatures::treants::TREANT_TEMPLATE;
+        use crate::actors::creatures::vampires::VAMPIRE_TEMPLATE;
         use crate::actors::creatures::veterans::VETERAN_TEMPLATE;
         use crate::actors::creatures::wights::WIGHT_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -1136,6 +1175,10 @@ mod tests {
             // Barbarian on team 0 so the AI exercises the new Rage /
             // Reckless Attack feature stack mid-encounter.
             let _ = e.instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(6, 2), 0, 4);
+            // Paladin on team 0 — exercises Divine Smite (bonus action +
+            // slot prime) + Lay on Hands + Channel Divinity: Sacred Weapon
+            // mid-encounter.
+            let _ = e.instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(6, 4), 0, 5);
             let _ = e.instantiate_creature(&WIGHT_TEMPLATE, Coordinate::new(27, 17), 1, 0);
             let _ = e.instantiate_creature(&MINOTAUR_TEMPLATE, Coordinate::new(27, 15), 1, 1);
             let _ = e.instantiate_creature(&BANSHEE_TEMPLATE, Coordinate::new(25, 17), 1, 2);
@@ -1158,6 +1201,11 @@ mod tests {
             // Drow on the enemy team so the action picker exercises the
             // new poisoned-hand-crossbow CON-save rider.
             let _ = e.instantiate_creature(&DROW_TEMPLATE, Coordinate::new(13, 17), 1, 15);
+            // Latest additions: a Vampire (CR 13 boss with regen + charm
+            // gaze + lifesteal multiattack) and a Frost Giant (CR 8 huge
+            // dice + cold immunity). Round out the enemy lineup.
+            let _ = e.instantiate_creature(&VAMPIRE_TEMPLATE, Coordinate::new(13, 15), 1, 16);
+            let _ = e.instantiate_creature(&FROST_GIANT_TEMPLATE, Coordinate::new(11, 16), 1, 17);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

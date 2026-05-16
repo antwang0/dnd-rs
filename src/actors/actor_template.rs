@@ -301,6 +301,11 @@ pub struct ActorInstance {
     /// site (`EncounterInstance::roll_save`) on a fail. Refreshed by
     /// long rest along with the feature pool.
     indomitable_pending: bool,
+    /// Identity of the paladin that has Compelled this actor to a duel.
+    /// Paired with the `Dueled` condition: attacks against anyone *other*
+    /// than this id are at disadvantage. Cleared when the Dueled
+    /// condition lifts.
+    dueled_by: Option<usize>,
 }
 
 impl ActorInstance {
@@ -374,6 +379,7 @@ impl ActorInstance {
             mirror_images: 0,
             charmed_by: None,
             indomitable_pending: false,
+            dueled_by: None,
         })
     }
 
@@ -413,6 +419,17 @@ impl ActorInstance {
 
     pub fn set_charmed_by(&mut self, id: Option<usize>) {
         self.charmed_by = id;
+    }
+
+    /// Identity of the paladin that has this actor locked in a Compelled
+    /// Duel (if any). Read by `compute_attack_mode` to apply the
+    /// "disadvantage on attacks vs anyone other than the duelist" rider.
+    pub fn dueled_by(&self) -> Option<usize> {
+        self.dueled_by
+    }
+
+    pub fn set_dueled_by(&mut self, id: Option<usize>) {
+        self.dueled_by = id;
     }
 
     /// HP regenerated each round-end while combat-active. 0 disables the
@@ -708,6 +725,7 @@ impl ActorInstance {
             match c {
                 Condition::Charmed => self.charmed_by = None,
                 Condition::MirroredImages => self.mirror_images = 0,
+                Condition::Dueled => self.dueled_by = None,
                 _ => {}
             }
         }
@@ -956,6 +974,14 @@ impl ActorInstance {
         }
         if self.has_condition(Condition::Baned) {
             bonus -= 2;
+        }
+        // 5e Channel Divinity: Sacred Weapon — paladin's weapon glows
+        // with divine light, adding their CHA modifier to attack rolls.
+        // Sourced from the holder's own CHA so monsters who somehow grab
+        // the buff still scale off their own stat block (no edge case
+        // today, but the symmetry beats hard-coding a +3).
+        if self.has_condition(Condition::Sacred) {
+            bonus += modifier_from_score(self.charisma);
         }
         bonus
     }

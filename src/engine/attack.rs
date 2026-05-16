@@ -207,26 +207,59 @@ pub fn resolve_attack_outcome(
             damage_type: DamageType::Necrotic,
         }));
     }
-    // 5e Crusader's Mantle (+1d4 radiant) and Crown of Stars (+1d8
-    // radiant): both are caster-side concentration buffs that layer a
-    // bonus-damage die on every weapon hit. Same shape — one table here
-    // gates both with a single helper call to roll the rider die.
-    for (cond, dice, label) in [
-        (crate::conditions::Condition::CrusadersMantled, Dice::new(1, 4), "crusader's mantle"),
-        (crate::conditions::Condition::CrownOfStars, Dice::new(1, 8), "crown of stars"),
-    ] {
-        if encounter
+    // Caster-side per-hit radiant riders. Each entry is a (condition,
+    // dice, label, gates) tuple — same shape lets the buff table grow
+    // without each new buff repeating the rider boilerplate. `gates`
+    // are post-conditions evaluated together:
+    //   - `melee_only`: skip on ranged attacks (5e Divine Smite RAW).
+    //   - `consume_on_trigger`: strip the condition after the rider
+    //     lands (Divine Smite is a one-shot prime; Crusader's Mantle
+    //     and Crown of Stars persist for the spell duration).
+    let radiant_riders: [(crate::conditions::Condition, Dice, &str, bool, bool); 3] = [
+        (
+            crate::conditions::Condition::CrusadersMantled,
+            Dice::new(1, 4),
+            "crusader's mantle",
+            false,
+            false,
+        ),
+        (
+            crate::conditions::Condition::CrownOfStars,
+            Dice::new(1, 8),
+            "crown of stars",
+            false,
+            false,
+        ),
+        (
+            crate::conditions::Condition::Smiting,
+            Dice::new(2, 8),
+            "divine smite",
+            true,
+            true,
+        ),
+    ];
+    for (cond, dice, label, melee_only, consume_on_trigger) in radiant_riders {
+        if melee_only && !p.is_melee {
+            continue;
+        }
+        if !encounter
             .actors
             .get(&p.caster_id)
             .is_some_and(|a| a.has_condition(cond))
         {
-            let total = roll_rider(encounter, dice, is_crit);
-            encounter.log(format!("  {}: +{} radiant", label, total));
-            effects.push(Box::new(DealDamage {
-                actor_id: p.target_id,
-                amount: total,
-                damage_type: DamageType::Radiant,
-            }));
+            continue;
+        }
+        let total = roll_rider(encounter, dice, is_crit);
+        encounter.log(format!("  {}: +{} radiant", label, total));
+        effects.push(Box::new(DealDamage {
+            actor_id: p.target_id,
+            amount: total,
+            damage_type: DamageType::Radiant,
+        }));
+        if consume_on_trigger
+            && let Some(caster) = encounter.actors.get_mut(&p.caster_id)
+        {
+            caster.remove_condition(cond);
         }
     }
     // 5e Fire Shield: if the target is fire-shielded and this was a melee

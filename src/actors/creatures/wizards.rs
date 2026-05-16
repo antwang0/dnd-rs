@@ -3,7 +3,7 @@ use crate::actions::spells::{
     ACID_SPLASH, BANISHMENT, BESTOW_CURSE, BLINDNESS, BLUR, BOOMING_BLADE, BURNING_HANDS,
     CAUSE_FEAR, CHARM_PERSON, CHILL_TOUCH, CLOUDKILL, CLOUD_OF_DAGGERS, COLOR_SPRAY, CONE_OF_COLD,
     COUNTERSPELL, CROWN_OF_MADNESS, CROWN_OF_STARS, DIMENSION_DOOR, DISINTEGRATE, DISPEL_MAGIC,
-    EARTHQUAKE, FINGER_OF_DEATH, FIREBALL, FIRE_BOLT, FIRE_SHIELD, FORCECAGE,
+    EARTHQUAKE, FEAR, FINGER_OF_DEATH, FIREBALL, FIRE_BOLT, FIRE_SHIELD, FORCECAGE,
     GLOBE_OF_INVULNERABILITY, GREATER_INVISIBILITY, HASTE, HOLD_MONSTER, HYPNOTIC_PATTERN,
     ICE_STORM, INVISIBILITY, LIGHTNING_BOLT, MAGE_ARMOR, MAGIC_MISSILE, MAGIC_WEAPON,
     MASS_SUGGESTION, METEOR_SWARM, MIND_SLIVER, MIND_WHIP, MIRROR_IMAGE, MISTY_STEP,
@@ -111,6 +111,9 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*EARTHQUAKE);
     actions.push(&*TIME_STOP);
     actions.push(&*WISH);
+    // Latest arcane addition: lv3 Fear (cone WIS save → Frightened),
+    // a clean illusion-control option missing from the wizard list.
+    actions.push(&*FEAR);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

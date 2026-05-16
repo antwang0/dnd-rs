@@ -291,6 +291,27 @@ pub enum Condition {
     /// crown is up. Mirrors Crusader's Mantle but is self-only and
     /// concentration-free (a flat Rounds timer suffices).
     CrownOfStars,
+    /// Divine Smite primed (5e Paladin feature). The paladin has spent a
+    /// spell slot via the Divine Smite bonus action; their next successful
+    /// melee weapon hit deals +2d8 radiant damage and consumes this flag.
+    /// We model the slot-level scaling at the trigger site (resolve_attack
+    /// reads it and rolls the per-slot-level dice). Tick-down timer keeps
+    /// the prime from outliving the round if the paladin never connects.
+    Smiting,
+    /// Channel Divinity: Sacred Weapon active (5e Paladin Oath of Devotion).
+    /// The paladin's weapon glows with divine light: attack rolls gain a
+    /// flat +CHA-modifier bonus (folded into `condition_attack_bonus`).
+    /// Lasts up to 10 rounds (1 minute RAW). Tracked as a condition so
+    /// the buff drops cleanly when the timer expires or it's dispelled.
+    Sacred,
+    /// Compelled Duel (5e Paladin level-1 enchantment, concentration). The
+    /// target is locked into combat with the caster: they have disadvantage
+    /// on attacks against anyone *other* than the caster, and must save
+    /// against the spell to move further than 30ft from them. We model only
+    /// the load-bearing half: the disadvantage on attacks against non-caster
+    /// targets (read by `compute_attack_mode`). Tracked as a condition with
+    /// a `dueled_by` link so the engine knows who the duel is anchored on.
+    Dueled,
 }
 
 impl Condition {
@@ -350,6 +371,9 @@ impl Condition {
             Condition::TimeStopped => "time-stopped",
             Condition::Caged => "caged in force",
             Condition::CrownOfStars => "haloed by stars",
+            Condition::Smiting => "smiting",
+            Condition::Sacred => "wielding a sacred weapon",
+            Condition::Dueled => "compelled to duel",
         }
     }
 
@@ -397,6 +421,8 @@ impl Condition {
                 | Condition::CrusadersMantled
                 | Condition::CrownOfStars
                 | Condition::TimeStopped
+                | Condition::Smiting
+                | Condition::Sacred
         )
     }
 
