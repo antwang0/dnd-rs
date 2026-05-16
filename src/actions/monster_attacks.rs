@@ -940,6 +940,117 @@ pub static ZOMBIE_MULTISLAM: LazyLock<Multiattack> = LazyLock::new(|| Multiattac
     count: 2,
 });
 
+/// Heterogeneous multi-attack wrapper. Bundles multiple distinct
+/// sub-attacks (each with its own count) into a single Action — used
+/// by creatures whose multi mixes limbs (Pit Fiend: 1 bite + 2 claws,
+/// Hippogriff: 1 beak + 2 talons by MM RAW, etc.). The standard
+/// `Multiattack` struct is the same-sub-attack-twice case; this one
+/// supports the more general N×A + M×B + K×C pattern without each
+/// creature reaching for a bespoke `impl Action`.
+///
+/// Targeting / reach / requires_los are inherited from the first
+/// sub-attack — every entry in `parts` is expected to share these
+/// (mixed melee/ranged multis aren't a thing in 5e); the engine's
+/// reach + LOS validation runs once per action.
+pub struct CompoundAttack {
+    pub display_name: &'static str,
+    /// List of (sub_attack, count). Each entry produces `count` calls
+    /// to the sub-attack's `side_effects` for the same target. Order
+    /// of resolution mirrors declaration so log lines read top-down.
+    /// Stored as a `Vec` rather than a slice so the trait-object
+    /// coercion inside the array literal works cleanly — the cost is
+    /// one heap allocation per `CompoundAttack` (we wrap them in
+    /// `LazyLock` anyway, so it's a one-shot cost at startup).
+    pub parts: Vec<(&'static (dyn Action + Send + Sync), u32)>,
+}
+
+impl Action for CompoundAttack {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["multi", "ma"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        // Inherit from the first sub-attack — every entry is expected
+        // to use the same schema.
+        self.parts
+            .first()
+            .map(|(a, _)| a.targeting_schema())
+            .unwrap_or(TargetingSchema::SingleActor)
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        self.parts.first().and_then(|(a, _)| a.reach_tiles())
+    }
+
+    fn requires_los(&self) -> bool {
+        self.parts.first().is_some_and(|(a, _)| a.requires_los())
+    }
+
+    fn damage_types(&self) -> Vec<DamageType> {
+        // Union of damage types across all parts. Useful for the UI
+        // resistance hint — a bite + claws Pit Fiend strike surfaces
+        // both Piercing and Slashing.
+        let mut out = Vec::new();
+        for (a, _) in &self.parts {
+            for dt in a.damage_types() {
+                if !out.contains(&dt) {
+                    out.push(dt);
+                }
+            }
+        }
+        out
+    }
+
+    fn cost(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // Inherit the first sub-attack's cost shape (filtering movement
+        // for the same reason as `Multiattack`). Mixed-cost compounds
+        // aren't supported — the cost is the wrapper's single envelope.
+        self.parts
+            .first()
+            .map(|(a, _)| {
+                a.cost(encounter, caster_id, target_ids, target_locations, overrides)
+                    .into_iter()
+                    .filter(|r| !matches!(r, Resource::Movement(_)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let mut all = Vec::new();
+        for (sub, count) in &self.parts {
+            for _ in 0..*count {
+                all.extend(sub.side_effects(
+                    encounter,
+                    caster_id,
+                    target_ids,
+                    target_locations,
+                    overrides,
+                ));
+            }
+        }
+        all
+    }
+}
+
 /// Goblin Boss multiattack: 2 scimitar swings per Action. Distinct from
 /// the standard goblin's single swing — the boss hits twice as often,
 /// which combined with the higher base AC makes the encounter pop.
@@ -3972,3 +4083,319 @@ pub static VAMPIRE_MULTIATTACK: LazyLock<Multiattack> = LazyLock::new(|| Multiat
     sub_attack: &*VAMPIRIC_BITE,
     count: 2,
 });
+
+/// Couatl's Constricting Bite — STR-based 1d6+4 piercing on hit plus a
+/// 3d6 poison rider (no save, like the SRD couatl's poison clause). The
+/// target also makes a CON save (caster DC) or is Poisoned for up to 10
+/// rounds. Reach melee.
+pub struct CouatlBite {}
+
+impl Action for CouatlBite {
+    fn name(&self) -> &str {
+        "couatl bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["couatl"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Poison]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let attack_mod = str_mod + caster.proficiency_bonus();
+        // Primary bite: standard weapon attack roll.
+        let mut effects = resolve_attack(
+            encounter,
+            AttackParams {
+                caster_id,
+                target_id,
+                action_name: "couatl bite",
+                attack_bonus: attack_mod,
+                damage_dice: Dice::new(1, 6),
+                damage_bonus: str_mod,
+                damage_type: DamageType::Piercing,
+                is_melee: true,
+            },
+        );
+        // 5e RAW: poison rider applies on hit only — bail if the bite missed.
+        if effects.is_empty() {
+            return effects;
+        }
+        // Poison rider: 3d6 poison + CON save or Poisoned (10 rounds).
+        let raw = encounter.roll(&Dice::new(3, 6));
+        encounter.log(format!("  couatl bite poison: 3d6({}) poison", raw));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: raw,
+            damage_type: DamageType::Poison,
+        }));
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return effects;
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Constitution);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
+        if !save.passed() {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Poisoned,
+                timer: ConditionTimer::Rounds(10),
+            }));
+        }
+        effects
+    }
+}
+
+pub static COUATL_BITE: LazyLock<CouatlBite> = LazyLock::new(|| CouatlBite {});
+
+/// Couatl's Sleep Gaze — celestial sleep at 30ft (12 tiles). Single
+/// target makes a WIS save vs the couatl's WIS-based DC; on fail, the
+/// target is Asleep for 10 rounds. Damage wakes the sleeper via the
+/// existing DealDamage hook. Unlike Vampire Charming Gaze, Sleep Gaze
+/// ignores Charm-immunity but is gated by Sleep-immunity (we route
+/// through the standard Asleep condition; immune undead skip silently).
+pub struct CouatlSleepGaze {}
+
+impl Action for CouatlSleepGaze {
+    fn name(&self) -> &str {
+        "sleep gaze"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["slumber", "sg"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Asleep,
+            timer: ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static COUATL_SLEEP_GAZE: LazyLock<CouatlSleepGaze> = LazyLock::new(|| CouatlSleepGaze {});
+
+/// Pit Fiend's Bite — colossal 4d6+8 piercing plus a 3d6 poison rider
+/// on hit. The poison damage applies regardless of save (the MM pit
+/// fiend's bite is "magical, plus 21 (6d6) poison"). Reach 1 tile
+/// (5ft); the pit fiend has reach 2 for its other natural attacks RAW
+/// but its bite is the standard 5ft.
+pub static PIT_FIEND_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "pit fiend bite",
+    aliases: &["pf-bite"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(4, 6),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Pit Fiend's Devil Claw — STR-based 2d8+8 slashing. The companion
+/// melee attack to the bite; together they make up the pit fiend's
+/// 4-attack multiattack (1 bite + 1 claw + 1 mace + 1 tail in MM RAW).
+/// We collapse to bite+claw bursting via the Multiattack wrapper below.
+pub static PIT_FIEND_CLAW: SimpleWeapon = SimpleWeapon {
+    display_name: "devil claw",
+    aliases: &["pf-claw"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 8),
+    damage_type: DamageType::Slashing,
+    reach: 2, // 10ft reach — the pit fiend's natural reach for non-bite limbs.
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Pit Fiend Multiattack — Action: 1 bite + 2 devil-claw swings,
+/// expressed as a single heterogeneous CompoundAttack so the boss's
+/// signature mixed-limb burst lands in one action pick (rather than
+/// the AI alternating between separate bite / claw multis). RAW
+/// gives the pit fiend four attacks; we trim to three to keep the
+/// per-turn ceiling tense rather than TPK-machine against level-3
+/// PCs.
+pub static PIT_FIEND_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "pit fiend multiattack",
+    parts: vec![(&PIT_FIEND_BITE, 1), (&PIT_FIEND_CLAW, 2)],
+});
+
+/// Pit Fiend's Fear Aura — Action that radiates dread within 20ft (8
+/// tiles). Every hostile combat-active creature in range makes a WIS
+/// save vs the pit fiend's CHA-based DC; on fail, they're Frightened
+/// for 10 rounds. The aura is gated as an explicit Action rather than
+/// a passive on-arrival check so the AI can pick when to fire it —
+/// usually round 1 when the most allies are still healthy. Mirrors
+/// Banshee Wail's "burst-save → condition" shape, but the on-fail
+/// effect is Frightened instead of damage.
+pub struct PitFiendFearAura {}
+
+impl Action for PitFiendFearAura {
+    fn name(&self) -> &str {
+        "fear aura"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fa", "aura"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
+        let caster_loc = caster.location();
+        let caster_team = caster.team();
+        let caster_size = get_tiles_from_size(caster.size());
+        encounter.log(format!(
+            "  fear aura: 20ft burst (DC {} WIS save).",
+            dc
+        ));
+        let candidates: Vec<usize> = encounter
+            .sorted_actor_ids()
+            .into_iter()
+            .filter(|id| {
+                let Some(a) = encounter.actors.get(id) else {
+                    return false;
+                };
+                if *id == caster_id || a.team() == caster_team || !a.is_combat_active() {
+                    return false;
+                }
+                let dist = footprint_chebyshev(
+                    a.location(),
+                    get_tiles_from_size(a.size()),
+                    caster_loc,
+                    caster_size,
+                );
+                dist <= 8
+            })
+            .collect();
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for id in candidates {
+            let save = encounter.roll_save(id, AbilityScoreType::Wisdom, dc);
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: id,
+                condition: Condition::Frightened,
+                timer: ConditionTimer::Rounds(10),
+            }));
+        }
+        effects
+    }
+}
+
+pub static PIT_FIEND_FEAR_AURA: LazyLock<PitFiendFearAura> = LazyLock::new(|| PitFiendFearAura {});
+
+/// Monk's Martial Arts Strike — DEX-based 1d8+DEX bludgeoning unarmed
+/// strike. The signature monk attack: finesse (uses DEX over STR),
+/// scales with monk level via the martial-arts die (RAW: 1d4 → 1d6
+/// → 1d8 → 1d10). We use a fixed 1d8 to model a mid-level monk
+/// (level 5+ baseline). Melee reach.
+pub static MONK_UNARMED_STRIKE: SimpleWeapon = SimpleWeapon {
+    display_name: "martial arts",
+    aliases: &["ma-strike", "unarmed", "punch"],
+    attack_ability: AbilityScoreType::Dexterity,
+    damage_ability: Some(AbilityScoreType::Dexterity),
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};

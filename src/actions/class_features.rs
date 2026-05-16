@@ -748,3 +748,366 @@ impl Action for SacredWeapon {
 }
 
 pub static SACRED_WEAPON: LazyLock<SacredWeapon> = LazyLock::new(|| SacredWeapon {});
+
+/// Class-feature tag for the Monk's Stunning Strike (once per long
+/// rest, in our model — RAW is one per ki point, but we collapse the
+/// ki pool into a single big-burst prime to keep the once-per-rest
+/// gating pattern uniform). The actual stun save fires on the next
+/// melee hit via the StunningStrike condition rider in
+/// `EncounterInstance::resolve_attack`.
+pub const STUNNING_STRIKE_TAG: &str = "monk.stunning_strike";
+
+/// Monk Stunning Strike — bonus action. Primes the monk's next melee
+/// hit: when the swing lands, the target makes a CON save vs the monk's
+/// WIS-based DC (8 + prof + WIS). On fail, the target is Stunned until
+/// the end of the monk's next turn. We model the prime as a caster-side
+/// condition (StunningStrike) that the on-hit hook in `resolve_attack`
+/// consumes — mirrors the Smiting pattern.
+pub struct StunningStrike {}
+
+impl Action for StunningStrike {
+    fn name(&self) -> &str {
+        "stunning strike"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ss-monk", "stun"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| {
+                a.is_combat_active()
+                    && a.feature_available(STUNNING_STRIKE_TAG)
+                    && !a.has_condition(Condition::StunningStrike)
+            })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(STUNNING_STRIKE_TAG);
+        }
+        encounter.log("  stunning strike: monk's next hit primes a stun save.".to_string());
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::StunningStrike,
+            // 2-round prime window so a primed monk who misses the
+            // first swing still has the rest of this turn + next to
+            // connect (same envelope as Divine Smite).
+            timer: ConditionTimer::Rounds(2),
+        })]
+    }
+}
+
+pub static STUNNING_STRIKE: LazyLock<StunningStrike> = LazyLock::new(|| StunningStrike {});
+
+/// Class-feature tag for the Monk's Patient Defense — bonus-action
+/// Dodge. At-will (RAW: 1 ki point per use; we drop the ki pool to keep
+/// the bonus-action mobility tools uniform with Cunning Action).
+pub const PATIENT_DEFENSE_TAG: &str = "monk.patient_defense";
+
+/// Patient Defense — Monk bonus action. Take the Dodge action as a
+/// bonus action: attacks vs the monk have disadvantage and DEX saves
+/// gain advantage until the start of the monk's next turn. Mirrors
+/// `CunningDisengage` / `CunningHide` — same one-shot bonus-action
+/// pattern, just a different resulting flag.
+pub struct PatientDefense {}
+
+impl Action for PatientDefense {
+    fn name(&self) -> &str {
+        "patient defense"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pd", "patient"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![Box::new(crate::engine::side_effects::SetDodging {
+            actor_id: caster_id,
+            dodging: true,
+        })]
+    }
+}
+
+pub static PATIENT_DEFENSE: LazyLock<PatientDefense> = LazyLock::new(|| PatientDefense {});
+
+/// Class-feature tag for the Bard's Bardic Inspiration (RAW: a pool of
+/// CHA-mod uses per long rest — we collapse to a single big use to keep
+/// the once-per-rest pattern uniform).
+pub const BARDIC_INSPIRATION_TAG: &str = "bard.bardic_inspiration";
+
+/// Bardic Inspiration — Bard bonus action, single ally. Grants the
+/// Inspired condition on a willing ally within 60ft (24 tiles), letting
+/// them add a flat +3 (the d6-average) to their next attack roll, save,
+/// or ability check. We tag both the attack-roll bonus (via
+/// `condition_attack_bonus`) and the save bonus (`condition_save_bonus`)
+/// so the inspiration die is useful regardless of which roll comes up
+/// next. The condition has a 10-round timer (1 minute RAW); the next
+/// attack / save consumes it implicitly when the on-hit / save site
+/// strips the condition (see `clear_inspired_on_attack`).
+pub struct BardicInspiration {}
+
+impl Action for BardicInspiration {
+    fn name(&self) -> &str {
+        "bardic inspiration"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bi", "inspire"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60ft RAW = 24 tiles.
+        Some(24)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        if !actor.feature_available(BARDIC_INSPIRATION_TAG) {
+            return false;
+        }
+        // Target must be an ally (same team), combat-active, and not
+        // already Inspired — re-inspiration would just refresh the
+        // timer without giving the AI a meaningful new effect.
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return false;
+        };
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return false;
+        };
+        target.team() == actor.team()
+            && target.is_combat_active()
+            && !target.has_condition(Condition::Inspired)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(BARDIC_INSPIRATION_TAG);
+        }
+        encounter.log("  bardic inspiration: ally rallies, gaining a die.".to_string());
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Inspired,
+            timer: ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static BARDIC_INSPIRATION: LazyLock<BardicInspiration> = LazyLock::new(|| BardicInspiration {});
+
+/// Class-feature tag for Cleric Channel Divinity: Turn Undead.
+pub const TURN_UNDEAD_TAG: &str = "cleric.turn_undead";
+
+/// Turn Undead — Cleric Channel Divinity, action. Every undead-flavored
+/// creature (proxied here by Poisoned-immunity, the most reliable
+/// undead/construct shorthand in our pool) within 30ft (12 tiles) makes
+/// a WIS save vs the cleric's WIS-based DC. On fail, they're Frightened
+/// for 10 rounds (1 minute RAW; the spell also says "and must spend its
+/// turns trying to move away" — we model only the disadvantage half via
+/// the existing Frightened condition).
+///
+/// Once per long rest. Uses the cleric's `is_immune_to(Poison)` filter
+/// as the undead proxy — every undead / construct template in our pool
+/// has Poison immunity (zombies, skeletons, wights, ghouls, vampires,
+/// etc.), which is a cleaner proxy than the SRD's "creature type" tag
+/// would be in our engine.
+pub struct TurnUndead {}
+
+impl Action for TurnUndead {
+    fn name(&self) -> &str {
+        "turn undead"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["turn", "cd-turn"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_combat_active() && a.feature_available(TURN_UNDEAD_TAG))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::types::{AbilityScoreType, DamageType};
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(TURN_UNDEAD_TAG);
+        }
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let caster_loc = caster.location();
+        let caster_team = caster.team();
+        let caster_size = get_tiles_from_size(caster.size());
+        encounter.log(format!(
+            "  turn undead: every undead within 30ft saves (DC {}).",
+            dc
+        ));
+
+        // Snapshot candidates so we don't mutate during iteration.
+        let candidates: Vec<usize> = encounter
+            .sorted_actor_ids()
+            .into_iter()
+            .filter(|id| {
+                let Some(a) = encounter.actors.get(id) else {
+                    return false;
+                };
+                if *id == caster_id || a.team() == caster_team || !a.is_combat_active() {
+                    return false;
+                }
+                // Undead/construct proxy: Poison-immune.
+                if !a.is_immune_to(DamageType::Poison) {
+                    return false;
+                }
+                let dist = footprint_chebyshev(
+                    a.location(),
+                    get_tiles_from_size(a.size()),
+                    caster_loc,
+                    caster_size,
+                );
+                dist <= 12
+            })
+            .collect();
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for id in candidates {
+            let save = encounter.roll_save(id, AbilityScoreType::Wisdom, dc);
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: id,
+                condition: Condition::Frightened,
+                timer: ConditionTimer::Rounds(10),
+            }));
+        }
+        effects
+    }
+}
+
+pub static TURN_UNDEAD: LazyLock<TurnUndead> = LazyLock::new(|| TurnUndead {});

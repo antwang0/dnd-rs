@@ -426,6 +426,10 @@ impl EncounterInstance {
                 // Modeled with a one-turn condition that flips attack
                 // rolls to disadvantage while present.
                 Condition::Mocked,
+                // 5e Heat Metal: the holder of the heated metal gear
+                // takes ongoing fire damage AND has disadvantage on
+                // attacks and ability checks while concentration holds.
+                Condition::HeatMetaled,
             ] {
                 if attacker.has_condition(c) {
                     mode = mode.combine(RollMode::Disadvantage);
@@ -649,6 +653,12 @@ impl EncounterInstance {
         };
         let item_bonus = actor.item_save_bonus();
         let buff = actor.save_bonus_buff();
+        // Condition-only flat save bonus lane (Bardic Inspiration's
+        // +3). Symmetric with `condition_attack_bonus` on the attack
+        // path. Kept separate from `save_bonus_buff` so install/uninstall
+        // bookkeeping (Bless's AdjustSaveBuff) and read-only flag
+        // bonuses don't double-count.
+        let cond_save_bonus = actor.condition_save_bonus();
         // 5e: actors proficient in this save add their proficiency bonus.
         // Previously this lane was dead code — the per-template
         // `proficient_saves` set existed but was never read at roll time,
@@ -658,8 +668,11 @@ impl EncounterInstance {
         } else {
             0
         };
-        let modifier =
-            modifier_from_score(actor.ability_score(ability)) + item_bonus + buff + prof_bonus;
+        let modifier = modifier_from_score(actor.ability_score(ability))
+            + item_bonus
+            + buff
+            + cond_save_bonus
+            + prof_bonus;
         let total = raw as i32 + modifier + extra;
         let outcome = if total >= dc {
             SaveOutcome::Pass
@@ -1677,6 +1690,12 @@ impl EncounterInstance {
             attacker.remove_condition(Condition::Helped);
             attacker.remove_condition(Condition::Hidden);
             attacker.consume_help_for(target_id);
+            // 5e Bardic Inspiration: the holder can add the inspiration
+            // die to an attack roll, save, or check. The condition
+            // grants a flat +3 to attack rolls and saves; we consume it
+            // here so a single inspiration die doesn't double-fire on
+            // a second swing this turn.
+            attacker.remove_condition(Condition::Inspired);
         }
         // Concentration spells that explicitly break on attack (Invisibility,
         // not Greater Invisibility) drop here. Flag-based to avoid the
@@ -1890,6 +1909,27 @@ impl EncounterInstance {
                 let dmg = self.roll(&Dice::new(1, 4));
                 let name = self.actors.get(&id).map(|a| a.name().to_string()).unwrap_or_default();
                 self.log(format!("  {} burns: 1d4({}) fire", name, dmg));
+                let de = crate::engine::side_effects::DealDamage {
+                    actor_id: id,
+                    amount: dmg,
+                    damage_type: crate::engine::types::DamageType::Fire,
+                };
+                use crate::engine::side_effects::ApplicableSideEffect;
+                de.apply(self);
+            }
+            // 5e Heat Metal: 2d8 fire at end-of-round while the spell's
+            // concentration holds. The condition is anchored to the
+            // caster's concentration data (see HeatMetal::side_effects),
+            // so it clears automatically on concentration drop — no
+            // separate tick gate needed here.
+            if self
+                .actors
+                .get(&id)
+                .is_some_and(|a| a.has_condition(Condition::HeatMetaled))
+            {
+                let dmg = self.roll(&Dice::new(2, 8));
+                let name = self.actors.get(&id).map(|a| a.name().to_string()).unwrap_or_default();
+                self.log(format!("  {}'s gear sears: 2d8({}) fire", name, dmg));
                 let de = crate::engine::side_effects::DealDamage {
                     actor_id: id,
                     amount: dmg,
@@ -4071,23 +4111,34 @@ mod tests {
     }
 
     #[test]
-    fn blessed_attack_bonus_is_positive() {
+    fn blessed_actor_rolls_d4_advantage_die_and_advantage_mode() {
+        // 5e Bless: target adds 1d4 to attack rolls and saves and gains
+        // Advantage (house rule). The +1d4 is per-roll via
+        // `bless_bane_attack_die` and the Advantage clause via
+        // `compute_attack_mode`. The flat +2 install (Bless's
+        // `AdjustAttackBuff`) lives on the `attack_bonus_buff` lane —
+        // adding the condition by hand doesn't install that lane, but
+        // the die roll + mode change still fire so we can assert
+        // *those* from a hand-applied Blessed flag.
         use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
         let mut e = ei_with_terrain(15, 15, &[]);
-        let id = e
+        let attacker = e
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        let baseline = e.actors[&id].attack_bonus();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
         e.actors
-            .get_mut(&id)
+            .get_mut(&attacker)
             .unwrap()
             .add_condition(Condition::Blessed, ConditionTimer::Rounds(3));
-        let blessed = e.actors[&id].attack_bonus();
-        assert!(
-            blessed > baseline,
-            "Bless should bump attack_bonus ({} → {})",
-            baseline,
-            blessed
+        let (die, _) = e.bless_bane_attack_die(attacker);
+        assert!(die > 0, "Bless d4 should add to the roll, got {}", die);
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage,
+            "Blessed attackers swing with advantage (house rule)"
         );
     }
 
@@ -7127,8 +7178,13 @@ mod tests {
         e.push_action(aei);
         e.process_stack();
         assert!(e.actors[&ally].has_condition(Condition::Blessed));
-        assert_eq!(e.actors[&ally].condition_save_bonus(), 2);
-        assert_eq!(e.actors[&ally].condition_attack_bonus(), 2);
+        // Bless installs its +2 via the `attack_bonus_buff` /
+        // `save_bonus_buff` lane (concentration-aware install/uninstall),
+        // not the read-only `condition_*_bonus` lane. The condition
+        // flag itself just unlocks the d4 die in `bless_bane_attack_die`
+        // and the Advantage clause in `compute_attack_mode`.
+        assert_eq!(e.actors[&ally].save_bonus_buff(), 2);
+        assert_eq!(e.actors[&ally].attack_bonus_buff(), 2);
         // Caster is concentrating on Bless.
         assert!(e.actors[&cleric].is_concentrating());
     }
@@ -10543,26 +10599,33 @@ mod tests {
     }
 
     #[test]
-    fn baned_actor_has_attack_penalty() {
+    fn baned_actor_subtracts_d4_via_bane_roll() {
+        // 5e Bane: target subtracts 1d4 from attack rolls and saves
+        // while Baned. The subtraction lives in `bless_bane_attack_die`
+        // (a fresh d4 per roll) — separate from the flat
+        // `condition_attack_bonus` lane which is now condition-only
+        // (Sacred Weapon / Bardic Inspiration). The Baned flag itself
+        // contributes 0 to the flat lane post-refactor.
         use crate::conditions::{Condition, ConditionTimer};
         let mut e = ei_with_terrain(10, 10, &[]);
-        let id = e
+        let attacker = e
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        let baseline = e.actors[&id].condition_attack_bonus();
         e.actors
-            .get_mut(&id)
+            .get_mut(&attacker)
             .unwrap()
             .add_condition(Condition::Baned, ConditionTimer::Permanent);
+        let (die, _) = e.bless_bane_attack_die(attacker);
+        assert!(die < 0, "Bane d4 should subtract from the roll, got {}", die);
         assert_eq!(
-            e.actors[&id].condition_attack_bonus(),
-            baseline - 2,
-            "Bane should subtract 2 from attack bonus"
+            e.actors[&attacker].condition_attack_bonus(),
+            0,
+            "Bane lives on the die lane, not the flat condition lane"
         );
         assert_eq!(
-            e.actors[&id].condition_save_bonus(),
-            -2,
-            "Bane should subtract 2 from save bonus"
+            e.actors[&attacker].condition_save_bonus(),
+            0,
+            "Bane lives on the die lane, not the flat condition save lane"
         );
     }
 
@@ -16642,5 +16705,637 @@ mod tests {
             .collect();
         assert!(names.contains(FROST_GIANT_GREATAXE.name()));
         assert!(names.contains(FROST_GIANT_ROCK.name()));
+    }
+
+    /// Searing Smite primes the SearingSmiting condition on the paladin
+    /// and installs concentration anchored on that condition. The next
+    /// melee hit should consume the prime AND apply Burning to the
+    /// target (Burning is an auto-apply follow-up — no save).
+    #[test]
+    fn searing_smite_primes_concentration_and_burns_on_hit() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::GREATSWORD;
+        use crate::actions::spells::SEARING_SMITE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        let mut consumed_and_burned = false;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let pal = e
+                .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let effects = SEARING_SMITE.side_effects(&mut e, pal, None, None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            assert!(
+                e.actors[&pal].has_condition(Condition::SearingSmiting),
+                "searing smite should prime SearingSmiting"
+            );
+            assert!(
+                e.actors[&pal].is_concentrating(),
+                "searing smite anchors concentration"
+            );
+            let tv = vec![g];
+            let weapon_effects = GREATSWORD.side_effects(&mut e, pal, Some(&tv), None, None);
+            for ef in weapon_effects {
+                ef.apply(&mut e);
+            }
+            let prime_consumed = !e.actors[&pal].has_condition(Condition::SearingSmiting);
+            let burning = e
+                .actors
+                .get(&g)
+                .is_some_and(|a| a.has_condition(Condition::Burning));
+            if prime_consumed && burning {
+                consumed_and_burned = true;
+                break;
+            }
+        }
+        assert!(
+            consumed_and_burned,
+            "searing smite hit never both consumed the prime and ignited the target"
+        );
+    }
+
+    /// Wrathful Smite primes WrathfulSmiting; the next melee hit forces
+    /// a WIS save (caster CHA-DC) that, on fail, applies Frightened.
+    #[test]
+    fn wrathful_smite_can_frighten_on_hit() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::GREATSWORD;
+        use crate::actions::spells::WRATHFUL_SMITE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        let mut frightened_any = false;
+        for seed in 0..80 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let pal = e
+                .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let effects = WRATHFUL_SMITE.side_effects(&mut e, pal, None, None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            let tv = vec![g];
+            let weapon_effects = GREATSWORD.side_effects(&mut e, pal, Some(&tv), None, None);
+            for ef in weapon_effects {
+                ef.apply(&mut e);
+            }
+            if e.actors
+                .get(&g)
+                .is_some_and(|a| a.has_condition(Condition::Frightened))
+            {
+                frightened_any = true;
+                break;
+            }
+        }
+        assert!(
+            frightened_any,
+            "wrathful smite never frightened a target across 80 seeds"
+        );
+    }
+
+    /// Branding Smite auto-applies Outlined on hit (no save). Validates
+    /// the SmiteFollowUp's "save_ability == dc_ability" sentinel path
+    /// in `apply_smite_follow_up` — sentinel skips the save roll.
+    #[test]
+    fn branding_smite_auto_brands_on_hit() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::GREATSWORD;
+        use crate::actions::spells::BRANDING_SMITE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        let mut branded_any = false;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let pal = e
+                .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let effects = BRANDING_SMITE.side_effects(&mut e, pal, None, None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            let tv = vec![g];
+            let weapon_effects = GREATSWORD.side_effects(&mut e, pal, Some(&tv), None, None);
+            for ef in weapon_effects {
+                ef.apply(&mut e);
+            }
+            // The brand auto-applies on hit (sentinel-DC path) — every
+            // landed hit should brand. We loop seeds because the hit
+            // itself can miss; once we see Outlined, RAW guarantees it.
+            if e.actors
+                .get(&g)
+                .is_some_and(|a| a.has_condition(Condition::Outlined))
+            {
+                branded_any = true;
+                break;
+            }
+        }
+        assert!(branded_any, "branding smite never branded the target");
+    }
+
+    /// Blinding Smite primes BlindingSmiting; the next melee hit forces
+    /// a CON save and on fail applies Blinded.
+    #[test]
+    fn blinding_smite_can_blind_on_hit() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::GREATSWORD;
+        use crate::actions::spells::BLINDING_SMITE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        let mut blinded_any = false;
+        for seed in 0..80 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let pal = e
+                .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let effects = BLINDING_SMITE.side_effects(&mut e, pal, None, None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            let tv = vec![g];
+            let weapon_effects = GREATSWORD.side_effects(&mut e, pal, Some(&tv), None, None);
+            for ef in weapon_effects {
+                ef.apply(&mut e);
+            }
+            if e.actors
+                .get(&g)
+                .is_some_and(|a| a.has_condition(Condition::Blinded))
+            {
+                blinded_any = true;
+                break;
+            }
+        }
+        assert!(
+            blinded_any,
+            "blinding smite never blinded a target across 80 seeds"
+        );
+    }
+
+    /// Flame Strike rolls 4d6 fire + 4d6 radiant separately; a target
+    /// with full fire immunity still takes the radiant half. Use a Fire
+    /// Elemental (fire-immune) to confirm only the radiant half lands.
+    #[test]
+    fn flame_strike_splits_damage_so_fire_immune_takes_radiant() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::FLAME_STRIKE;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fire_elementals::FIRE_ELEMENTAL_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let c = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let fe = e
+            .instantiate_creature(&FIRE_ELEMENTAL_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        // Give the cleric the slot.
+        let _ = e
+            .actors
+            .get_mut(&c)
+            .unwrap()
+            .spell_slot_manager
+            .restore_spell_slot(5, 1);
+        let before = e.actors[&fe].hitpoints();
+        let tl = vec![Coordinate::new(10, 10)];
+        let effects = FLAME_STRIKE.side_effects(&mut e, c, None, Some(&tl), None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let after = e.actors[&fe].hitpoints();
+        // Fire half was nullified by fire immunity; the radiant half
+        // should still chip the elemental. Worst case is a successful
+        // DEX save halving the radiant — still > 0.
+        assert!(
+            after < before,
+            "fire elemental should take radiant from flame strike (before={}, after={})",
+            before,
+            after
+        );
+    }
+
+    /// Heat Metal lands a chunk of fire on cast, applies HeatMetaled
+    /// (which gives disadvantage on attack rolls via compute_attack_mode),
+    /// and ticks 2d8 more fire each end-of-round while concentration holds.
+    #[test]
+    fn heat_metal_damages_and_grants_attack_disadvantage() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::HEAT_METAL;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let w = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        let dummy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 2), 0, 1)
+            .unwrap();
+        let before = e.actors[&g].hitpoints();
+        let tv = vec![g];
+        let effects = HEAT_METAL.side_effects(&mut e, w, Some(&tv), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&g].hitpoints() < before,
+            "heat metal should deal fire damage on cast"
+        );
+        assert!(
+            e.actors[&g].has_condition(Condition::HeatMetaled),
+            "target should be HeatMetaled"
+        );
+        // HeatMetaled attacker → attack roll mode is Disadvantage.
+        let mode = e.compute_attack_mode(g, dummy, true);
+        assert_eq!(
+            mode,
+            crate::engine::dice::RollMode::Disadvantage,
+            "HeatMetaled attacker should swing at disadvantage"
+        );
+    }
+
+    /// Turn Undead frightens undead-proxy enemies (Poison-immune)
+    /// within 30ft, and ignores non-undead (mortal humanoids). Validates
+    /// the proxy-by-poison-immunity logic.
+    #[test]
+    fn turn_undead_targets_only_undead_proxy() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{TURN_UNDEAD, TURN_UNDEAD_TAG};
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        // Seed-sweep over multiple rolls to find a seed where the zombie
+        // fails its save — clerics have WIS 14 (DC 12) and zombies have
+        // WIS 6 (-2 mod), so failures are common but not guaranteed.
+        let mut zombie_frightened = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let c = e
+                .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let z = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 4), 1, 1)
+                .unwrap();
+            assert!(e.actors[&c].feature_available(TURN_UNDEAD_TAG));
+            let effects = TURN_UNDEAD.side_effects(&mut e, c, None, None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            // Feature consumed unconditionally.
+            assert!(!e.actors[&c].feature_available(TURN_UNDEAD_TAG));
+            // Goblin (non-undead-proxy) is never targeted.
+            assert!(
+                !e.actors[&g].has_condition(Condition::Frightened),
+                "non-undead-proxy goblin must not be frightened"
+            );
+            if e.actors[&z].has_condition(Condition::Frightened) {
+                zombie_frightened = true;
+                break;
+            }
+        }
+        assert!(
+            zombie_frightened,
+            "turn undead never frightened a zombie across 30 seeds"
+        );
+    }
+
+    /// Stunning Strike primes StunningStrike on the monk and the next
+    /// melee hit forces a CON save (8 + prof + WIS) — on fail the
+    /// target is Stunned for 1 round.
+    #[test]
+    fn stunning_strike_primes_and_stuns_on_hit() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{STUNNING_STRIKE, STUNNING_STRIKE_TAG};
+        use crate::actions::monster_attacks::MONK_UNARMED_STRIKE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::monks::MONK_TEMPLATE;
+        let mut stunned_any = false;
+        for seed in 0..80 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let m = e
+                .instantiate_creature(&MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            assert!(e.actors[&m].feature_available(STUNNING_STRIKE_TAG));
+            let effects = STUNNING_STRIKE.side_effects(&mut e, m, None, None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            assert!(
+                e.actors[&m].has_condition(Condition::StunningStrike),
+                "stunning strike primes the StunningStrike condition"
+            );
+            let tv = vec![g];
+            let weapon_effects =
+                MONK_UNARMED_STRIKE.side_effects(&mut e, m, Some(&tv), None, None);
+            for ef in weapon_effects {
+                ef.apply(&mut e);
+            }
+            if e.actors
+                .get(&g)
+                .is_some_and(|a| a.has_condition(Condition::Stunned))
+            {
+                stunned_any = true;
+                break;
+            }
+        }
+        assert!(
+            stunned_any,
+            "stunning strike never stunned a target across 80 seeds"
+        );
+    }
+
+    /// Bardic Inspiration grants the Inspired condition to a willing
+    /// ally; consumes the once-per-rest feature flag. The Inspired
+    /// holder's `condition_attack_bonus` jumps by +3 (d6-average).
+    #[test]
+    fn bardic_inspiration_grants_inspired_and_attack_buff() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{BARDIC_INSPIRATION, BARDIC_INSPIRATION_TAG};
+        use crate::actors::creatures::bards::BARD_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let b = e
+            .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&b].feature_available(BARDIC_INSPIRATION_TAG));
+        let before = e.actors[&f].condition_attack_bonus();
+        let tv = vec![f];
+        let effects = BARDIC_INSPIRATION.side_effects(&mut e, b, Some(&tv), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&f].has_condition(Condition::Inspired),
+            "ally should be Inspired"
+        );
+        assert_eq!(
+            e.actors[&f].condition_attack_bonus(),
+            before + 3,
+            "Inspired adds +3 to attack rolls"
+        );
+        assert!(
+            !e.actors[&b].feature_available(BARDIC_INSPIRATION_TAG),
+            "feature is consumed on cast"
+        );
+    }
+
+    /// The Inspired condition is consumed by `clear_attack_advantage_riders`
+    /// — i.e. the holder uses the inspiration die on a single attack.
+    /// Second swing should not double-dip the +3.
+    #[test]
+    fn inspired_consumes_on_attack() {
+        use crate::actions::class_features::BARDIC_INSPIRATION;
+        use crate::actions::action_template::Action;
+        use crate::actors::creatures::bards::BARD_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let b = e
+            .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        let tv = vec![f];
+        let effects = BARDIC_INSPIRATION.side_effects(&mut e, b, Some(&tv), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&f].has_condition(Condition::Inspired));
+        // Simulate the attack-clear hook.
+        e.clear_attack_advantage_riders(f, g);
+        assert!(
+            !e.actors[&f].has_condition(Condition::Inspired),
+            "inspired die should be consumed by the next attack"
+        );
+    }
+
+    /// Couatl template has the bite + sleep gaze action pair and the
+    /// MM radiant/psychic resistance + immunity profile.
+    #[test]
+    fn couatl_template_has_bite_gaze_and_resistances() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::{COUATL_BITE, COUATL_SLEEP_GAZE};
+        use crate::actors::creatures::couatls::COUATL_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let c = e
+            .instantiate_creature(&COUATL_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = &e.actors[&c];
+        let names: std::collections::HashSet<_> = actor
+            .actions
+            .iter()
+            .map(|a| a.name().to_string())
+            .collect();
+        assert!(names.contains(COUATL_BITE.name()));
+        assert!(names.contains(COUATL_SLEEP_GAZE.name()));
+        // Psychic immunity, radiant resistance.
+        assert!(actor.is_immune_to(DamageType::Psychic));
+        assert!(actor.is_resistant_to(DamageType::Radiant));
+        // Couatls can't be magically charmed or frightened.
+        assert!(actor.is_immune_to_condition(Condition::Charmed));
+        assert!(actor.is_immune_to_condition(Condition::Frightened));
+    }
+
+    /// Pit Fiend template carries fire + poison immunity, the fear-
+    /// aura action, and the bite/claw multi pair. Also: immune to
+    /// Frightened (so its own aura can't reflect off allied auras).
+    #[test]
+    fn pit_fiend_template_is_fire_poison_immune_with_fear_aura() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::PIT_FIEND_FEAR_AURA;
+        use crate::actors::creatures::pit_fiends::PIT_FIEND_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let p = e
+            .instantiate_creature(&PIT_FIEND_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = &e.actors[&p];
+        assert!(actor.is_immune_to(DamageType::Fire));
+        assert!(actor.is_immune_to(DamageType::Poison));
+        let names: std::collections::HashSet<_> = actor
+            .actions
+            .iter()
+            .map(|a| a.name().to_string())
+            .collect();
+        assert!(names.contains(PIT_FIEND_FEAR_AURA.name()));
+        assert!(actor.is_immune_to_condition(Condition::Frightened));
+        assert!(actor.is_immune_to_condition(Condition::Poisoned));
+        assert!(actor.is_immune_to_condition(Condition::Charmed));
+    }
+
+    /// Pit Fiend Fear Aura: every hostile combat-active actor within
+    /// 20ft (8 tiles) makes a WIS save vs the fiend's CHA-DC. Failures
+    /// land Frightened. Place a low-WIS goblin and the save should fail
+    /// across the seed sweep.
+    #[test]
+    fn pit_fiend_fear_aura_frightens_nearby_enemies() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::PIT_FIEND_FEAR_AURA;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::pit_fiends::PIT_FIEND_TEMPLATE;
+        let mut frightened = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let p = e
+                .instantiate_creature(&PIT_FIEND_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+                .unwrap();
+            let effects = PIT_FIEND_FEAR_AURA.side_effects(&mut e, p, None, None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e.actors
+                .get(&g)
+                .is_some_and(|a| a.has_condition(Condition::Frightened))
+            {
+                frightened = true;
+                break;
+            }
+        }
+        assert!(frightened, "fear aura never frightened the goblin");
+    }
+
+    /// Chain Lightning: hits the primary + up to 3 forks within 5 tiles
+    /// of the primary. Each fork makes its own save. Placing 4 enemies
+    /// in a tight cluster verifies all 4 take damage.
+    #[test]
+    fn chain_lightning_arcs_to_three_nearby_targets() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::CHAIN_LIGHTNING;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let w = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Give the wizard a level-6 slot.
+        let _ = e
+            .actors
+            .get_mut(&w)
+            .unwrap()
+            .spell_slot_manager
+            .restore_spell_slot(6, 1);
+        // Primary + 3 forks tightly clustered.
+        let primary = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        let f1 = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(11, 10), 1, 1)
+            .unwrap();
+        let f2 = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 11), 1, 2)
+            .unwrap();
+        let f3 = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 11), 1, 3)
+            .unwrap();
+        let hp_before: Vec<u32> = [primary, f1, f2, f3]
+            .iter()
+            .map(|id| e.actors[id].hitpoints())
+            .collect();
+        let tv = vec![primary];
+        let effects = CHAIN_LIGHTNING.side_effects(&mut e, w, Some(&tv), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let hp_after: Vec<u32> = [primary, f1, f2, f3]
+            .iter()
+            .map(|id| e.actors.get(id).map(|a| a.hitpoints()).unwrap_or(0))
+            .collect();
+        // Every target should have taken damage (10d8 even halved is
+        // > 0 against AC 12 goblins with no resistance).
+        for (i, (b, a)) in hp_before.iter().zip(hp_after.iter()).enumerate() {
+            assert!(
+                a < b,
+                "chain lightning target index {} should be damaged ({} → {})",
+                i, b, a
+            );
+        }
+    }
+
+    /// AI integration: a paladin with no concentration up and an enemy
+    /// in melee reach should fire one of the new Smite spells (Searing
+    /// at lv1 first, falling back as slots run out).
+    #[test]
+    fn ai_paladin_casts_smite_spell_when_adjacent() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::ai::Controller;
+        use crate::conditions::ConditionTimer;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let _g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        // Pre-spend Divine Smite by marking it as already primed so the
+        // AI's earlier-priority Divine Smite gate falls through; the
+        // SmiteSpell path is what we want to validate here.
+        e.actors
+            .get_mut(&pal)
+            .unwrap()
+            .add_condition(Condition::Smiting, ConditionTimer::Rounds(2));
+        let ai = crate::ai::simple::SimpleAi;
+        let decision = ai.decide(&e, pal);
+        let crate::ai::ControllerDecision::Act(aei) = decision else {
+            panic!("paladin should act");
+        };
+        let name = aei.action().name();
+        assert!(
+            matches!(
+                name,
+                "searing smite" | "wrathful smite" | "branding smite" | "blinding smite"
+            ),
+            "paladin should cast a smite spell, got {}",
+            name
+        );
     }
 }

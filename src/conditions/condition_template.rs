@@ -312,6 +312,50 @@ pub enum Condition {
     /// targets (read by `compute_attack_mode`). Tracked as a condition with
     /// a `dueled_by` link so the engine knows who the duel is anchored on.
     Dueled,
+    /// Searing Smite primed (5e level-1 paladin evocation, bonus action).
+    /// The paladin's weapon erupts in fire on the primed hit: +1d6 fire
+    /// rider via the on-hit rider table, plus the target catches fire
+    /// (Burning, 3 rounds) on the same swing. One-shot prime — consumed
+    /// the moment the rider lands.
+    SearingSmiting,
+    /// Wrathful Smite primed (5e level-1 paladin enchantment, bonus
+    /// action). +1d6 psychic rider on the primed hit, then a WIS save
+    /// (caster's CHA-based DC) gates a 10-round Frightened on the
+    /// target on fail. One-shot.
+    WrathfulSmiting,
+    /// Branding Smite primed (5e level-2 paladin evocation, bonus
+    /// action). +2d6 radiant rider on the primed hit; target also lights
+    /// up (Outlined for 10 rounds — attackers get advantage and any
+    /// concurrent Invisibility / Hidden status falls off via the
+    /// existing Outlined hooks). Auto-apply on hit (no save in RAW).
+    BrandingSmiting,
+    /// Blinding Smite primed (5e level-3 paladin evocation, bonus
+    /// action). +3d8 radiant rider on the primed hit; target makes a CON
+    /// save vs the caster's CHA-based DC or is Blinded for 10 rounds.
+    /// One-shot.
+    BlindingSmiting,
+    /// Heat Metal (5e level-2 transmutation, concentration). The target's
+    /// metal armor / weapon glows red-hot: 2d8 fire on cast and on each
+    /// of the holder's turn-start ticks while concentration holds. They
+    /// also have disadvantage on attacks and ability checks (we read the
+    /// Mocked-style disadvantage clause via `compute_attack_mode`'s
+    /// extension). Cleared when the caster drops concentration.
+    HeatMetaled,
+    /// Stunning Strike pending (5e Monk feature). On the next melee hit,
+    /// the monk spends a ki point and the target makes a CON save vs the
+    /// monk's WIS-based DC (8 + prof + WIS); on fail, the target is
+    /// Stunned until the end of the monk's next turn. We model this as a
+    /// caster-side prime (similar to Divine Smite) — the on-hit hook
+    /// reads the flag, queues the save, and clears the prime. One-shot.
+    StunningStrike,
+    /// Bardic Inspiration die granted (5e Bard feature). The holder may
+    /// add a `bardic_inspiration_die` (1d6 by default in this engine) to
+    /// the next attack roll, save, or ability check they make. We honor
+    /// the attack-roll bump via `condition_attack_bonus` (flat +3, the
+    /// d6-average rounded down) and clear the condition on consume.
+    /// Concentration-free; the timer caps unused inspiration at 10
+    /// rounds (1 minute RAW).
+    Inspired,
 }
 
 impl Condition {
@@ -374,6 +418,13 @@ impl Condition {
             Condition::Smiting => "smiting",
             Condition::Sacred => "wielding a sacred weapon",
             Condition::Dueled => "compelled to duel",
+            Condition::SearingSmiting => "primed to sear",
+            Condition::WrathfulSmiting => "primed with wrath",
+            Condition::BrandingSmiting => "primed to brand",
+            Condition::BlindingSmiting => "primed to blind",
+            Condition::HeatMetaled => "burning from heat metal",
+            Condition::StunningStrike => "primed to stun",
+            Condition::Inspired => "inspired",
         }
     }
 
@@ -423,6 +474,11 @@ impl Condition {
                 | Condition::TimeStopped
                 | Condition::Smiting
                 | Condition::Sacred
+                | Condition::SearingSmiting
+                | Condition::WrathfulSmiting
+                | Condition::BrandingSmiting
+                | Condition::BlindingSmiting
+                | Condition::Inspired
         )
     }
 

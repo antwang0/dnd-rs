@@ -93,6 +93,43 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3e. Paladin Smite spells — bonus-action concentration primes
+        //     (Searing / Wrathful / Branding / Blinding). Same trigger
+        //     as Divine Smite but concentration-gated; skipped when the
+        //     paladin already holds Bless / Compelled Duel etc.
+        if let Some(aei) = try_smite_spell(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3f. Monk Stunning Strike — once-per-rest bonus-action prime
+        //     that lays a stun save on the next melee hit. Fire when
+        //     an adjacent enemy is queued for a swing this turn.
+        if let Some(aei) = try_stunning_strike(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3g. Cleric Turn Undead — once-per-rest Channel Divinity.
+        //     Fire when at least one undead-proxy enemy is within 30ft
+        //     so the cleanse-and-frighten lands on someone worth it.
+        if let Some(aei) = try_turn_undead(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3g2. Pit Fiend Fear Aura — boss-level "frighten everyone
+        //      in the room" burst. Fire when 2+ enemies sit inside
+        //      the 20ft radius (single-target a normal swing is
+        //      better, but at 2+ the multi-target frighten dominates).
+        if let Some(aei) = try_fear_aura(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3h. Bardic Inspiration — bonus-action ally buff. Fire on the
+        //     highest-HP ally so the inspiration die rides their next
+        //     attack swing (front-liners get the most value).
+        if let Some(aei) = try_bardic_inspiration(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 4. Bless — round 1 self+ally buff. Only valid before we're
         //    already concentrating on something.
         if let Some(aei) = try_bless(encounter, actor_id) {
@@ -229,6 +266,11 @@ fn try_hold_person(
     // soft. New entries land in priority order.
     const SOFT_LOCKS: &[(&str, Condition)] = &[
         ("hold person", Condition::Stunned),
+        // Couatl's Sleep Gaze: single-target Asleep (mechanically same
+        // envelope as Stunned — blocks actions / movement, melee auto-
+        // crit on hit). Hard lock that doesn't compete with Stunned for
+        // the same target.
+        ("sleep gaze", Condition::Asleep),
         ("cause fear", Condition::Frightened),
     ];
     let candidates: Vec<(&'static (dyn Action + Send + Sync), Condition)> = actor
@@ -428,6 +470,147 @@ fn try_divine_smite(
         return None;
     }
     try_self_action(encounter, actor_id, "divine smite")
+}
+
+/// Paladin Smite spells (Searing / Wrathful / Branding / Blinding).
+/// Same trigger as Divine Smite — fire when an enemy is footprint-
+/// adjacent so the bonus-action prime doesn't go to waste. We try
+/// them in increasing-slot-level order so the paladin spends low slots
+/// before high ones; each spell's own `custom_validate_input` rejects
+/// re-prime if the smite condition is already up. The Smite-spell path
+/// is concentration-gated — skip the whole stack if the paladin is
+/// already concentrating on something (e.g. Compelled Duel / Bless).
+fn try_smite_spell(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() {
+        return None;
+    }
+    if !any_enemy_within(encounter, actor_id, 0) {
+        return None;
+    }
+    // Slot-cheapest first — preserves higher slots for emergencies.
+    for name in ["searing smite", "wrathful smite", "branding smite", "blinding smite"] {
+        if let Some(aei) = try_self_action(encounter, actor_id, name) {
+            return Some(aei);
+        }
+    }
+    None
+}
+
+/// Monk Stunning Strike — bonus action prime that lays a stun save on
+/// the next melee hit. Same trigger as Divine Smite (adjacent enemy
+/// required so the prime doesn't tick out). Once-per-rest gated so the
+/// AI only fires it when the action picker has a melee target queued.
+fn try_stunning_strike(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    if !any_enemy_within(encounter, actor_id, 0) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "stunning strike")
+}
+
+/// Cleric Channel Divinity: Turn Undead — action. Fire when at least
+/// one undead-proxy enemy (Poison-immune) is within 30ft. Once per
+/// long rest; the action's own validation handles the feature-flag
+/// gate so the AI just provides the proximity heuristic.
+fn try_turn_undead(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    use crate::engine::types::DamageType;
+    use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+    let actor = encounter.actors.get(&actor_id)?;
+    let team = actor.team();
+    let loc = actor.location();
+    let size = get_tiles_from_size(actor.size());
+    let undead_nearby = encounter.actors.iter().any(|(id, a)| {
+        *id != actor_id
+            && a.team() != team
+            && a.is_combat_active()
+            && a.is_immune_to(DamageType::Poison)
+            && footprint_chebyshev(loc, size, a.location(), get_tiles_from_size(a.size())) <= 12
+    });
+    if !undead_nearby {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "turn undead")
+}
+
+/// Pit Fiend Fear Aura — action that frightens every hostile within
+/// 20ft (8 tiles) on a failed WIS save. Fire when at least 2 enemies
+/// (frighten-eligible) are inside the radius — single-target there
+/// are better single-target attacks, but at 2+ the aura's burst payoff
+/// dominates a normal swing.
+fn try_fear_aura(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+    let actor = encounter.actors.get(&actor_id)?;
+    let team = actor.team();
+    let loc = actor.location();
+    let size = get_tiles_from_size(actor.size());
+    let nearby = encounter
+        .actors
+        .iter()
+        .filter(|(id, a)| {
+            **id != actor_id
+                && a.team() != team
+                && a.is_combat_active()
+                && !a.is_immune_to_condition(Condition::Frightened)
+                && !a.has_condition(Condition::Frightened)
+                && footprint_chebyshev(loc, size, a.location(), get_tiles_from_size(a.size())) <= 8
+        })
+        .count();
+    if nearby < 2 {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "fear aura")
+}
+
+/// Bard Bardic Inspiration — bonus action giving an ally a +3 die for
+/// their next attack / save. Cast on the ally with the highest current
+/// HP (likely a frontliner who's swinging this round) that isn't
+/// already Inspired. Validates via the action's own custom check.
+fn try_bardic_inspiration(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor
+        .actions
+        .iter()
+        .find(|a| a.name() == "bardic inspiration")
+        .copied()?;
+    let team = actor.team();
+    let mut best: Option<(u32, ActionExecutionInfo)> = None;
+    for id in encounter.sorted_actor_ids() {
+        if id == actor_id {
+            continue;
+        }
+        let Some(a) = encounter.actors.get(&id) else {
+            continue;
+        };
+        if a.team() != team || !a.is_combat_active() {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![id]), None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        let hp = a.hitpoints();
+        if best.as_ref().is_none_or(|(best_hp, _)| hp > *best_hp) {
+            best = Some((hp, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
 }
 
 fn try_bless(
@@ -1128,9 +1311,11 @@ mod tests {
     fn ai_vs_ai_terminates_with_new_content() {
         use crate::actors::creatures::banshees::BANSHEE_TEMPLATE;
         use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::bards::BARD_TEMPLATE;
         use crate::actors::creatures::beholders::BEHOLDER_TEMPLATE;
         use crate::actors::creatures::berserkers::BERSERKER_TEMPLATE;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::couatls::COUATL_TEMPLATE;
         use crate::actors::creatures::doppelgangers::DOPPELGANGER_TEMPLATE;
         use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
         use crate::actors::creatures::drow::DROW_TEMPLATE;
@@ -1142,8 +1327,10 @@ mod tests {
         use crate::actors::creatures::liches::LICH_TEMPLATE;
         use crate::actors::creatures::manticores::MANTICORE_TEMPLATE;
         use crate::actors::creatures::minotaurs::MINOTAUR_TEMPLATE;
+        use crate::actors::creatures::monks::MONK_TEMPLATE;
         use crate::actors::creatures::mummies::MUMMY_TEMPLATE;
         use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::actors::creatures::pit_fiends::PIT_FIEND_TEMPLATE;
         use crate::actors::creatures::treants::TREANT_TEMPLATE;
         use crate::actors::creatures::vampires::VAMPIRE_TEMPLATE;
         use crate::actors::creatures::veterans::VETERAN_TEMPLATE;
@@ -1206,6 +1393,15 @@ mod tests {
             // dice + cold immunity). Round out the enemy lineup.
             let _ = e.instantiate_creature(&VAMPIRE_TEMPLATE, Coordinate::new(13, 15), 1, 16);
             let _ = e.instantiate_creature(&FROST_GIANT_TEMPLATE, Coordinate::new(11, 16), 1, 17);
+            // Newest PC-team additions: Bard (Bardic Inspiration support
+            // caster) and Monk (Stunning Strike + Patient Defense melee
+            // controller). The Couatl on the enemy team has Sleep Gaze +
+            // poison bite; the Pit Fiend is the new top-tier devil boss
+            // with fear aura + multi-bite/claw burst.
+            let _ = e.instantiate_creature(&BARD_TEMPLATE, Coordinate::new(8, 2), 0, 6);
+            let _ = e.instantiate_creature(&MONK_TEMPLATE, Coordinate::new(8, 4), 0, 7);
+            let _ = e.instantiate_creature(&COUATL_TEMPLATE, Coordinate::new(9, 16), 1, 18);
+            let _ = e.instantiate_creature(&PIT_FIEND_TEMPLATE, Coordinate::new(9, 14), 1, 19);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;
@@ -1389,20 +1585,22 @@ mod tests {
     fn ai_picks_aoe_when_two_enemies_clustered() {
         use crate::actors::actor_template::ConcentrationData;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 
         let mut e = empty_arena();
         // Cleric on team 0; two enemies tightly clustered on team 1, no
         // allies near them. Pre-set the cleric's concentration so Hold
         // Person (higher priority than AoE) is gated out — this test is
-        // specifically about the AoE-vs-single-target choice.
+        // specifically about the AoE-vs-single-target choice. Goblins
+        // are non-undead so Turn Undead doesn't pre-empt either.
         let cleric = e
             .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
             .unwrap();
         let _e1 = e
-            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
             .unwrap();
         let _e2 = e
-            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 10), 1, 1)
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 10), 1, 1)
             .unwrap();
         e.actors
             .get_mut(&cleric)
@@ -1493,19 +1691,21 @@ mod tests {
     #[test]
     fn ai_casts_hold_person_when_available() {
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 
         let mut e = empty_arena();
         let cleric = e
             .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
             .unwrap();
-        // Two enemies: a low-HP zombie (would be focus-fire pick) and a
-        // high-HP zombie (Hold Person target). Hold should beat single-
+        // Two enemies: a low-HP goblin (would be focus-fire pick) and a
+        // high-HP goblin (Hold Person target). Hold should beat single-
         // target attack in priority since it's a bigger lockdown.
+        // Goblins are non-undead so Turn Undead doesn't pre-empt.
         let _e1 = e
-            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 5), 1, 0)
             .unwrap();
         let _e2 = e
-            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(11, 5), 1, 1)
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(11, 5), 1, 1)
             .unwrap();
 
         let ai = SimpleAi;

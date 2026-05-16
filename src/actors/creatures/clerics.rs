@@ -1,9 +1,10 @@
+use crate::actions::class_features::{TURN_UNDEAD, TURN_UNDEAD_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
     AID, AURA_OF_VITALITY, BANE, BEACON_OF_HOPE, BESTOW_CURSE, BLESS, CALM_EMOTIONS, COMMAND,
     COUNTERSPELL, CROWN_OF_STARS, CRUSADERS_MANTLE, CURE_WOUNDS, DAYLIGHT, DEATH_WARD, DISPEL_MAGIC,
-    DIVINE_FAVOR, EARTHQUAKE, FAERIE_FIRE, FEAR, GREATER_RESTORATION, GUIDING_BOLT, HASTE,
-    HEAL_SPELL_HIGH, HEALING_SPIRIT, HEALING_WORD, HEROISM, HOLD_PERSON, INFLICT_WOUNDS,
+    DIVINE_FAVOR, EARTHQUAKE, FAERIE_FIRE, FEAR, FLAME_STRIKE, GREATER_RESTORATION, GUIDING_BOLT,
+    HASTE, HEAL_SPELL_HIGH, HEALING_SPIRIT, HEALING_WORD, HEROISM, HOLD_PERSON, INFLICT_WOUNDS,
     INSECT_PLAGUE, LESSER_RESTORATION, MASS_CURE_WOUNDS, MASS_HEAL, MASS_HEALING_WORD,
     POWER_WORD_HEAL, PRAYER_OF_HEALING, PROTECTION_FROM_EVIL_AND_GOOD, RESURRECTION, REVIVIFY,
     SACRED_BURST, SACRED_FLAME, SANCTUARY, SHIELD_OF_FAITH, SPARE_THE_DYING, SPIKE_GROWTH,
@@ -86,6 +87,12 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // mid-level utilities the cleric was missing.
     actions.push(&*FEAR);
     actions.push(&*GREATER_RESTORATION);
+    // Flame Strike — lv5 mixed-damage AoE (fire + radiant). Slips past
+    // fire-resistant fiends (radiant lands) and radiant-resistant
+    // celestials (fire lands).
+    actions.push(&*FLAME_STRIKE);
+    // Turn Undead — Cleric Channel Divinity, once per long rest.
+    actions.push(&*TURN_UNDEAD);
     CreatureTemplate {
         name: "Cleric",
         glyph: 'C',
@@ -122,7 +129,7 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Clerics are proficient in WIS and CHA saves (5e PHB).
         proficient_saves: HashSet::from([AbilityScoreType::Wisdom, AbilityScoreType::Charisma]),
         condition_immunities: HashSet::new(),
-        features: HashSet::new(),
+        features: HashSet::from([TURN_UNDEAD_TAG]),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),
     }

@@ -962,19 +962,15 @@ impl ActorInstance {
         self.total_item_bonuses().save
     }
 
-    /// Flat to-hit bonus contributed only by *conditions* (Bless = +2,
-    /// the d4 average; Bane = -2, the symmetric debuff). Independent of
-    /// `attack_bonus_buff` so callers that want both can sum them; the
-    /// engine adds both at attack-roll time via
-    /// `condition_attack_bonus + attack_bonus_buff`.
+    /// Flat to-hit bonus contributed only by *conditions* whose dice
+    /// aren't already represented elsewhere. Bless / Bane install a
+    /// separate `attack_bonus_buff` delta on top of the d4 die roll
+    /// (`bless_bane_attack_die`), so they're intentionally excluded
+    /// from this lane — including them here would double-count. This
+    /// lane is reserved for condition-only flat bonuses (Sacred
+    /// Weapon: +CHA, Bardic Inspiration: +3 d6-average).
     pub fn condition_attack_bonus(&self) -> i32 {
         let mut bonus = 0;
-        if self.has_condition(Condition::Blessed) {
-            bonus += 2;
-        }
-        if self.has_condition(Condition::Baned) {
-            bonus -= 2;
-        }
         // 5e Channel Divinity: Sacred Weapon — paladin's weapon glows
         // with divine light, adding their CHA modifier to attack rolls.
         // Sourced from the holder's own CHA so monsters who somehow grab
@@ -983,16 +979,26 @@ impl ActorInstance {
         if self.has_condition(Condition::Sacred) {
             bonus += modifier_from_score(self.charisma);
         }
+        // 5e Bardic Inspiration: holder adds a d6 (RAW scales d6→d8→d10→d12
+        // by bard level) to the next attack roll. We collapse to the
+        // d6-average (+3); the condition is consumed by the next attack
+        // via `clear_attack_advantage_riders` so the bonus doesn't
+        // double-fire across multiple swings.
+        if self.has_condition(Condition::Inspired) {
+            bonus += 3;
+        }
         bonus
     }
 
+    /// Symmetric save-roll counterpart to `condition_attack_bonus`. Same
+    /// rationale for excluding Bless / Bane: their +2 / -2 lives on
+    /// `save_bonus_buff` and their d4 die on `bless_bane_attack_die`,
+    /// so this lane is condition-only flat bonuses (Bardic
+    /// Inspiration: +3 d6-average).
     pub fn condition_save_bonus(&self) -> i32 {
         let mut bonus = 0;
-        if self.has_condition(Condition::Blessed) {
-            bonus += 2;
-        }
-        if self.has_condition(Condition::Baned) {
-            bonus -= 2;
+        if self.has_condition(Condition::Inspired) {
+            bonus += 3;
         }
         bonus
     }
@@ -1350,16 +1356,6 @@ impl ActorInstance {
         }
     }
 
-    pub fn attack_bonus(&self) -> i32 {
-        modifier_from_score(self.strength)
-            + self.proficiency_bonus()
-            + self.attack_bonus_buff
-            + self.condition_attack_bonus()
-    }
-
-    pub fn damage_bonus(&self) -> i32 {
-        modifier_from_score(self.strength)
-    }
 
     /// Class-feature gates (Second Wind, Action Surge, etc.).
     pub fn feature_available(&self, tag: &'static str) -> bool {

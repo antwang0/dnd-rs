@@ -128,15 +128,18 @@ fn spell_attack_outcome(
     encounter.clear_attack_advantage_riders(caster_id, target_id);
     let raw = encounter.roll_d20_with_mode(mode) as i32;
     // Pull through the same caster-side flat buffs (Bless / Bane d4,
-    // attack_bonus_buff) that weapon attacks get via `resolve_attack`.
-    // This keeps spell-attack rolls consistent with weapon swings.
-    let buff = encounter
+    // attack_bonus_buff, condition_attack_bonus) that weapon attacks
+    // get via `resolve_attack`. This keeps spell-attack rolls
+    // consistent with weapon swings — Sacred Weapon's +CHA fires on
+    // spell attacks too (e.g. a Sacred-Weapon paladin casting Guiding
+    // Bolt as a multiclass with cleric / divine soul).
+    let (buff, cond_attack_bonus) = encounter
         .actors
         .get(&caster_id)
-        .map(|a| a.attack_bonus_buff())
-        .unwrap_or(0);
+        .map(|a| (a.attack_bonus_buff(), a.condition_attack_bonus()))
+        .unwrap_or((0, 0));
     let (bless_die, bless_note) = encounter.bless_bane_attack_die(caster_id);
-    let total = raw + attack_bonus + buff + bless_die;
+    let total = raw + attack_bonus + buff + cond_attack_bonus + bless_die;
     let is_crit = raw == 20;
     let hit = is_crit || total >= target_ac;
     let outcome = if is_crit {
@@ -150,7 +153,7 @@ fn spell_attack_outcome(
         "  {}: 1d20({}){:+}{} = {} vs AC {}{} \u{2014} {}",
         action_name,
         raw,
-        attack_bonus + buff,
+        attack_bonus + buff + cond_attack_bonus,
         bless_note,
         total,
         target_ac,
@@ -9834,3 +9837,434 @@ impl Action for CompelledDuel {
 }
 
 pub static COMPELLED_DUEL: LazyLock<CompelledDuel> = LazyLock::new(|| CompelledDuel {});
+
+/// Config-driven Smite spell. Every Smite (Searing / Wrathful / Branding
+/// / Blinding) shares the same shape: bonus-action cast, level-N slot,
+/// concentration, applies a one-shot "primed" condition to the caster
+/// that the on-hit rider table in `engine::attack` consumes on the next
+/// melee weapon hit. The four spells differ only in slot level, log
+/// name, and which prime they apply — collapsed into one impl so adding
+/// a fifth smite is a one-entry table addition.
+pub struct SmiteSpell {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub spell_slot_lvl: u32,
+    /// Caster-side condition the smite primes — read by the on-hit
+    /// rider table to apply the bonus damage and follow-up effect.
+    pub prime: Condition,
+    /// Spell name string used for concentration tracking. Matches the
+    /// 5e RAW spell name so concentration logs read cleanly.
+    pub concentration_name: &'static str,
+}
+
+impl Action for SmiteSpell {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        // Like Divine Smite — the rider damage lands on the *next* hit,
+        // not on this action's resolution. False keeps the AI's
+        // focus-fire pipeline from picking the prime over an actual
+        // attack.
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_and_slot(self.spell_slot_lvl)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Don't double-prime: re-casting the same smite while already
+        // primed wastes a slot. The AI's pipeline doesn't deeply model
+        // this; the gate is here for symmetry with Divine Smite's
+        // `!has_condition(Smiting)` guard.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_combat_active() && !a.has_condition(self.prime))
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // 10-round prime window — long enough that a primed paladin who
+        // can't connect on the cast turn still has the better part of a
+        // minute (in 5e time) to land it. Concentration anchors the
+        // spell so taking damage can break the prime via the CON-save
+        // path, matching RAW.
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: self.prime,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    self.concentration_name,
+                    vec![(caster_id, self.prime)],
+                ),
+            }),
+        ]
+    }
+}
+
+/// Searing Smite — 1st-level paladin evocation, bonus action,
+/// concentration. Primes the next melee hit with +1d6 fire and ignites
+/// the target (Burning, 3 rounds).
+pub static SEARING_SMITE: SmiteSpell = SmiteSpell {
+    display_name: "searing smite",
+    aliases: &["searing", "smite-fire"],
+    spell_slot_lvl: 1,
+    prime: Condition::SearingSmiting,
+    concentration_name: "Searing Smite",
+};
+
+/// Wrathful Smite — 1st-level paladin enchantment, bonus action,
+/// concentration. Primes the next melee hit with +1d6 psychic and a
+/// WIS save (vs caster CHA-DC) gates Frightened (10 rounds) on fail.
+pub static WRATHFUL_SMITE: SmiteSpell = SmiteSpell {
+    display_name: "wrathful smite",
+    aliases: &["wrathful", "smite-fear"],
+    spell_slot_lvl: 1,
+    prime: Condition::WrathfulSmiting,
+    concentration_name: "Wrathful Smite",
+};
+
+/// Branding Smite — 2nd-level paladin evocation, bonus action,
+/// concentration. Primes the next melee hit with +2d6 radiant and
+/// brands the target (Outlined, 10 rounds — attackers get advantage).
+pub static BRANDING_SMITE: SmiteSpell = SmiteSpell {
+    display_name: "branding smite",
+    aliases: &["branding", "smite-brand"],
+    spell_slot_lvl: 2,
+    prime: Condition::BrandingSmiting,
+    concentration_name: "Branding Smite",
+};
+
+/// Blinding Smite — 3rd-level paladin evocation, bonus action,
+/// concentration. Primes the next melee hit with +3d8 radiant and a
+/// CON save gates Blinded (10 rounds) on fail.
+pub static BLINDING_SMITE: SmiteSpell = SmiteSpell {
+    display_name: "blinding smite",
+    aliases: &["blinding", "smite-blind"],
+    spell_slot_lvl: 3,
+    prime: Condition::BlindingSmiting,
+    concentration_name: "Blinding Smite",
+};
+
+/// Flame Strike — 5th-level evocation. A column of divine fire descends
+/// on a tile within 60ft (24 tiles); every creature whose footprint is
+/// within a 2-tile (10ft) radius of the point makes a DEX save vs the
+/// caster's WIS-based DC. On fail: 4d6 fire + 4d6 radiant. On success:
+/// half. The mixed damage type is the spell's signature — it slips past
+/// fire-resistant fiends (radiant lands) and undead with radiant
+/// resistance (fire lands), making it the cleric's go-to AoE.
+pub struct FlameStrike {}
+
+impl Action for FlameStrike {
+    fn name(&self) -> &str {
+        "flame strike"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fs", "fstrike"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 2 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60ft RAW = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire, DamageType::Radiant]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        // Roll the two damage halves separately so the per-actor
+        // resistance / immunity lookup applies independently — a fire-
+        // immune efreet still eats the radiant half, and a radiant-
+        // resistant celestial still takes full fire.
+        let fire_raw = encounter.roll(&Dice::new(4, 6));
+        let rad_raw = encounter.roll(&Dice::new(4, 6));
+        encounter.log(format!(
+            "  flame strike: 4d6({}) fire + 4d6({}) radiant",
+            fire_raw, rad_raw
+        ));
+        let mut effects = crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            2,
+            AbilityScoreType::Dexterity,
+            dc,
+            fire_raw,
+            DamageType::Fire,
+        );
+        effects.extend(crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            2,
+            AbilityScoreType::Dexterity,
+            dc,
+            rad_raw,
+            DamageType::Radiant,
+        ));
+        effects
+    }
+}
+
+pub static FLAME_STRIKE: LazyLock<FlameStrike> = LazyLock::new(|| FlameStrike {});
+
+/// Heat Metal — 2nd-level transmutation, concentration, bonus action
+/// (RAW: Action on cast, bonus action to repeat the damage each round;
+/// we collapse to a one-tap concentration mark that ticks the damage on
+/// the holder's turn-start). The target's metal armor / weapon glows
+/// red-hot: they take 2d8 fire on cast, and an additional 2d8 fire at
+/// the start of each of their turns while concentration holds. They
+/// also have disadvantage on attack rolls and ability checks (the
+/// HeatMetaled condition feeds `compute_attack_mode`'s disadvantage
+/// clause). No save — RAW gives a CON save each turn to drop the gear
+/// but we keep the simulation crisp by skipping it.
+pub struct HeatMetal {}
+
+impl Action for HeatMetal {
+    fn name(&self) -> &str {
+        "heat metal"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hm-fire", "heat"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60ft RAW = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let raw = encounter.roll(&Dice::new(2, 8));
+        encounter.log(format!("  heat metal: 2d8({}) fire on cast", raw));
+        vec![
+            Box::new(DealDamage {
+                actor_id: target_id,
+                amount: raw,
+                damage_type: DamageType::Fire,
+            }),
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::HeatMetaled,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Heat Metal",
+                    vec![(target_id, Condition::HeatMetaled)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static HEAT_METAL: LazyLock<HeatMetal> = LazyLock::new(|| HeatMetal {});
+
+/// Chain Lightning — 6th-level evocation. A bolt of lightning leaps
+/// from the caster to a primary target (DEX save for half, 10d8
+/// lightning), then forks to up to 3 additional creatures within
+/// 5 tiles (25ft RAW) of the primary — each rolling its own DEX save
+/// for half. Selection of secondary targets is deterministic: the 3
+/// nearest combat-active actors (other than the primary), excluding
+/// the caster. Mixed-team — fork hits allies as well as enemies, so
+/// the AI's friendly-fire heuristic gates casting through
+/// `try_attack_aoe`'s pool check.
+pub struct ChainLightning {}
+
+impl Action for ChainLightning {
+    fn name(&self) -> &str {
+        "chain lightning"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["chain", "cl"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 150 ft RAW = 60 tiles, but we cap to the engine's standard
+        // long-range cantrip reach to keep the targeting picker honest.
+        Some(60)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Lightning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        let Some(primary_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let raw = encounter.roll(&Dice::new(10, 8));
+        encounter.log(format!(
+            "  chain lightning: 10d8({}) lightning (primary + forks)",
+            raw
+        ));
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        // Primary target — full DEX save for half.
+        let save = encounter.roll_save(primary_id, AbilityScoreType::Dexterity, dc);
+        let dmg = if save.passed() { raw / 2 } else { raw };
+        if dmg > 0 {
+            effects.push(Box::new(DealDamage {
+                actor_id: primary_id,
+                amount: dmg,
+                damage_type: DamageType::Lightning,
+            }));
+        }
+
+        // Find the 3 nearest combat-active actors within 5 tiles of the
+        // primary — caster excluded so the bolt doesn't bite its source.
+        let Some(primary) = encounter.actors.get(&primary_id) else {
+            return effects;
+        };
+        let primary_loc = primary.location();
+        let primary_size = get_tiles_from_size(primary.size());
+        let mut forks: Vec<(isize, usize)> = encounter
+            .actors
+            .iter()
+            .filter_map(|(id, a)| {
+                if *id == caster_id || *id == primary_id || !a.is_combat_active() {
+                    return None;
+                }
+                let dist = footprint_chebyshev(
+                    a.location(),
+                    get_tiles_from_size(a.size()),
+                    primary_loc,
+                    primary_size,
+                );
+                if dist > 5 {
+                    return None;
+                }
+                Some((dist, *id))
+            })
+            .collect();
+        // Deterministic by (distance, id) so seeded tests are stable.
+        forks.sort_unstable();
+        for (_, fork_id) in forks.into_iter().take(3) {
+            let save = encounter.roll_save(fork_id, AbilityScoreType::Dexterity, dc);
+            let dmg = if save.passed() { raw / 2 } else { raw };
+            if dmg > 0 {
+                effects.push(Box::new(DealDamage {
+                    actor_id: fork_id,
+                    amount: dmg,
+                    damage_type: DamageType::Lightning,
+                }));
+            }
+        }
+        effects
+    }
+}
+
+pub static CHAIN_LIGHTNING: LazyLock<ChainLightning> = LazyLock::new(|| ChainLightning {});

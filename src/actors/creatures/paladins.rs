@@ -4,7 +4,8 @@ use crate::actions::class_features::{
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GREATSWORD;
 use crate::actions::spells::{
-    BLESS, COMPELLED_DUEL, CURE_WOUNDS, HEALING_WORD, LESSER_RESTORATION, SHIELD_OF_FAITH,
+    BLESS, BLINDING_SMITE, BRANDING_SMITE, COMPELLED_DUEL, CURE_WOUNDS, HEALING_WORD,
+    LESSER_RESTORATION, SEARING_SMITE, SHIELD_OF_FAITH, WRATHFUL_SMITE,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size};
@@ -38,6 +39,14 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*SHIELD_OF_FAITH);
     actions.push(&*LESSER_RESTORATION);
     actions.push(&*COMPELLED_DUEL);
+    // Smite spells — bonus-action concentration primes that lay extra
+    // rider damage (and a follow-up effect for Wrathful / Branding /
+    // Blinding) on the paladin's next melee hit. Slot-cost varies per
+    // spell (1 / 1 / 2 / 3); the half-caster slot table supports them.
+    actions.push(&SEARING_SMITE);
+    actions.push(&WRATHFUL_SMITE);
+    actions.push(&BRANDING_SMITE);
+    actions.push(&BLINDING_SMITE);
     CreatureTemplate {
         name: "Paladin",
         glyph: 'P',
@@ -57,8 +66,11 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         cr: 1.5,
         size: Size::Medium,
         actions,
-        // Half-caster ramp: 4 level-1, 2 level-2. Matches level-5 RAW.
-        spell_slots_by_level: vec![4, 2],
+        // Half-caster ramp: 4 level-1, 3 level-2, 1 level-3. Matches
+        // level-7 RAW — bumped from level-5 to support the lv3 Blinding
+        // Smite addition and keep enough level-1 slots for both Bless
+        // and Divine Smite spam.
+        spell_slots_by_level: vec![4, 3, 1],
         rolls_death_saves: true,
         damage_modifiers: HashMap::new(),
         // Paladins are proficient in WIS and CHA saves (5e PHB).

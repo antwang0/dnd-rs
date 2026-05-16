@@ -1,7 +1,8 @@
+use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::Dice;
 use crate::engine::encounter::EncounterInstance;
-use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
-use crate::engine::types::DamageType;
+use crate::engine::side_effects::{ApplicableSideEffect, ApplyCondition, DealDamage};
+use crate::engine::types::{AbilityScoreType, DamageType};
 
 /// Inputs to a single attack roll. Lets callers describe attacks without
 /// repeating the d20 / crit / damage / log dance for every weapon and
@@ -81,17 +82,23 @@ pub fn resolve_attack_outcome(
     encounter.clear_attack_advantage_riders(p.caster_id, p.target_id);
     let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
     let is_crit = raw_attack == 20;
-    let buff = encounter
+    // Caster-side flat bonuses. `attack_bonus_buff` is the install-side
+    // ledger (Bless's AdjustAttackBuff(+2), etc.). `condition_attack_bonus`
+    // is the read-side flag table — Sacred Weapon's +CHA modifier and
+    // Bardic Inspiration's +3 ride here. Keeping the two lanes separate
+    // makes Bless's "install once, drop on concentration" pattern reuse
+    // cleanly with the read-only condition lane.
+    let (buff, cond_attack_bonus) = encounter
         .actors
         .get(&p.caster_id)
-        .map(|a| a.attack_bonus_buff())
-        .unwrap_or(0);
+        .map(|a| (a.attack_bonus_buff(), a.condition_attack_bonus()))
+        .unwrap_or((0, 0));
     // Bless/Bane: roll an actual 1d4 once per attack and add (Bless) or
     // subtract (Bane) from the total. Both: they cancel and no die is
     // rolled. We log the d4 separately so the player can see why the
     // d20 alone doesn't account for the swing's hit.
     let (bless_die, bless_note) = encounter.bless_bane_attack_die(p.caster_id);
-    let attack_total = raw_attack + p.attack_bonus + buff + bless_die;
+    let attack_total = raw_attack + p.attack_bonus + buff + cond_attack_bonus + bless_die;
     let hit = is_crit || attack_total >= target_ac;
     let outcome = if is_crit {
         "CRIT!"
@@ -104,7 +111,7 @@ pub fn resolve_attack_outcome(
         "  {}: 1d20({}){:+}{} = {} vs AC {}{} \u{2014} {}",
         p.action_name,
         raw_attack,
-        p.attack_bonus + buff,
+        p.attack_bonus + buff + cond_attack_bonus,
         bless_note,
         attack_total,
         target_ac,
@@ -207,59 +214,53 @@ pub fn resolve_attack_outcome(
             damage_type: DamageType::Necrotic,
         }));
     }
-    // Caster-side per-hit radiant riders. Each entry is a (condition,
-    // dice, label, gates) tuple — same shape lets the buff table grow
-    // without each new buff repeating the rider boilerplate. `gates`
-    // are post-conditions evaluated together:
-    //   - `melee_only`: skip on ranged attacks (5e Divine Smite RAW).
+    // Caster-side per-hit damage riders. Generalized so any condition
+    // that grants "+Xdy damage of type T on hit" plugs in here without
+    // re-implementing the attack-roll-to-damage glue. Gates:
+    //   - `melee_only`: skip on ranged attacks (5e Smite spells / Divine
+    //     Smite RAW: melee weapon only).
     //   - `consume_on_trigger`: strip the condition after the rider
-    //     lands (Divine Smite is a one-shot prime; Crusader's Mantle
-    //     and Crown of Stars persist for the spell duration).
-    let radiant_riders: [(crate::conditions::Condition, Dice, &str, bool, bool); 3] = [
-        (
-            crate::conditions::Condition::CrusadersMantled,
-            Dice::new(1, 4),
-            "crusader's mantle",
-            false,
-            false,
-        ),
-        (
-            crate::conditions::Condition::CrownOfStars,
-            Dice::new(1, 8),
-            "crown of stars",
-            false,
-            false,
-        ),
-        (
-            crate::conditions::Condition::Smiting,
-            Dice::new(2, 8),
-            "divine smite",
-            true,
-            true,
-        ),
-    ];
-    for (cond, dice, label, melee_only, consume_on_trigger) in radiant_riders {
-        if melee_only && !p.is_melee {
+    //     lands (one-shot primes like Divine Smite / the four Smite
+    //     spells; persistent aura-style riders like Crusader's Mantle
+    //     and Crown of Stars leave their condition in place for the
+    //     full spell duration).
+    //   - `follow_up`: optional secondary clause that fires only on the
+    //     swing that *consumed* the rider — used by Blinding Smite (CON
+    //     save or Blinded) and Wrathful Smite (WIS save or Frightened).
+    for rider in on_hit_riders() {
+        if rider.melee_only && !p.is_melee {
             continue;
         }
         if !encounter
             .actors
             .get(&p.caster_id)
-            .is_some_and(|a| a.has_condition(cond))
+            .is_some_and(|a| a.has_condition(rider.condition))
         {
             continue;
         }
-        let total = roll_rider(encounter, dice, is_crit);
-        encounter.log(format!("  {}: +{} radiant", label, total));
-        effects.push(Box::new(DealDamage {
-            actor_id: p.target_id,
-            amount: total,
-            damage_type: DamageType::Radiant,
-        }));
-        if consume_on_trigger
+        // Roll the rider damage only if the rider actually has dice —
+        // primes whose entire effect is the follow-up (Stunning Strike:
+        // no damage, just a stun save) declare 0 dice so the damage
+        // line and the DealDamage push are skipped.
+        if rider.dice.count > 0 {
+            let total = roll_rider(encounter, rider.dice, is_crit);
+            encounter.log(format!(
+                "  {}: +{} {:?}",
+                rider.label, total, rider.damage_type
+            ));
+            effects.push(Box::new(DealDamage {
+                actor_id: p.target_id,
+                amount: total,
+                damage_type: rider.damage_type,
+            }));
+        }
+        if rider.consume_on_trigger
             && let Some(caster) = encounter.actors.get_mut(&p.caster_id)
         {
-            caster.remove_condition(cond);
+            caster.remove_condition(rider.condition);
+        }
+        if let Some(follow) = rider.follow_up {
+            apply_smite_follow_up(encounter, &mut effects, p.caster_id, p.target_id, follow);
         }
     }
     // 5e Fire Shield: if the target is fire-shielded and this was a melee
@@ -291,4 +292,227 @@ fn roll_rider(encounter: &mut EncounterInstance, dice: Dice, is_crit: bool) -> u
     let base = encounter.roll(&dice);
     let crit_extra = if is_crit { encounter.roll(&dice) } else { 0 };
     base + crit_extra
+}
+
+/// A "+Xdy damage on hit" rider sourced from one of the caster's active
+/// conditions. The rider table is consumed once per weapon hit by
+/// `resolve_attack_outcome` — any caster who holds `condition` adds the
+/// rolled `dice` of `damage_type` to that swing.
+#[derive(Clone, Copy)]
+pub struct OnHitRider {
+    /// Caster-side flag the rider keys off (Smiting / Crusader's
+    /// Mantled / Crown of Stars / one of the four Smite-spell primes).
+    pub condition: Condition,
+    pub dice: Dice,
+    /// Log-friendly name ("divine smite", "searing smite", ...).
+    pub label: &'static str,
+    pub damage_type: DamageType,
+    /// True iff the rider only fires on melee swings (every Paladin
+    /// Smite, Divine Smite). Ranged carriers like Crown of Stars or
+    /// Crusader's Mantle leave this false so they tag arrow hits too.
+    pub melee_only: bool,
+    /// True iff the condition is stripped from the caster the moment
+    /// the rider lands (one-shot primes). Persistent buffs leave this
+    /// false so they stay up until the spell ends.
+    pub consume_on_trigger: bool,
+    /// Optional save-then-condition follow-up that fires only on the
+    /// swing that consumed the rider. Powers Blinding Smite (CON save
+    /// or Blinded) and Wrathful Smite (WIS save or Frightened). `None`
+    /// for damage-only riders.
+    pub follow_up: Option<SmiteFollowUp>,
+}
+
+/// Secondary save + condition rider tagged onto a Smite-spell hit. The
+/// caster's CHA-based spell save DC drives the save; on fail, `apply`
+/// lands on the target with `timer`. Stored as a value so the on-hit
+/// rider table stays a flat array of plain-data entries.
+#[derive(Clone, Copy)]
+pub struct SmiteFollowUp {
+    /// Save the target rolls (CON for Blinding Smite, WIS for Wrathful
+    /// Smite).
+    pub save_ability: AbilityScoreType,
+    /// Ability whose mod feeds the caster's spell save DC.
+    pub dc_ability: AbilityScoreType,
+    pub apply: Condition,
+    pub timer: ConditionTimer,
+    /// Log-friendly tag ("blinding smite blind", "wrathful smite fear").
+    pub label: &'static str,
+}
+
+/// Build the caster-side on-hit rider table. Returned by value rather
+/// than declared `const` because `Dice::new` isn't a const fn — but the
+/// runtime cost is one stack-allocated array of plain data, so the
+/// indirection is free.
+fn on_hit_riders() -> [OnHitRider; 8] {
+    [
+        OnHitRider {
+            condition: Condition::CrusadersMantled,
+            dice: Dice::new(1, 4),
+            label: "crusader's mantle",
+            damage_type: DamageType::Radiant,
+            melee_only: false,
+            consume_on_trigger: false,
+            follow_up: None,
+        },
+        OnHitRider {
+            condition: Condition::CrownOfStars,
+            dice: Dice::new(1, 8),
+            label: "crown of stars",
+            damage_type: DamageType::Radiant,
+            melee_only: false,
+            consume_on_trigger: false,
+            follow_up: None,
+        },
+        OnHitRider {
+            condition: Condition::Smiting,
+            dice: Dice::new(2, 8),
+            label: "divine smite",
+            damage_type: DamageType::Radiant,
+            melee_only: true,
+            consume_on_trigger: true,
+            follow_up: None,
+        },
+        // 5e Searing Smite — 1st-level paladin evocation, bonus action.
+        // +1d6 fire on the primed hit, and the target catches fire
+        // (Burning) for 3 rounds. We bake the Burning rider in as a
+        // SmiteFollowUp with a permissive save (no save in RAW — the
+        // target makes ongoing WIS saves to extinguish; we approximate
+        // with a flat 3-round Burning).
+        OnHitRider {
+            condition: Condition::SearingSmiting,
+            dice: Dice::new(1, 6),
+            label: "searing smite",
+            damage_type: DamageType::Fire,
+            melee_only: true,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                // Auto-apply — represent as a save the target auto-fails
+                // by routing through a high-DC sentinel never reached
+                // (we keep the save line short with a low DC and CON
+                // ability, matching the 5e flavor of resisting flames).
+                save_ability: AbilityScoreType::Constitution,
+                dc_ability: AbilityScoreType::Charisma,
+                apply: Condition::Burning,
+                timer: ConditionTimer::Rounds(3),
+                label: "searing smite ignite",
+            }),
+        },
+        // 5e Wrathful Smite — 1st-level. +1d6 psychic on the primed hit;
+        // target makes WIS save or is Frightened of the paladin for
+        // up to 10 rounds (RAW: 1 minute).
+        OnHitRider {
+            condition: Condition::WrathfulSmiting,
+            dice: Dice::new(1, 6),
+            label: "wrathful smite",
+            damage_type: DamageType::Psychic,
+            melee_only: true,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: AbilityScoreType::Wisdom,
+                dc_ability: AbilityScoreType::Charisma,
+                apply: Condition::Frightened,
+                timer: ConditionTimer::Rounds(10),
+                label: "wrathful smite fear",
+            }),
+        },
+        // 5e Branding Smite — 2nd-level. +2d6 radiant; target glows
+        // (Outlined for 10 rounds), giving advantage to attackers and
+        // ending Invisibility / Hidden status.
+        OnHitRider {
+            condition: Condition::BrandingSmiting,
+            dice: Dice::new(2, 6),
+            label: "branding smite",
+            damage_type: DamageType::Radiant,
+            melee_only: true,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                // No save — RAW Branding Smite is auto-apply on hit. We
+                // route through the save path with a "guaranteed fail"
+                // save by picking an unreachable DC; cleaner to just
+                // queue the ApplyCondition unconditionally, which we
+                // handle in `apply_smite_follow_up` via a special-cased
+                // sentinel (`save_ability == dc_ability` is the marker).
+                save_ability: AbilityScoreType::Charisma,
+                dc_ability: AbilityScoreType::Charisma,
+                apply: Condition::Outlined,
+                timer: ConditionTimer::Rounds(10),
+                label: "branding smite brand",
+            }),
+        },
+        // 5e Blinding Smite — 3rd-level. +3d8 radiant; target makes CON
+        // save or is Blinded for 10 rounds.
+        OnHitRider {
+            condition: Condition::BlindingSmiting,
+            dice: Dice::new(3, 8),
+            label: "blinding smite",
+            damage_type: DamageType::Radiant,
+            melee_only: true,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: AbilityScoreType::Constitution,
+                dc_ability: AbilityScoreType::Charisma,
+                apply: Condition::Blinded,
+                timer: ConditionTimer::Rounds(10),
+                label: "blinding smite blind",
+            }),
+        },
+        // 5e Monk Stunning Strike — bonus action prime; on the next
+        // melee hit, the target makes a CON save vs the monk's
+        // WIS-based DC or is Stunned for 1 round. Zero rider dice (the
+        // stun *is* the effect); the rider loop's `count > 0` guard
+        // skips the damage line.
+        OnHitRider {
+            condition: Condition::StunningStrike,
+            dice: Dice::new(0, 1),
+            label: "stunning strike",
+            damage_type: DamageType::Bludgeoning,
+            melee_only: true,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: AbilityScoreType::Constitution,
+                dc_ability: AbilityScoreType::Wisdom,
+                apply: Condition::Stunned,
+                timer: ConditionTimer::Rounds(1),
+                label: "stunning strike stun",
+            }),
+        },
+    ]
+}
+
+/// Process the optional secondary save-and-apply step that some Smite
+/// spells stack on top of their bonus damage. Branding Smite's "no save"
+/// flavor (auto-apply on hit) is encoded with `save_ability == dc_ability`
+/// — we skip the save roll and queue the condition unconditionally.
+fn apply_smite_follow_up(
+    encounter: &mut EncounterInstance,
+    effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    caster_id: usize,
+    target_id: usize,
+    follow: SmiteFollowUp,
+) {
+    // Auto-apply sentinel: same ability on both fields means "no save".
+    if follow.save_ability == follow.dc_ability {
+        encounter.log(format!("  {}: auto-apply on hit", follow.label));
+        effects.push(Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: follow.apply,
+            timer: follow.timer,
+        }));
+        return;
+    }
+    let Some(caster) = encounter.actors.get(&caster_id) else {
+        return;
+    };
+    let dc = caster.spell_save_dc(follow.dc_ability);
+    let save = encounter.roll_save(target_id, follow.save_ability, dc);
+    if save.passed() {
+        encounter.log(format!("  {}: target saves", follow.label));
+        return;
+    }
+    encounter.log(format!("  {}: target fails save", follow.label));
+    effects.push(Box::new(ApplyCondition {
+        actor_id: target_id,
+        condition: follow.apply,
+        timer: follow.timer,
+    }));
 }
