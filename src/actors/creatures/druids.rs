@@ -3,7 +3,8 @@ use crate::actions::monster_attacks::SCIMITAR;
 use crate::actions::spells::{
     CALL_LIGHTNING, CURE_WOUNDS, DAYLIGHT, DISPEL_MAGIC, FAERIE_FIRE, GOODBERRY, HEALING_WORD,
     HEAT_METAL, ICE_STORM, LESSER_RESTORATION, MASS_CURE_WOUNDS, MOONBEAM, POISON_SPRAY,
-    POLYMORPH, REVERSE_GRAVITY, SLEET_STORM, SPIKE_GROWTH, THORN_WHIP, THUNDERWAVE, WALL_OF_FIRE,
+    POLYMORPH, REVERSE_GRAVITY, SLEET_STORM, SPIKE_GROWTH, STORM_OF_VENGEANCE, THORN_WHIP,
+    THUNDERWAVE, WALL_OF_FIRE,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size};
@@ -57,6 +58,8 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*MASS_CURE_WOUNDS);
     // Level 7
     actions.push(&*REVERSE_GRAVITY);
+    // Level 9 — the apex druid spell.
+    actions.push(&*STORM_OF_VENGEANCE);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

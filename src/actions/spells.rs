@@ -10687,3 +10687,109 @@ impl Action for ReverseGravity {
 }
 
 pub static REVERSE_GRAVITY: LazyLock<ReverseGravity> = LazyLock::new(|| ReverseGravity {});
+
+/// Storm of Vengeance — 5e druid level-9 conjuration, concentration. A
+/// massive storm churns above the targeted point. The apex druid spell:
+/// huge radius, mixed thunder + lightning damage, plus a CON save vs
+/// Deafened. We collapse the multi-round RAW (acid → wind → hail) into
+/// a single big burst on cast: 2d6 thunder + 4d6 lightning on every
+/// enemy in the 30ft sphere; CON save halves and dodges the Deafened
+/// rider. Caster + allies are spared by the enemy_burst_targets filter.
+pub struct StormOfVengeance {}
+
+impl Action for StormOfVengeance {
+    fn name(&self) -> &str {
+        "storm of vengeance"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sov", "stormv"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 6 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // "Sight" range RAW — we cap to the engine's long-range bracket
+        // so the picker stays sane.
+        Some(60)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Thunder, DamageType::Lightning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(9)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        const RADIUS: isize = 6;
+
+        let thunder = encounter.roll(&Dice::new(2, 6));
+        let lightning = encounter.roll(&Dice::new(4, 6));
+        encounter.log(format!(
+            "  storm of vengeance: 2d6({}) thunder + 4d6({}) lightning",
+            thunder, lightning
+        ));
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut deafened: Vec<(usize, Condition)> = Vec::new();
+        for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
+            let save = encounter.roll_save(tid, AbilityScoreType::Constitution, dc);
+            let t_dmg = if save.passed() { thunder / 2 } else { thunder };
+            let l_dmg = if save.passed() { lightning / 2 } else { lightning };
+            if t_dmg > 0 {
+                effects.push(Box::new(DealDamage {
+                    actor_id: tid,
+                    amount: t_dmg,
+                    damage_type: DamageType::Thunder,
+                }));
+            }
+            if l_dmg > 0 {
+                effects.push(Box::new(DealDamage {
+                    actor_id: tid,
+                    amount: l_dmg,
+                    damage_type: DamageType::Lightning,
+                }));
+            }
+            // Deafened rider only on failed saves — the storm's roar
+            // ruptures eardrums on a fail.
+            if !save.passed() {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: tid,
+                    condition: Condition::Deafened,
+                    timer: ConditionTimer::Rounds(10),
+                }));
+                deafened.push((tid, Condition::Deafened));
+            }
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Storm of Vengeance", deafened),
+        }));
+        effects
+    }
+}
+
+pub static STORM_OF_VENGEANCE: LazyLock<StormOfVengeance> =
+    LazyLock::new(|| StormOfVengeance {});

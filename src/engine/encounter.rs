@@ -17612,6 +17612,52 @@ mod tests {
         assert!(matches!(save_mode, RollMode::Disadvantage));
     }
 
+    /// Storm of Vengeance: 2d6 thunder + 4d6 lightning on every enemy
+    /// in the 30ft sphere, CON save for half + dodges the Deafened
+    /// rider. Allies in the radius are spared by enemy_burst_targets.
+    /// Verifies the dual-damage shape lands and concentration installs.
+    #[test]
+    fn storm_of_vengeance_dual_damages_enemies_only() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::STORM_OF_VENGEANCE;
+        use crate::actors::creatures::druids::DRUID_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let druid = e
+            .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 10), 0, 1)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(11, 10), 1, 0)
+            .unwrap();
+        let ally_before = e.actors[&ally].hitpoints();
+        let enemy_before = e.actors[&enemy].hitpoints();
+        let tl = vec![Coordinate::new(10, 10)];
+        let effs = STORM_OF_VENGEANCE.side_effects(&mut e, druid, None, Some(&tl), None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        // Concentration installs on the druid.
+        assert!(e.actors[&druid].is_concentrating());
+        // Enemy goblin takes mixed damage; ally zombie is spared.
+        let enemy_after = e
+            .actors
+            .get(&enemy)
+            .map(|a| a.hitpoints())
+            .unwrap_or(0);
+        assert!(
+            enemy_after < enemy_before,
+            "enemy should take storm damage"
+        );
+        assert_eq!(
+            e.actors[&ally].hitpoints(),
+            ally_before,
+            "ally should NOT take storm damage (enemy-only burst)"
+        );
+    }
+
     /// Exhausted is in the Greater Restoration cleanse pool, so casting
     /// GR on an exhausted ally lifts the flag.
     #[test]
