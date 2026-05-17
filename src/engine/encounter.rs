@@ -430,6 +430,10 @@ impl EncounterInstance {
                 // takes ongoing fire damage AND has disadvantage on
                 // attacks and ability checks while concentration holds.
                 Condition::HeatMetaled,
+                // 5e Exhaustion (simplified): disadvantage on attack
+                // rolls. RAW exhaustion is tiered; we model the flat
+                // "tier 1 + tier 3" envelope (attack & save disadvantage).
+                Condition::Exhausted,
             ] {
                 if attacker.has_condition(c) {
                     mode = mode.combine(RollMode::Disadvantage);
@@ -574,6 +578,12 @@ impl EncounterInstance {
         // Frightened → disadvantage on ability checks while you can see
         // the source of fear. Tests expect this to apply to saves too.
         if actor.has_condition(Condition::Frightened) {
+            mode = mode.combine(RollMode::Disadvantage);
+        }
+        // 5e Exhaustion tier 3: disadvantage on all saving throws. We
+        // model the flat tier-3 envelope alongside the attack-side
+        // disadvantage from `compute_attack_mode`.
+        if actor.has_condition(Condition::Exhausted) {
             mode = mode.combine(RollMode::Disadvantage);
         }
         // Bless: advantage on saving throws (matches the attack-side
@@ -17336,6 +17346,299 @@ mod tests {
             ),
             "paladin should cast a smite spell, got {}",
             name
+        );
+    }
+
+    /// Goodberry heals 10 HP on a touch-range ally — no save, no roll
+    /// dependency, just a flat top-up. The cleanse path doesn't fire
+    /// (it's a heal, not a restoration), so the only mutation is HP.
+    #[test]
+    fn goodberry_heals_ally_for_ten() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::GOODBERRY;
+        use crate::actors::creatures::druids::DRUID_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let druid = e
+            .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        let max = e.actors[&ally].max_hitpoints();
+        e.actors.get_mut(&ally).unwrap().take_damage(max - 1);
+        let before = e.actors[&ally].hitpoints();
+        let tv = vec![ally];
+        let effs = GOODBERRY.side_effects(&mut e, druid, Some(&tv), None, None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        let after = e.actors[&ally].hitpoints();
+        assert_eq!(after, before + 10);
+    }
+
+    /// Moonbeam: cast at a point, damages every creature in the 1-tile
+    /// burst on a failed CON save and installs concentration on the
+    /// caster. With AC-agnostic save targets the save outcome is RNG;
+    /// we just verify damage landed on at least one target and the
+    /// caster is now concentrating on Moonbeam.
+    #[test]
+    fn moonbeam_damages_burst_and_starts_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::MOONBEAM;
+        use crate::actors::creatures::druids::DRUID_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let druid = e
+            .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g1 = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        let g2 = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(11, 10), 1, 1)
+            .unwrap();
+        let hp_before = [e.actors[&g1].hitpoints(), e.actors[&g2].hitpoints()];
+        let tl = vec![Coordinate::new(10, 10)];
+        let effs = MOONBEAM.side_effects(&mut e, druid, None, Some(&tl), None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        // Concentration installs on the caster.
+        assert!(
+            e.actors[&druid].is_concentrating(),
+            "druid should concentrate on Moonbeam"
+        );
+        // At least one goblin should have taken some damage (even on a
+        // save they take half of 2d10 ≥ 1).
+        let hp_after = [
+            e.actors.get(&g1).map(|a| a.hitpoints()).unwrap_or(0),
+            e.actors.get(&g2).map(|a| a.hitpoints()).unwrap_or(0),
+        ];
+        assert!(
+            hp_after[0] < hp_before[0] || hp_after[1] < hp_before[1],
+            "moonbeam should damage at least one goblin in the burst"
+        );
+    }
+
+    /// Call Lightning: a 3d10 lightning strike at a point, DEX save for
+    /// half. Installs concentration so the druid can re-fire on later
+    /// turns. Verifies damage + concentration as the load-bearing
+    /// pieces of the spell.
+    #[test]
+    fn call_lightning_damages_burst_and_starts_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::CALL_LIGHTNING;
+        use crate::actors::creatures::druids::DRUID_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let druid = e
+            .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        let hp_before = e.actors[&g].hitpoints();
+        let tl = vec![Coordinate::new(10, 10)];
+        let effs = CALL_LIGHTNING.side_effects(&mut e, druid, None, Some(&tl), None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&druid].is_concentrating(),
+            "druid should concentrate on Call Lightning"
+        );
+        let hp_after = e.actors.get(&g).map(|a| a.hitpoints()).unwrap_or(0);
+        assert!(
+            hp_after < hp_before,
+            "call lightning should damage the goblin in the strike"
+        );
+    }
+
+    /// Sleet Storm: deals no damage but every enemy in the burst that
+    /// fails a DEX save is knocked Prone. Verify at least one of the
+    /// goblins in the cluster ends up Prone (RNG-dependent on the save
+    /// outcome — we cluster 4 of them so the probability of no fails
+    /// is negligible).
+    #[test]
+    fn sleet_storm_prones_enemies_in_burst() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::SLEET_STORM;
+        use crate::actors::creatures::druids::DRUID_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let druid = e
+            .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblins: Vec<usize> = (0..4)
+            .map(|i| {
+                e.instantiate_creature(
+                    &GOBLIN_TEMPLATE,
+                    Coordinate::new(10 + i, 10),
+                    1,
+                    i as usize,
+                )
+                .unwrap()
+            })
+            .collect();
+        let tl = vec![Coordinate::new(10, 10)];
+        let effs = SLEET_STORM.side_effects(&mut e, druid, None, Some(&tl), None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        let any_prone = goblins
+            .iter()
+            .any(|id| e.actors[id].has_condition(Condition::Prone));
+        assert!(any_prone, "sleet storm should prone at least one goblin");
+    }
+
+    /// Reverse Gravity: every creature in the column makes a STR save;
+    /// fails take 8d6 bludgeoning + Prone. Tests one fail leads to
+    /// damage by stacking enough goblins that at least one fails the
+    /// save (low STR keeps the math friendly).
+    #[test]
+    fn reverse_gravity_damages_and_prones() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::REVERSE_GRAVITY;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Give the wizard a level-7 slot.
+        let _ = e
+            .actors
+            .get_mut(&wiz)
+            .unwrap()
+            .spell_slot_manager
+            .restore_spell_slot(7, 1);
+        let goblins: Vec<usize> = (0..6)
+            .map(|i| {
+                e.instantiate_creature(
+                    &GOBLIN_TEMPLATE,
+                    Coordinate::new(10 + i, 10),
+                    1,
+                    i as usize,
+                )
+                .unwrap()
+            })
+            .collect();
+        let tl = vec![Coordinate::new(12, 10)];
+        let effs = REVERSE_GRAVITY.side_effects(&mut e, wiz, None, Some(&tl), None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        // Concentration installed on the caster.
+        assert!(
+            e.actors[&wiz].is_concentrating(),
+            "caster should concentrate on Reverse Gravity"
+        );
+        // At least one goblin should be either dead (gone from the
+        // actors map) or prone (failed save).
+        let any_affected = goblins.iter().any(|id| {
+            !e.actors.contains_key(id) || e.actors[id].has_condition(Condition::Prone)
+        });
+        assert!(
+            any_affected,
+            "reverse gravity should down or prone at least one goblin in the column"
+        );
+    }
+
+    /// Druid template instantiates cleanly and has WIS-primary stats.
+    #[test]
+    fn druid_template_instantiates() {
+        use crate::actors::creatures::druids::DRUID_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let d = e
+            .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = &e.actors[&d];
+        assert_eq!(actor.ability_score(AbilityScoreType::Wisdom), 18);
+        assert!(actor.rolls_death_saves(), "druid is a PC class");
+        // Sanity: a level-9 full-caster has a level-9 slot.
+        assert!(
+            actor
+                .spell_slot_manager
+                .spell_slots(9)
+                .max_spell_slots
+                >= 1
+        );
+    }
+
+    /// Tarrasque template: gargantuan, fire+poison immune, regen 40, and
+    /// the multiattack lane is present.
+    #[test]
+    fn tarrasque_template_immunities_and_regen() {
+        use crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let t = e
+            .instantiate_creature(&TARRASQUE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let actor = &e.actors[&t];
+        assert!(actor.is_immune_to(DamageType::Fire));
+        assert!(actor.is_immune_to(DamageType::Poison));
+        assert!(actor.is_resistant_to(DamageType::Bludgeoning));
+        assert_eq!(actor.regen_per_round(), 40);
+        // Tarrasque is condition-immune to mind-affecting effects.
+        assert!(actor.is_immune_to_condition(Condition::Charmed));
+        assert!(actor.is_immune_to_condition(Condition::Frightened));
+        assert!(actor.is_immune_to_condition(Condition::Paralyzed));
+    }
+
+    /// Exhausted: imposes disadvantage on attacks via compute_attack_mode
+    /// and on saves via compute_save_mode. Symmetric envelope so a single
+    /// flag captures the two load-bearing tiers of 5e exhaustion.
+    #[test]
+    fn exhausted_imposes_attack_and_save_disadvantage() {
+        use crate::conditions::ConditionTimer;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Exhausted, ConditionTimer::Permanent);
+        // Attack mode should be Disadvantage from the attacker side.
+        let mode = e.compute_attack_mode(attacker, target, true);
+        assert!(matches!(mode, RollMode::Disadvantage));
+        // Save mode should also be Disadvantage (tier-3 envelope).
+        let save_mode =
+            e.compute_save_mode(attacker, crate::engine::types::AbilityScoreType::Wisdom);
+        assert!(matches!(save_mode, RollMode::Disadvantage));
+    }
+
+    /// Exhausted is in the Greater Restoration cleanse pool, so casting
+    /// GR on an exhausted ally lifts the flag.
+    #[test]
+    fn greater_restoration_lifts_exhausted() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::GREATER_RESTORATION;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&ally)
+            .unwrap()
+            .add_condition(Condition::Exhausted, ConditionTimer::Permanent);
+        let tv = vec![ally];
+        let effs = GREATER_RESTORATION.side_effects(&mut e, cleric, Some(&tv), None, None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&ally].has_condition(Condition::Exhausted),
+            "greater restoration should cleanse Exhausted"
         );
     }
 }

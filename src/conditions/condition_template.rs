@@ -356,6 +356,14 @@ pub enum Condition {
     /// Concentration-free; the timer caps unused inspiration at 10
     /// rounds (1 minute RAW).
     Inspired,
+    /// Exhausted (5e Exhaustion, simplified to a single level). RAW
+    /// models 6 cumulative tiers; we collapse to one flag with the
+    /// load-bearing penalties: disadvantage on attack rolls AND ability
+    /// checks (tier 1) plus disadvantage on saving throws (tier 3).
+    /// Cleared by a long rest. Distinct from `Poisoned` so cleanse
+    /// pickers (Lesser Restoration / Greater Restoration) can target
+    /// it explicitly.
+    Exhausted,
 }
 
 impl Condition {
@@ -425,6 +433,7 @@ impl Condition {
             Condition::HeatMetaled => "burning from heat metal",
             Condition::StunningStrike => "primed to stun",
             Condition::Inspired => "inspired",
+            Condition::Exhausted => "exhausted",
         }
     }
 

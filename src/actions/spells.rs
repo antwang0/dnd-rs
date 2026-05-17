@@ -9728,12 +9728,16 @@ impl GreaterRestoration {
     /// targets the lockdown set (Paralyzed, Stunned, Petrified, Charmed)
     /// that LR can't touch. Includes Lesser-Restoration's targets too so
     /// a stuck-with-only-GR caster can still cleanse Poisoned / etc.
-    const CANDIDATES: [Condition; 8] = [
+    /// Also lifts Exhausted (RAW: GR removes one level of exhaustion;
+    /// we model the simplified single-tier flag so cleansing it ends
+    /// the condition outright).
+    const CANDIDATES: [Condition; 9] = [
         Condition::Petrified,
         Condition::Paralyzed,
         Condition::Stunned,
         Condition::Charmed,
         Condition::Frightened,
+        Condition::Exhausted,
         Condition::Poisoned,
         Condition::Blinded,
         Condition::Deafened,
@@ -10268,3 +10272,418 @@ impl Action for ChainLightning {
 }
 
 pub static CHAIN_LIGHTNING: LazyLock<ChainLightning> = LazyLock::new(|| ChainLightning {});
+
+/// Goodberry — 5e druid level-1 transmutation. Conjures up to 10 magical
+/// berries; eating one restores 1 HP. We collapse the "10 berries over an
+/// hour" RAW into a single in-combat heal of 10 HP on a touch-range ally
+/// — the caster's WIS modifier isn't added (RAW: berries are a flat 1 HP
+/// each). Behaves like a low-cost emergency top-up: cheap level-1 slot,
+/// touch range, schemes nicely with Healing Word for ranged backup.
+pub struct Goodberry {}
+
+impl Action for Goodberry {
+    fn name(&self) -> &str {
+        "goodberry"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["gb", "berry"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(1)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        encounter.log("  goodberry: 10 HP restored from magical berries".to_string());
+        vec![Box::new(Heal {
+            actor_id: target_id,
+            amount: 10,
+        })]
+    }
+}
+
+pub static GOODBERRY: LazyLock<Goodberry> = LazyLock::new(|| Goodberry {});
+
+/// Moonbeam — 5e druid level-2 evocation, concentration. A 5ft-radius
+/// beam of silvery light strikes the targeted point. Every creature in
+/// the beam makes a CON save; fail = 2d10 radiant, pass = half. We treat
+/// the cast as a single burst (Spirit Guardians shape) since the engine
+/// doesn't yet model "lingering area, re-rolled each round" AoEs. Targets
+/// allies and enemies alike (it's an indiscriminate beam) and starts
+/// concentration so the AI knows it's holding it.
+pub struct Moonbeam {}
+
+impl Action for Moonbeam {
+    fn name(&self) -> &str {
+        "moonbeam"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mb", "moon"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 1 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Radiant]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let raw = encounter.roll(&Dice::new(2, 10));
+        encounter.log(format!("  moonbeam: 2d10({}) radiant beam", raw));
+        let mut effs = crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            1,
+            AbilityScoreType::Constitution,
+            dc,
+            raw,
+            DamageType::Radiant,
+        );
+        effs.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Moonbeam", Vec::new()),
+        }));
+        effs
+    }
+}
+
+pub static MOONBEAM: LazyLock<Moonbeam> = LazyLock::new(|| Moonbeam {});
+
+/// Call Lightning — 5e druid level-3 conjuration, concentration. Calls a
+/// storm cloud overhead; on cast and on each subsequent Action this turn,
+/// a lightning bolt strikes a chosen point dealing 3d10 lightning (DEX
+/// save, half on success) to every creature within 5ft of the strike.
+/// We model the cast as a single 3d10 burst at the point + concentration
+/// install — re-casts of the same spell while concentrating proc the
+/// bolt anew (the action picker handles that path since the slot is gone
+/// after the initial cast, RAW's "without spending a spell slot" repeat
+/// fires the standard concentration channel). Single-tile burst (5ft).
+pub struct CallLightning {}
+
+impl Action for CallLightning {
+    fn name(&self) -> &str {
+        "call lightning"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cl-spell", "lightning", "callbolt"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 5ft burst — single-tile strike. Targets in the same tile as
+        // the strike point catch the full radius.
+        TargetingSchema::Burst { radius: 1 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft strike radius.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Lightning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let raw = encounter.roll(&Dice::new(3, 10));
+        encounter.log(format!("  call lightning: 3d10({}) lightning bolt", raw));
+        let mut effs = crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            1,
+            AbilityScoreType::Dexterity,
+            dc,
+            raw,
+            DamageType::Lightning,
+        );
+        effs.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Call Lightning", Vec::new()),
+        }));
+        effs
+    }
+}
+
+pub static CALL_LIGHTNING: LazyLock<CallLightning> = LazyLock::new(|| CallLightning {});
+
+/// Sleet Storm — 5e druid level-3 conjuration, concentration. Freezing
+/// rain coats a 20-ft cylinder; creatures inside make a DEX save or be
+/// knocked Prone, and concentrating spellcasters in the area must save
+/// on a CON check or drop concentration. We model: enemy-only burst
+/// (caster + allies stay vertical), DEX save vs Prone on fail, plus an
+/// optional concentration-break for any enemy holding concentration. No
+/// damage — the storm is pure crowd-control. 20ft radius = 4 tiles.
+pub struct SleetStorm {}
+
+impl Action for SleetStorm {
+    fn name(&self) -> &str {
+        "sleet storm"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sleet", "ss-spell"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 150 ft = 60 tiles.
+        Some(60)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        const RADIUS: isize = 4;
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut applied: Vec<(usize, Condition)> = Vec::new();
+        for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
+            let save = encounter.roll_save(tid, AbilityScoreType::Dexterity, dc);
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Prone,
+                timer: ConditionTimer::Permanent,
+            }));
+            applied.push((tid, Condition::Prone));
+            // Concentration break: any enemy holding concentration must
+            // succeed on a CON save or drop. We piggyback on the engine's
+            // drop_concentration helper rather than re-rolling here — the
+            // CON save uses the same DC as the DEX save (5e RAW: "DC
+            // equal to your spell save DC").
+            if encounter
+                .actors
+                .get(&tid)
+                .is_some_and(|a| a.is_concentrating())
+            {
+                let conc_save =
+                    encounter.roll_save(tid, AbilityScoreType::Constitution, dc);
+                if !conc_save.passed() {
+                    encounter.drop_concentration(tid);
+                }
+            }
+        }
+        if !applied.is_empty() {
+            effects.push(Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions("Sleet Storm", applied),
+            }));
+        }
+        effects
+    }
+}
+
+pub static SLEET_STORM: LazyLock<SleetStorm> = LazyLock::new(|| SleetStorm {});
+
+/// Reverse Gravity — 5e level-7 transmutation, concentration. Gravity
+/// reverses in a wide column; creatures inside fall *up*, then crash
+/// back down when concentration drops. We model the cast's load-bearing
+/// half: a STR save (failure = thrown around, Prone) plus 8d6 bludgeoning
+/// to fallen creatures (the fall damage). Allies in the column are
+/// included — RAW makes no friend/foe distinction. Concentration is
+/// installed so dispel can lift the gravity column.
+pub struct ReverseGravity {}
+
+impl Action for ReverseGravity {
+    fn name(&self) -> &str {
+        "reverse gravity"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["rg", "reverse"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 10 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 100 ft = 40 tiles.
+        Some(40)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(7)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Druid (WIS) or wizard (INT) — pick the caster's better DC.
+        let dc = caster
+            .spell_save_dc(AbilityScoreType::Wisdom)
+            .max(caster.spell_save_dc(AbilityScoreType::Intelligence));
+        let raw = encounter.roll(&Dice::new(8, 6));
+        encounter.log(format!(
+            "  reverse gravity: 8d6({}) bludgeoning fall damage",
+            raw
+        ));
+        const RADIUS: isize = 10;
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut applied: Vec<(usize, Condition)> = Vec::new();
+        // RAW makes no ally/enemy distinction — every creature in the
+        // column rolls a save. Caster is excluded (they cast it; they
+        // brace themselves).
+        for tid in encounter.burst_targets(caster_id, point, RADIUS) {
+            let save = encounter.roll_save(tid, AbilityScoreType::Strength, dc);
+            if save.passed() {
+                continue;
+            }
+            // On a fail: 8d6 bludgeoning + Prone (the crash landing).
+            effects.push(Box::new(DealDamage {
+                actor_id: tid,
+                amount: raw,
+                damage_type: DamageType::Bludgeoning,
+            }));
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Prone,
+                timer: ConditionTimer::Permanent,
+            }));
+            applied.push((tid, Condition::Prone));
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Reverse Gravity", applied),
+        }));
+        effects
+    }
+}
+
+pub static REVERSE_GRAVITY: LazyLock<ReverseGravity> = LazyLock::new(|| ReverseGravity {});

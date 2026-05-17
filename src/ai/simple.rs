@@ -1402,6 +1402,17 @@ mod tests {
             let _ = e.instantiate_creature(&MONK_TEMPLATE, Coordinate::new(8, 4), 0, 7);
             let _ = e.instantiate_creature(&COUATL_TEMPLATE, Coordinate::new(9, 16), 1, 18);
             let _ = e.instantiate_creature(&PIT_FIEND_TEMPLATE, Coordinate::new(9, 14), 1, 19);
+            // Druid on team 0 — exercises the new druid spell loadout
+            // (Goodberry, Moonbeam, Call Lightning, Sleet Storm, Reverse
+            // Gravity) through the AI's action picker.
+            use crate::actors::creatures::druids::DRUID_TEMPLATE;
+            let _ = e.instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(10, 2), 0, 8);
+            // Tarrasque on the enemy team — CR-30 apex boss with the
+            // new heterogeneous multiattack (bite + 2 claws + tail
+            // sweep). Verifies the AI doesn't stall on the gargantuan
+            // footprint or the prone-on-hit tail rider.
+            use crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE;
+            let _ = e.instantiate_creature(&TARRASQUE_TEMPLATE, Coordinate::new(5, 12), 1, 20);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

@@ -1185,7 +1185,6 @@ impl Action for FrightfulPresence {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::engine::side_effects::ApplyCondition;
-        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
         const RADIUS: isize = 6;
         const DC: i32 = 11;
@@ -1194,44 +1193,21 @@ impl Action for FrightfulPresence {
             return Vec::new();
         };
         let caster_loc = caster.location();
-        let caster_size = get_tiles_from_size(caster.size());
-        let caster_team = caster.team();
 
-        let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
-        ids.sort_unstable();
-
-        // Filter once so we know if we have any victims to log about.
-        // Saves a log line when every potential target is already
-        // Frightened or out of range — keeps the play-by-play clean.
-        let mut victims: Vec<usize> = Vec::new();
-        for tid in ids {
-            if tid == caster_id {
-                continue;
-            }
-            let Some(target) = encounter.actors.get(&tid) else {
-                continue;
-            };
-            if target.team() == caster_team || !target.is_combat_active() {
-                continue;
-            }
-            // Already-Frightened targets are immune to a re-application —
-            // RAW: a successful save against Frightful Presence makes you
-            // immune for 24h. We model it as: don't re-roll for actors
-            // already carrying the condition.
-            if target.has_condition(Condition::Frightened) {
-                continue;
-            }
-            let dist = footprint_chebyshev(
-                target.location(),
-                get_tiles_from_size(target.size()),
-                caster_loc,
-                caster_size,
-            );
-            if dist > RADIUS {
-                continue;
-            }
-            victims.push(tid);
-        }
+        // 5e: a successful save against Frightful Presence makes you
+        // immune for 24h. We model the simpler "don't re-roll for actors
+        // already carrying the condition" — same end state without the
+        // per-target immunity bookkeeping.
+        let victims: Vec<usize> = encounter
+            .enemy_burst_targets(caster_id, caster_loc, RADIUS)
+            .into_iter()
+            .filter(|id| {
+                encounter
+                    .actors
+                    .get(id)
+                    .is_some_and(|a| !a.has_condition(Condition::Frightened))
+            })
+            .collect();
         if victims.is_empty() {
             return Vec::new();
         }
@@ -4333,37 +4309,16 @@ impl Action for PitFiendFearAura {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::engine::side_effects::ApplyCondition;
-        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
         let caster_loc = caster.location();
-        let caster_team = caster.team();
-        let caster_size = get_tiles_from_size(caster.size());
         encounter.log(format!(
             "  fear aura: 20ft burst (DC {} WIS save).",
             dc
         ));
-        let candidates: Vec<usize> = encounter
-            .sorted_actor_ids()
-            .into_iter()
-            .filter(|id| {
-                let Some(a) = encounter.actors.get(id) else {
-                    return false;
-                };
-                if *id == caster_id || a.team() == caster_team || !a.is_combat_active() {
-                    return false;
-                }
-                let dist = footprint_chebyshev(
-                    a.location(),
-                    get_tiles_from_size(a.size()),
-                    caster_loc,
-                    caster_size,
-                );
-                dist <= 8
-            })
-            .collect();
+        let candidates = encounter.enemy_burst_targets(caster_id, caster_loc, 8);
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         for id in candidates {
             let save = encounter.roll_save(id, AbilityScoreType::Wisdom, dc);
@@ -4399,3 +4354,132 @@ pub static MONK_UNARMED_STRIKE: SimpleWeapon = SimpleWeapon {
     requires_los: false,
     cost_resource: Resource::Action,
 };
+
+/// Tarrasque Bite — STR-based 4d12+10 piercing, 10ft reach. The
+/// signature one-shot of the apex 5e creature. Hit modifier scales off
+/// the tarrasque's massive STR (30 → +10 + prof 9 = +19 RAW; we let
+/// the engine compute the modifier from STR + prof so the boss's stat
+/// block stays authoritative).
+pub static TARRASQUE_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "tarrasque bite",
+    aliases: &["t-bite", "tbite"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(4, 12),
+    damage_type: DamageType::Piercing,
+    reach: 4, // 15ft reach — gargantuan natural reach for the bite.
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Tarrasque Claw — STR-based 3d8 slashing. Companion melee that fills
+/// out the multiattack with two swings per Action. Reach matches the
+/// tarrasque's body footprint (10ft for the claws — slightly shorter
+/// than the bite's 15ft).
+pub static TARRASQUE_CLAW: SimpleWeapon = SimpleWeapon {
+    display_name: "tarrasque claw",
+    aliases: &["t-claw", "tclaw"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(3, 8),
+    damage_type: DamageType::Slashing,
+    reach: 3, // 10ft reach for the claw lanes.
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Tarrasque Tail Sweep — STR-based 3d8 bludgeoning + Prone-on-hit. The
+/// sweep lands at the tarrasque's far edge so the reach is generous; on
+/// a successful hit the target is knocked Prone (RAW: STR save half /
+/// prone; we simplify to "hit also prones" so the engine doesn't double
+/// up the swing's d20 with a save). One sub-attack of the full multi.
+pub struct TarrasqueTail {}
+
+impl Action for TarrasqueTail {
+    fn name(&self) -> &str {
+        "tail sweep"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["t-tail", "sweep"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(4) // 20ft reach for the tail.
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_mod =
+            modifier_from_score(caster.ability_score(AbilityScoreType::Strength))
+                + caster.proficiency_bonus();
+        let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let (mut effects, dmg) = crate::engine::attack::resolve_attack_outcome(
+            encounter,
+            AttackParams {
+                caster_id,
+                target_id,
+                action_name: "tail sweep",
+                attack_bonus: attack_mod,
+                damage_dice: Dice::new(3, 8),
+                damage_bonus: str_mod,
+                damage_type: DamageType::Bludgeoning,
+                is_melee: true,
+            },
+        );
+        if dmg > 0 {
+            // Knock prone on hit — Permanent timer so standing back up
+            // costs the target half movement next turn.
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Prone,
+                timer: ConditionTimer::Permanent,
+            }));
+        }
+        effects
+    }
+}
+
+pub static TARRASQUE_TAIL: LazyLock<TarrasqueTail> = LazyLock::new(|| TarrasqueTail {});
+
+/// Tarrasque Multiattack — Action: 1 bite + 2 claws + 1 tail sweep.
+/// Heterogeneous compound so the tarrasque issues a single burst per
+/// turn instead of ping-ponging between separate multis. Numbers tuned
+/// to keep the 4-attack burst spirit of MM RAW while skipping the
+/// Gore + Horns separate lanes (we collapse to bite-as-piercing).
+pub static TARRASQUE_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "tarrasque multiattack",
+    parts: vec![
+        (&TARRASQUE_BITE, 1),
+        (&TARRASQUE_CLAW, 2),
+        (&*TARRASQUE_TAIL, 1),
+    ],
+});
