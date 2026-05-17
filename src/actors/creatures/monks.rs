@@ -1,5 +1,5 @@
 use crate::actions::class_features::{
-    PATIENT_DEFENSE, STUNNING_STRIKE, STUNNING_STRIKE_TAG,
+    FLURRY_OF_BLOWS, PATIENT_DEFENSE, STUNNING_STRIKE, STUNNING_STRIKE_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::MONK_UNARMED_STRIKE;
@@ -19,6 +19,9 @@ use std::sync::LazyLock;
 ///   Stunned for 1 round.
 /// - **Patient Defense** (bonus action, at-will): take the Dodge action
 ///   for free defensive disadvantage on incoming attacks.
+/// - **Flurry of Blows** (bonus action, at-will): grants an extra Action
+///   for a follow-up Martial Arts strike — doubles the per-turn swing
+///   cap when the bonus action is otherwise idle.
 ///
 /// Stats target a level-5 monk: 33 HP (5d8+5), AC 15 (unarmored
 /// defense baseline), DEX 16 / WIS 14, no spells. PC flag flips on so
@@ -28,6 +31,7 @@ pub static MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&MONK_UNARMED_STRIKE);
     actions.push(&*STUNNING_STRIKE);
     actions.push(&*PATIENT_DEFENSE);
+    actions.push(&*FLURRY_OF_BLOWS);
     CreatureTemplate {
         name: "Monk",
         glyph: 'M',

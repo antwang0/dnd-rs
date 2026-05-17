@@ -412,31 +412,17 @@ impl EncounterInstance {
             mode = mode.combine(RollMode::Disadvantage);
         }
 
-        // Attacker-side modifiers.
+        // Attacker-side modifiers. The disadvantage / advantage cohorts
+        // live on `Condition` itself (`imposes_attacker_disadvantage` /
+        // `grants_self_attack_advantage`) so adding a new condition is a
+        // one-line change to the helper rather than a re-edit here.
         if let Some(attacker) = self.actors.get(&attacker_id) {
-            // Disadvantage clauses.
-            for c in [
-                Condition::Prone,
-                Condition::Poisoned,
-                Condition::Frightened,
-                Condition::Restrained,
-                Condition::Blinded,
-                // 5e Vicious Mockery: disadvantage on the next attack
-                // roll the target makes before the end of its next turn.
-                // Modeled with a one-turn condition that flips attack
-                // rolls to disadvantage while present.
-                Condition::Mocked,
-                // 5e Heat Metal: the holder of the heated metal gear
-                // takes ongoing fire damage AND has disadvantage on
-                // attacks and ability checks while concentration holds.
-                Condition::HeatMetaled,
-                // 5e Exhaustion (simplified): disadvantage on attack
-                // rolls. RAW exhaustion is tiered; we model the flat
-                // "tier 1 + tier 3" envelope (attack & save disadvantage).
-                Condition::Exhausted,
-            ] {
-                if attacker.has_condition(c) {
+            for c in attacker.conditions().keys() {
+                if c.imposes_attacker_disadvantage() {
                     mode = mode.combine(RollMode::Disadvantage);
+                }
+                if c.grants_self_attack_advantage() {
+                    mode = mode.combine(RollMode::Advantage);
                 }
             }
             // 5e Compelled Duel: an attacker tagged as Dueled is locked
@@ -444,37 +430,15 @@ impl EncounterInstance {
             // disadvantage. We honor the link via `dueled_by`: same
             // target as the duelist? No effect. Different target?
             // Disadvantage. The duelist themselves is unaffected (they
-            // get a normal swing).
+            // get a normal swing). The general `Dueled`-no-link case is
+            // already covered by the helper above (it's not in the
+            // cohort), so this branch is the *targeted* clause.
             if attacker.has_condition(Condition::Dueled)
                 && attacker
                     .dueled_by()
                     .is_some_and(|duelist| duelist != target_id)
             {
                 mode = mode.combine(RollMode::Disadvantage);
-            }
-            // Advantage clauses.
-            if attacker.has_condition(Condition::Invisible) {
-                mode = mode.combine(RollMode::Advantage);
-            }
-            if attacker.has_condition(Condition::Helped) {
-                mode = mode.combine(RollMode::Advantage);
-            }
-            if attacker.has_condition(Condition::Hidden) {
-                mode = mode.combine(RollMode::Advantage);
-            }
-            // 5e Foresight: holder rolls every attack with advantage.
-            // Symmetric with the save / target-disadvantage clauses
-            // (`compute_save_mode` advantage, target-side disadvantage
-            // below).
-            if attacker.has_condition(Condition::Foreseen) {
-                mode = mode.combine(RollMode::Advantage);
-            }
-            // House-rule: Blessed grants advantage in lieu of the d4 bonus
-            // some tests assume. We also keep the flat +2 attack/save
-            // bonus via condition_attack_bonus / condition_save_bonus, so
-            // call sites can pick whichever model suits them.
-            if attacker.has_condition(Condition::Blessed) {
-                mode = mode.combine(RollMode::Advantage);
             }
         }
 
@@ -489,49 +453,17 @@ impl EncounterInstance {
                     RollMode::Disadvantage
                 });
             }
-            // Advantage clauses (target is easier to hit).
-            for c in [
-                Condition::Stunned,
-                Condition::Restrained,
-                Condition::Blinded,
-                Condition::Incapacitated,
-                Condition::Paralyzed,
-                Condition::Unconscious,
-                Condition::Outlined,
-                // 5e Petrified: attacks against the target have
-                // advantage (target can't dodge, weave, or even fall
-                // over). Same envelope as Paralyzed for our purposes.
-                Condition::Petrified,
-                // 5e Guiding Bolt: next attack against the target before
-                // the end of the caster's next turn has advantage. We
-                // model "next attack" via a 1-round timer; the condition
-                // is consumed (cleared) after the next attack lands.
-                Condition::GuidingBoltLit,
-            ] {
-                if target.has_condition(c) {
+            // Static cohorts: target-side advantage / disadvantage. Same
+            // refactor pattern as the attacker side — adding a new
+            // attack-impacting condition is a one-line change to the
+            // `Condition` helpers, not a re-edit of this function.
+            for c in target.conditions().keys() {
+                if c.grants_advantage_to_attackers() {
                     mode = mode.combine(RollMode::Advantage);
                 }
-            }
-            // Disadvantage clauses (target is harder to hit).
-            if target.has_condition(Condition::Invisible) {
-                mode = mode.combine(RollMode::Disadvantage);
-            }
-            if target.has_condition(Condition::Dodging) {
-                mode = mode.combine(RollMode::Disadvantage);
-            }
-            // 5e Blur: attackers have disadvantage vs the blurred target,
-            // mirroring Dodge's defensive disadvantage clause.
-            if target.has_condition(Condition::Blurred) {
-                mode = mode.combine(RollMode::Disadvantage);
-            }
-            // 5e Holy Aura / Foresight: both impose disadvantage on
-            // attacks against the target. Holy Aura is a 30ft burst aura
-            // applied to allies of the caster; Foresight is a single
-            // ally buff. Either flag is enough.
-            if target.has_condition(Condition::HolyAuraed)
-                || target.has_condition(Condition::Foreseen)
-            {
-                mode = mode.combine(RollMode::Disadvantage);
+                if c.imposes_disadvantage_to_attackers() {
+                    mode = mode.combine(RollMode::Disadvantage);
+                }
             }
             // 5e Protection from Evil and Good: aberrations / celestials /
             // elementals / fey / fiends / undead have disadvantage on
@@ -543,6 +475,9 @@ impl EncounterInstance {
             // ally standing in the daylight aura, mirroring RAW's "sunlight
             // forces sun-vulnerable creatures to make Constitution saves
             // or take damage" but simplified to a flat disadvantage.
+            //
+            // Not in the static cohort because the disadvantage fires only
+            // for undead-flavored attackers — needs attacker-side state.
             if (target.has_condition(Condition::Warded)
                 || target.has_condition(Condition::Daylit))
                 && let Some(attacker) = self.actors.get(&attacker_id)
@@ -18070,5 +18005,250 @@ mod tests {
             !e.actors[&ally].has_condition(Condition::Exhausted),
             "greater restoration should cleanse Exhausted"
         );
+    }
+
+    /// Confusion: imposes attacker disadvantage on the target and blocks
+    /// their reactions. We pick a low-WIS goblin and spam casts until one
+    /// fails the save so the condition lands.
+    #[test]
+    fn confusion_disad_attacks_and_blocks_reactions() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::CONFUSION;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+        let mut confused = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(25, 25, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+                .unwrap();
+            let tl = vec![Coordinate::new(10, 10)];
+            let effs = CONFUSION.side_effects(&mut e, wiz, None, Some(&tl), None);
+            for ef in effs {
+                ef.apply(&mut e);
+            }
+            if e.actors[&g].has_condition(Condition::Confused) {
+                confused = true;
+                // Concentration installs on the caster regardless of saves.
+                assert!(e.actors[&wiz].is_concentrating());
+                // Reactions are blocked.
+                let g_actor = e.actors.get_mut(&g).unwrap();
+                g_actor.give_resource(Resource::Reaction);
+                assert!(
+                    !g_actor.can_consume_resource(Resource::Reaction),
+                    "Confused should block reaction consumption"
+                );
+                // Attack rolls eat disadvantage.
+                let mode = e.compute_attack_mode(g, wiz, true);
+                assert!(matches!(mode, RollMode::Disadvantage));
+                break;
+            }
+        }
+        assert!(confused, "confusion never landed across 30 attempts");
+    }
+
+    /// Plant Growth: every enemy in the burst is Entangled (zeros
+    /// movement) for the duration; allies are skipped.
+    #[test]
+    fn plant_growth_entangles_enemies_only() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::PLANT_GROWTH;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(25, 25, &[]);
+        let cler = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 10), 0, 1)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(11, 10), 1, 0)
+            .unwrap();
+        let tl = vec![Coordinate::new(10, 10)];
+        let effs = PLANT_GROWTH.side_effects(&mut e, cler, None, Some(&tl), None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&enemy].has_condition(Condition::Entangled),
+            "enemy in burst should be Entangled"
+        );
+        assert!(
+            !e.actors[&ally].has_condition(Condition::Entangled),
+            "ally in burst should be spared (enemy-only partition)"
+        );
+        // Entangled enters the zeros_movement set: the goblin's remaining
+        // movement should be 0 even after a turn-reset gives them speed.
+        e.actors.get_mut(&enemy).unwrap().reset_for_new_round();
+        assert_eq!(e.actors[&enemy].remaining_movement(), 0.0);
+        // Plant Growth is not concentration-bound.
+        assert!(!e.actors[&cler].is_concentrating());
+    }
+
+    /// Fly: applies the Flying condition (concentration-bound) and bumps
+    /// the target's speed by the +60ft fly rider in `speed()`.
+    #[test]
+    fn fly_boosts_speed_and_starts_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::FLY;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cler = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        let base_speed = e.actors[&ally].speed();
+        let tv = vec![ally];
+        let effs = FLY.side_effects(&mut e, cler, Some(&tv), None, None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&ally].has_condition(Condition::Flying),
+            "fly should apply the Flying condition"
+        );
+        assert!(
+            e.actors[&ally].speed() > base_speed,
+            "Flying should boost speed: {} → {}",
+            base_speed,
+            e.actors[&ally].speed()
+        );
+        assert!(e.actors[&cler].is_concentrating());
+    }
+
+    /// Levitate: lifts a failed-save target (Lifted condition zeros
+    /// movement) and installs concentration on the caster.
+    #[test]
+    fn levitate_lifts_failed_save_target() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::LEVITATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut lifted = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+                .unwrap();
+            let tv = vec![g];
+            let effs = LEVITATE.side_effects(&mut e, wiz, Some(&tv), None, None);
+            for ef in effs {
+                ef.apply(&mut e);
+            }
+            if e.actors[&g].has_condition(Condition::Lifted) {
+                lifted = true;
+                assert!(e.actors[&wiz].is_concentrating());
+                break;
+            }
+        }
+        assert!(lifted, "levitate never landed across 30 attempts");
+    }
+
+    /// Dominate Person: on failed WIS save, applies Charmed + Dominated
+    /// and links charmed_by → caster.
+    #[test]
+    fn dominate_person_charms_and_dominates() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::DOMINATE_PERSON;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut dominated = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+                .unwrap();
+            let tv = vec![g];
+            let effs = DOMINATE_PERSON.side_effects(&mut e, wiz, Some(&tv), None, None);
+            for ef in effs {
+                ef.apply(&mut e);
+            }
+            if e.actors[&g].has_condition(Condition::Dominated) {
+                dominated = true;
+                assert!(e.actors[&g].has_condition(Condition::Charmed));
+                assert_eq!(e.actors[&g].charmed_by(), Some(wiz));
+                assert!(e.actors[&wiz].is_concentrating());
+                // Dominated joins the imposes_attacker_disadvantage cohort.
+                let mode = e.compute_attack_mode(g, wiz, true);
+                assert!(matches!(mode, RollMode::Disadvantage));
+                break;
+            }
+        }
+        assert!(dominated, "dominate person never landed across 30 attempts");
+    }
+
+    /// Flurry of Blows: grants the monk an extra Action so a second
+    /// martial-arts strike fits in the turn.
+    #[test]
+    fn flurry_of_blows_grants_extra_action() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::FLURRY_OF_BLOWS;
+        use crate::actors::creatures::monks::MONK_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let monk = e
+            .instantiate_creature(&MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Top up to default: 1 Action, 1 BonusAction.
+        let m = e.actors.get_mut(&monk).unwrap();
+        m.give_resource(Resource::Action);
+        m.give_resource(Resource::BonusAction);
+        let before = e.actors[&monk].action_slots();
+        let effs = FLURRY_OF_BLOWS.side_effects(&mut e, monk, None, None, None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        let after = e.actors[&monk].action_slots();
+        assert_eq!(
+            after,
+            before + 1,
+            "flurry should grant +1 Action ({} → {})",
+            before,
+            after
+        );
+    }
+
+    /// Condition cohort helpers — verify the new attacker-disadvantage
+    /// table is populated correctly so the refactor of
+    /// `compute_attack_mode` doesn't silently drop a condition.
+    #[test]
+    fn condition_cohort_helpers_match_engine_behavior() {
+        use crate::conditions::Condition;
+        // Confused / Dominated must be in the attacker-disadvantage cohort.
+        assert!(Condition::Confused.imposes_attacker_disadvantage());
+        assert!(Condition::Dominated.imposes_attacker_disadvantage());
+        // Legacy disadvantage sources still flag as such.
+        assert!(Condition::Prone.imposes_attacker_disadvantage());
+        assert!(Condition::Poisoned.imposes_attacker_disadvantage());
+        assert!(Condition::HeatMetaled.imposes_attacker_disadvantage());
+        // Confused blocks reactions (RAW: chaos table); NoReaction too.
+        assert!(Condition::Confused.blocks_reactions());
+        assert!(Condition::NoReaction.blocks_reactions());
+        // Flying is a dispellable buff (concentration-anchored).
+        assert!(Condition::Flying.is_dispellable_buff());
+        // Entangled zeros movement (Plant Growth area).
+        assert!(Condition::Entangled.zeros_movement());
     }
 }

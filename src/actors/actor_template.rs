@@ -830,12 +830,13 @@ impl ActorInstance {
             }
             Resource::Action => !action_blocked && self.action_slots >= 1,
             Resource::BonusAction => !action_blocked && self.bonus_action_slots >= 1,
-            // 5e Shocking Grasp & similar lockout effects: NoReaction
-            // blocks reactions until start of next turn. Stacks with the
+            // 5e Shocking Grasp & similar lockout effects: any condition
+            // whose `blocks_reactions` clause is true (NoReaction,
+            // Confused) silences the reaction lane. Stacks with the
             // Incapacitated family which already zeroes them.
             Resource::Reaction => {
                 !action_blocked
-                    && !self.has_condition(Condition::NoReaction)
+                    && !self.conditions.keys().any(|c| c.blocks_reactions())
                     && self.reaction_slots >= 1
             }
             Resource::LegendaryAction => !action_blocked && self.legendary_action_slots >= 1,
@@ -944,7 +945,14 @@ impl ActorInstance {
 
     pub fn speed(&self) -> f32 {
         let bonus = self.total_item_bonuses().speed as f32;
-        let raw = (self.base_speed + bonus).max(0.0);
+        // 5e Fly spell: the target gains a flying speed equal to its
+        // walking speed (we approximate with +60ft so the buff is a
+        // meaningful kiting boost rather than a no-op for fast actors).
+        // Applied additively before the Haste / Slow factor so haste-fly
+        // doubles the larger number — matching the "Haste doubles your
+        // speed" RAW phrasing.
+        let fly = if self.has_condition(Condition::Flying) { 60.0 } else { 0.0 };
+        let raw = (self.base_speed + bonus + fly).max(0.0);
         // 5e Haste doubles speed; Slow halves it. If both happen to be
         // active (e.g. cross-cast), they cancel back to base — applying
         // the factor multiplicatively keeps the math symmetric.

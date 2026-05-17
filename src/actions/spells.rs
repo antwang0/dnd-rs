@@ -11278,3 +11278,384 @@ impl Action for AnimateDead {
 }
 
 pub static ANIMATE_DEAD: LazyLock<AnimateDead> = LazyLock::new(|| AnimateDead {});
+
+/// Confusion — 5e level-4 enchantment, concentration, action. Targets a
+/// 20ft burst (radius 4) at a point within 90ft (36 tiles). Every
+/// creature in the area makes a WIS save vs the caster's spell DC; on
+/// fail, they're Confused for up to 10 rounds (1 minute RAW).
+///
+/// Confused (collapsed from RAW's per-turn chaos table): disadvantage on
+/// attack rolls (via `Condition::imposes_attacker_disadvantage`) plus the
+/// holder cannot take Reactions (via `Condition::blocks_reactions`).
+/// Concentration-bound on the caster — dropping the spell strips Confused
+/// from every target it landed on.
+pub struct Confusion {}
+
+impl Action for Confusion {
+    fn name(&self) -> &str {
+        "confusion"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["conf", "scramble"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 90 ft = 36 tiles.
+        Some(36)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        const RADIUS: isize = 4;
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut applied: Vec<(usize, Condition)> = Vec::new();
+        for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
+            let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, dc);
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Confused,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            applied.push((tid, Condition::Confused));
+        }
+        // Concentration installs even on a no-effect cast — RAW the chaos
+        // mist hangs around for the duration regardless of saves.
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Confusion", applied),
+        }));
+        effects
+    }
+}
+
+pub static CONFUSION: LazyLock<Confusion> = LazyLock::new(|| Confusion {});
+
+/// Fly — 5e level-3 transmutation, concentration, action. Targets one
+/// willing creature within 5ft (1 tile reach). The target gains a flying
+/// speed bonus (we model as +60ft, applied additively in `speed()`).
+/// Concentration-bound; dropping concentration strips the `Flying`
+/// condition (and the speed boost).
+pub struct Fly {}
+
+impl Action for Fly {
+    fn name(&self) -> &str {
+        "fly"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["levitate-flight", "wing"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch range — 5ft = 1 tile.
+        Some(1)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Flying,
+                timer: ConditionTimer::Rounds(10),
+            }) as Box<dyn ApplicableSideEffect>,
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Fly",
+                    vec![(target_id, Condition::Flying)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static FLY: LazyLock<Fly> = LazyLock::new(|| Fly {});
+
+/// Levitate — 5e level-2 transmutation, concentration, action. Targets
+/// one creature or object within 60ft. Target makes a CON save vs the
+/// caster's spell DC; on fail, hoisted 20ft into the air and unable to
+/// move horizontally. Mechanically we apply the existing `Lifted`
+/// condition (zeros movement). Concentration-bound; lighter-weight than
+/// Telekinesis (level-5, includes the forced-pull rider).
+pub struct Levitate {}
+
+impl Action for Levitate {
+    fn name(&self) -> &str {
+        "levitate"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["lev", "hoist"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Lifted,
+                timer: ConditionTimer::Permanent,
+            }) as Box<dyn ApplicableSideEffect>,
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Levitate",
+                    vec![(target_id, Condition::Lifted)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static LEVITATE: LazyLock<Levitate> = LazyLock::new(|| Levitate {});
+
+/// Plant Growth — 5e level-3 transmutation, action. Targets a 20ft burst
+/// (radius 4) at a point within 150ft. Every enemy creature in the area
+/// is Entangled for 10 rounds — vines snare them in place, zeroing
+/// movement for the duration. No save; no concentration. Allies are
+/// untouched via the `enemy_burst_targets` partition.
+pub struct PlantGrowth {}
+
+impl Action for PlantGrowth {
+    fn name(&self) -> &str {
+        "plant growth"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pg", "vines", "entangle"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 150 ft = 60 tiles.
+        Some(60)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        const RADIUS: isize = 4;
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Entangled,
+                timer: ConditionTimer::Rounds(10),
+            }));
+        }
+        effects
+    }
+}
+
+pub static PLANT_GROWTH: LazyLock<PlantGrowth> = LazyLock::new(|| PlantGrowth {});
+
+/// Dominate Person — 5e level-5 enchantment, concentration, action. Targets
+/// one creature within 60ft; target makes a WIS save vs the caster's spell
+/// DC. On fail, target is Charmed by the caster AND Dominated (disadvantage
+/// on all attacks — they hesitate, fight the compulsion) for 10 rounds.
+/// The `Charmed` half blocks the target from attacking the dominator (via
+/// `charmed_by`); the `Dominated` half folds into
+/// `Condition::imposes_attacker_disadvantage`. Concentration-bound on the
+/// caster — drop concentration to free the target.
+pub struct DominatePerson {}
+
+impl Action for DominatePerson {
+    fn name(&self) -> &str {
+        "dominate person"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dom", "dominate"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::SetCharmedBy;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Charmed,
+                timer: ConditionTimer::Rounds(10),
+            }) as Box<dyn ApplicableSideEffect>,
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Dominated,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(SetCharmedBy {
+                target_id,
+                charmer: Some(caster_id),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Dominate Person",
+                    vec![
+                        (target_id, Condition::Charmed),
+                        (target_id, Condition::Dominated),
+                    ],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static DOMINATE_PERSON: LazyLock<DominatePerson> = LazyLock::new(|| DominatePerson {});

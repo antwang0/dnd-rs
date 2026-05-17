@@ -1111,3 +1111,78 @@ impl Action for TurnUndead {
 }
 
 pub static TURN_UNDEAD: LazyLock<TurnUndead> = LazyLock::new(|| TurnUndead {});
+
+/// Flurry of Blows — Monk bonus action. After the monk takes the Attack
+/// action, they may spend a ki point (modeled as a bonus action — we don't
+/// track ki) to make two unarmed strikes against a target. We collapse to
+/// a single side-effect: the monk gets one extra Action (which they can
+/// then use on a martial-arts strike, double-dipping their swing cap for
+/// the turn). The "must have already attacked" gate from RAW is dropped
+/// for simplicity — the bonus action is gated on the monk having a Martial
+/// Arts attack available, which proxies the same intent.
+///
+/// At-will (RAW: 1 ki point per use; we drop the ki pool for symmetry
+/// with Patient Defense, the other monk bonus action). The economic
+/// payoff is real: spending a bonus action to gain a second main-action
+/// swing puts the monk's per-turn damage well ahead of any other PC.
+pub struct FlurryOfBlows {}
+
+impl Action for FlurryOfBlows {
+    fn name(&self) -> &str {
+        "flurry of blows"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fob", "flurry"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Gate on the monk having a Martial Arts action — keeps Flurry
+        // out of the dispatcher for non-monk actors that somehow got the
+        // template.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_combat_active() && a.find_action("martial arts").is_some())
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        encounter.log("  flurry of blows: monk gains an extra Action for a follow-up strike.".to_string());
+        vec![Box::new(GiveResource {
+            actor_id: caster_id,
+            resource: Resource::Action,
+        })]
+    }
+}
+
+pub static FLURRY_OF_BLOWS: LazyLock<FlurryOfBlows> = LazyLock::new(|| FlurryOfBlows {});

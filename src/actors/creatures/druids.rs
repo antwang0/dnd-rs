@@ -1,10 +1,10 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::SCIMITAR;
 use crate::actions::spells::{
-    CALL_LIGHTNING, CURE_WOUNDS, DAYLIGHT, DISPEL_MAGIC, FAERIE_FIRE, GOODBERRY, HEALING_WORD,
-    HEAT_METAL, ICE_STORM, LESSER_RESTORATION, MASS_CURE_WOUNDS, MOONBEAM, POISON_SPRAY,
-    POLYMORPH, REVERSE_GRAVITY, SLEET_STORM, SPIKE_GROWTH, STORM_OF_VENGEANCE, THORN_WHIP,
-    THUNDERWAVE, WALL_OF_FIRE,
+    CALL_LIGHTNING, CONFUSION, CURE_WOUNDS, DAYLIGHT, DISPEL_MAGIC, FAERIE_FIRE, FLY, GOODBERRY,
+    HEALING_WORD, HEAT_METAL, ICE_STORM, LESSER_RESTORATION, LEVITATE, MASS_CURE_WOUNDS, MOONBEAM,
+    PLANT_GROWTH, POISON_SPRAY, POLYMORPH, REVERSE_GRAVITY, SLEET_STORM, SPIKE_GROWTH,
+    STORM_OF_VENGEANCE, THORN_WHIP, THUNDERWAVE, WALL_OF_FIRE,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size};
@@ -45,15 +45,19 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*SPIKE_GROWTH);
     actions.push(&*HEAT_METAL);
     actions.push(&*LESSER_RESTORATION);
+    actions.push(&*LEVITATE);
     // Level 3
     actions.push(&*CALL_LIGHTNING);
     actions.push(&*SLEET_STORM);
     actions.push(&*DAYLIGHT);
     actions.push(&*DISPEL_MAGIC);
+    actions.push(&*PLANT_GROWTH);
+    actions.push(&*FLY);
     // Level 4
     actions.push(&*ICE_STORM);
     actions.push(&*POLYMORPH);
     actions.push(&*WALL_OF_FIRE);
+    actions.push(&*CONFUSION);
     // Level 5
     actions.push(&*MASS_CURE_WOUNDS);
     // Level 7

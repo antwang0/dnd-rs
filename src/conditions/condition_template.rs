@@ -390,6 +390,42 @@ pub enum Condition {
     /// disadvantage-to-attackers half through `compute_attack_mode` on
     /// the target side. Concentration-bound on the caster.
     Foreseen,
+    /// Confused (5e Confusion spell, level-4 enchantment, concentration).
+    /// The target's mind is scrambled: in RAW they roll on a chaos table
+    /// each turn (attack random ally, babble, do nothing). We collapse the
+    /// table into the load-bearing penalty: disadvantage on attack rolls
+    /// (joins the `Frightened`/`Poisoned` cohort in `compute_attack_mode`)
+    /// AND the target cannot take Reactions (joins the `NoReaction` cohort
+    /// in the action-economy gate). Concentration-bound on the caster;
+    /// applied on a failed WIS save when the spell's burst lands.
+    Confused,
+    /// Entangled (5e Plant Growth spell, level-3 transmutation). The area
+    /// erupts with grasping vines: every creature in the 20ft burst is
+    /// snared in place for the duration. Mechanically: movement is zeroed
+    /// (joins `zeros_movement`) but the target can still act (unlike
+    /// `Restrained`, no attack-roll penalty / DEX-save disadvantage). The
+    /// spell has no concentration; we apply with a Rounds(10) timer and
+    /// let it tick down. Doesn't stack with Restrained — both flags
+    /// together still just zero movement once.
+    Entangled,
+    /// Flying (5e Fly spell, level-3 transmutation, concentration). The
+    /// target gains a flying speed bonus — read by `speed()` as +24 tiles
+    /// (60ft RAW). We don't model 3D positioning; the bonus represents the
+    /// raw kiting advantage. Concentration-bound on the caster; the spell
+    /// drops the buff when concentration ends. Joins `is_dispellable_buff`
+    /// so Dispel Magic / Counterspell can rip it.
+    Flying,
+    /// Dominated (5e Dominate Person, level-5 enchantment, concentration).
+    /// The target's will is overridden by the caster. We model the
+    /// load-bearing half: the target is Charmed by the caster (so they
+    /// can't attack them, via the existing `charmed_by` block) AND any
+    /// attack the target makes against anyone other than the caster's
+    /// enemies is at disadvantage — we approximate by giving the holder
+    /// blanket attack disadvantage (they hesitate, fight the compulsion).
+    /// Concentration-bound; broken when the dominator drops concentration
+    /// or the target makes a successful WIS save (which we re-trigger via
+    /// damage in 5e; we keep the spell duration-bound for simplicity).
+    Dominated,
 }
 
 impl Condition {
@@ -463,6 +499,10 @@ impl Condition {
             Condition::SpiritShrouded => "wreathed in spirits",
             Condition::HolyAuraed => "haloed in holy light",
             Condition::Foreseen => "foreseen",
+            Condition::Confused => "confused",
+            Condition::Entangled => "entangled",
+            Condition::Flying => "flying",
+            Condition::Dominated => "dominated",
         }
     }
 
@@ -520,6 +560,7 @@ impl Condition {
                 | Condition::SpiritShrouded
                 | Condition::HolyAuraed
                 | Condition::Foreseen
+                | Condition::Flying
         )
     }
 
@@ -543,7 +584,87 @@ impl Condition {
                 | Condition::Petrified
                 | Condition::Lifted
                 | Condition::Caged
+                | Condition::Entangled
         )
+    }
+
+    /// True if this condition imposes disadvantage on every attack roll
+    /// the holder makes. Centralized so the `compute_attack_mode` list and
+    /// any future "is this attacker debuffed?" sites read from one table.
+    /// Used by the engine's attack-mode resolver and surfaced for AI
+    /// heuristics (e.g. "is this caster's swing penalized?").
+    pub fn imposes_attacker_disadvantage(&self) -> bool {
+        matches!(
+            self,
+            Condition::Prone
+                | Condition::Poisoned
+                | Condition::Frightened
+                | Condition::Restrained
+                | Condition::Blinded
+                | Condition::Mocked
+                | Condition::HeatMetaled
+                | Condition::Exhausted
+                | Condition::Confused
+                | Condition::Dominated
+        )
+    }
+
+    /// True if this condition grants the holder advantage on their own
+    /// attack rolls. Centralized for the same reason as
+    /// `imposes_attacker_disadvantage` — one list, one source of truth.
+    pub fn grants_self_attack_advantage(&self) -> bool {
+        matches!(
+            self,
+            Condition::Invisible
+                | Condition::Helped
+                | Condition::Hidden
+                | Condition::Foreseen
+                | Condition::Blessed
+        )
+    }
+
+    /// True if attacks targeting the holder get advantage. Mirrors the
+    /// "target-side advantage" cohort of `compute_attack_mode`. The
+    /// `Prone`-melee-only edge case is handled at the call site (it's not
+    /// universally advantage — ranged attackers get disadvantage instead).
+    pub fn grants_advantage_to_attackers(&self) -> bool {
+        matches!(
+            self,
+            Condition::Stunned
+                | Condition::Restrained
+                | Condition::Blinded
+                | Condition::Incapacitated
+                | Condition::Paralyzed
+                | Condition::Unconscious
+                | Condition::Outlined
+                | Condition::Petrified
+                | Condition::GuidingBoltLit
+        )
+    }
+
+    /// True if attacks targeting the holder get disadvantage. Mirrors the
+    /// "target-side disadvantage" cohort of `compute_attack_mode`.
+    /// `Warded` / `Daylit` are *not* in this list — they impose
+    /// disadvantage only against undead / fiend attackers, which needs
+    /// attacker-side state to evaluate; the call site handles them.
+    pub fn imposes_disadvantage_to_attackers(&self) -> bool {
+        matches!(
+            self,
+            Condition::Invisible
+                | Condition::Dodging
+                | Condition::Blurred
+                | Condition::HolyAuraed
+                | Condition::Foreseen
+        )
+    }
+
+    /// True if the holder cannot take Reactions while this condition is
+    /// up. Covers the explicit `NoReaction` lockout and the new `Confused`
+    /// clause (RAW: chaos table prevents reactions). Read by
+    /// `can_consume_resource` alongside the `blocks_action_economy` cohort
+    /// so the gate has one chokepoint per resource lane.
+    pub fn blocks_reactions(&self) -> bool {
+        matches!(self, Condition::NoReaction | Condition::Confused)
     }
 }
 
