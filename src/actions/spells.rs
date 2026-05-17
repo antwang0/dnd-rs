@@ -107,6 +107,11 @@ fn spell_attack_outcome(
         .get(&target_id)
         .map(|a| a.armor_class() as i32)
         .unwrap_or(10);
+    // 5e Cover: intervening creatures bump the target's effective AC,
+    // same as for weapon swings. Spell attacks (Fire Bolt, Guiding Bolt,
+    // Scorching Ray, etc.) honor the rule identically.
+    let cover_bonus = encounter.cover_ac_bonus(caster_id, target_id);
+    let target_ac = target_ac + cover_bonus;
     // 5e Sanctuary: gate spell attacks the same way weapon attacks are
     // gated — attacker rolls a WIS save vs the ward's DC. On fail, the
     // spell silently fizzles against the warded target.
@@ -132,12 +137,9 @@ fn spell_attack_outcome(
     // get via `resolve_attack`. This keeps spell-attack rolls
     // consistent with weapon swings — Sacred Weapon's +CHA fires on
     // spell attacks too (e.g. a Sacred-Weapon paladin casting Guiding
-    // Bolt as a multiclass with cleric / divine soul).
-    let (buff, cond_attack_bonus) = encounter
-        .actors
-        .get(&caster_id)
-        .map(|a| (a.attack_bonus_buff(), a.condition_attack_bonus()))
-        .unwrap_or((0, 0));
+    // Bolt as a multiclass with cleric / divine soul). Shared with
+    // weapon attacks via `EncounterInstance::caster_attack_buffs`.
+    let (buff, cond_attack_bonus) = encounter.caster_attack_buffs(caster_id);
     let (bless_die, bless_note) = encounter.bless_bane_attack_die(caster_id);
     let total = raw + attack_bonus + buff + cond_attack_bonus + bless_die;
     let is_crit = raw == 20;
@@ -149,14 +151,16 @@ fn spell_attack_outcome(
     } else {
         "miss"
     };
+    let cover_note = EncounterInstance::cover_log_suffix(cover_bonus);
     encounter.log(format!(
-        "  {}: 1d20({}){:+}{} = {} vs AC {}{} \u{2014} {}",
+        "  {}: 1d20({}){:+}{} = {} vs AC {}{}{} \u{2014} {}",
         action_name,
         raw,
         attack_bonus + buff + cond_attack_bonus,
         bless_note,
         total,
         target_ac,
+        cover_note,
         mode.log_suffix(),
         outcome,
     ));
@@ -10793,3 +10797,484 @@ impl Action for StormOfVengeance {
 
 pub static STORM_OF_VENGEANCE: LazyLock<StormOfVengeance> =
     LazyLock::new(|| StormOfVengeance {});
+
+/// Hellish Rebuke — 5e level-1 evocation (warlock signature). Single-
+/// target bonus-action damage at 60ft: target makes a DEX save vs the
+/// caster's CHA-based DC. On fail: 2d10 fire; on save: half. Cast as a
+/// bonus action here for engine simplicity — RAW's reaction-on-damage
+/// gating doesn't fit the action picker, but the level-1 slot + bonus-
+/// action cost matches the spell's combat tempo.
+pub struct HellishRebuke {}
+
+impl Action for HellishRebuke {
+    fn name(&self) -> &str {
+        "hellish rebuke"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hr", "rebuke"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_and_slot(1)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, dc);
+        let raw = encounter.roll(&Dice::new(2, 10));
+        let dmg = if save.passed() { raw / 2 } else { raw };
+        encounter.log(format!(
+            "  hellish rebuke: 2d10({}) fire — {} ({})",
+            raw,
+            if save.passed() { "save (half)" } else { "fail (full)" },
+            dmg
+        ));
+        if dmg == 0 {
+            return Vec::new();
+        }
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: dmg,
+            damage_type: DamageType::Fire,
+        })]
+    }
+}
+
+pub static HELLISH_REBUKE: LazyLock<HellishRebuke> = LazyLock::new(|| HellishRebuke {});
+
+/// Spirit Shroud — 5e level-3 necromancy / abjuration, concentration.
+/// Self-buff that wreathes the caster in deathly mist: their next 10
+/// rounds of melee weapon attacks deal +1d8 cold rider per hit (per the
+/// OnHitRider table entry). No save, no target — purely a self-prime.
+/// The actual rider lives in `attack::on_hit_riders()`.
+pub struct SpiritShroud {}
+
+impl Action for SpiritShroud {
+    fn name(&self) -> &str {
+        "spirit shroud"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["shroud", "spirits"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_and_slot(3)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Already wreathed → don't re-cast and burn another slot.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.has_condition(Condition::SpiritShrouded))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        encounter.log("  spirit shroud: ghostly mist coils around you.".to_string());
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::SpiritShrouded,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Spirit Shroud",
+                    vec![(caster_id, Condition::SpiritShrouded)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static SPIRIT_SHROUD: LazyLock<SpiritShroud> = LazyLock::new(|| SpiritShroud {});
+
+/// Holy Aura — 5e level-8 abjuration cleric, concentration. The caster
+/// and every ally inside a 30ft sphere centered on the caster receive a
+/// huge defensive buff: advantage on saves + attackers vs them have
+/// disadvantage. Single-shot install: every ally in range at cast time
+/// picks up the condition. No re-scan per round (cheap approximation —
+/// allies who walk in after the cast miss out, but the high-impact
+/// half-blast-radius "everyone in the room" cleanse is preserved).
+pub struct HolyAura {}
+
+impl Action for HolyAura {
+    fn name(&self) -> &str {
+        "holy aura"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["aura"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(8)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let center = match encounter.actors.get(&caster_id) {
+            Some(c) => c.location(),
+            None => return Vec::new(),
+        };
+        // 30ft = 12 tiles. Pick up every ally (including caster) inside.
+        const RADIUS: isize = 12;
+        let allies = encounter.ally_burst_targets(caster_id, center, RADIUS);
+        encounter.log(format!(
+            "  holy aura: {} ally{} bathed in light",
+            allies.len(),
+            if allies.len() == 1 { "" } else { "ies" }
+        ));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut applied: Vec<(usize, Condition)> = Vec::new();
+        for id in allies {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: id,
+                condition: Condition::HolyAuraed,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            applied.push((id, Condition::HolyAuraed));
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Holy Aura", applied),
+        }));
+        effects
+    }
+}
+
+pub static HOLY_AURA: LazyLock<HolyAura> = LazyLock::new(|| HolyAura {});
+
+/// Foresight — 5e level-9 divination, concentration. Target ally gets
+/// the mightiest single-target buff in the SRD: advantage on every
+/// attack roll, save, and ability check; attackers vs them have
+/// disadvantage. 10-round timer (8 hours RAW). Concentration-bound.
+pub struct Foresight {}
+
+impl Action for Foresight {
+    fn name(&self) -> &str {
+        "foresight"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fs"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch — the caster lays hands on the recipient.
+        Some(1)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(9)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        encounter.log("  foresight: glimpse of the future settles over them.".to_string());
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Foreseen,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Foresight",
+                    vec![(target_id, Condition::Foreseen)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static FORESIGHT: LazyLock<Foresight> = LazyLock::new(|| Foresight {});
+
+/// Hail of Thorns — 5e level-1 ranger conjuration. A single-target ranged
+/// attack that on hit erupts in a 5ft burst of thorns around the target,
+/// dealing 1d10 piercing on a failed DEX save (half on save) to every
+/// other creature within reach of the target. We approximate as: pick
+/// a target tile, every actor within 1-tile gap of that tile (excluding
+/// the caster) makes a save against the caster's WIS-based DC.
+pub struct HailOfThorns {}
+
+impl Action for HailOfThorns {
+    fn name(&self) -> &str {
+        "hail of thorns"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hot", "thorns"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 1 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Long bow range — 600 ft RAW; we cap to 60 tiles for the map.
+        Some(60)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(1)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let raw = encounter.roll(&Dice::new(1, 10));
+        encounter.log(format!(
+            "  hail of thorns: 1d10({}) piercing around target tile",
+            raw
+        ));
+        crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            1,
+            AbilityScoreType::Dexterity,
+            dc,
+            raw,
+            DamageType::Piercing,
+        )
+    }
+}
+
+pub static HAIL_OF_THORNS: LazyLock<HailOfThorns> = LazyLock::new(|| HailOfThorns {});
+
+/// Animate Dead — 5e level-3 necromancy. The caster raises an undead
+/// minion adjacent to themselves: a Skeleton joins the caster's team
+/// and acts on its own initiative for the rest of the encounter. We
+/// approximate "raise from a corpse pile" by spawning a fresh
+/// SKELETON_TEMPLATE instance at a footprint-free tile next to the
+/// caster (closest spawnable diagonal / orthogonal neighbor). No
+/// concentration; the minion is permanent for the encounter.
+pub struct AnimateDead {}
+
+impl Action for AnimateDead {
+    fn name(&self) -> &str {
+        "animate dead"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["raise"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Need a free adjacent tile to spawn the skeleton.
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        let loc = caster.location();
+        // Skeleton is Medium (2x2); pick any 8-direction neighbor anchor
+        // that's spawnable across the full 2x2 footprint.
+        for dx in -2..=2isize {
+            for dy in -2..=2isize {
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+                let anchor = Coordinate::new(loc.x + dx, loc.y + dy);
+                if (0..2isize).all(|ox| {
+                    (0..2isize).all(|oy| {
+                        encounter
+                            .is_spawnable(Coordinate::new(anchor.x + ox, anchor.y + oy))
+                    })
+                }) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+
+        let (team, loc) = match encounter.actors.get(&caster_id) {
+            Some(c) => (c.team(), c.location()),
+            None => return Vec::new(),
+        };
+        // Find a spawnable 2x2 anchor next to the caster (8-direction).
+        let mut spawn: Option<Coordinate> = None;
+        'outer: for dx in -2..=2isize {
+            for dy in -2..=2isize {
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+                let anchor = Coordinate::new(loc.x + dx, loc.y + dy);
+                if (0..2isize).all(|ox| {
+                    (0..2isize).all(|oy| {
+                        encounter
+                            .is_spawnable(Coordinate::new(anchor.x + ox, anchor.y + oy))
+                    })
+                }) {
+                    spawn = Some(anchor);
+                    break 'outer;
+                }
+            }
+        }
+        let Some(spawn) = spawn else {
+            return Vec::new();
+        };
+        match encounter.instantiate_creature(&SKELETON_TEMPLATE, spawn, team, 99) {
+            Ok(new_id) => encounter.log(format!(
+                "  animate dead: raises a skeleton minion at {} (actor #{})",
+                spawn, new_id
+            )),
+            Err(e) => encounter.log(format!("  animate dead failed: {}", e)),
+        }
+        Vec::new()
+    }
+}
+
+pub static ANIMATE_DEAD: LazyLock<AnimateDead> = LazyLock::new(|| AnimateDead {});

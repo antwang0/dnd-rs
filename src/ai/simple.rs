@@ -130,6 +130,26 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3i. Foresight — level-9 single-target ally apex buff. Lay it
+        //     on the toughest ally before they engage. Highest priority
+        //     of the support-buff lane because the slot is precious.
+        if let Some(aei) = try_foresight(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3j. Holy Aura — level-8 concentration burst centered on the
+        //     caster. Fire when allies are clustered and a fight has
+        //     started. Slot-cheaper than Foresight per ally affected.
+        if let Some(aei) = try_holy_aura(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3k. Spirit Shroud — level-3 self concentration. Fire when an
+        //     enemy is in melee so the cold rider lands this round.
+        if let Some(aei) = try_spirit_shroud(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 4. Bless — round 1 self+ally buff. Only valid before we're
         //    already concentrating on something.
         if let Some(aei) = try_bless(encounter, actor_id) {
@@ -387,6 +407,103 @@ fn try_self_buff_mage_armor(
         return None;
     }
     try_self_action(encounter, actor_id, "mage armor")
+}
+
+/// Holy Aura — level-8 concentration burst centered on the caster. Fire
+/// only when at least 2 allies (caster + 1 other) sit within 30ft AND a
+/// hostile is engaged. Single-caster clerics get more value from a
+/// level-2 Hold Person than a level-8 self-only aura, so we gate on
+/// actual ally clustering. Skips re-cast when already concentrating.
+fn try_holy_aura(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() {
+        return None;
+    }
+    if actor.has_condition(Condition::HolyAuraed) {
+        return None;
+    }
+    // Engagement check — don't burn a level-8 slot in an empty room.
+    if !any_enemy_within(encounter, actor_id, 60) {
+        return None;
+    }
+    // Ally-cluster check: 12 tiles = 30ft aura radius. Require at least
+    // 1 other combat-active ally inside (caster is free).
+    let team = actor.team();
+    let loc = actor.location();
+    let my_size = get_tiles_from_size(actor.size());
+    let ally_count = encounter.actors.iter().filter(|(id, a)| {
+        **id != actor_id
+            && a.team() == team
+            && a.is_combat_active()
+            && footprint_chebyshev(loc, my_size, a.location(), get_tiles_from_size(a.size())) <= 12
+    }).count();
+    if ally_count < 1 {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "holy aura")
+}
+
+/// Spirit Shroud — level-3 concentration self-buff. Fire when an enemy
+/// is in melee reach so the cold rider lands this turn. Concentration-
+/// gated; skip if the holder already concentrates.
+fn try_spirit_shroud(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() {
+        return None;
+    }
+    if actor.has_condition(Condition::SpiritShrouded) {
+        return None;
+    }
+    if !any_enemy_within(encounter, actor_id, 1) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "spirit shroud")
+}
+
+/// Foresight — level-9 single-target ally buff. Pick the highest-HP
+/// combat-active ally (likely a frontliner) and lay the apex buff on
+/// them. Concentration-gated.
+fn try_foresight(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() {
+        return None;
+    }
+    let action = actor
+        .actions
+        .iter()
+        .find(|a| a.name() == "foresight")
+        .copied()?;
+    let team = actor.team();
+    let mut best: Option<(u32, ActionExecutionInfo)> = None;
+    for id in encounter.sorted_actor_ids() {
+        let Some(a) = encounter.actors.get(&id) else {
+            continue;
+        };
+        if a.team() != team || !a.is_combat_active() {
+            continue;
+        }
+        if a.has_condition(Condition::Foreseen) {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![id]), None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        let hp = a.hitpoints();
+        if best.as_ref().is_none_or(|(best_hp, _)| hp > *best_hp) {
+            best = Some((hp, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
 }
 
 /// True if any combat-active hostile actor's footprint sits within
@@ -1413,6 +1530,18 @@ mod tests {
             // footprint or the prone-on-hit tail rider.
             use crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE;
             let _ = e.instantiate_creature(&TARRASQUE_TEMPLATE, Coordinate::new(5, 12), 1, 20);
+            // Latest additions: Ranger PC (DEX longbow + Hunter's Mark +
+            // Hail of Thorns), Aboleth (CR 10 aquatic tentacle multi),
+            // Solar (CR 21 celestial wielding Holy Aura + Foresight).
+            // Seeds the new spells / classes through the AI picker so
+            // any regression in the validation / cost / side-effect path
+            // surfaces here, not in the live UI.
+            use crate::actors::creatures::aboleths::ABOLETH_TEMPLATE;
+            use crate::actors::creatures::rangers::RANGER_TEMPLATE;
+            use crate::actors::creatures::solars::SOLAR_TEMPLATE;
+            let _ = e.instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(12, 2), 0, 9);
+            let _ = e.instantiate_creature(&ABOLETH_TEMPLATE, Coordinate::new(7, 12), 1, 21);
+            let _ = e.instantiate_creature(&SOLAR_TEMPLATE, Coordinate::new(14, 2), 0, 10);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

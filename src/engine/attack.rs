@@ -59,6 +59,11 @@ pub fn resolve_attack_outcome(
     else {
         return (Vec::new(), 0);
     };
+    // 5e Cover: intervening combat-active creatures bump the target's
+    // effective AC (+2 for half cover, +5 for three-quarters). Adjacent
+    // melee swings are exempt (the cover routine returns 0 at gap ≤ 1).
+    let cover_bonus = encounter.cover_ac_bonus(p.caster_id, p.target_id);
+    let target_ac = target_ac + cover_bonus;
 
     // 5e Sanctuary: if the target is sanctified, the attacker first makes
     // a WIS save vs the warding caster's DC. On fail, the attack silently
@@ -87,12 +92,9 @@ pub fn resolve_attack_outcome(
     // is the read-side flag table — Sacred Weapon's +CHA modifier and
     // Bardic Inspiration's +3 ride here. Keeping the two lanes separate
     // makes Bless's "install once, drop on concentration" pattern reuse
-    // cleanly with the read-only condition lane.
-    let (buff, cond_attack_bonus) = encounter
-        .actors
-        .get(&p.caster_id)
-        .map(|a| (a.attack_bonus_buff(), a.condition_attack_bonus()))
-        .unwrap_or((0, 0));
+    // cleanly with the read-only condition lane. Shared with spell
+    // attacks via `EncounterInstance::caster_attack_buffs`.
+    let (buff, cond_attack_bonus) = encounter.caster_attack_buffs(p.caster_id);
     // Bless/Bane: roll an actual 1d4 once per attack and add (Bless) or
     // subtract (Bane) from the total. Both: they cancel and no die is
     // rolled. We log the d4 separately so the player can see why the
@@ -107,14 +109,16 @@ pub fn resolve_attack_outcome(
     } else {
         "miss"
     };
+    let cover_note = EncounterInstance::cover_log_suffix(cover_bonus);
     encounter.log(format!(
-        "  {}: 1d20({}){:+}{} = {} vs AC {}{} \u{2014} {}",
+        "  {}: 1d20({}){:+}{} = {} vs AC {}{}{} \u{2014} {}",
         p.action_name,
         raw_attack,
         p.attack_bonus + buff + cond_attack_bonus,
         bless_note,
         attack_total,
         target_ac,
+        cover_note,
         mode.log_suffix(),
         outcome,
     ));
@@ -343,7 +347,7 @@ pub struct SmiteFollowUp {
 /// than declared `const` because `Dice::new` isn't a const fn — but the
 /// runtime cost is one stack-allocated array of plain data, so the
 /// indirection is free.
-fn on_hit_riders() -> [OnHitRider; 8] {
+fn on_hit_riders() -> [OnHitRider; 9] {
     [
         OnHitRider {
             condition: Condition::CrusadersMantled,
@@ -360,6 +364,18 @@ fn on_hit_riders() -> [OnHitRider; 8] {
             label: "crown of stars",
             damage_type: DamageType::Radiant,
             melee_only: false,
+            consume_on_trigger: false,
+            follow_up: None,
+        },
+        // 5e Spirit Shroud (level-3 concentration). Persistent +1d8 cold
+        // rider on every melee swing the holder lands. Mirrors Crown of
+        // Stars but cold-typed and melee-only.
+        OnHitRider {
+            condition: Condition::SpiritShrouded,
+            dice: Dice::new(1, 8),
+            label: "spirit shroud",
+            damage_type: DamageType::Cold,
+            melee_only: true,
             consume_on_trigger: false,
             follow_up: None,
         },

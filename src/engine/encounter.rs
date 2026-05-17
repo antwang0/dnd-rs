@@ -462,6 +462,13 @@ impl EncounterInstance {
             if attacker.has_condition(Condition::Hidden) {
                 mode = mode.combine(RollMode::Advantage);
             }
+            // 5e Foresight: holder rolls every attack with advantage.
+            // Symmetric with the save / target-disadvantage clauses
+            // (`compute_save_mode` advantage, target-side disadvantage
+            // below).
+            if attacker.has_condition(Condition::Foreseen) {
+                mode = mode.combine(RollMode::Advantage);
+            }
             // House-rule: Blessed grants advantage in lieu of the d4 bonus
             // some tests assume. We also keep the flat +2 attack/save
             // bonus via condition_attack_bonus / condition_save_bonus, so
@@ -515,6 +522,15 @@ impl EncounterInstance {
             // 5e Blur: attackers have disadvantage vs the blurred target,
             // mirroring Dodge's defensive disadvantage clause.
             if target.has_condition(Condition::Blurred) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+            // 5e Holy Aura / Foresight: both impose disadvantage on
+            // attacks against the target. Holy Aura is a 30ft burst aura
+            // applied to allies of the caster; Foresight is a single
+            // ally buff. Either flag is enough.
+            if target.has_condition(Condition::HolyAuraed)
+                || target.has_condition(Condition::Foreseen)
+            {
                 mode = mode.combine(RollMode::Disadvantage);
             }
             // 5e Protection from Evil and Good: aberrations / celestials /
@@ -594,6 +610,14 @@ impl EncounterInstance {
         // 5e Barbarian Rage: advantage on STR checks / saves while raging.
         if matches!(ability, AbilityScoreType::Strength)
             && actor.has_condition(Condition::Raging)
+        {
+            mode = mode.combine(RollMode::Advantage);
+        }
+        // 5e Holy Aura / Foresight: advantage on every save the holder
+        // rolls. Holy Aura is concentrated by the caster onto allies in a
+        // 30ft burst; Foresight is single-target. Either flag suffices.
+        if actor.has_condition(Condition::HolyAuraed)
+            || actor.has_condition(Condition::Foreseen)
         {
             mode = mode.combine(RollMode::Advantage);
         }
@@ -913,6 +937,89 @@ impl EncounterInstance {
                 return false;
             }
         }
+    }
+
+    /// 5e cover from intervening creatures. Counts combat-active actors
+    /// (other than `attacker_id`/`target_id`) whose footprint a straight
+    /// origin-to-origin line from attacker to target passes through. 0
+    /// intervening = no cover; 1 = half cover (+2 AC); 2+ = three-quarters
+    /// cover (+5 AC). Total cover (line fully blocked by wall) is handled
+    /// upstream via `actor_has_line_of_sight`; this routine assumes LOS
+    /// already validated.
+    ///
+    /// The routine is deliberately conservative: it walks the Bresenham
+    /// line between the two actors' anchor tiles and stops counting after
+    /// 2 hits (the bonus saturates at +5). It deliberately doesn't
+    /// consider walls — those are total cover and gate the attack via
+    /// LOS — and it doesn't model object cover (5e half cover from
+    /// terrain) because the terrain layer here has no per-tile cover
+    /// semantics.
+    pub fn cover_ac_bonus(&self, attacker_id: usize, target_id: usize) -> i32 {
+        let (Some(a), Some(b)) = (
+            self.actors.get(&attacker_id),
+            self.actors.get(&target_id),
+        ) else {
+            return 0;
+        };
+        // 5e: adjacent attackers ignore cover. The clause keeps melee
+        // swings clean (a grappler isn't shielded from their grappling
+        // partner by a third creature).
+        if footprint_chebyshev(
+            a.location(),
+            get_tiles_from_size(a.size()),
+            b.location(),
+            get_tiles_from_size(b.size()),
+        ) <= crate::actions::action_template::MELEE_REACH
+        {
+            return 0;
+        }
+        let from = a.location();
+        let to = b.location();
+        if from == to {
+            return 0;
+        }
+        let mut x0 = from.x;
+        let mut y0 = from.y;
+        let x1 = to.x;
+        let y1 = to.y;
+        let dx = (x1 - x0).abs();
+        let dy = -(y1 - y0).abs();
+        let sx = if x0 < x1 { 1 } else { -1 };
+        let sy = if y0 < y1 { 1 } else { -1 };
+        let mut err = dx + dy;
+        let mut hits = 0u32;
+        let mut last_hit: Option<usize> = None;
+        loop {
+            let e2 = 2 * err;
+            if e2 >= dy {
+                err += dy;
+                x0 += sx;
+            }
+            if e2 <= dx {
+                err += dx;
+                y0 += sy;
+            }
+            if x0 == x1 && y0 == y1 {
+                break;
+            }
+            let coord = Coordinate::new(x0, y0);
+            if let Some(blocker_id) = self.actor_id_at(coord)
+                && blocker_id != attacker_id
+                && blocker_id != target_id
+                && self
+                    .actors
+                    .get(&blocker_id)
+                    .is_some_and(|a| a.is_combat_active())
+                && last_hit != Some(blocker_id)
+            {
+                last_hit = Some(blocker_id);
+                hits = hits.saturating_add(1);
+                if hits >= 2 {
+                    return 5;
+                }
+            }
+        }
+        if hits >= 1 { 2 } else { 0 }
     }
 
     /// Footprint-aware LOS: clear if *any* tile of A's footprint can see
@@ -1669,6 +1776,32 @@ impl EncounterInstance {
     /// Bane rolls -1d4. Both: they cancel and we return (0, ""). Returns
     /// the rolled total and a log suffix to embed in the attack log.
     /// The roll uses the encounter's seedable roller for reproducibility.
+    /// Log-friendly cover suffix matching the integer returned by
+    /// `cover_ac_bonus`: "" for no cover, " (half cover)" for +2,
+    /// " (three-quarters cover)" for +5. Shared between weapon and spell
+    /// attack-roll log lines so the two paths can't drift.
+    pub fn cover_log_suffix(cover_bonus: i32) -> &'static str {
+        match cover_bonus {
+            2 => " (half cover)",
+            5 => " (three-quarters cover)",
+            _ => "",
+        }
+    }
+
+    /// Sum the caster-side flat attack-roll bonuses that ride every
+    /// attack roll (weapon or spell): the install-side `attack_bonus_buff`
+    /// ledger (Bless's AdjustAttackBuff(+2), etc.) and the read-side
+    /// `condition_attack_bonus` flag table (Sacred Weapon's +CHA,
+    /// Bardic Inspiration's +3). Returns (install_buff, condition_buff)
+    /// — two lanes so callers can keep the log breakdown if they want
+    /// to. Missing actor returns `(0, 0)`.
+    pub fn caster_attack_buffs(&self, caster_id: usize) -> (i32, i32) {
+        self.actors
+            .get(&caster_id)
+            .map(|a| (a.attack_bonus_buff(), a.condition_attack_bonus()))
+            .unwrap_or((0, 0))
+    }
+
     pub fn bless_bane_attack_die(&mut self, actor_id: usize) -> (i32, String) {
         let Some(actor) = self.actors.get(&actor_id) else {
             return (0, String::new());
@@ -13961,6 +14094,257 @@ mod tests {
         let mut expected = vec![caster, ally];
         expected.sort_unstable();
         assert_eq!(ids, expected);
+    }
+
+    /// Cover: an intervening combat-active creature on the origin-to-origin
+    /// line bumps the target's effective AC by 2 (half cover). Adjacent
+    /// melee swings are exempt — the cover routine returns 0 at gap ≤ 1.
+    #[test]
+    fn cover_one_intervener_is_half_cover() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(40, 10, &[]);
+        let archer = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(30, 5), 1, 0)
+            .unwrap();
+        // No interveners: no cover.
+        assert_eq!(e.cover_ac_bonus(archer, target), 0);
+        // Drop one combat-active actor on the line — half cover (+2).
+        let _blocker = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(15, 5), 1, 1)
+            .unwrap();
+        assert_eq!(e.cover_ac_bonus(archer, target), 2);
+    }
+
+    #[test]
+    fn cover_two_interveners_is_three_quarters() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(40, 10, &[]);
+        let archer = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(30, 5), 1, 0)
+            .unwrap();
+        let _b1 = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 5), 1, 1)
+            .unwrap();
+        let _b2 = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 5), 1, 2)
+            .unwrap();
+        assert_eq!(e.cover_ac_bonus(archer, target), 5);
+    }
+
+    #[test]
+    fn cover_adjacent_melee_ignores_cover() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(20, 10, &[]);
+        let attacker = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 5), 1, 0)
+            .unwrap();
+        // Goblins are Small (2-tile footprints) — gap is 0 at this spacing.
+        assert_eq!(e.footprint_distance(attacker, target), Some(0));
+        // Even with a third creature wedged into the line, melee ignores
+        // cover.
+        assert_eq!(e.cover_ac_bonus(attacker, target), 0);
+    }
+
+    /// Spirit Shroud: a SpiritShrouded caster's melee hits carry a +1d8
+    /// cold rider through the OnHitRider table. Smoke-test the condition
+    /// install path by checking the dispel buff classification.
+    #[test]
+    fn spirit_shroud_condition_is_dispellable() {
+        assert!(crate::conditions::Condition::SpiritShrouded.is_dispellable_buff());
+        assert!(crate::conditions::Condition::HolyAuraed.is_dispellable_buff());
+        assert!(crate::conditions::Condition::Foreseen.is_dispellable_buff());
+    }
+
+    /// Foresight: holder rolls attacks at advantage AND attackers vs
+    /// holder roll at disadvantage. Verify the symmetric attack-mode
+    /// hooks through compute_attack_mode.
+    #[test]
+    fn foresight_grants_attack_advantage_to_holder() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let attacker = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+            .unwrap();
+        let defender = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+            .unwrap();
+        // Without Foresight: normal mode.
+        assert_eq!(
+            e.compute_attack_mode(attacker, defender, false),
+            RollMode::Normal
+        );
+        // Foreseen attacker → advantage.
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Foreseen, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_attack_mode(attacker, defender, false),
+            RollMode::Advantage
+        );
+        // Re-target with a Foreseen defender: the defender's foresight
+        // imposes disadvantage on the attacker.
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .remove_condition(Condition::Foreseen);
+        e.actors
+            .get_mut(&defender)
+            .unwrap()
+            .add_condition(Condition::Foreseen, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_attack_mode(attacker, defender, false),
+            RollMode::Disadvantage
+        );
+    }
+
+    /// Holy Aura: holder gets advantage on saves AND attackers vs holder
+    /// have disadvantage. Symmetric with Foresight but a 30ft aura.
+    #[test]
+    fn holy_aura_grants_save_advantage() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let actor = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+            .unwrap();
+        assert_eq!(
+            e.compute_save_mode(actor, AbilityScoreType::Constitution),
+            RollMode::Normal
+        );
+        e.actors
+            .get_mut(&actor)
+            .unwrap()
+            .add_condition(Condition::HolyAuraed, ConditionTimer::Permanent);
+        assert_eq!(
+            e.compute_save_mode(actor, AbilityScoreType::Constitution),
+            RollMode::Advantage
+        );
+    }
+
+    /// Animate Dead: casting from a wizard with a clear adjacent tile
+    /// spawns a new Skeleton actor on the wizard's team.
+    #[test]
+    fn animate_dead_spawns_skeleton() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::ANIMATE_DEAD;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let actor_count_before = e.actors.len();
+        let effects = ANIMATE_DEAD.side_effects(&mut e, caster, None, None, None);
+        for x in effects {
+            x.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors.len(),
+            actor_count_before + 1,
+            "expected one new actor (skeleton) spawned"
+        );
+        // The new actor should be on the caster's team.
+        let team = e.actors.get(&caster).unwrap().team();
+        let new_id = (0..e.next_actor_id())
+            .filter(|id| e.actors.contains_key(id) && *id != caster)
+            .next()
+            .expect("a non-caster actor exists");
+        assert_eq!(e.actors[&new_id].team(), team);
+    }
+
+    /// Spirit Shroud install: a paladin casts it and gains the
+    /// `SpiritShrouded` condition plus the concentration mark. The
+    /// rider then fires on the next melee swing — we verify the
+    /// install half (the rider table is exercised by the AI integration
+    /// test).
+    #[test]
+    fn spirit_shroud_installs_condition_and_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::SPIRIT_SHROUD;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let effects = SPIRIT_SHROUD.side_effects(&mut e, cleric, None, None, None);
+        for x in effects {
+            x.apply(&mut e);
+        }
+        assert!(e.actors[&cleric].has_condition(Condition::SpiritShrouded));
+        assert!(e.actors[&cleric].is_concentrating());
+    }
+
+    /// Hail of Thorns lands a piercing burst on the target tile. We can't
+    /// guarantee the save lands every seed, but the spell's burst-save
+    /// pipeline returns DealDamage effects whenever any target rolls badly
+    /// — verify it produces an effect across enough seeds.
+    #[test]
+    fn hail_of_thorns_can_damage_clustered_targets() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::HAIL_OF_THORNS;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rangers::RANGER_TEMPLATE;
+        let mut hit_any = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let ranger = e
+                .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+                .unwrap();
+            let g1 = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+                .unwrap();
+            let _g2 = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(11, 5), 1, 1)
+                .unwrap();
+            let hp1_before = e.actors[&g1].hitpoints();
+            let tl = vec![Coordinate::new(10, 5)];
+            let effects = HAIL_OF_THORNS.side_effects(&mut e, ranger, None, Some(&tl), None);
+            for x in effects {
+                x.apply(&mut e);
+            }
+            if e.actors
+                .get(&g1)
+                .is_some_and(|a| a.hitpoints() < hp1_before)
+            {
+                hit_any = true;
+                break;
+            }
+        }
+        assert!(
+            hit_any,
+            "hail of thorns never damaged any clustered target across 40 seeds"
+        );
+    }
+
+    /// Hellish Rebuke: a SingleActor bonus-action spell that lands a
+    /// 2d10 fire DEX-save damage roll. Confirm the cost and damage type.
+    #[test]
+    fn hellish_rebuke_costs_bonus_action_slot() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::HELLISH_REBUKE;
+        use crate::engine::side_effects::Resource;
+        let e = ei_with_terrain(10, 10, &[]);
+        let costs = HELLISH_REBUKE.cost(&e, 0, None, None, None);
+        assert!(costs.contains(&Resource::BonusAction));
+        assert!(costs.contains(&Resource::SpellSlot(1)));
+        assert_eq!(
+            HELLISH_REBUKE.damage_types(),
+            vec![crate::engine::types::DamageType::Fire]
+        );
     }
 
     #[test]

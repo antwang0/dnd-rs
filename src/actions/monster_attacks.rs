@@ -4483,3 +4483,127 @@ pub static TARRASQUE_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Compound
         (&*TARRASQUE_TAIL, 1),
     ],
 });
+
+/// Aboleth Tentacle — STR-based 2d6 bludgeoning melee, reach 2 tiles
+/// (10ft). Iconic MM aboleth attack — paired with the tentacle multi
+/// below to deal a brutal melee burst out at near-reach distance.
+pub static ABOLETH_TENTACLE: SimpleWeapon = SimpleWeapon {
+    display_name: "tentacle",
+    aliases: &["tent"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Bludgeoning,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Aboleth Multiattack — 3 tentacle swings per Action. Single same-sub
+/// pattern through the `Multiattack` wrapper.
+pub static ABOLETH_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "aboleth multiattack",
+    sub_attack: &ABOLETH_TENTACLE,
+    count: 3,
+});
+
+/// Solar Slaying Longsword — STR-based 4d8+8 slashing melee with a
+/// permanent +1d6 radiant rider on hit (the angelic weapon glows). The
+/// rider runs through the same on-hit damage pipeline as the on_hit_riders
+/// table but is baked into the attack itself rather than into a
+/// concentration condition, since the Solar always wields it.
+pub struct SolarLongsword {}
+
+impl Action for SolarLongsword {
+    fn name(&self) -> &str {
+        "slaying longsword"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sl-sword"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn requires_los(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Slashing, DamageType::Radiant]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_mod =
+            modifier_from_score(caster.ability_score(AbilityScoreType::Strength))
+                + caster.proficiency_bonus();
+        let damage_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        // Roll the swing through the standard pipeline so cover / mirror
+        // image / sanctuary all apply, then layer the radiant rider as
+        // a separate DealDamage so the target's per-type modifiers
+        // honor each component independently.
+        let mut effects = resolve_attack(
+            encounter,
+            AttackParams {
+                caster_id,
+                target_id,
+                action_name: "slaying longsword",
+                attack_bonus: attack_mod,
+                damage_dice: Dice::new(4, 8),
+                damage_bonus: damage_mod,
+                damage_type: DamageType::Slashing,
+                is_melee: true,
+            },
+        );
+        // Only fire the radiant rider on a successful hit. We detect
+        // success via the side-effects list being non-empty (resolve_attack
+        // returns no DealDamage on a miss).
+        if !effects.is_empty() {
+            let rad = encounter.roll(&Dice::new(1, 6));
+            encounter.log(format!(
+                "  slaying longsword: +{} extra Radiant (angelic glow)",
+                rad
+            ));
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: rad,
+                damage_type: DamageType::Radiant,
+            }));
+        }
+        effects
+    }
+}
+
+pub static SOLAR_LONGSWORD: LazyLock<SolarLongsword> = LazyLock::new(|| SolarLongsword {});
+
+/// Solar Multiattack — 2 slaying-longsword swings per Action. Both
+/// swings deal the radiant rider. Used by the SOLAR_TEMPLATE.
+pub static SOLAR_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "solar multiattack",
+    sub_attack: &*SOLAR_LONGSWORD,
+    count: 2,
+});

@@ -364,6 +364,32 @@ pub enum Condition {
     /// pickers (Lesser Restoration / Greater Restoration) can target
     /// it explicitly.
     Exhausted,
+    /// Spirit Shroud (5e level-3, concentration). The holder wraps
+    /// themselves in deathly mist: every melee weapon attack the holder
+    /// lands deals an extra 1d8 cold damage, and the target's speed is
+    /// reduced (we model only the on-hit rider half — cold typed per
+    /// RAW's default flavor). Mirrors Crusader's Mantle / Crown of Stars
+    /// in the OnHitRider table — persistent (non-consumed) and non-
+    /// melee-only since our weapon-vs-spell-attack split surfaces the
+    /// melee filter centrally.
+    SpiritShrouded,
+    /// Holy Aura (5e level-8 abjuration, concentration). The holder and
+    /// every ally inside a 30ft sphere benefit from advantage on all
+    /// saving throws, and attackers against them have disadvantage on
+    /// attack rolls. We model the load-bearing half via two condition
+    /// hooks: `compute_save_mode` reads the flag for advantage, and
+    /// `compute_attack_mode` reads it on the target for the
+    /// attacker-disadvantage clause. Concentration-bound on the caster.
+    HolyAuraed,
+    /// Foresight (5e level-9 divination, concentration). The target has
+    /// advantage on every attack roll, saving throw, and ability check,
+    /// and attackers against them have disadvantage. The mightiest
+    /// single-target buff in the SRD — we wire the attack-advantage
+    /// half through `compute_attack_mode` on the attacker side, the
+    /// save-advantage half through `compute_save_mode`, and the
+    /// disadvantage-to-attackers half through `compute_attack_mode` on
+    /// the target side. Concentration-bound on the caster.
+    Foreseen,
 }
 
 impl Condition {
@@ -434,6 +460,9 @@ impl Condition {
             Condition::StunningStrike => "primed to stun",
             Condition::Inspired => "inspired",
             Condition::Exhausted => "exhausted",
+            Condition::SpiritShrouded => "wreathed in spirits",
+            Condition::HolyAuraed => "haloed in holy light",
+            Condition::Foreseen => "foreseen",
         }
     }
 
@@ -488,6 +517,9 @@ impl Condition {
                 | Condition::BrandingSmiting
                 | Condition::BlindingSmiting
                 | Condition::Inspired
+                | Condition::SpiritShrouded
+                | Condition::HolyAuraed
+                | Condition::Foreseen
         )
     }
 

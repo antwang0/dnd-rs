@@ -120,6 +120,10 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*HEAT_METAL);
     actions.push(&*FLAME_STRIKE);
     actions.push(&*CHAIN_LIGHTNING);
+    // Latest necromancy / divination additions: lv3 Animate Dead (raise
+    // skeleton ally) and lv9 Foresight (single-target apex buff).
+    actions.push(&*crate::actions::spells::ANIMATE_DEAD);
+    actions.push(&*crate::actions::spells::FORESIGHT);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.
