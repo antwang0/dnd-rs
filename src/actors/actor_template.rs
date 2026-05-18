@@ -1188,6 +1188,24 @@ impl ActorInstance {
         self.proficiency_bonus() + modifier_from_score(self.ability_score(ability))
     }
 
+    /// For spells available to multiple classes (Bard / Sorcerer / Wizard /
+    /// Warlock — Eyebite, Otto's, Fire Storm), pick the ability whose raw
+    /// score is highest from a candidate set and return the resulting
+    /// `spell_save_dc`. Ties break by the order in `candidates`. Falls back
+    /// to the first ability if every candidate score is identical.
+    /// Centralized so spell impls don't each open-code the
+    /// "max(INT, CHA, WIS)" pattern.
+    pub fn best_spell_save_dc<I>(&self, candidates: I) -> i32
+    where
+        I: IntoIterator<Item = AbilityScoreType>,
+    {
+        let best = candidates
+            .into_iter()
+            .max_by_key(|a| self.ability_score(*a))
+            .unwrap_or(AbilityScoreType::Intelligence);
+        self.spell_save_dc(best)
+    }
+
     /// Apply `raw` damage of type `dt`, factoring in immunity / resistance
     /// / vulnerability and absorbing through any temp HP first. Returns
     /// `(outcome, final_amount)` where `final_amount` is the actual HP

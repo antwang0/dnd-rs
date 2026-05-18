@@ -440,6 +440,42 @@ pub enum Condition {
     ///
     /// Cleared by a Greater Restoration cleanse or by long rest.
     Feebled,
+    /// Dancing (5e Otto's Irresistible Dance, level-6 enchantment,
+    /// concentration). The target capers helplessly: they have disadvantage
+    /// on attacks (joins the `imposes_attacker_disadvantage` cohort);
+    /// attacks against them have advantage (joins
+    /// `grants_advantage_to_attackers`); they auto-fail DEX saves; movement
+    /// is zero (joins `zeros_movement`). The dance lasts up to 10 rounds —
+    /// RAW lets the target spend an Action to attempt a WIS save each turn;
+    /// we collapse to the duration-bound install for simplicity.
+    /// Concentration-bound on the caster.
+    Dancing,
+    /// Mazed (5e Maze, level-8 conjuration, concentration). The target is
+    /// banished to a demiplane: they're effectively removed from the
+    /// encounter map for the spell's duration. Mechanically we treat the
+    /// Maze condition as a full incapacitation envelope — zero movement
+    /// (joins `zeros_movement`), all action economy blocked
+    /// (`blocks_action_economy`), and reactions blocked. We don't
+    /// physically delete the actor; the engine just makes them inert.
+    /// RAW gives the target an INT check at the end of each of their turns
+    /// to escape; we leave the duration-bound install for simplicity.
+    /// Concentration-bound on the caster.
+    Mazed,
+    /// Eyebitten — Asleep (5e Eyebite spell, level-6 necromancy,
+    /// concentration). The target falls unconscious; mechanically we route
+    /// through the existing `Asleep` condition for the action-economy
+    /// envelope. This variant exists so the eyebite-specific log line and
+    /// the concentration mark have a distinct condition to track, and so
+    /// dropping concentration cleans up the eyebite mark cleanly.
+    /// Currently inert beyond marking — the load-bearing penalties land on
+    /// the `Asleep` rider applied alongside.
+    EyebittenSick,
+    /// Conjured (5e Conjure Animals and related). The summoned minion
+    /// holds this flag so the caster's concentration drop can prune the
+    /// minion (dispel the conjured creature) cleanly via the
+    /// `dispel_conjured_on_concentration_drop` hook. Inert otherwise; the
+    /// summoned actor behaves like any team-mate while the flag is up.
+    Conjured,
 }
 
 impl Condition {
@@ -518,6 +554,10 @@ impl Condition {
             Condition::Flying => "flying",
             Condition::Dominated => "dominated",
             Condition::Feebled => "feebleminded",
+            Condition::Dancing => "dancing helplessly",
+            Condition::Mazed => "trapped in a maze",
+            Condition::EyebittenSick => "afflicted by eyebite",
+            Condition::Conjured => "conjured",
         }
     }
 
@@ -533,6 +573,7 @@ impl Condition {
                 | Condition::Unconscious
                 | Condition::Asleep
                 | Condition::Petrified
+                | Condition::Mazed
         )
     }
 
@@ -600,6 +641,8 @@ impl Condition {
                 | Condition::Lifted
                 | Condition::Caged
                 | Condition::Entangled
+                | Condition::Dancing
+                | Condition::Mazed
         )
     }
 
@@ -622,6 +665,7 @@ impl Condition {
                 | Condition::Confused
                 | Condition::Dominated
                 | Condition::Feebled
+                | Condition::Dancing
         )
     }
 
@@ -655,6 +699,7 @@ impl Condition {
                 | Condition::Outlined
                 | Condition::Petrified
                 | Condition::GuidingBoltLit
+                | Condition::Dancing
         )
     }
 

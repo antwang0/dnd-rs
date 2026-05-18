@@ -4803,3 +4803,335 @@ impl Action for StormGiantLightningStrike {
 
 pub static STORM_GIANT_LIGHTNING_STRIKE: LazyLock<StormGiantLightningStrike> =
     LazyLock::new(|| StormGiantLightningStrike {});
+
+/// Hydra Bite — STR-based 1d10+STR piercing melee, reach 2 (10ft natural
+/// reach for the gargantuan head). The Hydra has 5 of these per turn via
+/// HYDRA_MULTI. Standalone so the hydra can still bite when only one
+/// target is in melee range.
+pub static HYDRA_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "hydra bite",
+    aliases: &["h-bite", "hbite"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 10),
+    damage_type: DamageType::Piercing,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Hydra Multiattack — 5 simultaneous bites (one per head). The number
+/// of heads is fixed at 5 RAW; the engine doesn't model head-severing
+/// dynamics so the multiattack count is constant.
+pub static HYDRA_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "hydra multiattack",
+    sub_attack: &HYDRA_BITE,
+    count: 5,
+});
+
+/// Stone Giant Greatclub — STR-based 3d8+STR bludgeoning melee, reach 3.
+/// The greatclub is the giant's go-to melee, with the boulder filling
+/// the ranged lane.
+pub static STONE_GIANT_GREATCLUB: SimpleWeapon = SimpleWeapon {
+    display_name: "stone greatclub",
+    aliases: &["s-gc", "sgc"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(3, 8),
+    damage_type: DamageType::Bludgeoning,
+    reach: 3,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Stone Giant Boulder — STR-based 4d10+STR bludgeoning ranged, reach 24.
+/// The boulder is the giant's signature ranged threat — paired with the
+/// greatclub for melee, the AI picks whichever the action picker validates.
+pub static STONE_GIANT_BOULDER: SimpleWeapon = SimpleWeapon {
+    display_name: "stone boulder",
+    aliases: &["s-boulder", "sboulder"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(4, 10),
+    damage_type: DamageType::Bludgeoning,
+    reach: 24,
+    is_melee: false,
+    requires_los: true,
+    cost_resource: Resource::Action,
+};
+
+/// Stone Giant Multiattack — 2 greatclub swings per Action. Mirrors the
+/// frost giant / hill giant pattern: physical thresher boss melee, no
+/// rider effects, raw bludgeoning damage.
+pub static STONE_GIANT_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "stone giant multiattack",
+    sub_attack: &STONE_GIANT_GREATCLUB,
+    count: 2,
+});
+
+/// Medusa Petrifying Gaze — single-target action. CON save against a
+/// fixed DC 14; on fail, the target is Petrified for 1 round. No damage
+/// — the petrification is the threat. The gaze is line-of-sight gated
+/// (the medusa must see the target). Mirrors the cockatrice bite's
+/// shape but without the bite damage: pure stone-lock.
+pub struct MedusaPetrifyingGaze {}
+
+impl Action for MedusaPetrifyingGaze {
+    fn name(&self) -> &str {
+        "petrifying gaze"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["gaze", "medusa-gaze"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft RAW = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        const DC: i32 = 14;
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, DC);
+        if save.passed() {
+            encounter.log("  petrifying gaze: target averts their eyes");
+            return Vec::new();
+        }
+        encounter.log("  petrifying gaze: target turns to stone");
+        vec![Box::new(crate::engine::side_effects::ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Petrified,
+            timer: ConditionTimer::Rounds(1),
+        })]
+    }
+}
+
+pub static MEDUSA_PETRIFYING_GAZE: LazyLock<MedusaPetrifyingGaze> =
+    LazyLock::new(|| MedusaPetrifyingGaze {});
+
+/// Medusa Snake Hair — DEX-based 1d4+DEX piercing + 4d6 poison rider on
+/// hit (RAW). One of the multiattack lanes; reach 1.
+pub struct MedusaSnakeHair {}
+
+impl Action for MedusaSnakeHair {
+    fn name(&self) -> &str {
+        "snake hair"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sh", "snakes"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Poison]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "snake hair",
+            AbilityScoreType::Dexterity,
+            Some(AbilityScoreType::Dexterity),
+            Dice::new(1, 4),
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        let poison = encounter.roll(&Dice::new(4, 6));
+        encounter.log(format!("  snake hair: 4d6({}) poison rider", poison));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: poison,
+            damage_type: DamageType::Poison,
+        }));
+        effects
+    }
+}
+
+pub static MEDUSA_SNAKE_HAIR: LazyLock<MedusaSnakeHair> =
+    LazyLock::new(|| MedusaSnakeHair {});
+
+/// Medusa Multiattack — 1 snake-hair swing + 1 petrifying gaze per
+/// Action. CompoundAttack because the lanes are heterogeneous (different
+/// targeting, different effects). The gaze targets the same actor as the
+/// snake hair RAW (target shared per attack).
+pub static MEDUSA_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "medusa multiattack",
+    parts: vec![
+        (&*MEDUSA_SNAKE_HAIR, 1),
+        (&*MEDUSA_PETRIFYING_GAZE, 1),
+    ],
+});
+
+/// Salamander Tail — STR-based 2d6 bludgeoning + 1d6 fire rider on hit.
+/// The salamander wreathes its blows in heat; the fire rider is auto-
+/// apply on hit (no save). Reach 3 (gargantuan tail).
+pub struct SalamanderTail {}
+
+impl Action for SalamanderTail {
+    fn name(&self) -> &str {
+        "salamander tail"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["tail", "salamander"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(3)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning, DamageType::Fire]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "salamander tail",
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(2, 6),
+            DamageType::Bludgeoning,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        let fire = encounter.roll(&Dice::new(1, 6));
+        encounter.log(format!("  salamander tail: 1d6({}) fire rider", fire));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: fire,
+            damage_type: DamageType::Fire,
+        }));
+        effects
+    }
+}
+
+pub static SALAMANDER_TAIL: LazyLock<SalamanderTail> = LazyLock::new(|| SalamanderTail {});
+
+/// Salamander Spear — STR-based 2d6 piercing + 1d6 fire rider, reach 2.
+/// The salamander's polearm, paired with the tail in the multi.
+pub struct SalamanderSpear {}
+
+impl Action for SalamanderSpear {
+    fn name(&self) -> &str {
+        "salamander spear"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sspear"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(2)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Fire]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "salamander spear",
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(2, 6),
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        let fire = encounter.roll(&Dice::new(1, 6));
+        encounter.log(format!("  salamander spear: 1d6({}) fire rider", fire));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: fire,
+            damage_type: DamageType::Fire,
+        }));
+        effects
+    }
+}
+
+pub static SALAMANDER_SPEAR: LazyLock<SalamanderSpear> =
+    LazyLock::new(|| SalamanderSpear {});
+
+/// Salamander Multiattack — 1 spear + 1 tail per Action. Heterogeneous
+/// multi: spear is reach-2 (poke), tail is reach-3 (whip behind targets).
+pub static SALAMANDER_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "salamander multiattack",
+    parts: vec![
+        (&*SALAMANDER_SPEAR, 1),
+        (&*SALAMANDER_TAIL, 1),
+    ],
+});

@@ -1646,6 +1646,25 @@ mod tests {
             let _ = e.instantiate_creature(&HELL_HOUND_TEMPLATE, Coordinate::new(15, 12), 1, 24);
             let _ = e.instantiate_creature(&WYVERN_TEMPLATE, Coordinate::new(17, 12), 1, 25);
             let _ = e.instantiate_creature(&STORM_GIANT_TEMPLATE, Coordinate::new(19, 11), 1, 26);
+            // Newest additions: Warlock (CHA-primary pact-magic caster
+            // on team 0), Hydra (CR 8 huge 5-bite regen boss on team 1),
+            // Stone Giant (CR 7 boulder + greatclub on team 1), Medusa
+            // (CR 6 petrifying gaze + snake hair on team 1), Salamander
+            // (CR 5 fire-elemental on team 1). Verifies the AI handles
+            // the new pact-magic slot table, the 5-bite multi, the
+            // petrifying gaze rider, and the fire-immune elemental.
+            use crate::actors::creatures::hydras::HYDRA_TEMPLATE;
+            use crate::actors::creatures::medusas::MEDUSA_TEMPLATE;
+            use crate::actors::creatures::salamanders::SALAMANDER_TEMPLATE;
+            use crate::actors::creatures::stone_giants::STONE_GIANT_TEMPLATE;
+            use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
+            let _ = e.instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(18, 2), 0, 12);
+            // Place huge / large creatures off to the side so their
+            // footprints fit cleanly in the open lower-left quadrant.
+            let _ = e.instantiate_creature(&HYDRA_TEMPLATE, Coordinate::new(3, 17), 1, 27);
+            let _ = e.instantiate_creature(&STONE_GIANT_TEMPLATE, Coordinate::new(8, 17), 1, 28);
+            let _ = e.instantiate_creature(&MEDUSA_TEMPLATE, Coordinate::new(13, 17), 1, 29);
+            let _ = e.instantiate_creature(&SALAMANDER_TEMPLATE, Coordinate::new(16, 17), 1, 30);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

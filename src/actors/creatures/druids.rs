@@ -65,8 +65,12 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*MASS_CURE_WOUNDS);
     // Level 6 — apex pre-fight buff: ally temp-HP + heal + Heroic.
     actions.push(&*HEROES_FEAST);
-    // Level 7
+    // Level 3 — Conjure Animals (summon 2 wolves on caster's team).
+    // RAW: druid / ranger; we slot at druid lv3.
+    actions.push(&*crate::actions::spells::CONJURE_ANIMALS);
+    // Level 7 — Fire Storm joins as the druid's big elemental burst.
     actions.push(&*REVERSE_GRAVITY);
+    actions.push(&*crate::actions::spells::FIRE_STORM);
     // Level 9 — the apex druid spell.
     actions.push(&*STORM_OF_VENGEANCE);
     CreatureTemplate {

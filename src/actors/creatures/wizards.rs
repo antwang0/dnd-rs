@@ -141,6 +141,16 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // save → blanket disadvantage on attacks + INT/WIS/CHA saves).
     actions.push(&*PRISMATIC_SPRAY);
     actions.push(&*FEEBLEMIND);
+    // Newest additions: lv6 Eyebite (single-target Asleep on WIS save
+    // fail), lv6 Otto's Irresistible Dance (single-target dance lock on
+    // WIS save fail), lv7 Fire Storm (mass fire DEX-save burst), lv8
+    // Maze (single-target inert-removal, INT-save loop in RAW). Rounds
+    // out the high-level wizard control kit with the iconic single-
+    // target removal / lock spells.
+    actions.push(&*crate::actions::spells::EYEBITE);
+    actions.push(&*crate::actions::spells::OTTOS_IRRESISTIBLE_DANCE);
+    actions.push(&*crate::actions::spells::FIRE_STORM);
+    actions.push(&*crate::actions::spells::MAZE);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

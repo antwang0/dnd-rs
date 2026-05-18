@@ -11106,30 +11106,10 @@ impl Action for AnimateDead {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        // Need a free adjacent tile to spawn the skeleton.
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return false;
-        };
-        let loc = caster.location();
-        // Skeleton is Medium (2x2); pick any 8-direction neighbor anchor
-        // that's spawnable across the full 2x2 footprint.
-        for dx in -2..=2isize {
-            for dy in -2..=2isize {
-                if dx == 0 && dy == 0 {
-                    continue;
-                }
-                let anchor = Coordinate::new(loc.x + dx, loc.y + dy);
-                if (0..2isize).all(|ox| {
-                    (0..2isize).all(|oy| {
-                        encounter
-                            .is_spawnable(Coordinate::new(anchor.x + ox, anchor.y + oy))
-                    })
-                }) {
-                    return true;
-                }
-            }
-        }
-        false
+        // Need a free adjacent slot to spawn the Medium skeleton.
+        encounter
+            .find_adjacent_spawn(caster_id, crate::engine::types::Size::Medium, 2)
+            .is_some()
     }
     fn side_effects(
         &self,
@@ -11141,30 +11121,13 @@ impl Action for AnimateDead {
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
 
-        let (team, loc) = match encounter.actors.get(&caster_id) {
-            Some(c) => (c.team(), c.location()),
+        let team = match encounter.actors.get(&caster_id) {
+            Some(c) => c.team(),
             None => return Vec::new(),
         };
-        // Find a spawnable 2x2 anchor next to the caster (8-direction).
-        let mut spawn: Option<Coordinate> = None;
-        'outer: for dx in -2..=2isize {
-            for dy in -2..=2isize {
-                if dx == 0 && dy == 0 {
-                    continue;
-                }
-                let anchor = Coordinate::new(loc.x + dx, loc.y + dy);
-                if (0..2isize).all(|ox| {
-                    (0..2isize).all(|oy| {
-                        encounter
-                            .is_spawnable(Coordinate::new(anchor.x + ox, anchor.y + oy))
-                    })
-                }) {
-                    spawn = Some(anchor);
-                    break 'outer;
-                }
-            }
-        }
-        let Some(spawn) = spawn else {
+        let Some(spawn) =
+            encounter.find_adjacent_spawn(caster_id, crate::engine::types::Size::Medium, 2)
+        else {
             return Vec::new();
         };
         match encounter.instantiate_creature(&SKELETON_TEMPLATE, spawn, team, 99) {
@@ -12137,3 +12100,450 @@ impl Action for Feeblemind {
 }
 
 pub static FEEBLEMIND: LazyLock<Feeblemind> = LazyLock::new(|| Feeblemind {});
+
+/// Otto's Irresistible Dance — 5e level-6 enchantment, concentration,
+/// action. Single-target WIS save against the caster's spell DC. On a
+/// failed save, the target dances helplessly: zero movement, attack
+/// disadvantage, auto-fail DEX saves, attackers get advantage. RAW
+/// allows the target to spend an Action each turn to reattempt the
+/// save; we collapse to a duration-bound install (10 rounds). Cleared
+/// on concentration drop. No damage — pure control.
+pub struct OttosIrresistibleDance {}
+
+impl Action for OttosIrresistibleDance {
+    fn name(&self) -> &str {
+        "otto's irresistible dance"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dance", "ottos", "irresistible dance"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft RAW = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Bard / wizard / sorcerer-list spell — pick the higher of the
+        // caster's mental abilities for the DC.
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Intelligence,
+        ]);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        if save.passed() {
+            encounter.log("  otto's dance: target resists the compulsion");
+            return Vec::new();
+        }
+        encounter.log("  otto's dance: target capers helplessly");
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Dancing,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Otto's Irresistible Dance",
+                    vec![(target_id, Condition::Dancing)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static OTTOS_IRRESISTIBLE_DANCE: LazyLock<OttosIrresistibleDance> =
+    LazyLock::new(|| OttosIrresistibleDance {});
+
+/// Maze — 5e level-8 conjuration, concentration, action. Single-target
+/// banishment with no save (RAW gives the target an INT check each turn
+/// to escape — we collapse to a duration-bound install). The target is
+/// removed from the encounter for up to 10 rounds (1 minute RAW) — we
+/// model with the `Mazed` condition which blocks all action economy +
+/// movement, leaving the actor inert on the map. Concentration-bound.
+pub struct Maze {}
+
+impl Action for Maze {
+    fn name(&self) -> &str {
+        "maze"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["banish"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft RAW = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(8)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        encounter.log("  maze: target vanishes into a labyrinthine demiplane");
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Mazed,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Maze",
+                    vec![(target_id, Condition::Mazed)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static MAZE: LazyLock<Maze> = LazyLock::new(|| Maze {});
+
+/// Fire Storm — 5e level-7 evocation, action. 20ft-radius sphere
+/// centered on a point within 150ft (40 tiles). Every creature in the
+/// burst makes a DEX save against the caster's spell DC (WIS for
+/// druid/cleric, INT for wizard — we pick the caster's higher one);
+/// on fail they take 7d10 fire, half on save. Allies in the radius are
+/// spared (caster picks the silhouette of the storm per RAW) — we use
+/// the standard `enemy_burst_targets` partition.
+pub struct FireStorm {}
+
+impl Action for FireStorm {
+    fn name(&self) -> &str {
+        "fire storm"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["firestorm", "storm"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(40)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(7)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Cleric / Druid → WIS, Wizard → INT. Pick the larger.
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Intelligence,
+        ]);
+        let raw = encounter.roll(&Dice::new(7, 10));
+        encounter.log(format!(
+            "  fire storm: 7d10({}) fire engulfs the radius",
+            raw
+        ));
+        // 5e RAW lets the caster shape the storm as ten contiguous 10ft
+        // cubes — players use it to skirt allies. We approximate with
+        // the enemy-only burst partition so allies in the radius are
+        // spared (matches the load-bearing "caster chooses the
+        // silhouette" intent of the spell).
+        const RADIUS: isize = 4;
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
+            let save = encounter.roll_save(tid, AbilityScoreType::Dexterity, dc);
+            let dmg = if save.passed() { raw / 2 } else { raw };
+            if dmg == 0 {
+                continue;
+            }
+            effects.push(Box::new(DealDamage {
+                actor_id: tid,
+                amount: dmg,
+                damage_type: DamageType::Fire,
+            }));
+        }
+        effects
+    }
+}
+
+pub static FIRE_STORM: LazyLock<FireStorm> = LazyLock::new(|| FireStorm {});
+
+/// Eyebite — 5e level-6 necromancy, concentration, action. Single-target
+/// WIS save against the caster's spell DC. RAW offers three eye options
+/// (asleep / panicked / sickened); we pick `asleep` as the load-bearing
+/// flavor since it's the strongest control. On fail the target falls
+/// Asleep for up to 10 rounds (1 minute RAW). Sleep is woken by damage
+/// per the engine's existing damage-on-Asleep hook, so the spell still
+/// gives the target an escape. Concentration-bound on the caster.
+pub struct Eyebite {}
+
+impl Action for Eyebite {
+    fn name(&self) -> &str {
+        "eyebite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["evil eye"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft RAW = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Eyebite is on the bard / sorcerer / warlock / wizard list — pick
+        // the caster's higher mental ability for the DC.
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Intelligence,
+        ]);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        if save.passed() {
+            encounter.log("  eyebite: target shakes off the evil eye");
+            return Vec::new();
+        }
+        encounter.log("  eyebite: target collapses into a magical slumber");
+        // Two parallel conditions: Asleep (load-bearing mechanics —
+        // action-economy block + melee-crit-on-hit) and EyebittenSick
+        // (concentration mark; only used to link the spell to the
+        // target for cleanup on drop).
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Asleep,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::EyebittenSick,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Eyebite",
+                    vec![(target_id, Condition::Asleep), (target_id, Condition::EyebittenSick)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static EYEBITE: LazyLock<Eyebite> = LazyLock::new(|| Eyebite {});
+
+/// Conjure Animals — 5e level-3 conjuration, concentration, action.
+/// Summons two CR-1/4 wolves on adjacent tiles to the caster, joining
+/// the caster's team. We collapse the RAW "1 CR-2 / 2 CR-1 / 4 CR-1/2
+/// / 8 CR-1/4" option table to the 2-wolf branch since it's the load-
+/// bearing flavor for a level-3 cast and our wolf is already on the
+/// books. Each conjured wolf gets the Conjured condition so dropping
+/// concentration prunes them via the engine's cleanup hook.
+/// Concentration-bound on the caster.
+pub struct ConjureAnimals {}
+
+impl Action for ConjureAnimals {
+    fn name(&self) -> &str {
+        "conjure animals"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["conjure", "summon"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Need at least one free Medium slot adjacent to the caster —
+        // the second wolf is best-effort (the spell still resolves with
+        // one conjured ally if only one slot is available).
+        encounter
+            .find_adjacent_spawn(caster_id, crate::engine::types::Size::Medium, 2)
+            .is_some()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actors::creatures::wolves::WOLF_TEMPLATE;
+
+        let team = match encounter.actors.get(&caster_id) {
+            Some(c) => c.team(),
+            None => return Vec::new(),
+        };
+        // Spawn up to two wolves on free adjacent slots — find one,
+        // spawn it (it occupies its slot), then look for the next slot.
+        let mut spawned: Vec<usize> = Vec::new();
+        for _ in 0..2 {
+            let Some(anchor) = encounter
+                .find_adjacent_spawn(caster_id, crate::engine::types::Size::Medium, 3)
+            else {
+                break;
+            };
+            match encounter.instantiate_creature(&WOLF_TEMPLATE, anchor, team, 90 + spawned.len()) {
+                Ok(new_id) => {
+                    encounter.log(format!(
+                        "  conjure animals: a spectral wolf appears at {} (actor #{})",
+                        anchor, new_id
+                    ));
+                    spawned.push(new_id);
+                }
+                Err(e) => {
+                    encounter.log(format!("  conjure animals failed: {}", e));
+                    break;
+                }
+            }
+        }
+        if spawned.is_empty() {
+            return Vec::new();
+        }
+        // Tag each wolf with the Conjured condition so the engine's
+        // concentration drop can prune them, then start concentration.
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut tags = Vec::new();
+        for id in &spawned {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: *id,
+                condition: Condition::Conjured,
+                timer: ConditionTimer::Rounds(100),
+            }));
+            tags.push((*id, Condition::Conjured));
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Conjure Animals", tags),
+        }));
+        effects
+    }
+}
+
+pub static CONJURE_ANIMALS: LazyLock<ConjureAnimals> = LazyLock::new(|| ConjureAnimals {});
