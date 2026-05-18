@@ -11,7 +11,7 @@ use crate::{
         action_overrides::ActionOverride,
         dice::Dice,
         encounter::EncounterInstance,
-        side_effects::{ApplicableSideEffect, DealDamage, Resource},
+        side_effects::{ApplicableSideEffect, DealDamage},
         types::{Coordinate, DamageType},
         util::{footprint_chebyshev, get_tiles_from_size, modifier_from_score},
     },
@@ -42,16 +42,6 @@ impl Action for RogueShortsword {
         Some(MELEE_REACH)
     }
 
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
 
     fn side_effects(
         &self,

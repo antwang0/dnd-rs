@@ -532,16 +532,6 @@ impl Action for LayOnHands {
     fn deals_damage(&self) -> bool {
         false
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn custom_validate_input(
         &self,
         encounter: &EncounterInstance,
@@ -703,16 +693,6 @@ impl Action for SacredWeapon {
     }
     fn deals_damage(&self) -> bool {
         false
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn custom_validate_input(
         &self,
@@ -1019,16 +999,6 @@ impl Action for TurnUndead {
     }
     fn deals_damage(&self) -> bool {
         false
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn custom_validate_input(
         &self,

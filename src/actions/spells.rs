@@ -167,6 +167,12 @@ fn spell_attack_outcome(
     if !hit {
         return (Vec::new(), 0);
     }
+    // 5e Mirror Image: spell attack rolls trigger the deflection too
+    // (RAW: "any attack roll against you"). Shared with weapon swings
+    // via the engine's `mirror_image_deflect` helper.
+    if encounter.mirror_image_deflect(target_id, is_crit) {
+        return (Vec::new(), 0);
+    }
     let dmg = encounter.roll(&damage_dice) as i32;
     let crit_extra = if is_crit { encounter.roll(&damage_dice) as i32 } else { 0 };
     let total_dmg = (dmg + crit_extra + damage_bonus).max(0) as u32;
@@ -188,14 +194,26 @@ fn spell_attack_outcome(
             String::new()
         }
     ));
-    (
-        vec![Box::new(DealDamage {
+    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
+        actor_id: target_id,
+        amount: total_dmg,
+        damage_type,
+    })];
+    // 5e Hex rider on spell attacks. The Hex spell RAW says "you deal
+    // extra 1d6 necrotic damage to the target whenever you hit it with
+    // an attack" — both weapon and spell attacks trigger the rider.
+    // Hunter's Mark RAW is weapon-only, so it's not duplicated here.
+    if encounter.is_hex_target(caster_id, target_id) {
+        let hex_total =
+            crate::engine::attack::roll_rider(encounter, Dice::new(1, 6), is_crit);
+        encounter.log(format!("  hex: +{} extra Necrotic", hex_total));
+        effects.push(Box::new(DealDamage {
             actor_id: target_id,
-            amount: total_dmg,
-            damage_type,
-        })],
-        total_dmg,
-    )
+            amount: hex_total,
+            damage_type: DamageType::Necrotic,
+        }));
+    }
+    (effects, total_dmg)
 }
 
 /// Sacred Flame — cleric cantrip. Range 60ft (24 tiles), DEX save vs the
@@ -1552,16 +1570,6 @@ impl Action for RayOfFrost {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Cold]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -2051,16 +2059,6 @@ impl Action for ChillTouch {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Necrotic]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -2248,16 +2246,6 @@ impl Action for PoisonSpray {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Poison]
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -2556,16 +2544,6 @@ impl Action for ThornWhip {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Piercing]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -2651,16 +2629,6 @@ impl Action for SpareTheDying {
     fn is_heal(&self) -> bool {
         true
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn custom_validate_input(
         &self,
         encounter: &EncounterInstance,
@@ -2721,16 +2689,6 @@ impl Action for TollTheDead {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Necrotic]
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -2800,16 +2758,6 @@ impl Action for ViciousMockery {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Psychic]
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -3051,16 +2999,6 @@ impl Action for ShockingGrasp {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Lightning]
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -3412,16 +3350,6 @@ impl Action for EldritchBlast {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Force]
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -4609,16 +4537,6 @@ impl Action for MindSliver {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Psychic]
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -6674,16 +6592,6 @@ impl Action for WordOfRadiance {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Radiant]
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -9020,16 +8928,6 @@ impl Action for BoomingBlade {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Thunder]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -9734,11 +9632,14 @@ impl GreaterRestoration {
     /// a stuck-with-only-GR caster can still cleanse Poisoned / etc.
     /// Also lifts Exhausted (RAW: GR removes one level of exhaustion;
     /// we model the simplified single-tier flag so cleansing it ends
-    /// the condition outright).
-    const CANDIDATES: [Condition; 9] = [
+    /// the condition outright) and Feebled (RAW: GR explicitly removes
+    /// Feeblemind's mind-shattering effect — high-priority since it
+    /// otherwise locks down INT/WIS/CHA saves indefinitely).
+    const CANDIDATES: [Condition; 10] = [
         Condition::Petrified,
         Condition::Paralyzed,
         Condition::Stunned,
+        Condition::Feebled,
         Condition::Charmed,
         Condition::Frightened,
         Condition::Exhausted,
@@ -11927,3 +11828,312 @@ impl Action for SpikeStones {
 }
 
 pub static SPIKE_STONES: LazyLock<SpikeStones> = LazyLock::new(|| SpikeStones {});
+
+/// Holy Word — 5e level-7 cleric evocation, 30ft burst centered on the
+/// caster. Every enemy in the area makes a CHA save against the cleric's
+/// WIS-based DC: on fail, take 5d10 radiant. The save outcome also
+/// determines a rider keyed to the target's *remaining* HP after the
+/// damage lands (we approximate by reading the pre-damage HP — the engine
+/// queues all side effects in one batch so a "post-damage" read would
+/// require splitting into two queues, which the rest of the codebase
+/// avoids):
+/// - HP ≤ 50  → Stunned for 1 round  (the lockdown rider)
+/// - HP ≤ 75  → Blinded for 1 round
+/// - HP ≤ 100 → Deafened for 1 round
+/// - HP > 100 → damage only
+///
+/// Allies are spared per RAW (the spell explicitly targets enemies).
+/// Concentration-free.
+pub struct HolyWord {}
+
+impl Action for HolyWord {
+    fn name(&self) -> &str {
+        "holy word"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hwd", "holy"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Radiant]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(7)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let caster_loc = caster.location();
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let damage = encounter.roll(&Dice::new(5, 10));
+        encounter.log(format!(
+            "  holy word: 5d10({}) = {} radiant to enemies in 30ft",
+            damage, damage
+        ));
+        // Enemy-only burst centered on the caster (radius 6 ≈ 30ft).
+        let enemies = encounter.enemy_burst_targets(caster_id, caster_loc, 6);
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in enemies {
+            let save = encounter.roll_save(tid, AbilityScoreType::Charisma, dc);
+            if save.passed() {
+                continue;
+            }
+            // Capture HP *before* the damage queues — used to pick the rider
+            // tier per RAW's "if it has X or fewer HP" gate.
+            let hp = encounter
+                .actors
+                .get(&tid)
+                .map(|a| a.hitpoints())
+                .unwrap_or(0);
+            effects.push(Box::new(DealDamage {
+                actor_id: tid,
+                amount: damage,
+                damage_type: DamageType::Radiant,
+            }));
+            let (cond, label) = if hp <= 50 {
+                (Condition::Stunned, "stunned")
+            } else if hp <= 75 {
+                (Condition::Blinded, "blinded")
+            } else if hp <= 100 {
+                (Condition::Deafened, "deafened")
+            } else {
+                continue;
+            };
+            encounter.log(format!(
+                "  holy word: target at {} HP is {}",
+                hp, label
+            ));
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: cond,
+                timer: ConditionTimer::Rounds(1),
+            }));
+        }
+        effects
+    }
+}
+
+pub static HOLY_WORD: LazyLock<HolyWord> = LazyLock::new(|| HolyWord {});
+
+/// Prismatic Spray — 5e level-7 evocation. 60ft cone (radius-6 burst on
+/// the target point). Each enemy in the area rolls 1d8 to determine
+/// which colored ray strikes them; the ray's damage type is fixed by the
+/// roll. Then they make a DEX save against the caster's INT-based DC:
+/// on fail, take 10d6 of the rolled type; on save, half. The 8th color
+/// (white/multi) deals all rolled types together — we collapse the rare
+/// "force + blinded" rider into the 7-roll table and skip the reroll
+/// branch for simplicity.
+///   roll → damage type:
+///     1 → Fire, 2 → Acid, 3 → Lightning, 4 → Poison,
+///     5 → Cold, 6 → Force, 7 → Radiant (also Blinded for 1 round),
+///     8 → Necrotic (the indigo ray)
+/// Each target gets its own ray roll — RAW lets each pick a different
+/// color, and this matches the chaos of the spell. Enemy-only filter:
+/// the caster controls the cone aim, so allies in the burst are spared.
+pub struct PrismaticSpray {}
+
+impl Action for PrismaticSpray {
+    fn name(&self) -> &str {
+        "prismatic spray"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ps", "prismatic"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 6 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60ft cone — the burst origin sits at the cone's far edge.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        // Random per target — list the full envelope so resistance hints
+        // in the UI surface every possibility.
+        vec![
+            DamageType::Fire,
+            DamageType::Acid,
+            DamageType::Lightning,
+            DamageType::Poison,
+            DamageType::Cold,
+            DamageType::Force,
+            DamageType::Radiant,
+            DamageType::Necrotic,
+        ]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(7)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        encounter.log("  prismatic spray: a rainbow burst erupts");
+        let enemies = encounter.enemy_burst_targets(caster_id, point, 6);
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in enemies {
+            let ray = encounter.roll(&Dice::new(1, 8));
+            let (dtype, name, with_blind) = match ray {
+                1 => (DamageType::Fire, "red", false),
+                2 => (DamageType::Acid, "orange", false),
+                3 => (DamageType::Lightning, "yellow", false),
+                4 => (DamageType::Poison, "green", false),
+                5 => (DamageType::Cold, "blue", false),
+                6 => (DamageType::Force, "violet", false),
+                7 => (DamageType::Radiant, "white", true),
+                _ => (DamageType::Necrotic, "indigo", false),
+            };
+            let raw = encounter.roll(&Dice::new(10, 6));
+            let save = encounter.roll_save(tid, AbilityScoreType::Dexterity, dc);
+            let dmg = if save.passed() { raw / 2 } else { raw };
+            encounter.log(format!(
+                "  prismatic spray: 1d8({}) {} ray \u{2014} 10d6({}) {:?} ({}{})",
+                ray,
+                name,
+                raw,
+                dtype,
+                dmg,
+                if save.passed() { ", saved" } else { "" }
+            ));
+            if dmg > 0 {
+                effects.push(Box::new(DealDamage {
+                    actor_id: tid,
+                    amount: dmg,
+                    damage_type: dtype,
+                }));
+            }
+            // The white ray also leaves the target Blinded for 1 round on
+            // a failed save (the radiant flash sears their eyes).
+            if with_blind && !save.passed() {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: tid,
+                    condition: Condition::Blinded,
+                    timer: ConditionTimer::Rounds(1),
+                }));
+            }
+        }
+        effects
+    }
+}
+
+pub static PRISMATIC_SPRAY: LazyLock<PrismaticSpray> = LazyLock::new(|| PrismaticSpray {});
+
+/// Feeblemind — 5e level-8 enchantment. Single-target INT save against
+/// the caster's INT-based spell DC. On a failed save, the target takes
+/// 4d6 psychic damage and is Feebled (our new condition): their INT and
+/// CHA effectively drop to 1, modeled as blanket disadvantage on attack
+/// rolls (the target can barely focus), disadvantage on INT/WIS/CHA
+/// saves, and they can't cast spells. The condition lasts 10 rounds
+/// (RAW: permanent until Greater Restoration / Heal / etc; we cap to a
+/// duration the engine can resolve before the encounter ends). Greater
+/// Restoration explicitly removes Feebled.
+pub struct Feeblemind {}
+
+impl Action for Feeblemind {
+    fn name(&self) -> &str {
+        "feeblemind"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fm", "feeble"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 150 ft = 60 tiles RAW — capped at 40 to fit common map widths.
+        Some(40)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Psychic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(8)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let damage = encounter.roll(&Dice::new(4, 6));
+        // Per RAW the damage lands regardless of the save; only the
+        // mind-shatter rider gates on the save outcome.
+        encounter.log(format!(
+            "  feeblemind: 4d6({}) = {} psychic",
+            damage, damage
+        ));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: damage,
+            damage_type: DamageType::Psychic,
+        })];
+        let save = encounter.roll_save(target_id, AbilityScoreType::Intelligence, dc);
+        if !save.passed() {
+            encounter.log("  feeblemind: target's mind shatters");
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Feebled,
+                timer: ConditionTimer::Rounds(10),
+            }));
+        }
+        effects
+    }
+}
+
+pub static FEEBLEMIND: LazyLock<Feeblemind> = LazyLock::new(|| Feeblemind {});

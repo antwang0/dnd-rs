@@ -524,16 +524,6 @@ impl Action for SpiderBite {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Bludgeoning]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -605,16 +595,6 @@ impl Action for Greataxe {
     fn reach_tiles(&self) -> Option<isize> {
         Some(MELEE_REACH)
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -659,16 +639,6 @@ impl Action for HeavyCrossbow {
     fn requires_los(&self) -> bool {
         true
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -712,16 +682,6 @@ impl Action for WolfBite {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Piercing]
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -1091,16 +1051,6 @@ impl Action for ImpSting {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Piercing, DamageType::Poison]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -1343,16 +1293,6 @@ impl Action for VampiricBite {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Piercing, DamageType::Necrotic]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -1436,16 +1376,6 @@ impl Action for GhoulClaws {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Slashing]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -1511,16 +1441,6 @@ impl Action for BugbearMorningstar {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Piercing]
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -1592,16 +1512,6 @@ impl Action for DireWolfBite {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Piercing]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -1672,16 +1582,6 @@ impl Action for OwlbearMultiattack {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Piercing, DamageType::Slashing]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -1741,16 +1641,6 @@ impl Action for WispShock {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Lightning]
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -1819,16 +1709,6 @@ impl Action for WerewolfBite {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Piercing]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -1891,16 +1771,6 @@ impl Action for WerewolfMultiattack {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Piercing, DamageType::Slashing]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -1960,16 +1830,6 @@ impl Action for MimicBite {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Piercing, DamageType::Acid]
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -2056,16 +1916,6 @@ impl Action for LuringSong {
     }
     fn deals_damage(&self) -> bool {
         false
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -2227,16 +2077,6 @@ impl Action for WorgBite {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Piercing]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -2337,16 +2177,6 @@ impl Action for CockatriceBite {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Piercing]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -2410,16 +2240,6 @@ impl Action for WightLifeDrain {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Necrotic]
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -2491,16 +2311,6 @@ impl Action for MinotaurGore {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Piercing]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -2545,16 +2355,6 @@ impl Action for BansheeWail {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Psychic]
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -3146,16 +2946,6 @@ impl Action for ManticoreSpikes {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Piercing]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -3201,16 +2991,6 @@ impl Action for ManticoreMultiattack {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Piercing, DamageType::Slashing]
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -3322,16 +3102,6 @@ impl Action for TreantMultiattack {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Bludgeoning]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -3386,16 +3156,6 @@ impl Action for FireElementalTouch {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Fire]
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -3467,16 +3227,6 @@ impl Action for GelatinousCubeEngulf {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Acid]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -3547,16 +3297,6 @@ impl Action for DragonFireBreath {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Fire]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -3612,16 +3352,6 @@ impl Action for DragonBite {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Piercing, DamageType::Fire]
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -3713,16 +3443,6 @@ impl Action for LichParalyzingTouch {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Cold]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -3798,16 +3518,6 @@ impl Action for BeholderEyeRay {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Force]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -3869,16 +3579,6 @@ impl Action for DrowPoisonedCrossbow {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Piercing, DamageType::Poison]
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -3997,16 +3697,6 @@ impl Action for VampireCharmingGaze {
     fn deals_damage(&self) -> bool {
         false
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -4081,16 +3771,6 @@ impl Action for CouatlBite {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Piercing, DamageType::Poison]
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -4179,16 +3859,6 @@ impl Action for CouatlSleepGaze {
     }
     fn deals_damage(&self) -> bool {
         false
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -4289,16 +3959,6 @@ impl Action for PitFiendFearAura {
     }
     fn deals_damage(&self) -> bool {
         false
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -4413,16 +4073,6 @@ impl Action for TarrasqueTail {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Bludgeoning]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -4533,16 +4183,6 @@ impl Action for SolarLongsword {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Slashing, DamageType::Radiant]
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -4721,16 +4361,6 @@ impl Action for MindFlayerTentacles {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Psychic]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -4806,16 +4436,6 @@ impl Action for ErinyesLongsword {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Slashing, DamageType::Poison]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -4873,3 +4493,313 @@ pub static ERINYES_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
     sub_attack: &*ERINYES_LONGSWORD,
     count: 3,
 });
+
+/// Hell Hound Bite — STR-based 1d8 piercing melee with a 1d6 fire rider
+/// per RAW. The fire is a separate `DealDamage` so per-target resistance
+/// / immunity applies independently to the piercing and the fire halves.
+pub struct HellHoundBite {}
+
+impl Action for HellHoundBite {
+    fn name(&self) -> &str {
+        "hellfire bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hhb", "hellbite"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Fire]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "bite",
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(1, 8),
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        let fire = encounter.roll(&Dice::new(1, 6));
+        encounter.log(format!(
+            "  hellfire bite: 1d6({}) = {} fire rider",
+            fire, fire
+        ));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: fire,
+            damage_type: DamageType::Fire,
+        }));
+        effects
+    }
+}
+
+pub static HELL_HOUND_BITE: LazyLock<HellHoundBite> = LazyLock::new(|| HellHoundBite {});
+
+/// Hell Hound Fire Breath — 15ft cone (radius-3 burst). DC 12 DEX save:
+/// half damage on pass, full 6d6 fire on fail. Recharge mechanic in RAW
+/// (5-6 on d6 at start of each turn); we model the simpler one-shot —
+/// the AI's action picker will re-cast the breath when the slot allows.
+pub struct HellHoundFireBreath {}
+
+impl Action for HellHoundFireBreath {
+    fn name(&self) -> &str {
+        "fire breath"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hhfb", "breath"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 3 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 15ft cone — burst origin sits 15ft from caster.
+        Some(6)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        const DC: i32 = 12;
+        let raw = encounter.roll(&Dice::new(6, 6));
+        encounter.log(format!(
+            "  fire breath: 6d6({}) = {} fire (DC {} DEX, half on save)",
+            raw, raw, DC
+        ));
+        crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            3,
+            AbilityScoreType::Dexterity,
+            DC,
+            raw,
+            DamageType::Fire,
+        )
+    }
+}
+
+pub static HELL_HOUND_FIRE_BREATH: LazyLock<HellHoundFireBreath> =
+    LazyLock::new(|| HellHoundFireBreath {});
+
+/// Wyvern Bite — 2d6+STR piercing melee (a chomp; no rider). The
+/// stinger is a separate action with its own poison save rider.
+pub static WYVERN_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "wyvern bite",
+    aliases: &["wbite"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Piercing,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Wyvern Stinger — 2d6+STR piercing melee with a brutal poison rider:
+/// target makes a DC 15 CON save or takes 7d6 poison (half on save).
+/// The wyvern's signature finisher — average ~24 poison on a fail
+/// adds up to roughly half a CR-6 HP bar in one swing. Reach 2 because
+/// the stinger tail extends past the body's footprint.
+pub struct WyvernStinger {}
+
+impl Action for WyvernStinger {
+    fn name(&self) -> &str {
+        "wyvern stinger"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sting", "wsting"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(2)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Poison]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "sting",
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(2, 6),
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        const DC: i32 = 15;
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, DC);
+        let raw = encounter.roll(&Dice::new(7, 6));
+        let poison = if save.passed() { raw / 2 } else { raw };
+        encounter.log(format!(
+            "  wyvern poison: 7d6({}) = {} poison{}",
+            raw,
+            poison,
+            if save.passed() { " (saved)" } else { "" }
+        ));
+        if poison > 0 {
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: poison,
+                damage_type: DamageType::Poison,
+            }));
+        }
+        effects
+    }
+}
+
+pub static WYVERN_STINGER: LazyLock<WyvernStinger> = LazyLock::new(|| WyvernStinger {});
+
+/// Storm Giant Greatsword — STR-based 6d6 + STR slashing melee. Reach 3
+/// (15ft for a Huge-footprint giant). One of the heaviest single-swing
+/// damage dice in the codebase — averages ~30 slashing per hit.
+pub static STORM_GIANT_GREATSWORD: SimpleWeapon = SimpleWeapon {
+    display_name: "storm greatsword",
+    aliases: &["sgs", "sgreatsword"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(6, 6),
+    damage_type: DamageType::Slashing,
+    reach: 3,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Storm Giant Thrown Rock — STR-based 4d12 + STR bludgeoning ranged
+/// attack. Range 240ft RAW; capped at 40 tiles to fit the map. The
+/// storm giant's stand-off lane when the front line is buttoned up.
+pub static STORM_GIANT_ROCK: SimpleWeapon = SimpleWeapon {
+    display_name: "storm rock",
+    aliases: &["sgr", "srock"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(4, 12),
+    damage_type: DamageType::Bludgeoning,
+    reach: 40,
+    is_melee: false,
+    requires_los: true,
+    cost_resource: Resource::Action,
+};
+
+/// Storm Giant Lightning Strike — bonus-action signature ability. Hurls
+/// a bolt of lightning at a single target within 500ft. DC 17 DEX save:
+/// half damage on pass, full 8d10 lightning on fail. The bonus-action
+/// cost makes it free-action-economy alongside the giant's main swing.
+pub struct StormGiantLightningStrike {}
+
+impl Action for StormGiantLightningStrike {
+    fn name(&self) -> &str {
+        "lightning strike"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["lstrike", "sgls"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 500ft RAW — capped to map width.
+        Some(40)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Lightning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        const DC: i32 = 17;
+        let raw = encounter.roll(&Dice::new(8, 10));
+        let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, DC);
+        let damage = if save.passed() { raw / 2 } else { raw };
+        encounter.log(format!(
+            "  lightning strike: 8d10({}) = {} lightning{}",
+            raw,
+            damage,
+            if save.passed() { " (saved)" } else { "" }
+        ));
+        if damage == 0 {
+            return Vec::new();
+        }
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: damage,
+            damage_type: DamageType::Lightning,
+        })]
+    }
+}
+
+pub static STORM_GIANT_LIGHTNING_STRIKE: LazyLock<StormGiantLightningStrike> =
+    LazyLock::new(|| StormGiantLightningStrike {});

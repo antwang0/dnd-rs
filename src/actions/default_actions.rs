@@ -634,16 +634,6 @@ impl Action for Hide {
     fn is_harmful(&self) -> bool {
         false
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn custom_validate_input(
         &self,
         encounter: &EncounterInstance,

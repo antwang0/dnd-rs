@@ -426,6 +426,20 @@ pub enum Condition {
     /// or the target makes a successful WIS save (which we re-trigger via
     /// damage in 5e; we keep the spell duration-bound for simplicity).
     Dominated,
+    /// Feebled (5e Feeblemind, level-8 enchantment). The target's INT
+    /// and CHA scores effectively drop to 1: they can't focus, can't
+    /// cast spells, can't sustain attention. We model the load-bearing
+    /// penalties:
+    /// - Disadvantage on attack rolls (joins the `imposes_attacker_
+    ///   disadvantage` cohort) — the target swings dazed.
+    /// - Disadvantage on INT, WIS, and CHA saving throws (read by
+    ///   `compute_save_mode`'s Feebled clause).
+    /// - The "can't cast spells" RAW clause is *not* enforced (the
+    ///   engine has no spell-component gate), but Greater Restoration
+    ///   explicitly removes Feebled so the cleanse path stays intact.
+    ///
+    /// Cleared by a Greater Restoration cleanse or by long rest.
+    Feebled,
 }
 
 impl Condition {
@@ -503,6 +517,7 @@ impl Condition {
             Condition::Entangled => "entangled",
             Condition::Flying => "flying",
             Condition::Dominated => "dominated",
+            Condition::Feebled => "feebleminded",
         }
     }
 
@@ -606,6 +621,7 @@ impl Condition {
                 | Condition::Exhausted
                 | Condition::Confused
                 | Condition::Dominated
+                | Condition::Feebled
         )
     }
 

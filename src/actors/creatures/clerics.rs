@@ -5,7 +5,7 @@ use crate::actions::spells::{
     COMMAND, COUNTERSPELL, CROWN_OF_STARS, CRUSADERS_MANTLE, CURE_WOUNDS, DAYLIGHT, DEATH_WARD,
     DISPEL_MAGIC, DIVINE_FAVOR, EARTHQUAKE, FAERIE_FIRE, FEAR, FLAME_STRIKE, FLY,
     GREATER_RESTORATION, GUIDING_BOLT, HASTE, HEAL_SPELL_HIGH, HEALING_SPIRIT, HEALING_WORD,
-    HEROES_FEAST, HEROISM, HOLD_PERSON, HOLY_AURA, INFLICT_WOUNDS, INSECT_PLAGUE,
+    HEROES_FEAST, HEROISM, HOLD_PERSON, HOLY_AURA, HOLY_WORD, INFLICT_WOUNDS, INSECT_PLAGUE,
     LESSER_RESTORATION, MASS_CURE_WOUNDS, MASS_HEAL, MASS_HEALING_WORD, PLANT_GROWTH,
     POWER_WORD_HEAL, PRAYER_OF_HEALING, PROTECTION_FROM_EVIL_AND_GOOD, RESURRECTION, REVIVIFY,
     SACRED_BURST, SACRED_FLAME, SANCTUARY, SHIELD_OF_FAITH, SPARE_THE_DYING, SPIKE_GROWTH,
@@ -107,6 +107,9 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Level-6 apex pre-fight buff: ally-burst temp HP + heal + Heroic.
     // Costs the cleric's only level-6 slot, so it's a one-off opener.
     actions.push(&*HEROES_FEAST);
+    // Level-7 apex anti-enemy radiant burst with HP-tiered conditions.
+    // Pairs with Resurrection for the cleric's level-7 slot economy.
+    actions.push(&*HOLY_WORD);
     CreatureTemplate {
         name: "Cleric",
         glyph: 'C',
