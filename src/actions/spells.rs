@@ -11659,3 +11659,271 @@ impl Action for DominatePerson {
 }
 
 pub static DOMINATE_PERSON: LazyLock<DominatePerson> = LazyLock::new(|| DominatePerson {});
+
+/// Magic Stone — 5e druid / artificer cantrip. The caster blesses up to
+/// three pebbles; flinging one is a ranged spell attack (60ft) with the
+/// caster's spellcasting mod, 1d6 + mod bludgeoning on hit. We collapse
+/// the "three charges over the day" RAW into a per-cast 1-pebble attack
+/// — at cantrip cadence the action-economy gate matters more than the
+/// charge pool, and the 60ft range + spell-attack treatment is the
+/// load-bearing piece (it bypasses ranged-in-melee disadvantage RAW,
+/// which we don't yet model). Druids/artificers cast off WIS in 5e; we
+/// reuse the caster's `spell_attack_modifier(Wisdom)` so a sorcerer
+/// multiclass via Druidic Warrior would still get a sensible swing
+/// (CHA-flavored casters fall back via spell_attack_modifier itself).
+pub struct MagicStone {}
+
+impl Action for MagicStone {
+    fn name(&self) -> &str {
+        "magic stone"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ms", "stone"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60ft RAW = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // Cantrip — Action only.
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let wis_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
+        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Wisdom);
+        // 1d6 + WIS modifier on hit (RAW). Damage type is bludgeoning —
+        // a stone, not a magical force projectile — so per-target
+        // resistance / immunity to BPS applies normally.
+        spell_attack_with_bonus(
+            encounter,
+            caster_id,
+            target_id,
+            "magic stone",
+            attack_bonus,
+            Dice::new(1, 6),
+            wis_mod,
+            DamageType::Bludgeoning,
+            false,
+        )
+    }
+}
+
+pub static MAGIC_STONE: LazyLock<MagicStone> = LazyLock::new(|| MagicStone {});
+
+/// Heroes' Feast — 5e level-6 conjuration. A magical feast appears; every
+/// ally that partakes (we model: every ally in the caster's burst at
+/// cast time) gains 2d10 + 10 temp HP (we collapse the "2d10 max HP for
+/// 24 hours" RAW into a flat temp-HP grant for combat duration), gains
+/// immunity to Frightened (we approximate via Heroic, which already
+/// includes Frightened immunity), and is healed for 2d10 HP. Caster is
+/// included if they're in the burst. Slot-6 = once-per-day apex pre-
+/// fight buff for the cleric / druid / paladin loadout.
+pub struct HeroesFeast {}
+
+impl Action for HeroesFeast {
+    fn name(&self) -> &str {
+        "heroes' feast"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hf", "feast"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 6 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30ft to the burst origin = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        // Roll the temp-HP grant and heal once and share across all
+        // partakers per RAW's shared-feast semantics.
+        let temp_pool = encounter.roll(&Dice::new(2, 10)) + 10;
+        let heal_amount = encounter.roll(&Dice::new(2, 10));
+        encounter.log(format!(
+            "  heroes' feast: {} temp HP + {} HP heal + Heroic buff to allies in 30ft",
+            temp_pool, heal_amount
+        ));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        // Ally-only burst — friendly fire feasts make no sense.
+        let allies = encounter.ally_burst_targets(caster_id, point, 6);
+        // Include the caster explicitly if they sit at the table — the
+        // ally_burst_targets helper covers the caster naturally via the
+        // same-team filter, but we double-include if the caster wasn't
+        // in the 30ft window (they cast it on a distant pile of allies).
+        let mut targets = allies.clone();
+        if !targets.contains(&caster_id) {
+            targets.push(caster_id);
+        }
+        targets.sort_unstable();
+        targets.dedup();
+        for id in targets {
+            effects.push(Box::new(GainTempHp {
+                actor_id: id,
+                amount: temp_pool,
+            }));
+            effects.push(Box::new(Heal {
+                actor_id: id,
+                amount: heal_amount,
+            }));
+            // Heroic carries the Frightened-immunity clause already via
+            // the AdjustSaveBuff lane in the existing Heroism spell. We
+            // reuse the condition for symmetry; 10-round timer.
+            effects.push(Box::new(ApplyCondition {
+                actor_id: id,
+                condition: Condition::Heroic,
+                timer: ConditionTimer::Rounds(10),
+            }));
+        }
+        effects
+    }
+}
+
+pub static HEROES_FEAST: LazyLock<HeroesFeast> = LazyLock::new(|| HeroesFeast {});
+
+/// Spike Stones — 5e level-3 druid transmutation, concentration. Stones
+/// in a 20ft square sprout sharp spikes. Every enemy whose footprint
+/// touches the burst is tagged with `Spiked` for 10 rounds — the per-
+/// step piercing damage rider lives on `MoveActor::apply` and reads the
+/// condition. Acts like a slower, larger-area Spike Growth, traded for
+/// the higher slot cost. Concentration: dropping it pulls the tags.
+pub struct SpikeStones {}
+
+impl Action for SpikeStones {
+    fn name(&self) -> &str {
+        "spike stones"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ss", "spike-stones"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 20ft square ≈ 4-tile radius (we use Chebyshev burst so this is
+        // a 9×9 region; close enough to the 4-square RAW footprint).
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60ft to the burst origin = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        // Damage lands via the per-step Spiked rider, not at cast time.
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        // Enemy-only burst — we don't want allies stepping into the
+        // spike field to also bleed (RAW: it's terrain that hits
+        // anyone, but the AI's targeting works better as enemy-only).
+        let enemies = encounter.enemy_burst_targets(caster_id, point, 4);
+        if enemies.is_empty() {
+            encounter.log("  spike stones: no enemies in the area".to_string());
+        } else {
+            encounter.log(format!(
+                "  spike stones: {} enemies tagged with spiked",
+                enemies.len()
+            ));
+        }
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut concentration_targets: Vec<(usize, Condition)> = Vec::new();
+        for id in enemies {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: id,
+                condition: Condition::Spiked,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            concentration_targets.push((id, Condition::Spiked));
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions(
+                "Spike Stones",
+                concentration_targets,
+            ),
+        }));
+        effects
+    }
+}
+
+pub static SPIKE_STONES: LazyLock<SpikeStones> = LazyLock::new(|| SpikeStones {});

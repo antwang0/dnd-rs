@@ -326,16 +326,21 @@ pub struct OnHitRider {
     pub follow_up: Option<SmiteFollowUp>,
 }
 
-/// Secondary save + condition rider tagged onto a Smite-spell hit. The
-/// caster's CHA-based spell save DC drives the save; on fail, `apply`
-/// lands on the target with `timer`. Stored as a value so the on-hit
-/// rider table stays a flat array of plain-data entries.
+/// Secondary save + condition rider tagged onto a Smite-spell hit. When
+/// `save_ability` is `Some(ability)`, the target rolls that save against
+/// the caster's spell DC (driven by `dc_ability`); on fail, `apply` lands
+/// with `timer`. When `save_ability` is `None`, the rider auto-applies
+/// on hit with no save (Branding Smite's "brand", Searing Smite's ignite).
+/// Stored as a value so the on-hit rider table stays a flat array of
+/// plain-data entries.
 #[derive(Clone, Copy)]
 pub struct SmiteFollowUp {
     /// Save the target rolls (CON for Blinding Smite, WIS for Wrathful
-    /// Smite).
-    pub save_ability: AbilityScoreType,
-    /// Ability whose mod feeds the caster's spell save DC.
+    /// Smite). `None` skips the save entirely — the condition lands
+    /// unconditionally on the consuming hit.
+    pub save_ability: Option<AbilityScoreType>,
+    /// Ability whose mod feeds the caster's spell save DC. Ignored when
+    /// `save_ability` is `None` (no save means no DC).
     pub dc_ability: AbilityScoreType,
     pub apply: Condition,
     pub timer: ConditionTimer,
@@ -402,11 +407,10 @@ fn on_hit_riders() -> [OnHitRider; 9] {
             melee_only: true,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
-                // Auto-apply — represent as a save the target auto-fails
-                // by routing through a high-DC sentinel never reached
-                // (we keep the save line short with a low DC and CON
-                // ability, matching the 5e flavor of resisting flames).
-                save_ability: AbilityScoreType::Constitution,
+                // Auto-apply — RAW Searing Smite ignites the target on
+                // hit with no save. `save_ability: None` skips the save
+                // roll in `apply_smite_follow_up`.
+                save_ability: None,
                 dc_ability: AbilityScoreType::Charisma,
                 apply: Condition::Burning,
                 timer: ConditionTimer::Rounds(3),
@@ -424,7 +428,7 @@ fn on_hit_riders() -> [OnHitRider; 9] {
             melee_only: true,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
-                save_ability: AbilityScoreType::Wisdom,
+                save_ability: Some(AbilityScoreType::Wisdom),
                 dc_ability: AbilityScoreType::Charisma,
                 apply: Condition::Frightened,
                 timer: ConditionTimer::Rounds(10),
@@ -442,13 +446,9 @@ fn on_hit_riders() -> [OnHitRider; 9] {
             melee_only: true,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
-                // No save — RAW Branding Smite is auto-apply on hit. We
-                // route through the save path with a "guaranteed fail"
-                // save by picking an unreachable DC; cleaner to just
-                // queue the ApplyCondition unconditionally, which we
-                // handle in `apply_smite_follow_up` via a special-cased
-                // sentinel (`save_ability == dc_ability` is the marker).
-                save_ability: AbilityScoreType::Charisma,
+                // RAW Branding Smite is auto-apply on hit (no save).
+                // `save_ability: None` skips the save roll.
+                save_ability: None,
                 dc_ability: AbilityScoreType::Charisma,
                 apply: Condition::Outlined,
                 timer: ConditionTimer::Rounds(10),
@@ -465,7 +465,7 @@ fn on_hit_riders() -> [OnHitRider; 9] {
             melee_only: true,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
-                save_ability: AbilityScoreType::Constitution,
+                save_ability: Some(AbilityScoreType::Constitution),
                 dc_ability: AbilityScoreType::Charisma,
                 apply: Condition::Blinded,
                 timer: ConditionTimer::Rounds(10),
@@ -485,7 +485,7 @@ fn on_hit_riders() -> [OnHitRider; 9] {
             melee_only: true,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
-                save_ability: AbilityScoreType::Constitution,
+                save_ability: Some(AbilityScoreType::Constitution),
                 dc_ability: AbilityScoreType::Wisdom,
                 apply: Condition::Stunned,
                 timer: ConditionTimer::Rounds(1),
@@ -496,9 +496,9 @@ fn on_hit_riders() -> [OnHitRider; 9] {
 }
 
 /// Process the optional secondary save-and-apply step that some Smite
-/// spells stack on top of their bonus damage. Branding Smite's "no save"
-/// flavor (auto-apply on hit) is encoded with `save_ability == dc_ability`
-/// — we skip the save roll and queue the condition unconditionally.
+/// spells stack on top of their bonus damage. `save_ability: None`
+/// auto-applies the condition on hit (Branding Smite, Searing Smite's
+/// ignite); `Some(ability)` rolls that save against the caster's DC.
 fn apply_smite_follow_up(
     encounter: &mut EncounterInstance,
     effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
@@ -506,8 +506,7 @@ fn apply_smite_follow_up(
     target_id: usize,
     follow: SmiteFollowUp,
 ) {
-    // Auto-apply sentinel: same ability on both fields means "no save".
-    if follow.save_ability == follow.dc_ability {
+    let Some(save_ability) = follow.save_ability else {
         encounter.log(format!("  {}: auto-apply on hit", follow.label));
         effects.push(Box::new(ApplyCondition {
             actor_id: target_id,
@@ -515,12 +514,12 @@ fn apply_smite_follow_up(
             timer: follow.timer,
         }));
         return;
-    }
+    };
     let Some(caster) = encounter.actors.get(&caster_id) else {
         return;
     };
     let dc = caster.spell_save_dc(follow.dc_ability);
-    let save = encounter.roll_save(target_id, follow.save_ability, dc);
+    let save = encounter.roll_save(target_id, save_ability, dc);
     if save.passed() {
         encounter.log(format!("  {}: target saves", follow.label));
         return;

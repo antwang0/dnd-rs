@@ -2,9 +2,10 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::SCIMITAR;
 use crate::actions::spells::{
     CALL_LIGHTNING, CONFUSION, CURE_WOUNDS, DAYLIGHT, DISPEL_MAGIC, FAERIE_FIRE, FLY, GOODBERRY,
-    HEALING_WORD, HEAT_METAL, ICE_STORM, LESSER_RESTORATION, LEVITATE, MASS_CURE_WOUNDS, MOONBEAM,
-    PLANT_GROWTH, POISON_SPRAY, POLYMORPH, REVERSE_GRAVITY, SLEET_STORM, SPIKE_GROWTH,
-    STORM_OF_VENGEANCE, THORN_WHIP, THUNDERWAVE, WALL_OF_FIRE,
+    HEALING_WORD, HEAT_METAL, HEROES_FEAST, ICE_STORM, LESSER_RESTORATION, LEVITATE, MAGIC_STONE,
+    MASS_CURE_WOUNDS, MOONBEAM, PLANT_GROWTH, POISON_SPRAY, POLYMORPH, REVERSE_GRAVITY,
+    SLEET_STORM, SPIKE_GROWTH, SPIKE_STONES, STORM_OF_VENGEANCE, THORN_WHIP, THUNDERWAVE,
+    WALL_OF_FIRE,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size};
@@ -34,6 +35,7 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Cantrips
     actions.push(&*POISON_SPRAY);
     actions.push(&*THORN_WHIP);
+    actions.push(&*MAGIC_STONE);
     // Level 1
     actions.push(&*GOODBERRY);
     actions.push(&HEALING_WORD);
@@ -58,8 +60,11 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*POLYMORPH);
     actions.push(&*WALL_OF_FIRE);
     actions.push(&*CONFUSION);
+    actions.push(&*SPIKE_STONES);
     // Level 5
     actions.push(&*MASS_CURE_WOUNDS);
+    // Level 6 — apex pre-fight buff: ally temp-HP + heal + Heroic.
+    actions.push(&*HEROES_FEAST);
     // Level 7
     actions.push(&*REVERSE_GRAVITY);
     // Level 9 — the apex druid spell.

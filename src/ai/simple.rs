@@ -1542,6 +1542,18 @@ mod tests {
             let _ = e.instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(12, 2), 0, 9);
             let _ = e.instantiate_creature(&ABOLETH_TEMPLATE, Coordinate::new(7, 12), 1, 21);
             let _ = e.instantiate_creature(&SOLAR_TEMPLATE, Coordinate::new(14, 2), 0, 10);
+            // Latest additions: Sorcerer (CHA-primary blaster caster on
+            // team 0), Mind Flayer (CR 7 psionic boss with Mind Blast
+            // cone + Tentacle grapple on team 1), Erinyes (CR 12 flying
+            // devil with poisoned-longsword triple-multi on team 1).
+            // Verifies the AI handles the new spell list, the psychic
+            // cone save partition, and the heavy multi-swing burst.
+            use crate::actors::creatures::erinyes::ERINYES_TEMPLATE;
+            use crate::actors::creatures::mind_flayers::MIND_FLAYER_TEMPLATE;
+            use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+            let _ = e.instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(16, 2), 0, 11);
+            let _ = e.instantiate_creature(&MIND_FLAYER_TEMPLATE, Coordinate::new(11, 12), 1, 22);
+            let _ = e.instantiate_creature(&ERINYES_TEMPLATE, Coordinate::new(11, 14), 1, 23);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

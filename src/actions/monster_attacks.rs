@@ -4607,3 +4607,269 @@ pub static SOLAR_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
     sub_attack: &*SOLAR_LONGSWORD,
     count: 2,
 });
+
+/// Mind Flayer's Mind Blast — Action; 60-foot cone of psychic energy.
+/// Every creature in the burst makes an INT save vs the flayer's
+/// INT-based DC; on fail, take 4d8 psychic and become Stunned until the
+/// end of the flayer's next turn. On pass, half damage and no stun.
+/// We resolve the cone as a `radius: 6` burst centered on a targeted
+/// tile (the flayer aims) — consistent with how Dragon Fire Breath is
+/// modeled. Allies in the cone are spared via `enemy_burst_targets`.
+pub struct MindFlayerMindBlast {}
+
+impl Action for MindFlayerMindBlast {
+    fn name(&self) -> &str {
+        "mind blast"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mb", "blast"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 6 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Psychic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // 5e mind flayer's Mind Blast is a recharge 5-6 ability; we
+        // collapse to a regular Action with no recharge gate (the AI
+        // already paces it via the higher-leverage gating heuristics).
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let raw = encounter.roll(&Dice::new(4, 8));
+        encounter.log(format!(
+            "  mind blast: 4d8({}) = {} psychic cone (DC {} INT)",
+            raw, raw, dc
+        ));
+        // Enemy-only — we don't want the flayer Stunning its illithid
+        // allies that share the same team.
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for target_id in encounter.enemy_burst_targets(caster_id, point, 6) {
+            let save = encounter.roll_save(target_id, AbilityScoreType::Intelligence, dc);
+            let dmg = if save.passed() { raw / 2 } else { raw };
+            if dmg > 0 {
+                effects.push(Box::new(DealDamage {
+                    actor_id: target_id,
+                    amount: dmg,
+                    damage_type: DamageType::Psychic,
+                }));
+            }
+            if !save.passed() {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: target_id,
+                    condition: Condition::Stunned,
+                    timer: ConditionTimer::Rounds(1),
+                }));
+            }
+        }
+        effects
+    }
+}
+
+pub static MIND_FLAYER_MIND_BLAST: LazyLock<MindFlayerMindBlast> =
+    LazyLock::new(|| MindFlayerMindBlast {});
+
+/// Mind Flayer's Tentacles — STR-based 2d10+1 psychic melee. On hit, the
+/// target makes an INT save vs the flayer's INT-DC; on fail, the target
+/// is grappled by the tentacles. We approximate the grapple with the
+/// existing `Adhered` condition (zero movement) since we don't model
+/// the "extract brain" follow-up. Reach 1 (5ft).
+pub struct MindFlayerTentacles {}
+
+impl Action for MindFlayerTentacles {
+    fn name(&self) -> &str {
+        "tentacles"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["tent", "mf-tentacles"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Psychic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let attack_mod = str_mod + caster.proficiency_bonus();
+        let mut effects = resolve_attack(
+            encounter,
+            AttackParams {
+                caster_id,
+                target_id,
+                action_name: "tentacles",
+                attack_bonus: attack_mod,
+                damage_dice: Dice::new(2, 10),
+                damage_bonus: str_mod,
+                damage_type: DamageType::Psychic,
+                is_melee: true,
+            },
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return effects;
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Intelligence, dc);
+        if !save.passed() {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Adhered,
+                timer: ConditionTimer::Rounds(3),
+            }));
+        }
+        effects
+    }
+}
+
+pub static MIND_FLAYER_TENTACLES: LazyLock<MindFlayerTentacles> =
+    LazyLock::new(|| MindFlayerTentacles {});
+
+/// Erinyes Longsword — STR-based 2d8+4 slashing melee with a permanent
+/// +3d8 poison rider on hit (Erinyes' weapons are poisoned RAW). The
+/// rider mirrors the Solar's radiant rider — the bigger fiendish dice
+/// reflect the CR-12 bracket, and poison is a damage type many low-CR
+/// PCs lack resistance to, so the rider is load-bearing for the threat.
+pub struct ErinyesLongsword {}
+
+impl Action for ErinyesLongsword {
+    fn name(&self) -> &str {
+        "erinyes longsword"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["er-sword", "erinyes-ls"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Slashing, DamageType::Poison]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let attack_mod = str_mod + caster.proficiency_bonus();
+        let mut effects = resolve_attack(
+            encounter,
+            AttackParams {
+                caster_id,
+                target_id,
+                action_name: "erinyes longsword",
+                attack_bonus: attack_mod,
+                damage_dice: Dice::new(2, 8),
+                damage_bonus: str_mod,
+                damage_type: DamageType::Slashing,
+                is_melee: true,
+            },
+        );
+        if !effects.is_empty() {
+            let poison = encounter.roll(&Dice::new(3, 8));
+            encounter.log(format!(
+                "  erinyes longsword: +{} extra Poison (envenomed blade)",
+                poison
+            ));
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: poison,
+                damage_type: DamageType::Poison,
+            }));
+        }
+        effects
+    }
+}
+
+pub static ERINYES_LONGSWORD: LazyLock<ErinyesLongsword> =
+    LazyLock::new(|| ErinyesLongsword {});
+
+/// Erinyes Multiattack — 3 longsword swings per Action. The flying
+/// devil's signature burst at CR 12 — three 2d8+4 slashing + 3d8 poison
+/// per hit means a full-connect roughly 60 average damage, enough to
+/// drop most squishies in one turn.
+pub static ERINYES_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "erinyes multiattack",
+    sub_attack: &*ERINYES_LONGSWORD,
+    count: 3,
+});
