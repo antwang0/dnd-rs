@@ -51,5 +51,6 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         features: HashSet::from([SECOND_WIND_TAG, ACTION_SURGE_TAG, INDOMITABLE_TAG]),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),
+        legendary_resistances: 0,
     }
 });

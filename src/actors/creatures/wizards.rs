@@ -162,6 +162,11 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::MORDENKAINENS_SWORD);
     actions.push(&*crate::actions::spells::POWER_WORD_PAIN);
     actions.push(&*crate::actions::spells::MASS_POLYMORPH);
+    // Sickening Radiance — lv4 evocation, concentration AOE: enemy-only
+    // 30ft radiant burst with Exhausted-on-fail. Slots cleanly between
+    // Stinking Cloud (lv3) and the higher-tier Sunbeam (lv6) as a
+    // mid-tier control-burst.
+    actions.push(&*crate::actions::spells::SICKENING_RADIANCE);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.
@@ -200,5 +205,6 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         features: HashSet::new(),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),
+        legendary_resistances: 0,
     }
 });

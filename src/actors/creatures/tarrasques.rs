@@ -94,5 +94,10 @@ pub static TARRASQUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // suppressor — the tarrasque regenerates unconditionally.
         regen_per_round: 40,
         regen_suppressors: HashSet::new(),
+        // 5e Legendary Resistance (3/Day): three failed saves per long
+        // rest are auto-promoted to passes. The Tarrasque needs these
+        // to shrug off Power Word Kill / Banishment / Hold Monster from
+        // the party's casters mid-fight.
+        legendary_resistances: 3,
     }
 });

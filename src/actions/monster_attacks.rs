@@ -5397,3 +5397,86 @@ impl Action for GhostHorrifyingVisage {
 
 pub static GHOST_HORRIFYING_VISAGE: LazyLock<GhostHorrifyingVisage> =
     LazyLock::new(|| GhostHorrifyingVisage {});
+
+/// Stone Golem Slam — STR-based 3d8+STR bludgeoning melee, reach 1.
+/// The golem's only attack (RAW: 2 slams per multi). No rider effects;
+/// pure crushing damage. Stays a SimpleWeapon so the multiattack
+/// wrapper can re-use it cleanly.
+pub static STONE_GOLEM_SLAM: SimpleWeapon = SimpleWeapon {
+    display_name: "stone slam",
+    aliases: &["s-slam", "sslam"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(3, 8),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Stone Golem Multiattack — 2 slams per Action. The golem's only
+/// non-Slow-Spell action lane.
+pub static STONE_GOLEM_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "stone golem multiattack",
+    sub_attack: &STONE_GOLEM_SLAM,
+    count: 2,
+});
+
+/// Stone Golem Slow — Action; 10ft sphere around the golem. Every
+/// creature in the burst makes a WIS save vs DC 17; on fail, they're
+/// `Slowed` for 5 rounds (the engine collapses RAW's "halved speed +
+/// -2 AC + -2 DEX saves" envelope into our `Slowed` condition).
+/// Enemy-only partition matches the burst convention; allies in the
+/// area are spared. The golem's signature control action — pairs with
+/// the slam multi for raw damage.
+pub struct StoneGolemSlow {}
+
+impl Action for StoneGolemSlow {
+    fn name(&self) -> &str {
+        "stone golem slow"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sgs", "golem-slow"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        const DC: i32 = 17;
+        const RADIUS: isize = 2; // 10ft
+        let Some(caster_loc) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
+            return Vec::new();
+        };
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in encounter.enemy_burst_targets(caster_id, caster_loc, RADIUS) {
+            let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, DC);
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Slowed,
+                timer: ConditionTimer::Rounds(5),
+            }));
+            encounter.log(format!("  stone golem slow: actor #{} is Slowed", tid));
+        }
+        effects
+    }
+}
+
+pub static STONE_GOLEM_SLOW: LazyLock<StoneGolemSlow> = LazyLock::new(|| StoneGolemSlow {});

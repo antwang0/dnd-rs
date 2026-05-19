@@ -72,5 +72,6 @@ pub static VAMPIRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // holy water" downside — radiant is the carrier for both).
         regen_per_round: 20,
         regen_suppressors: HashSet::from([DamageType::Radiant]),
+        legendary_resistances: 0,
     }
 });

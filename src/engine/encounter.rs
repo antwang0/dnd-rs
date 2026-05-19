@@ -715,7 +715,36 @@ impl EncounterInstance {
                     "fail"
                 }
             ));
-            return reroll_outcome;
+            // Indomitable's reroll exhausts the per-rest pool — if the
+            // reroll still fails, the Legendary Resistance check below
+            // gets a second shot at converting it. Fall through to the
+            // shared LR gate.
+            if reroll_outcome.passed() {
+                return reroll_outcome;
+            }
+        }
+        // 5e Legendary Resistance: on a fail, boss-tier creatures may
+        // choose to succeed instead. We spend a charge whenever a fail
+        // would land — simplest "always burn" heuristic. Tarrasques /
+        // dragons / etc. have a small pool (3-5) so this still rationing
+        // itself; over-eager spending is more forgiving for the AI than
+        // hoarding charges and letting Power Word Stun land on round 1.
+        if !outcome.passed()
+            && self
+                .actors
+                .get_mut(&actor_id)
+                .is_some_and(|a| a.consume_legendary_resistance())
+        {
+            let remaining = self
+                .actors
+                .get(&actor_id)
+                .map(|a| a.legendary_resistance_remaining())
+                .unwrap_or(0);
+            self.log(format!(
+                "  {} invokes legendary resistance ({} remaining) \u{2014} pass",
+                name, remaining
+            ));
+            return SaveOutcome::Pass;
         }
         outcome
     }
@@ -19790,6 +19819,196 @@ mod tests {
         assert!(
             saw_frighten,
             "ghost's horrifying visage should frighten a low-WIS goblin across seeds"
+        );
+    }
+
+    /// Tarrasque carries 3 Legendary Resistance charges. Forcing 3 failing
+    /// saves should auto-promote all 3 to passes; the 4th lands on fail.
+    /// Verifies the `roll_save` LR gate fires across the boss template.
+    #[test]
+    fn tarrasque_legendary_resistance_promotes_fails() {
+        use crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let t = e
+            .instantiate_creature(&TARRASQUE_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        assert_eq!(
+            e.actors[&t].legendary_resistance_remaining(),
+            3,
+            "tarrasque template seeds 3 LR charges"
+        );
+        // DC 40 is unreachable — every save is a fail before LR.
+        for i in 0..3 {
+            let save = e.roll_save(t, AbilityScoreType::Charisma, 40);
+            assert!(save.passed(), "LR should auto-promote fail #{}", i + 1);
+        }
+        assert_eq!(e.actors[&t].legendary_resistance_remaining(), 0);
+        // 4th save burns no charge — falls through to actual fail.
+        let save = e.roll_save(t, AbilityScoreType::Charisma, 40);
+        assert!(!save.passed(), "exhausted LR pool means the fail sticks");
+    }
+
+    /// Ordinary creatures (goblin) have no Legendary Resistance — a
+    /// failed save lands unmodified. Spot-check that the gate doesn't
+    /// fire for non-boss templates.
+    #[test]
+    fn goblin_has_no_legendary_resistance() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        assert_eq!(e.actors[&g].legendary_resistance_remaining(), 0);
+        // High DC → fail; no LR gate to promote it.
+        let save = e.roll_save(g, AbilityScoreType::Charisma, 40);
+        assert!(!save.passed());
+    }
+
+    /// Armor of Agathys installs 5 temp HP and the `AgathysShielded`
+    /// condition on the caster, both lasting up to the spell's duration.
+    /// Verifies the GainTempHp + ApplyCondition side-effect pair.
+    #[test]
+    fn armor_of_agathys_grants_temp_hp_and_shield() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::ARMOR_OF_AGATHYS;
+        use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let warlock = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert_eq!(e.actors[&warlock].temp_hp(), 0);
+        for x in ARMOR_OF_AGATHYS.side_effects(&mut e, warlock, None, None, None) {
+            x.apply(&mut e);
+        }
+        assert_eq!(e.actors[&warlock].temp_hp(), 5);
+        assert!(e.actors[&warlock].has_condition(Condition::AgathysShielded));
+    }
+
+    /// A melee hit on an Agathys-shielded actor reflects 5 cold damage
+    /// onto the attacker, via the engine's resolve_attack rider. Symmetric
+    /// with the Fire Shield reflect path.
+    #[test]
+    fn armor_of_agathys_reflects_cold_on_melee_hit() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::SLAM;
+        use crate::actions::spells::ARMOR_OF_AGATHYS;
+        use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        let mut saw_reflect = false;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain(10, 10, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let warlock = e
+                .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let zombie = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            for x in ARMOR_OF_AGATHYS.side_effects(&mut e, warlock, None, None, None) {
+                x.apply(&mut e);
+            }
+            let zombie_hp_before = e.actors[&zombie].hitpoints();
+            for x in SLAM.side_effects(&mut e, zombie, Some(&vec![warlock]), None, None) {
+                x.apply(&mut e);
+            }
+            // Reflect only fires on a hit landing; check zombie took
+            // some cold damage in retaliation.
+            if zombie_hp_before > e.actors[&zombie].hitpoints() {
+                saw_reflect = true;
+                break;
+            }
+        }
+        assert!(
+            saw_reflect,
+            "Armor of Agathys should reflect cold damage on a melee hit across seeds"
+        );
+    }
+
+    /// Armor of Agathys drops the moment its temp HP shield is depleted.
+    /// We bypass attack roll to drain the temp HP directly via a force
+    /// damage hit (force is rare so no resistance shenanigans).
+    #[test]
+    fn armor_of_agathys_drops_when_temp_hp_drained() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::ARMOR_OF_AGATHYS;
+        use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
+        use crate::engine::side_effects::DealDamage;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let warlock = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        for x in ARMOR_OF_AGATHYS.side_effects(&mut e, warlock, None, None, None) {
+            x.apply(&mut e);
+        }
+        assert_eq!(e.actors[&warlock].temp_hp(), 5);
+        assert!(e.actors[&warlock].has_condition(Condition::AgathysShielded));
+        DealDamage {
+            actor_id: warlock,
+            amount: 5,
+            damage_type: crate::engine::types::DamageType::Force,
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&warlock].temp_hp(), 0);
+        assert!(
+            !e.actors[&warlock].has_condition(Condition::AgathysShielded),
+            "shattered shield strips the condition"
+        );
+    }
+
+    /// Sickening Radiance is enemy-only — allies in the burst radius are
+    /// spared, enemies on fail eat radiant damage and gain Exhausted.
+    /// We seed multiple times so at least one CON save fails (we don't
+    /// gate on per-seed determinism).
+    #[test]
+    fn sickening_radiance_exhausts_enemies_spares_allies() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::SICKENING_RADIANCE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
+        let mut saw_exhaust = false;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain(30, 30, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let warlock = e
+                .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let ally = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(11, 11), 0, 1)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+                .unwrap();
+            let origin = Coordinate::new(10, 10);
+            for x in
+                SICKENING_RADIANCE.side_effects(&mut e, warlock, None, Some(&vec![origin]), None)
+            {
+                x.apply(&mut e);
+            }
+            // Ally on caster's team — spared regardless of save.
+            assert!(
+                !e.actors[&ally].has_condition(Condition::Exhausted),
+                "allies in the burst should never be exhausted by Sickening Radiance"
+            );
+            assert!(
+                !e.actors[&ally].has_condition(Condition::SickeningRadiated),
+                "allies should not carry the SickeningRadiated marker"
+            );
+            if e.actors.contains_key(&enemy)
+                && e.actors[&enemy].has_condition(Condition::Exhausted)
+            {
+                saw_exhaust = true;
+                break;
+            }
+        }
+        assert!(
+            saw_exhaust,
+            "Sickening Radiance should exhaust the goblin enemy across seeds"
         );
     }
 }

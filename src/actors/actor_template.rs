@@ -147,6 +147,14 @@ pub struct CreatureTemplate {
     /// lands, `regen_suppressed` flips on the instance; `round_end`
     /// clears it after skipping that round's heal.
     pub regen_suppressors: HashSet<DamageType>,
+    /// 5e Legendary Resistance — number of times per long rest the creature
+    /// can choose to succeed on a save it just failed. Read by
+    /// `EncounterInstance::roll_save`: when a failed save would land and
+    /// the actor's `legendary_resistance_remaining` counter is non-zero,
+    /// the save is promoted to a pass and the counter is decremented.
+    /// Long rest restores to this template max. 0 = no legendary
+    /// resistance (the default for ordinary creatures).
+    pub legendary_resistances: u32,
 }
 
 #[derive(Clone, PartialEq)]
@@ -315,6 +323,11 @@ pub struct ActorInstance {
     /// than this id are at disadvantage. Cleared when the Dueled
     /// condition lifts.
     dueled_by: Option<usize>,
+    /// 5e Legendary Resistance — remaining auto-pass charges on failed
+    /// saves this long rest. Refreshed to `legendary_resistance_max` on
+    /// long rest. See `EncounterInstance::roll_save` for the trigger site.
+    legendary_resistance_remaining: u32,
+    legendary_resistance_max: u32,
 }
 
 impl ActorInstance {
@@ -389,6 +402,8 @@ impl ActorInstance {
             charmed_by: None,
             indomitable_pending: false,
             dueled_by: None,
+            legendary_resistance_remaining: ct.legendary_resistances,
+            legendary_resistance_max: ct.legendary_resistances,
         })
     }
 
@@ -530,6 +545,7 @@ impl ActorInstance {
         self.save_bonus_buff = 0;
         self.features_remaining = self.features_max.clone();
         self.indomitable_pending = false;
+        self.legendary_resistance_remaining = self.legendary_resistance_max;
     }
 
     pub fn temp_hp(&self) -> u32 {
@@ -1424,6 +1440,32 @@ impl ActorInstance {
         let pending = self.indomitable_pending;
         self.indomitable_pending = false;
         pending
+    }
+
+    /// 5e Legendary Resistance — remaining auto-pass charges this long rest.
+    /// Read by `EncounterInstance::roll_save` to promote a failed save when
+    /// the counter is non-zero. Zero for ordinary creatures.
+    pub fn legendary_resistance_remaining(&self) -> u32 {
+        self.legendary_resistance_remaining
+    }
+
+    /// Per-rest cap on Legendary Resistance charges (the template max).
+    /// Surfaced for UI / AI heuristics that need to know if a creature
+    /// has the trait at all without caring about the current pool.
+    pub fn legendary_resistance_max(&self) -> u32 {
+        self.legendary_resistance_max
+    }
+
+    /// Spend one Legendary Resistance charge. Returns true if a charge
+    /// was actually consumed (counter was > 0), false otherwise. Caller
+    /// is expected to check `legendary_resistance_remaining > 0` first
+    /// and decide whether burning a charge is worth it.
+    pub fn consume_legendary_resistance(&mut self) -> bool {
+        if self.legendary_resistance_remaining == 0 {
+            return false;
+        }
+        self.legendary_resistance_remaining -= 1;
+        true
     }
 
     /// Convenience: check Bless condition without callers having to

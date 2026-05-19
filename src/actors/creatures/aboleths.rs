@@ -58,6 +58,7 @@ pub static ABOLETH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         features: HashSet::new(),
         regen_per_round: 10,
         regen_suppressors: HashSet::new(),
+        legendary_resistances: 0,
     }
 });
 

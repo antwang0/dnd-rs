@@ -107,5 +107,9 @@ pub static LICH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         features: HashSet::new(),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),
+        // 5e Legendary Resistance (3/Day) — RAW per MM. The lich's
+        // signature defense against the party's save-or-die / save-or-
+        // suck spells (Hold Monster, Banishment, Power Word Stun).
+        legendary_resistances: 3,
     }
 });

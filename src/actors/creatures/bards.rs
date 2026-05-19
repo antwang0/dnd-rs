@@ -70,5 +70,6 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         features: HashSet::from([BARDIC_INSPIRATION_TAG]),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),
+        legendary_resistances: 0,
     }
 });

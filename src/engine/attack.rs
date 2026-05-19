@@ -255,6 +255,24 @@ pub fn resolve_attack_outcome(
             damage_type: DamageType::Fire,
         }));
     }
+    // 5e Armor of Agathys: melee attackers eat flat cold damage in
+    // retaliation. Static 5 damage per RAW (we don't scale by slot
+    // level — the spell's install site sets the temp HP). Symmetric
+    // shape with the Fire Shield reflect above. Skips on miss (no
+    // attack roll → no melee contact).
+    if p.is_melee
+        && encounter
+            .actors
+            .get(&p.target_id)
+            .is_some_and(|a| a.has_condition(crate::conditions::Condition::AgathysShielded))
+    {
+        encounter.log("  armor of agathys: 5 cold reflected".to_string());
+        effects.push(Box::new(DealDamage {
+            actor_id: p.caster_id,
+            amount: 5,
+            damage_type: DamageType::Cold,
+        }));
+    }
     (effects, damage)
 }
 

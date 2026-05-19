@@ -1,11 +1,12 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::DAGGER;
 use crate::actions::spells::{
-    ACID_SPLASH, ANIMATE_DEAD, BANISHMENT, BESTOW_CURSE, BLINDNESS, BURNING_HANDS,
-    CHARM_PERSON, CHILL_TOUCH, COUNTERSPELL, DIMENSION_DOOR, ELDRITCH_BLAST, EYEBITE,
-    FEAR, FIRE_BOLT, FLY, HELLISH_REBUKE, HEX, HOLD_MONSTER, HOLD_PERSON, HYPNOTIC_PATTERN,
-    INVISIBILITY, MAGE_ARMOR, MISTY_STEP, POISON_SPRAY, POWER_WORD_KILL, POWER_WORD_STUN,
-    SHIELD, SLEEP, SUGGESTION, VAMPIRIC_TOUCH, WITCH_BOLT,
+    ACID_SPLASH, ANIMATE_DEAD, ARMOR_OF_AGATHYS, BANISHMENT, BESTOW_CURSE, BLINDNESS,
+    BURNING_HANDS, CHARM_PERSON, CHILL_TOUCH, COUNTERSPELL, DIMENSION_DOOR, ELDRITCH_BLAST,
+    EYEBITE, FEAR, FIRE_BOLT, FLY, HELLISH_REBUKE, HEX, HOLD_MONSTER, HOLD_PERSON,
+    HYPNOTIC_PATTERN, INVISIBILITY, MAGE_ARMOR, MISTY_STEP, POISON_SPRAY, POWER_WORD_KILL,
+    POWER_WORD_STUN, SHIELD, SICKENING_RADIANCE, SLEEP, SUGGESTION, VAMPIRIC_TOUCH,
+    WITCH_BOLT,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size};
@@ -55,6 +56,10 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*CHARM_PERSON);
     actions.push(&*SLEEP);
     actions.push(&*BURNING_HANDS);
+    // Armor of Agathys — the warlock's signature self-buff: 5 temp HP
+    // plus 5 cold damage reflected on melee hit. Pairs with the
+    // warlock's lv1 slot economy as a pre-fight tank-up.
+    actions.push(&*ARMOR_OF_AGATHYS);
     // Level 2 — Misty Step (escape), Hold Person (control), Invisibility,
     // Blindness, Suggestion (single-target charm).
     actions.push(&*MISTY_STEP);
@@ -73,9 +78,11 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*FLY);
     actions.push(&*ANIMATE_DEAD);
     // Level 4 — Banishment (single-target removal), Dimension Door
-    // (teleport).
+    // (teleport). Sickening Radiance: enemy-only 30ft burst with
+    // Exhausted-on-fail; fits the warlock's "control burst" niche.
     actions.push(&*BANISHMENT);
     actions.push(&*DIMENSION_DOOR);
+    actions.push(&*SICKENING_RADIANCE);
     // Level 5 — Hold Monster (single-target paralysis on a bigger fish).
     actions.push(&*HOLD_MONSTER);
     // Negative Energy Flood — necromancy lv5 burst that fits the
@@ -128,6 +135,7 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         features: HashSet::new(),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),
+        legendary_resistances: 0,
     }
 });
 

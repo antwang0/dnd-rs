@@ -63,5 +63,6 @@ pub static MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         features: HashSet::from([STUNNING_STRIKE_TAG]),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),
+        legendary_resistances: 0,
     }
 });

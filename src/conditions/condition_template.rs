@@ -476,6 +476,26 @@ pub enum Condition {
     /// `dispel_conjured_on_concentration_drop` hook. Inert otherwise; the
     /// summoned actor behaves like any team-mate while the flag is up.
     Conjured,
+    /// Armor of Agathys (5e Warlock level-1 abjuration). The holder is
+    /// wreathed in protective freezing ice. They gain 5 temp HP (the
+    /// `GainTempHp` install lane handles the buffer) and any creature that
+    /// hits them with a melee attack takes 5 cold damage. The retaliation
+    /// rider lives on `EncounterInstance::resolve_attack` next to the
+    /// Fire Shield reflect — mirrors the same shape, with cold damage and
+    /// a melee-only filter. Drops when the temp HP pool hits zero (we
+    /// strip the condition the moment temp HP is exhausted, since the
+    /// shield is the temp HP) OR after the spell timer runs out.
+    /// Concentration-free; a flat Rounds timer is enough.
+    AgathysShielded,
+    /// Sickening Radiance (5e level-4 evocation, concentration). The
+    /// target sits inside a 30ft sphere of radiant light: every round
+    /// they're in the zone, they take 4d10 radiant on a failed CON save
+    /// and gain a level of exhaustion. We collapse the "sustained zone"
+    /// to a one-shot install at cast time — the burst rolls saves up
+    /// front, applies damage, and installs Exhausted on every actor
+    /// that failed. The condition tag itself is a marker so the
+    /// concentration cleanup hook can find it.
+    SickeningRadiated,
 }
 
 impl Condition {
@@ -558,6 +578,8 @@ impl Condition {
             Condition::Mazed => "trapped in a maze",
             Condition::EyebittenSick => "afflicted by eyebite",
             Condition::Conjured => "conjured",
+            Condition::AgathysShielded => "armored in agathys",
+            Condition::SickeningRadiated => "sickened with radiance",
         }
     }
 
@@ -617,6 +639,7 @@ impl Condition {
                 | Condition::HolyAuraed
                 | Condition::Foreseen
                 | Condition::Flying
+                | Condition::AgathysShielded
         )
     }
 

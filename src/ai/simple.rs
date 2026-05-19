@@ -75,6 +75,15 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3b'. Armor of Agathys — warlock 1st-level self-buff: 5 temp
+        //      HP + 5 cold reflected on melee hit. Pre-buff when an
+        //      enemy is near so the retaliation will trigger. Costs
+        //      an Action (not bonus action) plus a lv1 slot — pairs
+        //      with Hex on the bonus-action lane.
+        if let Some(aei) = try_armor_of_agathys(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3c. Rage — barbarian's bonus-action damage-resistance + STR
         //     advantage. Fire as soon as an enemy is in reach so the
         //     physical resistance lands before incoming swings. Once
@@ -416,6 +425,28 @@ fn try_self_buff_mage_armor(
         return None;
     }
     try_self_action(encounter, actor_id, "mage armor")
+}
+
+/// Armor of Agathys — warlock signature 1st-level abjuration. Pre-buff
+/// the caster with 5 temp HP + 5-cold melee retaliation. Gate on:
+/// - Not already shielded (one-shot install).
+/// - An enemy within ~6 tiles (≈15ft) so the retaliation rider will
+///   actually land before the buff times out. The spell costs a lv1
+///   slot — we don't want to burn it in an empty room.
+/// - No active concentration check needed (AoA isn't concentration-
+///   bound, so it pairs with the warlock's other concentration loops).
+fn try_armor_of_agathys(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.has_condition(Condition::AgathysShielded) {
+        return None;
+    }
+    if !any_enemy_within(encounter, actor_id, 6) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "armor of agathys")
 }
 
 /// Holy Aura — level-8 concentration burst centered on the caster. Fire
@@ -1682,6 +1713,15 @@ mod tests {
             use crate::actors::creatures::ghosts::GHOST_TEMPLATE;
             let _ = e.instantiate_creature(&DEATH_KNIGHT_TEMPLATE, Coordinate::new(19, 17), 1, 31);
             let _ = e.instantiate_creature(&GHOST_TEMPLATE, Coordinate::new(22, 17), 1, 32);
+            // Latest boss-tier addition: Stone Golem (CR 10 construct with
+            // Legendary Resistance 3/Day + magic-immune envelope + 10ft
+            // Slow burst). Verifies the AI handles a boss whose entire
+            // schtick is "your saves don't work" — most of the party's
+            // control spells get auto-promoted to passes via the new LR
+            // gate; the action picker shouldn't stall on the resulting
+            // "save spell did nothing" paths.
+            use crate::actors::creatures::stone_golems::STONE_GOLEM_TEMPLATE;
+            let _ = e.instantiate_creature(&STONE_GOLEM_TEMPLATE, Coordinate::new(25, 12), 1, 33);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

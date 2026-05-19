@@ -64,6 +64,7 @@ pub mod specters;
 pub mod spiders;
 pub mod stirges;
 pub mod stone_giants;
+pub mod stone_golems;
 pub mod storm_giants;
 pub mod tarrasques;
 pub mod treants;

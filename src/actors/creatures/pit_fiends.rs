@@ -75,5 +75,8 @@ pub static PIT_FIEND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         features: HashSet::new(),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),
+        // 5e Legendary Resistance (3/Day) — RAW per MM. Routine for
+        // a CR-20 archdevil boss.
+        legendary_resistances: 3,
     }
 });

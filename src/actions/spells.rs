@@ -13013,3 +13013,177 @@ impl Action for NegativeEnergyFlood {
 
 pub static NEGATIVE_ENERGY_FLOOD: LazyLock<NegativeEnergyFlood> =
     LazyLock::new(|| NegativeEnergyFlood {});
+
+/// Armor of Agathys — 5e level-1 abjuration (Warlock signature). Self-only
+/// buff: caster gains 5 temp HP and any creature that hits them with a
+/// melee attack takes 5 cold damage in retaliation. The temp HP IS the
+/// shield — once the pool is drained, the retaliation rider drops with
+/// it (handled in `DealDamage::apply` — when temp HP is exhausted and
+/// `AgathysShielded` is up, the condition is stripped so subsequent
+/// melee hits don't free-trigger off a depleted shield).
+///
+/// We don't scale by slot level (RAW: +5 temp HP and +5 cold per slot
+/// level above 1). The single-level baseline keeps the side-effect path
+/// flat and the AI heuristic ("am I about to be swarmed?") legible.
+/// Concentration-free; flat Rounds timer.
+pub struct ArmorOfAgathys {}
+
+impl Action for ArmorOfAgathys {
+    fn name(&self) -> &str {
+        "armor of agathys"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["agathys", "aoa"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(1)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![
+            Box::new(GainTempHp {
+                actor_id: caster_id,
+                amount: 5,
+            }),
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::AgathysShielded,
+                timer: ConditionTimer::Rounds(10),
+            }),
+        ]
+    }
+}
+
+pub static ARMOR_OF_AGATHYS: LazyLock<ArmorOfAgathys> = LazyLock::new(|| ArmorOfAgathys {});
+
+/// Sickening Radiance — 5e level-4 evocation, concentration. RAW: a 30ft
+/// sphere of dim radiant light persists for the spell's duration; every
+/// creature inside that fails a CON save each round takes 4d10 radiant
+/// and gains a level of exhaustion. We collapse the sustained zone into
+/// a one-shot burst at cast time: every enemy in the 30ft radius rolls
+/// CON; on fail they eat the full 4d10 radiant AND gain `Exhausted`
+/// (engine's single-tier exhaustion). The concentration mark holds so
+/// dropping it can prune the exhaustion later if the AI swaps focus.
+/// Excludes allies (typical 5e gotcha — RAW hits everyone in the zone,
+/// but enemy-only is the load-bearing tactical use). Damage and save are
+/// rolled per-target (independent CON saves per RAW); the `Exhausted`
+/// install is paired with the `SickeningRadiated` marker for the
+/// concentration cleanup hook.
+pub struct SickeningRadiance {}
+
+impl Action for SickeningRadiance {
+    fn name(&self) -> &str {
+        "sickening radiance"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sr", "sickening"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 6 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120ft range to the burst origin.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Radiant]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(center) = target_locations.and_then(|v| v.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]);
+        // 30ft = 6 tile gap. Enemy-only partition matches the burst's
+        // tactical use; allies caught in the zone are spared per
+        // standard engine convention.
+        let targets = encounter.enemy_burst_targets(caster_id, center, 6);
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut conditions: Vec<(usize, Condition)> = Vec::new();
+        for tid in targets {
+            let raw = encounter.roll(&Dice::new(4, 10));
+            let save = encounter.roll_save(tid, AbilityScoreType::Constitution, dc);
+            encounter.log(format!(
+                "  sickening radiance: 4d10({}) radiant ({})",
+                raw,
+                if save.passed() { "save" } else { "fail" }
+            ));
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(DealDamage {
+                actor_id: tid,
+                amount: raw,
+                damage_type: DamageType::Radiant,
+            }));
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Exhausted,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::SickeningRadiated,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            conditions.push((tid, Condition::Exhausted));
+            conditions.push((tid, Condition::SickeningRadiated));
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Sickening Radiance", conditions),
+        }));
+        effects
+    }
+}
+
+pub static SICKENING_RADIANCE: LazyLock<SickeningRadiance> =
+    LazyLock::new(|| SickeningRadiance {});

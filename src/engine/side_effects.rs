@@ -260,12 +260,26 @@ impl ApplicableSideEffect for DealDamage {
         if landed > 0 {
             actor.remove_condition(crate::conditions::Condition::Asleep);
         }
-        let temp_absorbed = temp_before.saturating_sub(actor.temp_hp());
+        let temp_after = actor.temp_hp();
+        let temp_absorbed = temp_before.saturating_sub(temp_after);
+        // 5e Armor of Agathys: the ice shield IS the temp HP. The
+        // moment temp HP is exhausted, the spell's retaliation rider
+        // dies with it — strip the condition so subsequent melee hits
+        // don't get free cold damage off a depleted shield.
+        let agathys_shatters = temp_absorbed > 0
+            && temp_after == 0
+            && actor.has_condition(crate::conditions::Condition::AgathysShielded);
+        if agathys_shatters {
+            actor.remove_condition(crate::conditions::Condition::AgathysShielded);
+        }
         if temp_absorbed > 0 {
             ei.log(format!(
                 "  {} absorbs {} damage (temp HP)",
                 name, temp_absorbed
             ));
+        }
+        if agathys_shatters {
+            ei.log(format!("{}'s armor of agathys shatters.", name));
         }
         ei.log(format!(
             "  {} takes {} {:?} damage",

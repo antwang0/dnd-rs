@@ -56,5 +56,6 @@ pub static HYDRA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // (we don't model fire-cauterizing head stumps).
         regen_per_round: 10,
         regen_suppressors: HashSet::new(),
+        legendary_resistances: 0,
     }
 });
