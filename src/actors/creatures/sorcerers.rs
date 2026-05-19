@@ -38,6 +38,7 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*CHILL_TOUCH);
     actions.push(&*ACID_SPLASH);
     actions.push(&*SHOCKING_GRASP);
+    actions.push(&*crate::actions::spells::FROSTBITE);
     // Level 1
     actions.push(&*BURNING_HANDS);
     actions.push(&*MAGIC_MISSILE);
@@ -68,10 +69,16 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*DISINTEGRATE);
     // Level 8
     actions.push(&*SUNBURST);
+    // Level 7 — Mordenkainen's Sword as the sorcerer's force-melee
+    // single-target burst (5d10 force, concentration). Sorcerer / wizard
+    // / warlock share this spell RAW.
+    actions.push(&*crate::actions::spells::MORDENKAINENS_SWORD);
+    actions.push(&*crate::actions::spells::POWER_WORD_PAIN);
     // Level 9
     actions.push(&*TIME_STOP);
     actions.push(&*POWER_WORD_KILL);
     actions.push(&*METEOR_SWARM);
+    actions.push(&*crate::actions::spells::MASS_POLYMORPH);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

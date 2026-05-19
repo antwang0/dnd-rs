@@ -5135,3 +5135,265 @@ pub static SALAMANDER_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Compoun
         (&*SALAMANDER_TAIL, 1),
     ],
 });
+
+/// Death Knight Longsword — STR-based 1d8 slash + 4d8 necrotic rider on
+/// hit (5e Death Knight uses a longsword with a necrotic empowerment).
+/// Models the necrotic rider via a direct DealDamage so the engine's
+/// resistance / immunity table handles the half-damage on a wraith /
+/// other necrotic-immune adjacency cleanly.
+pub struct DeathKnightLongsword {}
+
+impl Action for DeathKnightLongsword {
+    fn name(&self) -> &str {
+        "longsword"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ls", "sword"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Slashing, DamageType::Necrotic]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let prof = caster.proficiency_bonus();
+        // First, resolve the slashing core hit. We re-use resolve_attack
+        // for the d20 + log line and pull out the resulting damage to
+        // gate the necrotic rider on hit.
+        use crate::engine::attack::resolve_attack_outcome;
+        let (mut effects, slash_dmg) = resolve_attack_outcome(
+            encounter,
+            AttackParams {
+                caster_id,
+                target_id,
+                action_name: "longsword",
+                attack_bonus: str_mod + prof,
+                damage_dice: Dice::new(1, 8),
+                damage_bonus: str_mod,
+                damage_type: DamageType::Slashing,
+                is_melee: true,
+            },
+        );
+        if slash_dmg == 0 {
+            return effects;
+        }
+        // Necrotic rider — only fires on a successful slash. Empower
+        // tracks the death knight's life-draining edge.
+        let raw = encounter.roll(&Dice::new(4, 8));
+        encounter.log(format!(
+            "  longsword: +{} necrotic empowerment",
+            raw
+        ));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: raw,
+            damage_type: DamageType::Necrotic,
+        }));
+        effects
+    }
+}
+
+pub static DEATH_KNIGHT_LONGSWORD: LazyLock<DeathKnightLongsword> =
+    LazyLock::new(|| DeathKnightLongsword {});
+
+/// Death Knight Hellfire Orb — once-per-encounter signature: a 20 ft
+/// radius hell-fire orb hurled to a point within 120 ft. Every creature
+/// in the burst makes a DEX save vs the death knight's spell save DC
+/// (CHA-based, DC 18 at CR 17): fail = 10d8 fire damage, success = half.
+/// Friendly fire applies — the death knight doesn't filter undead allies
+/// out of the radius (RAW). Approximated as enemy-only burst via the
+/// engine's `resolve_burst_save_damage` helper for AI sanity.
+pub struct DeathKnightHellfireOrb {}
+
+impl Action for DeathKnightHellfireOrb {
+    fn name(&self) -> &str {
+        "hellfire orb"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hfo", "orb"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        const DC: i32 = 18;
+        let raw = encounter.roll(&Dice::new(10, 8));
+        encounter.log(format!(
+            "  hellfire orb: 10d8({}) = {} fire area",
+            raw, raw
+        ));
+        crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            4,
+            AbilityScoreType::Dexterity,
+            DC,
+            raw,
+            DamageType::Fire,
+        )
+    }
+}
+
+pub static DEATH_KNIGHT_HELLFIRE_ORB: LazyLock<DeathKnightHellfireOrb> =
+    LazyLock::new(|| DeathKnightHellfireOrb {});
+
+/// Death Knight Multiattack — 3 longsword swings per Action. RAW from
+/// the MM. Each swing rolls its own necrotic rider via the rider hook
+/// on DeathKnightLongsword.
+pub static DEATH_KNIGHT_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "death knight multiattack",
+    sub_attack: &*DEATH_KNIGHT_LONGSWORD,
+    count: 3,
+});
+
+/// Ghost Withering Touch — incorporeal melee. d20 + DEX + prof vs AC;
+/// on hit 4d6+3 necrotic. The ghost's "withering" name comes from the
+/// fact that the damage type is necrotic (RAW), so a necrotic-immune
+/// undead ally is safe and a celestial / radiant-resistant adventurer
+/// takes full damage. No on-hit rider beyond the necrotic typing —
+/// the Horrifying Visage / Possession actions are separate Actions.
+pub struct GhostWitheringTouch {}
+
+impl Action for GhostWitheringTouch {
+    fn name(&self) -> &str {
+        "withering touch"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wt", "touch"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Necrotic]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "withering touch",
+            AbilityScoreType::Dexterity,
+            Some(AbilityScoreType::Dexterity),
+            Dice::new(4, 6),
+            DamageType::Necrotic,
+            true,
+        )
+    }
+}
+
+pub static GHOST_WITHERING_TOUCH: LazyLock<GhostWitheringTouch> =
+    LazyLock::new(|| GhostWitheringTouch {});
+
+/// Ghost Horrifying Visage — 60ft radius burst (centred on the ghost),
+/// each non-undead enemy in range makes a WIS save vs DC 13. Fail =
+/// Frightened for 5 rounds. Success = immunity to this ghost's Visage
+/// for 24 hours (not modeled — single-encounter scope). Undead and
+/// fiends are immune to fright already via the engine's condition-
+/// immunity table, so the no-target case folds out naturally.
+pub struct GhostHorrifyingVisage {}
+
+impl Action for GhostHorrifyingVisage {
+    fn name(&self) -> &str {
+        "horrifying visage"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hv", "visage"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        // Frightens; never reduces HP. Stays in `is_harmful: true` lane
+        // so the AI's burst heuristic still picks it up when 2+ enemies
+        // cluster, but the focus-fire path that ranks "does this whittle
+        // HP?" skips it cleanly.
+        false
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        const DC: i32 = 13;
+        const RADIUS: isize = 24; // 60 ft
+        let Some(caster_loc) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
+            return Vec::new();
+        };
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in encounter.enemy_burst_targets(caster_id, caster_loc, RADIUS) {
+            let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, DC);
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Frightened,
+                timer: ConditionTimer::Rounds(5),
+            }));
+            encounter.log(format!(
+                "  horrifying visage: actor #{} is Frightened",
+                tid
+            ));
+        }
+        effects
+    }
+}
+
+pub static GHOST_HORRIFYING_VISAGE: LazyLock<GhostHorrifyingVisage> =
+    LazyLock::new(|| GhostHorrifyingVisage {});

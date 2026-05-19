@@ -75,6 +75,15 @@ pub struct HelpGrant {
 }
 
 impl ConcentrationData {
+    /// Bare concentration mark with no associated conditions to prune on
+    /// drop — used by spells whose entire effect is the concentration
+    /// marker itself (Crusader's Mantle, Crown of Stars, Mordenkainen's
+    /// Sword: a passive aura / persistent presence on the caster, no
+    /// per-target tag to remove).
+    pub fn new(spell_name: impl Into<String>) -> Self {
+        Self::with_conditions(spell_name, Vec::new())
+    }
+
     pub fn with_conditions(
         spell_name: impl Into<String>,
         conditions: Vec<(usize, Condition)>,

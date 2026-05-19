@@ -1164,17 +1164,23 @@ fn try_self_centered_burst(
 
     // Collect NoArgs harmful actions; sort by reach descending so a
     // dense cluster picks the bigger burst (longer reach ≈ bigger
-    // radius for self-centered bursts in this codebase). The
-    // damage_types non-empty filter rules out Skip / Dash / StandUp /
-    // Hide — they inherit the trait default `is_harmful: true` but
-    // declare no damage types, so they're not real attack options.
+    // radius for self-centered bursts in this codebase). We accept
+    // bursts that either deal damage *or* apply a hostile condition:
+    // the damage_types non-empty branch covers Thunderwave / Word of
+    // Radiance / Holy Word, the deals_damage=false branch admits
+    // condition-only NoArgs bursts like the Ghost's Horrifying Visage
+    // (frighten on save fail, no HP loss). The is_harmful gate alone
+    // is too loose — some default actions inherit the trait default
+    // `is_harmful: true` (e.g. Hide before its explicit override) —
+    // so we also require either damage or an explicit non-damage flag,
+    // which together exclude utility NoArgs (Dodge / Disengage) cleanly.
     let mut bursts: Vec<&'static (dyn Action + Send + Sync)> = actor
         .actions
         .iter()
         .filter(|a| {
             a.is_harmful()
                 && matches!(a.targeting_schema(), TargetingSchema::NoArgs)
-                && !a.damage_types().is_empty()
+                && (!a.damage_types().is_empty() || !a.deals_damage())
         })
         .copied()
         .collect();
@@ -1665,6 +1671,17 @@ mod tests {
             let _ = e.instantiate_creature(&STONE_GIANT_TEMPLATE, Coordinate::new(8, 17), 1, 28);
             let _ = e.instantiate_creature(&MEDUSA_TEMPLATE, Coordinate::new(13, 17), 1, 29);
             let _ = e.instantiate_creature(&SALAMANDER_TEMPLATE, Coordinate::new(16, 17), 1, 30);
+            // Latest enemy-team additions: Death Knight (CR 17 boss
+            // undead with 3-swing necrotic-rider longsword multi + 10d8
+            // Hellfire Orb DEX-save burst + tight fire-evocation spell
+            // list), Ghost (CR 4 incorporeal undead with withering
+            // necrotic touch + Horrifying Visage WIS-save Frighten
+            // burst). Exercises the AI's boss-tier action picker on the
+            // new burst path and the Ghost's NoArgs visage cast.
+            use crate::actors::creatures::death_knights::DEATH_KNIGHT_TEMPLATE;
+            use crate::actors::creatures::ghosts::GHOST_TEMPLATE;
+            let _ = e.instantiate_creature(&DEATH_KNIGHT_TEMPLATE, Coordinate::new(19, 17), 1, 31);
+            let _ = e.instantiate_creature(&GHOST_TEMPLATE, Coordinate::new(22, 17), 1, 32);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;
@@ -1868,7 +1885,7 @@ mod tests {
         e.actors
             .get_mut(&cleric)
             .unwrap()
-            .start_concentration(ConcentrationData::with_conditions("Placeholder", vec![]));
+            .start_concentration(ConcentrationData::new("Placeholder"));
 
         let ai = SimpleAi;
         let decision = ai.decide(&e, cleric);
@@ -1913,7 +1930,7 @@ mod tests {
         e.actors
             .get_mut(&cleric)
             .unwrap()
-            .start_concentration(ConcentrationData::with_conditions("Placeholder", vec![]));
+            .start_concentration(ConcentrationData::new("Placeholder"));
 
         let ai = SimpleAi;
         let decision = ai.decide(&e, cleric);
@@ -2003,7 +2020,7 @@ mod tests {
         e.actors
             .get_mut(&cleric)
             .unwrap()
-            .start_concentration(ConcentrationData::with_conditions("Bless", vec![]));
+            .start_concentration(ConcentrationData::new("Bless"));
 
         let ai = SimpleAi;
         let decision = ai.decide(&e, cleric);

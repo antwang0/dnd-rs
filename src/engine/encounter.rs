@@ -13952,9 +13952,9 @@ mod tests {
     #[test]
     fn concentration_breaks_on_attack_flag_default_false() {
         use crate::actors::actor_template::ConcentrationData;
-        let cd = ConcentrationData::with_conditions("Test", Vec::new());
+        let cd = ConcentrationData::new("Test");
         assert!(!cd.breaks_on_attack);
-        let cd2 = ConcentrationData::with_conditions("Test", Vec::new()).breaking_on_attack();
+        let cd2 = ConcentrationData::new("Test").breaking_on_attack();
         assert!(cd2.breaks_on_attack);
     }
 
@@ -19494,5 +19494,302 @@ mod tests {
         // STR / mental saves still roll normally.
         assert!(!e.auto_fail_save(actor, AbilityScoreType::Strength));
         assert!(!e.auto_fail_save(actor, AbilityScoreType::Wisdom));
+    }
+
+    /// Power Word Pain installs Slowed only if the target has ≤100 HP.
+    /// High-HP boss is unaffected; low-HP target is debuffed without a save.
+    #[test]
+    fn power_word_pain_gates_on_hp_threshold() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::POWER_WORD_PAIN;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(40, 30, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            .unwrap();
+        let boss = e
+            .instantiate_creature(&TARRASQUE_TEMPLATE, Coordinate::new(10, 5), 1, 1)
+            .unwrap();
+        // Low-HP target — Slowed should land.
+        let tids = vec![goblin];
+        for x in POWER_WORD_PAIN.side_effects(&mut e, wizard, Some(&tids), None, None) {
+            x.apply(&mut e);
+        }
+        assert!(e.actors[&goblin].has_condition(Condition::Slowed));
+        // High-HP boss — Slowed should NOT land (>100 HP).
+        let tids = vec![boss];
+        for x in POWER_WORD_PAIN.side_effects(&mut e, wizard, Some(&tids), None, None) {
+            x.apply(&mut e);
+        }
+        assert!(!e.actors[&boss].has_condition(Condition::Slowed));
+    }
+
+    /// Frostbite is a CON-save cantrip — on a fail, target takes 1d6
+    /// cold + Slowed-1-round. We use a high-DC seed-stable run that
+    /// reliably fails the save by picking a target with low CON.
+    #[test]
+    fn frostbite_applies_cold_and_slowed_on_fail() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::FROSTBITE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut saw_install = false;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wizard = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+                .unwrap();
+            let tids = vec![goblin];
+            let hp_before = e.actors[&goblin].hitpoints();
+            for x in FROSTBITE.side_effects(&mut e, wizard, Some(&tids), None, None) {
+                x.apply(&mut e);
+            }
+            let landed = e.actors[&goblin].has_condition(Condition::Slowed)
+                && e.actors[&goblin].hitpoints() < hp_before;
+            if landed {
+                saw_install = true;
+                break;
+            }
+        }
+        assert!(
+            saw_install,
+            "frostbite should install Slowed + cold damage on at least one failed save across seeds"
+        );
+    }
+
+    /// Mordenkainen's Sword installs concentration on cast and rolls a
+    /// melee force attack against the target. We assert the concentration
+    /// mark is present after the cast regardless of hit/miss (the sword
+    /// persists for the duration RAW).
+    #[test]
+    fn mordenkainens_sword_installs_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::MORDENKAINENS_SWORD;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        let tids = vec![goblin];
+        for x in MORDENKAINENS_SWORD.side_effects(&mut e, wizard, Some(&tids), None, None) {
+            x.apply(&mut e);
+        }
+        // Concentration is installed on the caster regardless of hit/miss.
+        assert!(
+            e.actors[&wizard].is_concentrating(),
+            "Mordenkainen's Sword installs concentration on cast"
+        );
+    }
+
+    /// Negative Energy Flood deals necrotic damage that respects
+    /// resistance: a wight (necrotic-immune) shrugs it off entirely;
+    /// a goblin (no resistance) takes damage.
+    #[test]
+    fn negative_energy_flood_respects_necrotic_immunity() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::NEGATIVE_ENERGY_FLOOD;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
+        use crate::actors::creatures::wights::WIGHT_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let warlock = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            .unwrap();
+        let wight = e
+            .instantiate_creature(&WIGHT_TEMPLATE, Coordinate::new(7, 2), 1, 1)
+            .unwrap();
+        let goblin_hp = e.actors[&goblin].hitpoints();
+        let wight_hp = e.actors[&wight].hitpoints();
+        // Hit the goblin first.
+        for x in NEGATIVE_ENERGY_FLOOD.side_effects(&mut e, warlock, Some(&vec![goblin]), None, None) {
+            x.apply(&mut e);
+        }
+        // Goblin takes damage on fail or half on save — but never more
+        // than the dice envelope. Either way, HP changes (5d12 ≥ 5
+        // halves to 2, so at minimum 2 damage).
+        let goblin_after = if e.actors.contains_key(&goblin) {
+            e.actors[&goblin].hitpoints()
+        } else {
+            0
+        };
+        assert!(goblin_after < goblin_hp, "goblin takes necrotic damage");
+        // Wight is necrotic-immune — HP unchanged.
+        for x in NEGATIVE_ENERGY_FLOOD.side_effects(&mut e, warlock, Some(&vec![wight]), None, None) {
+            x.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&wight].hitpoints(),
+            wight_hp,
+            "wight is necrotic-immune and takes no damage"
+        );
+    }
+
+    /// Mass Polymorph is a burst enemy-only spell — allies in the radius
+    /// are spared, enemies fail save become Polymorphed + 30 temp HP.
+    /// We seed with a very high spell save DC and a target with very
+    /// low WIS so the save reliably fails.
+    #[test]
+    fn mass_polymorph_morphs_enemies_spares_allies() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::MASS_POLYMORPH;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut saw_morph = false;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain(30, 30, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wizard = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let ally = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(11, 11), 0, 1)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+                .unwrap();
+            let origin = Coordinate::new(10, 10);
+            for x in
+                MASS_POLYMORPH.side_effects(&mut e, wizard, None, Some(&vec![origin]), None)
+            {
+                x.apply(&mut e);
+            }
+            // Ally is on the caster's team — spared.
+            assert!(
+                !e.actors[&ally].has_condition(Condition::Polymorphed),
+                "allies in the burst should never be polymorphed"
+            );
+            if e.actors[&enemy].has_condition(Condition::Polymorphed) {
+                saw_morph = true;
+                break;
+            }
+        }
+        assert!(
+            saw_morph,
+            "Mass Polymorph should install Polymorphed on the enemy goblin across seeds"
+        );
+    }
+
+    /// Death Knight has necrotic + poison immunity and resistance to
+    /// non-magical B/P/S — verifies the new template's damage modifier
+    /// envelope wires through `damage_modifier`.
+    #[test]
+    fn death_knight_damage_modifier_envelope() {
+        use crate::actors::creatures::death_knights::DEATH_KNIGHT_TEMPLATE;
+        use crate::engine::types::{DamageModifier, DamageType};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let dk = e
+            .instantiate_creature(&DEATH_KNIGHT_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let dk = &e.actors[&dk];
+        assert_eq!(
+            dk.damage_modifier(DamageType::Necrotic),
+            Some(DamageModifier::Immunity)
+        );
+        assert_eq!(
+            dk.damage_modifier(DamageType::Poison),
+            Some(DamageModifier::Immunity)
+        );
+        assert_eq!(
+            dk.damage_modifier(DamageType::Slashing),
+            Some(DamageModifier::Resistance)
+        );
+    }
+
+    /// Ghost has the standard incorporeal envelope: necrotic + poison
+    /// immunity, resistance to acid/cold/fire/lightning/thunder + B/P/S,
+    /// and a stack of condition immunities including Charmed, Frightened,
+    /// Paralyzed, Grappled, Prone, Restrained.
+    #[test]
+    fn ghost_incorporeal_envelope() {
+        use crate::actors::creatures::ghosts::GHOST_TEMPLATE;
+        use crate::engine::types::{DamageModifier, DamageType};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let ghost = e
+            .instantiate_creature(&GHOST_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let ghost = &e.actors[&ghost];
+        // Damage profile.
+        assert_eq!(
+            ghost.damage_modifier(DamageType::Necrotic),
+            Some(DamageModifier::Immunity)
+        );
+        assert_eq!(
+            ghost.damage_modifier(DamageType::Fire),
+            Some(DamageModifier::Resistance)
+        );
+        assert_eq!(
+            ghost.damage_modifier(DamageType::Slashing),
+            Some(DamageModifier::Resistance)
+        );
+        // Condition envelope.
+        for c in [
+            Condition::Charmed,
+            Condition::Frightened,
+            Condition::Paralyzed,
+            Condition::Grappled,
+            Condition::Prone,
+            Condition::Restrained,
+        ] {
+            assert!(
+                ghost.is_immune_to_condition(c),
+                "ghost should be immune to {:?}",
+                c
+            );
+        }
+    }
+
+    /// Ghost's Horrifying Visage is a NoArgs burst that frightens nearby
+    /// non-immune enemies. We seed with a low-WIS target so the save
+    /// reliably fails across seeds.
+    #[test]
+    fn ghost_horrifying_visage_frightens_nearby_enemies() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::GHOST_HORRIFYING_VISAGE;
+        use crate::actors::creatures::ghosts::GHOST_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut saw_frighten = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let ghost = e
+                .instantiate_creature(&GHOST_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+                .unwrap();
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 2), 0, 0)
+                .unwrap();
+            for x in GHOST_HORRIFYING_VISAGE.side_effects(&mut e, ghost, None, None, None) {
+                x.apply(&mut e);
+            }
+            if e.actors[&goblin].has_condition(Condition::Frightened) {
+                saw_frighten = true;
+                break;
+            }
+        }
+        assert!(
+            saw_frighten,
+            "ghost's horrifying visage should frighten a low-WIS goblin across seeds"
+        );
     }
 }

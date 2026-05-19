@@ -151,6 +151,17 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::OTTOS_IRRESISTIBLE_DANCE);
     actions.push(&*crate::actions::spells::FIRE_STORM);
     actions.push(&*crate::actions::spells::MAZE);
+    // Latest additions:
+    //   - **Frostbite** cantrip: 1d6 cold + Slowed-1-round on CON-save fail.
+    //   - **Negative Energy Flood** lv5: 5d12 CON-save necrotic burst.
+    //   - **Mordenkainen's Sword** lv7: 5d10 force melee spell attack + concentration mark.
+    //   - **Power Word Pain** lv7: HP≤100 gating Slowed install.
+    //   - **Mass Polymorph** lv9: burst Polymorphed install on the enemy team.
+    actions.push(&*crate::actions::spells::FROSTBITE);
+    actions.push(&*crate::actions::spells::NEGATIVE_ENERGY_FLOOD);
+    actions.push(&*crate::actions::spells::MORDENKAINENS_SWORD);
+    actions.push(&*crate::actions::spells::POWER_WORD_PAIN);
+    actions.push(&*crate::actions::spells::MASS_POLYMORPH);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

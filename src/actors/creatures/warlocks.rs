@@ -78,6 +78,9 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*DIMENSION_DOOR);
     // Level 5 — Hold Monster (single-target paralysis on a bigger fish).
     actions.push(&*HOLD_MONSTER);
+    // Negative Energy Flood — necromancy lv5 burst that fits the
+    // patron's flavor; CON-save halve, 5d12 necrotic on fail.
+    actions.push(&*crate::actions::spells::NEGATIVE_ENERGY_FLOOD);
     // Level 6 — Eyebite (single-target sleep), the warlock's apex
     // control. RAW gates Eyebite at lv6; we put it at lv6 here too.
     actions.push(&*EYEBITE);

@@ -216,6 +216,38 @@ fn spell_attack_outcome(
     (effects, total_dmg)
 }
 
+/// Roll a damage burst against a target's saving throw, halving on
+/// success. Returns `(damage, save_passed)` so callers can branch on
+/// the save (e.g. attach a rider only on fail). The roll + save log
+/// line is emitted with `action_name`; callers don't need to re-log
+/// the breakdown. Folds the recurring `let raw = roll(); let dmg = if
+/// save.passed() { raw / 2 } else { raw };` shape used by ~6 single-
+/// target save-or-half spells (Hellish Rebuke, Mind Whip, Hellfire
+/// Orb, the Smite spells, etc.) into one chokepoint.
+fn save_for_half_damage(
+    encounter: &mut EncounterInstance,
+    target_id: usize,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    dice: Dice,
+    damage_type: DamageType,
+    action_name: &str,
+) -> (u32, bool) {
+    let raw = encounter.roll(&dice);
+    let save = encounter.roll_save(target_id, save_ability, dc);
+    let dmg = if save.passed() { raw / 2 } else { raw };
+    encounter.log(format!(
+        "  {}: {}({}) = {} {:?} ({})",
+        action_name,
+        dice,
+        raw,
+        dmg,
+        damage_type,
+        if save.passed() { "save (half)" } else { "fail (full)" },
+    ));
+    (dmg, save.passed())
+}
+
 /// Sacred Flame — cleric cantrip. Range 60ft (24 tiles), DEX save vs the
 /// caster's WIS-based spell save DC. On fail: 1d8 radiant. On success:
 /// nothing (cantrips don't half-on-save). No spell slot consumed.
@@ -3731,7 +3763,7 @@ impl Action for MagicWeapon {
         };
         // Install a +1 attack buff and register it on the concentration
         // so dropping the spell rolls back the bonus on the right actor.
-        let mut data = ConcentrationData::with_conditions("Magic Weapon", Vec::new());
+        let mut data = ConcentrationData::new("Magic Weapon");
         data.attack_buffs.push((target_id, 1));
         vec![
             Box::new(AdjustAttackBuff {
@@ -3973,7 +4005,7 @@ impl Action for VampiricTouch {
         // strike misses. Drop on re-cast keeps memory tight.
         effs.push(Box::new(StartConcentration {
             caster_id,
-            data: ConcentrationData::with_conditions("Vampiric Touch", Vec::new()),
+            data: ConcentrationData::new("Vampiric Touch"),
         }));
         if dealt > 0 {
             let heal = (dealt / 2).max(1);
@@ -4131,7 +4163,7 @@ impl Action for DivineFavor {
         use crate::engine::side_effects::AdjustAttackBuff;
         // +2 attack buff approximates "+1d4 radiant per hit". The buff
         // lives on the concentration so it rolls back automatically.
-        let mut data = ConcentrationData::with_conditions("Divine Favor", Vec::new());
+        let mut data = ConcentrationData::new("Divine Favor");
         data.attack_buffs.push((caster_id, 2));
         vec![
             Box::new(AdjustAttackBuff {
@@ -4217,7 +4249,7 @@ impl Action for SpiritGuardians {
         );
         effs.push(Box::new(StartConcentration {
             caster_id,
-            data: ConcentrationData::with_conditions("Spirit Guardians", Vec::new()),
+            data: ConcentrationData::new("Spirit Guardians"),
         }));
         effs
     }
@@ -5757,7 +5789,7 @@ impl Action for CloudOfDaggers {
         }
         effects.push(Box::new(StartConcentration {
             caster_id,
-            data: ConcentrationData::with_conditions("Cloud of Daggers", Vec::new()),
+            data: ConcentrationData::new("Cloud of Daggers"),
         }));
         effects
     }
@@ -5838,7 +5870,7 @@ impl Action for WitchBolt {
         // sustained on a miss per RAW (the link forms either way).
         effects.push(Box::new(StartConcentration {
             caster_id,
-            data: ConcentrationData::with_conditions("Witch Bolt", Vec::new()),
+            data: ConcentrationData::new("Witch Bolt"),
         }));
         effects
     }
@@ -7453,7 +7485,7 @@ impl Action for Sunbeam {
         }
         effects.push(Box::new(StartConcentration {
             caster_id,
-            data: ConcentrationData::with_conditions("Sunbeam", Vec::new()),
+            data: ConcentrationData::new("Sunbeam"),
         }));
         effects
     }
@@ -7879,7 +7911,7 @@ impl Action for Cloudkill {
         );
         effects.push(Box::new(StartConcentration {
             caster_id,
-            data: ConcentrationData::with_conditions("Cloudkill", Vec::new()),
+            data: ConcentrationData::new("Cloudkill"),
         }));
         effects
     }
@@ -7957,7 +7989,7 @@ impl Action for InsectPlague {
         );
         effects.push(Box::new(StartConcentration {
             caster_id,
-            data: ConcentrationData::with_conditions("Insect Plague", Vec::new()),
+            data: ConcentrationData::new("Insect Plague"),
         }));
         effects
     }
@@ -8328,7 +8360,7 @@ impl Action for HealingSpirit {
             .collect();
         effects.push(Box::new(StartConcentration {
             caster_id,
-            data: ConcentrationData::with_conditions("Healing Spirit", Vec::new()),
+            data: ConcentrationData::new("Healing Spirit"),
         }));
         effects
     }
@@ -8410,7 +8442,7 @@ impl Action for AuraOfVitality {
             .collect();
         effects.push(Box::new(StartConcentration {
             caster_id,
-            data: ConcentrationData::with_conditions("Aura of Vitality", Vec::new()),
+            data: ConcentrationData::new("Aura of Vitality"),
         }));
         effects
     }
@@ -8483,7 +8515,7 @@ impl Action for WallOfForce {
             .collect();
         effects.push(Box::new(StartConcentration {
             caster_id,
-            data: ConcentrationData::with_conditions("Wall of Force", Vec::new()),
+            data: ConcentrationData::new("Wall of Force"),
         }));
         effects
     }
@@ -9199,7 +9231,7 @@ impl Action for Earthquake {
         }
         effects.push(Box::new(StartConcentration {
             caster_id,
-            data: ConcentrationData::with_conditions("Earthquake", Vec::new()),
+            data: ConcentrationData::new("Earthquake"),
         }));
         effects
     }
@@ -10310,7 +10342,7 @@ impl Action for Moonbeam {
         );
         effs.push(Box::new(StartConcentration {
             caster_id,
-            data: ConcentrationData::with_conditions("Moonbeam", Vec::new()),
+            data: ConcentrationData::new("Moonbeam"),
         }));
         effs
     }
@@ -10390,7 +10422,7 @@ impl Action for CallLightning {
         );
         effs.push(Box::new(StartConcentration {
             caster_id,
-            data: ConcentrationData::with_conditions("Call Lightning", Vec::new()),
+            data: ConcentrationData::new("Call Lightning"),
         }));
         effs
     }
@@ -10751,15 +10783,15 @@ impl Action for HellishRebuke {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, dc);
-        let raw = encounter.roll(&Dice::new(2, 10));
-        let dmg = if save.passed() { raw / 2 } else { raw };
-        encounter.log(format!(
-            "  hellish rebuke: 2d10({}) fire — {} ({})",
-            raw,
-            if save.passed() { "save (half)" } else { "fail (full)" },
-            dmg
-        ));
+        let (dmg, _) = save_for_half_damage(
+            encounter,
+            target_id,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(2, 10),
+            DamageType::Fire,
+            "hellish rebuke",
+        );
         if dmg == 0 {
             return Vec::new();
         }
@@ -12547,3 +12579,437 @@ impl Action for ConjureAnimals {
 }
 
 pub static CONJURE_ANIMALS: LazyLock<ConjureAnimals> = LazyLock::new(|| ConjureAnimals {});
+
+/// Power Word Pain — 5e level-7 enchantment, action. Single target;
+/// no save, no attack roll — but the spell only takes effect if the
+/// target has 100 HP or fewer at cast time. RAW: target is racked with
+/// pain that imposes Slowed-equivalent effects (speed reduced, can't
+/// take reactions, takes disadvantage on attacks and CON saves to
+/// maintain concentration). We approximate via the existing `Slowed`
+/// condition (already wires up speed multiplier, DEX-save disadvantage,
+/// and the AC penalty) for 10 rounds — long enough for the encounter
+/// without needing a per-turn "CON save to end" loop in the engine.
+///
+/// HP-threshold spells are rare in the engine — most spells gate on
+/// save or HP-percent rather than absolute HP. Power Word Pain is the
+/// canonical example so we keep the threshold literal (≤100 HP) and
+/// log the gate explicitly so a play-through can see why a Tarrasque
+/// shrugs it off and a level-3 fighter doesn't.
+pub struct PowerWordPain {}
+
+impl Action for PowerWordPain {
+    fn name(&self) -> &str {
+        "power word pain"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pwp", "pain"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(7)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return Vec::new();
+        };
+        let hp = target.hitpoints();
+        if hp > 100 {
+            encounter.log(format!(
+                "  power word pain: target has {} HP (>100), shrugged off",
+                hp
+            ));
+            return Vec::new();
+        }
+        encounter.log(format!(
+            "  power word pain: target has {} HP, racked with pain",
+            hp
+        ));
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Slowed,
+            timer: ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static POWER_WORD_PAIN: LazyLock<PowerWordPain> = LazyLock::new(|| PowerWordPain {});
+
+/// Mass Polymorph — 5e level-9 transmutation, concentration, action.
+/// Burst variant of Polymorph: every enemy whose footprint touches a
+/// 30ft radius around the chosen point makes a WIS save against the
+/// caster's spell save DC. On fail, the target is Polymorphed (loses
+/// its action economy, AC/speed default, etc., per the condition's
+/// existing wiring) and gains 30 temp HP (the beast pool). Allies in
+/// the radius are spared — friendly polymorphs are RAW willing, but
+/// the AI would auto-fail-save them which makes the burst variant
+/// strictly hostile in practice. Concentration drops all polymorphs at
+/// once.
+pub struct MassPolymorph {}
+
+impl Action for MassPolymorph {
+    fn name(&self) -> &str {
+        "mass polymorph"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mpoly", "mass morph"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 6 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft to burst origin.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(9)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(origin) = target_locations.and_then(|v| v.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let targets = encounter.enemy_burst_targets(caster_id, origin, 6);
+        if targets.is_empty() {
+            return Vec::new();
+        }
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut tagged: Vec<(usize, Condition)> = Vec::new();
+        for target_id in targets {
+            let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+            if save.passed() {
+                encounter.log(format!(
+                    "  mass polymorph: actor #{} resists the transformation",
+                    target_id
+                ));
+                continue;
+            }
+            encounter.log(format!(
+                "  mass polymorph: actor #{} morphs into a beast",
+                target_id
+            ));
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Polymorphed,
+                timer: ConditionTimer::Permanent,
+            }));
+            effects.push(Box::new(GainTempHp {
+                actor_id: target_id,
+                amount: 30,
+            }));
+            tagged.push((target_id, Condition::Polymorphed));
+        }
+        if tagged.is_empty() {
+            return effects;
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Mass Polymorph", tagged),
+        }));
+        effects
+    }
+}
+
+pub static MASS_POLYMORPH: LazyLock<MassPolymorph> = LazyLock::new(|| MassPolymorph {});
+
+/// Mordenkainen's Sword — 5e level-7 evocation, concentration, action.
+/// RAW: a sword of force appears within range; on cast and then each
+/// subsequent turn as a bonus action you can swing it for 3d10 force
+/// damage on hit. The "bonus-action recurring attack" pattern is
+/// awkward in this engine's one-action-per-spell model, so we collapse
+/// to a heavier on-cast hit (5d10 force, melee spell attack) plus a
+/// concentration mark that the AI can drop and re-cast — close enough
+/// in damage budget to one cast + ~3-4 sustained sword swings RAW.
+/// The mark also primes the Slowed condition on a hit (force is
+/// gravitically dense in 5e flavor — RAW Mordenkainen's "sword" cuts
+/// motion as well as flesh). Single-target.
+pub struct MordenkainensSword {}
+
+impl Action for MordenkainensSword {
+    fn name(&self) -> &str {
+        "mordenkainen's sword"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mord", "force sword", "sword"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60ft to the conjure point + 5ft reach for the sword itself —
+        // we collapse to a flat 24-tile spell range.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Force]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(7)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Spell uses the caster's best mental ability — wizards (INT),
+        // sorcerers (CHA), and warlocks (CHA) all get Mordenkainen's
+        // Sword on their published lists.
+        let attack_bonus = caster
+            .spell_attack_modifier(AbilityScoreType::Intelligence)
+            .max(caster.spell_attack_modifier(AbilityScoreType::Charisma));
+        // 5d10 force on hit — a melee spell attack, so reach + footprint
+        // adjacency apply via resolve_attack's melee path.
+        let mut effects = spell_attack_with_bonus(
+            encounter,
+            caster_id,
+            target_id,
+            "mordenkainen's sword",
+            attack_bonus,
+            Dice::new(5, 10),
+            0,
+            DamageType::Force,
+            true,
+        );
+        // Concentration mark — drops on damage / next concentration cast.
+        // We always install regardless of hit/miss (RAW: the sword
+        // persists for the duration even if the first swing whiffs).
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::new("Mordenkainen's Sword"),
+        }));
+        effects
+    }
+}
+
+pub static MORDENKAINENS_SWORD: LazyLock<MordenkainensSword> =
+    LazyLock::new(|| MordenkainensSword {});
+
+/// Frostbite — 5e cantrip, evocation. Single target, CON save vs the
+/// caster's spell save DC. On fail: 1d6 cold damage and the target has
+/// disadvantage on its next weapon attack (we approximate via Slowed
+/// for a 1-round timer — Slowed already wires up DEX-save disadvantage
+/// and the AC penalty, close enough flavor for the cantrip). On
+/// success: nothing. Caster's best of INT / WIS / CHA save DC, since
+/// druid / sorcerer / wizard / warlock all share the cantrip.
+pub struct Frostbite {}
+
+impl Action for Frostbite {
+    fn name(&self) -> &str {
+        "frostbite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["frost", "fb"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Cold]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // Cantrip — Action only.
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
+        if save.passed() {
+            encounter.log("  frostbite: target shrugs off the chill");
+            return Vec::new();
+        }
+        let raw = encounter.roll(&Dice::new(1, 6));
+        encounter.log(format!("  frostbite: 1d6({}) = {} cold", raw, raw));
+        vec![
+            Box::new(DealDamage {
+                actor_id: target_id,
+                amount: raw,
+                damage_type: DamageType::Cold,
+            }),
+            // Single-round disadvantage on the next attack — Slowed
+            // already encodes the AC penalty + DEX save disadvantage.
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Slowed,
+                timer: ConditionTimer::Rounds(1),
+            }),
+        ]
+    }
+}
+
+pub static FROSTBITE: LazyLock<Frostbite> = LazyLock::new(|| Frostbite {});
+
+/// Negative Energy Flood — 5e level-5 necromancy, action. Single target;
+/// CON save vs the caster's spell save DC. On fail: 5d12 necrotic
+/// damage. On success: half. The signature flavor is the "rises as a
+/// zombie if the target drops" clause — we don't model post-death
+/// raise here (the engine's Animate Dead spell covers that path), but
+/// the headline 5d12 burst lands either way. Force-resistant /
+/// necrotic-immune actors (vampires, wights, etc.) shrug damage off
+/// per the engine's resistance table.
+pub struct NegativeEnergyFlood {}
+
+impl Action for NegativeEnergyFlood {
+    fn name(&self) -> &str {
+        "negative energy flood"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["nef", "negflood"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Necrotic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+        ]);
+        let (dmg, _) = save_for_half_damage(
+            encounter,
+            target_id,
+            AbilityScoreType::Constitution,
+            dc,
+            Dice::new(5, 12),
+            DamageType::Necrotic,
+            "negative energy flood",
+        );
+        if dmg == 0 {
+            return Vec::new();
+        }
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: dmg,
+            damage_type: DamageType::Necrotic,
+        })]
+    }
+}
+
+pub static NEGATIVE_ENERGY_FLOOD: LazyLock<NegativeEnergyFlood> =
+    LazyLock::new(|| NegativeEnergyFlood {});

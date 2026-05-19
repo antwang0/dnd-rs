@@ -36,6 +36,8 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*POISON_SPRAY);
     actions.push(&*THORN_WHIP);
     actions.push(&*MAGIC_STONE);
+    // Frostbite — cold-themed druid cantrip with CON-save / Slowed rider.
+    actions.push(&*crate::actions::spells::FROSTBITE);
     // Level 1
     actions.push(&*GOODBERRY);
     actions.push(&HEALING_WORD);
