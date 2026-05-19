@@ -145,6 +145,25 @@ pub fn bonus_action_and_slot(lvl: u32) -> Vec<Resource> {
     vec![Resource::BonusAction, Resource::SpellSlot(lvl)]
 }
 
+/// Bonus-action-only cost — no spell slot, no other resource. Used by
+/// class features that fire as a bonus action without a slot (Rage,
+/// Cunning Dash / Disengage / Hide, Bardic Inspiration, Divine Smite's
+/// bonus action portion of the cost, etc.). Centralizes the
+/// `vec![Resource::BonusAction]` literal so a future cross-cutting
+/// change (e.g. "all bonus actions provoke an opportunity attack")
+/// can land in one place.
+pub fn bonus_action_only() -> Vec<Resource> {
+    vec![Resource::BonusAction]
+}
+
+/// Free action — no resource cost at all. Used by Action Surge,
+/// Indomitable, etc. — features that don't consume action economy
+/// directly. The empty vec lives behind a name so call sites read
+/// `free_cost()` rather than `Vec::new()` and the intent is obvious.
+pub fn free_cost() -> Vec<Resource> {
+    Vec::new()
+}
+
 pub enum TargetingSchema {
     NoArgs,
     SinglePoint,

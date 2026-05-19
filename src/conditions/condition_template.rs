@@ -496,6 +496,37 @@ pub enum Condition {
     /// that failed. The condition tag itself is a marker so the
     /// concentration cleanup hook can find it.
     SickeningRadiated,
+    /// Bigby's Hand (5e level-5 evocation, concentration). The caster
+    /// summons a spectral hand of force that follows enemies around
+    /// pounding them. We collapse the spell's many activation modes
+    /// (grasping, slamming, interposing) into a flat +1d10 force-typed
+    /// per-hit rider on the caster's weapon attacks — slots into the
+    /// existing OnHitRider table next to Crown of Stars / Crusader's
+    /// Mantle. Concentration-bound so re-casting cleans up.
+    BigbysHanded,
+    /// Tenser's Transformation (5e level-6 transmutation, concentration).
+    /// The caster becomes a battle-trance avatar — they gain advantage
+    /// on weapon attacks (joins `grants_self_attack_advantage`), and
+    /// the spell hands out 50 temp HP on cast. We skip the RAW
+    /// "proficient with all weapons / +2d12 force on weapon hits"
+    /// clauses since those would need bookkeeping for weapon damage
+    /// types; the headline self-advantage + temp HP envelope is the
+    /// load-bearing buff. Concentration-bound on the caster.
+    Transformed,
+    /// Divine Strike primed (5e Cleric Channel Divinity flavor; we model
+    /// the level-8-and-above feature as a once-per-rest prime that lands
+    /// on the caster's next melee hit for +1d8 radiant damage. Mirrors
+    /// the Smiting / SearingSmiting one-shot prime pattern. Cleared by
+    /// the OnHitRider table the moment the rider lands. Tick-down timer
+    /// keeps a swing-less prime from dangling indefinitely.
+    DivineStriking,
+    /// Trip Attack primed (5e Fighter Battle Master maneuver). The next
+    /// melee weapon hit forces the target to make a STR save vs the
+    /// fighter's maneuver DC (8 + prof + STR); on fail, the target is
+    /// knocked Prone. One-shot — the rider table strips this flag the
+    /// moment it lands. Tick-down timer caps the prime so an idle
+    /// fighter doesn't carry the maneuver across rests.
+    TripAttacking,
 }
 
 impl Condition {
@@ -580,6 +611,10 @@ impl Condition {
             Condition::Conjured => "conjured",
             Condition::AgathysShielded => "armored in agathys",
             Condition::SickeningRadiated => "sickened with radiance",
+            Condition::BigbysHanded => "guarded by bigby's hand",
+            Condition::Transformed => "transformed",
+            Condition::DivineStriking => "primed with divine strike",
+            Condition::TripAttacking => "primed to trip",
         }
     }
 
@@ -640,6 +675,10 @@ impl Condition {
                 | Condition::Foreseen
                 | Condition::Flying
                 | Condition::AgathysShielded
+                | Condition::BigbysHanded
+                | Condition::Transformed
+                | Condition::DivineStriking
+                | Condition::TripAttacking
         )
     }
 
@@ -703,6 +742,7 @@ impl Condition {
                 | Condition::Hidden
                 | Condition::Foreseen
                 | Condition::Blessed
+                | Condition::Transformed
         )
     }
 

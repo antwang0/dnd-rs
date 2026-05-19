@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::{
-    actions::action_template::{Action, TargetingSchema},
+    actions::action_template::{Action, TargetingSchema, bonus_action_only},
     engine::{
         action_overrides::ActionOverride,
         dice::Dice,
@@ -17,6 +17,8 @@ const ANTITOXIN_NAME: &str = "Antitoxin";
 const SCROLL_OF_FIREBALL_NAME: &str = "Scroll of Fireball";
 const SCROLL_OF_MAGIC_MISSILE_NAME: &str = "Scroll of Magic Missile";
 const POTION_OF_SPEED_NAME: &str = "Potion of Speed";
+const POTION_OF_HEROISM_NAME: &str = "Potion of Heroism";
+const POTION_OF_INVISIBILITY_NAME: &str = "Potion of Invisibility";
 
 /// Drink a Potion of Healing. Self-targeted, costs an Action, heals
 /// 2d4+2 and removes one potion from inventory. The validate hook
@@ -490,7 +492,7 @@ impl Action for DrinkPotionOfSpeed {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::BonusAction]
+        bonus_action_only()
     }
 
     fn custom_validate_input(
@@ -541,3 +543,185 @@ impl Action for DrinkPotionOfSpeed {
 }
 
 pub static DRINK_POTION_OF_SPEED: DrinkPotionOfSpeed = DrinkPotionOfSpeed {};
+
+/// Drink a Potion of Heroism: bonus action; gain 10 temp HP and the
+/// Heroic condition for 10 rounds (immune to Frightened + regen temp
+/// HP from the buff). 5e RAW: 1-hour duration, +10 temp HP and immune
+/// to Frightened — we collapse the duration to 10 rounds to match the
+/// engine's combat-scale timer envelope. Single-use; consumes one
+/// Potion of Heroism from inventory.
+pub struct DrinkPotionOfHeroism {}
+
+impl Action for DrinkPotionOfHeroism {
+    fn name(&self) -> &str {
+        "drink potion of heroism"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["heroism", "hero"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn is_heal(&self) -> bool {
+        // The temp HP grant + Heroic install reads as a buff/heal-style
+        // support action, so the AI's support pipeline can pick it up.
+        true
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_item_named(POTION_OF_HEROISM_NAME))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::{ApplyCondition, GainTempHp};
+        let removed = encounter
+            .actors
+            .get_mut(&caster_id)
+            .is_some_and(|a| a.remove_item_by_name(POTION_OF_HEROISM_NAME));
+        if !removed {
+            return Vec::new();
+        }
+        let name = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.name().to_string())
+            .unwrap_or_default();
+        encounter.log(format!("{} drinks a potion of heroism.", name));
+        vec![
+            Box::new(GainTempHp {
+                actor_id: caster_id,
+                amount: 10,
+            }),
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::Heroic,
+                timer: ConditionTimer::Rounds(10),
+            }),
+        ]
+    }
+}
+
+pub static DRINK_POTION_OF_HEROISM: DrinkPotionOfHeroism = DrinkPotionOfHeroism {};
+
+/// Drink a Potion of Invisibility: action; gain the Invisible condition
+/// for 10 rounds (a flat duration close to RAW's "1 hour or until you
+/// attack/cast"). The Invisible condition gives the holder advantage on
+/// their next attack and imposes disadvantage on attackers, with the
+/// flag dropping on attack via the standard `breaks_on_attack`
+/// concentration-style hook (we use a Rounds timer here since the
+/// potion isn't a concentration spell — the attack-clear semantics
+/// live elsewhere for spell Invisibility). Single-use; consumes one
+/// Potion of Invisibility from inventory.
+pub struct DrinkPotionOfInvisibility {}
+
+impl Action for DrinkPotionOfInvisibility {
+    fn name(&self) -> &str {
+        "drink potion of invisibility"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["invisibility", "invis"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_item_named(POTION_OF_INVISIBILITY_NAME))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::ApplyCondition;
+        let removed = encounter
+            .actors
+            .get_mut(&caster_id)
+            .is_some_and(|a| a.remove_item_by_name(POTION_OF_INVISIBILITY_NAME));
+        if !removed {
+            return Vec::new();
+        }
+        let name = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.name().to_string())
+            .unwrap_or_default();
+        encounter.log(format!("{} drinks a potion of invisibility.", name));
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::Invisible,
+            timer: ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static DRINK_POTION_OF_INVISIBILITY: DrinkPotionOfInvisibility =
+    DrinkPotionOfInvisibility {};

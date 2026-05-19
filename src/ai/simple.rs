@@ -159,6 +159,41 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3l. Bigby's Hand — level-5 wizard concentration self-buff
+        //     (persistent +1d10 force per-hit rider). Fire when an
+        //     enemy is in attack reach so the rider lands this turn.
+        if let Some(aei) = try_bigbys_hand(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3m. Tenser's Transformation — level-6 wizard concentration
+        //     self-buff (50 temp HP + self-attack-advantage). Fire
+        //     when engaged so the temp HP buffer matters this round.
+        if let Some(aei) = try_tensers_transformation(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3n. Aura of Life — level-4 paladin concentration aura. Fire
+        //     when at least one ally is clustered in the aura radius
+        //     and a fight has started.
+        if let Some(aei) = try_aura_of_life(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3o. Divine Strike — cleric bonus-action prime (once per long
+        //     rest). Fire when an enemy is in melee so the +1d8 radiant
+        //     rider lands on the cleric's next swing.
+        if let Some(aei) = try_divine_strike(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3p. Trip Attack — fighter bonus-action prime (once per long
+        //     rest). Fire when an enemy is in melee so the prone-on-
+        //     fail save lands this turn.
+        if let Some(aei) = try_trip_attack(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 4. Bless — round 1 self+ally buff. Only valid before we're
         //    already concentrating on something.
         if let Some(aei) = try_bless(encounter, actor_id) {
@@ -241,14 +276,7 @@ fn try_disengage(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    let actor = encounter.actors.get(&actor_id)?;
-    let act = actor
-        .actions
-        .iter()
-        .find(|a| a.name() == "disengage")
-        .copied()?;
-    let aei = ActionExecutionInfo::new(act, actor_id, None, None, None);
-    aei.validate(encounter).then_some(aei)
+    try_self_action(encounter, actor_id, "disengage")
 }
 
 /// If the actor is Prone, return the StandUp action invocation. The action
@@ -262,13 +290,7 @@ fn try_stand_up(
     if !actor.has_condition(Condition::Prone) {
         return None;
     }
-    let stand = actor.find_action("stand")?;
-    let aei = ActionExecutionInfo::new(stand, actor_id, None, None, None);
-    if aei.validate(encounter) {
-        Some(aei)
-    } else {
-        None
-    }
+    try_self_action(encounter, actor_id, "stand")
 }
 
 /// Dodge if the actor still has an Action available and reached this
@@ -278,14 +300,7 @@ fn try_dodge(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    let actor = encounter.actors.get(&actor_id)?;
-    let dodge = actor.actions.iter().find(|a| a.name() == "dodge").copied()?;
-    let aei = ActionExecutionInfo::new(dodge, actor_id, None, None, None);
-    if aei.validate(encounter) {
-        Some(aei)
-    } else {
-        None
-    }
+    try_self_action(encounter, actor_id, "dodge")
 }
 
 /// Cast Hold Person on the toughest in-range enemy if we have it and
@@ -378,11 +393,7 @@ fn try_cause_fear(
     if actor.is_concentrating() {
         return None;
     }
-    let cf = actor
-        .actions
-        .iter()
-        .find(|a| a.name() == "cause fear")
-        .copied()?;
+    let cf = actor.find_action("cause fear")?;
     let my_team = actor.team();
 
     let ids = encounter.sorted_actor_ids();
@@ -471,16 +482,7 @@ fn try_holy_aura(
     }
     // Ally-cluster check: 12 tiles = 30ft aura radius. Require at least
     // 1 other combat-active ally inside (caster is free).
-    let team = actor.team();
-    let loc = actor.location();
-    let my_size = get_tiles_from_size(actor.size());
-    let ally_count = encounter.actors.iter().filter(|(id, a)| {
-        **id != actor_id
-            && a.team() == team
-            && a.is_combat_active()
-            && footprint_chebyshev(loc, my_size, a.location(), get_tiles_from_size(a.size())) <= 12
-    }).count();
-    if ally_count < 1 {
+    if n_actors_within(encounter, actor_id, 12, true, 1) < 1 {
         return None;
     }
     try_self_action(encounter, actor_id, "holy aura")
@@ -506,6 +508,108 @@ fn try_spirit_shroud(
     try_self_action(encounter, actor_id, "spirit shroud")
 }
 
+/// Bigby's Hand — level-5 wizard concentration self-buff. The on-hit
+/// rider lands +1d10 force on every attack the caster makes. Fire when
+/// at least one enemy is within melee + close-ranged reach (8 tiles ≈
+/// 20ft) so the rider lands this round; concentration-gated.
+fn try_bigbys_hand(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() {
+        return None;
+    }
+    if actor.has_condition(Condition::BigbysHanded) {
+        return None;
+    }
+    // 8 tiles ≈ 20ft — engagement radius for caster's typical fire-bolt /
+    // ray-of-frost reach. Don't burn a level-5 slot in an empty room.
+    if !any_enemy_within(encounter, actor_id, 8) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "bigby's hand")
+}
+
+/// Tenser's Transformation — level-6 wizard concentration self-buff.
+/// Grants 50 temp HP plus advantage on weapon attacks. Concentration-
+/// gated; fire only when engaged so the temp HP buffer matters.
+fn try_tensers_transformation(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() {
+        return None;
+    }
+    if actor.has_condition(Condition::Transformed) {
+        return None;
+    }
+    // 30ft engagement radius — same envelope as Holy Aura's gate.
+    if !any_enemy_within(encounter, actor_id, 12) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "tenser's transformation")
+}
+
+/// Aura of Life — level-4 paladin concentration aura. Fires when at
+/// least one ally sits in the 30ft radius and a hostile is engaged.
+/// Concentration-gated; skip re-cast when the caster already holds the
+/// DeathWarded buff (i.e. the aura is already up on them).
+fn try_aura_of_life(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() {
+        return None;
+    }
+    if actor.has_condition(Condition::DeathWarded) {
+        // The aura installs DeathWarded on the caster; if the caster
+        // already has it, the aura is presumed active.
+        return None;
+    }
+    // Engagement check — don't burn a level-4 slot in an empty room.
+    if !any_enemy_within(encounter, actor_id, 60) {
+        return None;
+    }
+    // Ally-cluster check: 6 tiles = 30ft aura radius. Require at least
+    // 1 other combat-active ally inside.
+    if n_actors_within(encounter, actor_id, 6, true, 1) < 1 {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "aura of life")
+}
+
+/// Cleric Divine Strike — once-per-rest bonus-action prime. Fire when
+/// an enemy is footprint-adjacent so the +1d8 radiant rider lands on
+/// the cleric's next melee swing (most likely Thorn Whip or melee
+/// weapon). Validation handles the feature-available + already-primed
+/// gate.
+fn try_divine_strike(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    if !any_enemy_within(encounter, actor_id, 0) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "divine strike")
+}
+
+/// Fighter Trip Attack — once-per-rest bonus-action maneuver. Fire when
+/// an enemy is footprint-adjacent so the prone-on-fail STR save lands
+/// this turn. Validation handles the feature-available + already-primed
+/// gate.
+fn try_trip_attack(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    if !any_enemy_within(encounter, actor_id, 0) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "trip attack")
+}
+
 /// Foresight — level-9 single-target ally buff. Pick the highest-HP
 /// combat-active ally (likely a frontliner) and lay the apex buff on
 /// them. Concentration-gated.
@@ -517,11 +621,7 @@ fn try_foresight(
     if actor.is_concentrating() {
         return None;
     }
-    let action = actor
-        .actions
-        .iter()
-        .find(|a| a.name() == "foresight")
-        .copied()?;
+    let action = actor.find_action("foresight")?;
     let team = actor.team();
     let mut best: Option<(u32, ActionExecutionInfo)> = None;
     for id in encounter.sorted_actor_ids() {
@@ -555,23 +655,55 @@ fn any_enemy_within(
     actor_id: usize,
     max_gap: isize,
 ) -> bool {
+    n_actors_within(encounter, actor_id, max_gap, false, 1) >= 1
+}
+
+/// Count of combat-active actors (excluding the caster) within
+/// `max_gap` tiles of `actor_id`'s footprint, filtered by team
+/// relation. `allies = true` counts team-mates; `allies = false`
+/// counts hostiles. Caller can short-circuit by passing `cap` —
+/// counting stops as soon as we hit that many candidates, which
+/// keeps the proximity check O(min(cap, n)) on large maps.
+///
+/// Returns 0 when `actor_id` is missing. Shared body for the
+/// proximity-and-cluster checks used by `any_enemy_within`,
+/// `try_holy_aura` (ally-cluster gate), `try_aura_of_life`, and
+/// other ally-or-enemy-radius heuristics.
+fn n_actors_within(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    max_gap: isize,
+    allies: bool,
+    cap: usize,
+) -> usize {
     let Some(actor) = encounter.actors.get(&actor_id) else {
-        return false;
+        return 0;
     };
     let my_team = actor.team();
     let my_loc = actor.location();
     let my_size = get_tiles_from_size(actor.size());
-    encounter.actors.iter().any(|(id, a)| {
-        *id != actor_id
-            && a.team() != my_team
-            && a.is_combat_active()
-            && footprint_chebyshev(
-                my_loc,
-                my_size,
-                a.location(),
-                get_tiles_from_size(a.size()),
-            ) <= max_gap
-    })
+    let mut hits = 0usize;
+    for (id, a) in &encounter.actors {
+        if *id == actor_id || !a.is_combat_active() {
+            continue;
+        }
+        if (a.team() == my_team) != allies {
+            continue;
+        }
+        let dist = footprint_chebyshev(
+            my_loc,
+            my_size,
+            a.location(),
+            get_tiles_from_size(a.size()),
+        );
+        if dist <= max_gap {
+            hits += 1;
+            if hits >= cap {
+                return hits;
+            }
+        }
+    }
+    hits
 }
 
 /// Wrap "find action by name → ActionExecutionInfo if validates".
@@ -582,18 +714,9 @@ fn try_self_action(
     actor_id: usize,
     action_name: &str,
 ) -> Option<ActionExecutionInfo> {
-    let actor = encounter.actors.get(&actor_id)?;
-    let action = actor
-        .actions
-        .iter()
-        .find(|a| a.name() == action_name)
-        .copied()?;
+    let action = encounter.actors.get(&actor_id)?.find_action(action_name)?;
     let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
-    if aei.validate(encounter) {
-        Some(aei)
-    } else {
-        None
-    }
+    aei.validate(encounter).then_some(aei)
 }
 
 /// Barbarian Rage trigger: a barbarian who isn't already Raging fires
@@ -741,11 +864,7 @@ fn try_bardic_inspiration(
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
     let actor = encounter.actors.get(&actor_id)?;
-    let action = actor
-        .actions
-        .iter()
-        .find(|a| a.name() == "bardic inspiration")
-        .copied()?;
+    let action = actor.find_action("bardic inspiration")?;
     let team = actor.team();
     let mut best: Option<(u32, ActionExecutionInfo)> = None;
     for id in encounter.sorted_actor_ids() {
@@ -804,13 +923,7 @@ fn try_dodge_when_low_hp(
     if hp / max >= 0.5 {
         return None;
     }
-    let dodge = actor.actions.iter().find(|a| a.name() == "dodge").copied()?;
-    let aei = ActionExecutionInfo::new(dodge, actor_id, None, None, None);
-    if aei.validate(encounter) {
-        Some(aei)
-    } else {
-        None
-    }
+    try_self_action(encounter, actor_id, "dodge")
 }
 
 /// Sort key for advantage-aware target selection — lower wins.
@@ -1428,24 +1541,13 @@ fn try_step_toward_lowest_hp(
 /// if Dodge isn't available, and finally AwaitInput if neither is —
 /// preventing an infinite loop on a malformed actor.
 fn skip_or_await(encounter: &EncounterInstance, caster_id: usize) -> ControllerDecision {
-    let Some(actor) = encounter.actors.get(&caster_id) else {
-        return ControllerDecision::AwaitInput;
-    };
-    if let Some(dodge) = actor.actions.iter().find(|a| a.name() == "dodge").copied() {
-        let aei = ActionExecutionInfo::new(dodge, caster_id, None, None, None);
-        if aei.validate(encounter) {
-            return ControllerDecision::Act(aei);
-        }
+    if let Some(aei) = try_self_action(encounter, caster_id, "dodge") {
+        return ControllerDecision::Act(aei);
     }
-    let Some(skip) = actor.actions.iter().find(|a| a.name() == "skip").copied() else {
-        return ControllerDecision::AwaitInput;
-    };
-    let aei = ActionExecutionInfo::new(skip, caster_id, None, None, None);
-    if aei.validate(encounter) {
-        ControllerDecision::Act(aei)
-    } else {
-        ControllerDecision::AwaitInput
+    if let Some(aei) = try_self_action(encounter, caster_id, "skip") {
+        return ControllerDecision::Act(aei);
     }
+    ControllerDecision::AwaitInput
 }
 
 use crate::engine::types::Coordinate;
@@ -1722,6 +1824,15 @@ mod tests {
             // "save spell did nothing" paths.
             use crate::actors::creatures::stone_golems::STONE_GOLEM_TEMPLATE;
             let _ = e.instantiate_creature(&STONE_GOLEM_TEMPLATE, Coordinate::new(25, 12), 1, 33);
+            // Latest additions: Bullette (CR 5 burrowing predator with
+            // Deadly Leap → prone-on-fail-STR-save) and Bone Devil (CR 9
+            // flying fiend with multiattack + poison-rider stinger).
+            // Exercises the new prone-on-leap path and the standard
+            // devil envelope (fire/poison immunity + cold resistance).
+            use crate::actors::creatures::bone_devils::BONE_DEVIL_TEMPLATE;
+            use crate::actors::creatures::bullettes::BULLETTE_TEMPLATE;
+            let _ = e.instantiate_creature(&BULLETTE_TEMPLATE, Coordinate::new(2, 18), 1, 34);
+            let _ = e.instantiate_creature(&BONE_DEVIL_TEMPLATE, Coordinate::new(5, 18), 1, 35);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

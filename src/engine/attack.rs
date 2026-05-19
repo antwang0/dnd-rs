@@ -341,7 +341,7 @@ pub struct SmiteFollowUp {
 /// than declared `const` because `Dice::new` isn't a const fn — but the
 /// runtime cost is one stack-allocated array of plain data, so the
 /// indirection is free.
-fn on_hit_riders() -> [OnHitRider; 9] {
+fn on_hit_riders() -> [OnHitRider; 12] {
     [
         OnHitRider {
             condition: Condition::CrusadersMantled,
@@ -357,6 +357,19 @@ fn on_hit_riders() -> [OnHitRider; 9] {
             dice: Dice::new(1, 8),
             label: "crown of stars",
             damage_type: DamageType::Radiant,
+            melee_only: false,
+            consume_on_trigger: false,
+            follow_up: None,
+        },
+        // 5e Bigby's Hand (level-5 concentration). Persistent +1d10 force
+        // rider on every attack the caster lands — not melee-only since
+        // the spectral hand can punch at range. Slots cleanly between
+        // Crown of Stars (1d8 radiant) and the Smiting one-shot primes.
+        OnHitRider {
+            condition: Condition::BigbysHanded,
+            dice: Dice::new(1, 10),
+            label: "bigby's hand",
+            damage_type: DamageType::Force,
             melee_only: false,
             consume_on_trigger: false,
             follow_up: None,
@@ -479,6 +492,40 @@ fn on_hit_riders() -> [OnHitRider; 9] {
                 apply: Condition::Stunned,
                 timer: ConditionTimer::Rounds(1),
                 label: "stunning strike stun",
+            }),
+        },
+        // 5e Cleric Divine Strike (level 8 class feature, here exposed as
+        // a Channel-Divinity-flavored bonus-action prime). +1d8 radiant
+        // on the next melee weapon hit; no save. Mirrors the Smiting
+        // shape but auto-applies no follow-up condition (the radiant
+        // rider IS the effect). Consumed the moment a melee swing lands.
+        OnHitRider {
+            condition: Condition::DivineStriking,
+            dice: Dice::new(1, 8),
+            label: "divine strike",
+            damage_type: DamageType::Radiant,
+            melee_only: true,
+            consume_on_trigger: true,
+            follow_up: None,
+        },
+        // 5e Battle Master Trip Attack maneuver. No bonus damage in our
+        // model (RAW: +superiority die damage; we skip the die since the
+        // existing dice infra doesn't carry a per-class scaling pool);
+        // the prone-on-fail-STR-save IS the effect. Mirrors Stunning
+        // Strike's "zero-damage rider with a save follow-up" shape.
+        OnHitRider {
+            condition: Condition::TripAttacking,
+            dice: Dice::new(0, 1),
+            label: "trip attack",
+            damage_type: DamageType::Bludgeoning,
+            melee_only: true,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: Some(AbilityScoreType::Strength),
+                dc_ability: AbilityScoreType::Strength,
+                apply: Condition::Prone,
+                timer: ConditionTimer::Permanent,
+                label: "trip attack prone",
             }),
         },
     ]

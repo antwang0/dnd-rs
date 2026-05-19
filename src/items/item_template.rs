@@ -234,6 +234,38 @@ pub static POTION_OF_SPEED: Item = Item {
     on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_SPEED),
 };
 
+/// Potion of Heroism — bonus action; grants 10 temp HP and the Heroic
+/// condition (Frightened immunity + temp HP regen tagged onto the
+/// buff for 10 rounds). Single-use consumable; the buff drops with
+/// the condition timer.
+pub static POTION_OF_HEROISM: Item = Item {
+    name: "Potion of Heroism",
+    glyph: 'H',
+    bonuses: ItemBonuses {
+        ac: 0,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_HEROISM),
+};
+
+/// Potion of Invisibility — action; grants the Invisible condition for
+/// 10 rounds (attacks vs holder at disadvantage, holder's attacks at
+/// advantage). Single-use consumable; the buff drops with the
+/// condition timer.
+pub static POTION_OF_INVISIBILITY: Item = Item {
+    name: "Potion of Invisibility",
+    glyph: 'i',
+    bonuses: ItemBonuses {
+        ac: 0,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_INVISIBILITY),
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -254,6 +286,8 @@ pub static LOOT_POOL: &[&Item] = &[
     &POTION_OF_GREATER_HEALING,
     &ANTITOXIN,
     &POTION_OF_SPEED,
+    &POTION_OF_HEROISM,
+    &POTION_OF_INVISIBILITY,
     &SCROLL_OF_FIREBALL,
     &SCROLL_OF_MAGIC_MISSILE,
 ];

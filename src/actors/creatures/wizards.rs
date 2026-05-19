@@ -167,6 +167,14 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Stinking Cloud (lv3) and the higher-tier Sunbeam (lv6) as a
     // mid-tier control-burst.
     actions.push(&*crate::actions::spells::SICKENING_RADIANCE);
+    // Latest additions: lv2 Aganazzar's Scorcher (3d8 fire 3-tile burst
+    // DEX save half — a clean cheaper Fireball alternative), lv5
+    // Bigby's Hand (persistent +1d10 force per-hit rider concentration
+    // self-buff), lv6 Tenser's Transformation (50 temp HP + self-attack-
+    // advantage concentration self-buff).
+    actions.push(&*crate::actions::spells::AGANAZZARS_SCORCHER);
+    actions.push(&*crate::actions::spells::BIGBYS_HAND);
+    actions.push(&*crate::actions::spells::TENSERS_TRANSFORMATION);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

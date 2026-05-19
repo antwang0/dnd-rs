@@ -20011,4 +20011,272 @@ mod tests {
             "Sickening Radiance should exhaust the goblin enemy across seeds"
         );
     }
+
+    /// Bigby's Hand: self-cast applies the BigbysHanded condition + a
+    /// concentration mark. The persistent force-rider lives on the
+    /// OnHitRider table.
+    #[test]
+    fn bigbys_hand_self_buffs_with_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::BIGBYS_HAND;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let effects = BIGBYS_HAND.side_effects(&mut e, wiz, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&wiz].has_condition(Condition::BigbysHanded));
+        assert!(e.actors[&wiz].is_concentrating());
+    }
+
+    /// Tenser's Transformation: self-cast grants 50 temp HP and the
+    /// Transformed condition (self-attack-advantage cohort) + a
+    /// concentration mark.
+    #[test]
+    fn tensers_transformation_buffs_temp_hp_and_advantage() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::TENSERS_TRANSFORMATION;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let effects = TENSERS_TRANSFORMATION.side_effects(&mut e, wiz, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&wiz].has_condition(Condition::Transformed));
+        assert!(e.actors[&wiz].is_concentrating());
+        assert_eq!(e.actors[&wiz].temp_hp(), 50);
+        // Transformed condition lands in the self-attack-advantage cohort.
+        assert!(Condition::Transformed.grants_self_attack_advantage());
+    }
+
+    /// Aura of Life: paladin's allies-only burst installs DeathWarded on
+    /// the caster and every team-mate in the 30ft sphere; enemies in the
+    /// radius are spared. Concentration is installed regardless.
+    #[test]
+    fn aura_of_life_installs_death_ward_on_allies() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::AURA_OF_LIFE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 5), 0, 1)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+            .unwrap();
+        let effects = AURA_OF_LIFE.side_effects(&mut e, pal, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&pal].has_condition(Condition::DeathWarded));
+        assert!(e.actors[&ally].has_condition(Condition::DeathWarded));
+        assert!(
+            !e.actors[&enemy].has_condition(Condition::DeathWarded),
+            "Aura of Life must not bless enemies in the radius"
+        );
+        assert!(e.actors[&pal].is_concentrating());
+    }
+
+    /// Aganazzar's Scorcher: enemy-only DEX-save fire burst. Allies in
+    /// the radius are spared by `enemy_burst_targets`.
+    #[test]
+    fn aganazzars_scorcher_burns_enemies_spares_allies() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::AGANAZZARS_SCORCHER;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut saw_damage = false;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let ally = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 9), 0, 1)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+                .unwrap();
+            let ally_hp_before = e.actors[&ally].hitpoints();
+            let enemy_hp_before = e.actors[&enemy].hitpoints();
+            let origin = Coordinate::new(10, 10);
+            for ef in AGANAZZARS_SCORCHER.side_effects(
+                &mut e,
+                wiz,
+                None,
+                Some(&vec![origin]),
+                None,
+            ) {
+                ef.apply(&mut e);
+            }
+            assert_eq!(
+                e.actors[&ally].hitpoints(),
+                ally_hp_before,
+                "ally in the burst should be spared"
+            );
+            if !e.actors.contains_key(&enemy)
+                || e.actors[&enemy].hitpoints() < enemy_hp_before
+            {
+                saw_damage = true;
+                break;
+            }
+        }
+        assert!(saw_damage, "Aganazzar's Scorcher never damaged the enemy");
+    }
+
+    /// Divine Strike (Cleric): bonus-action prime applies the
+    /// DivineStriking condition and consumes the once-per-rest feature.
+    #[test]
+    fn divine_strike_primes_caster_and_consumes_feature() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{DIVINE_STRIKE, DIVINE_STRIKE_TAG};
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let cler = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&cler].feature_available(DIVINE_STRIKE_TAG));
+        let effects = DIVINE_STRIKE.side_effects(&mut e, cler, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&cler].has_condition(Condition::DivineStriking));
+        assert!(
+            !e.actors[&cler].feature_available(DIVINE_STRIKE_TAG),
+            "feature should be consumed after use"
+        );
+    }
+
+    /// Trip Attack (Fighter): bonus-action prime applies the
+    /// TripAttacking condition and consumes the once-per-rest feature.
+    #[test]
+    fn trip_attack_primes_caster_and_consumes_feature() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{TRIP_ATTACK, TRIP_ATTACK_TAG};
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&f].feature_available(TRIP_ATTACK_TAG));
+        let effects = TRIP_ATTACK.side_effects(&mut e, f, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&f].has_condition(Condition::TripAttacking));
+        assert!(!e.actors[&f].feature_available(TRIP_ATTACK_TAG));
+    }
+
+    /// Bullette template: high-HP CR-5 monstrosity with bite + multi +
+    /// deadly leap. Verifies the template wires cleanly via
+    /// instantiate_creature.
+    #[test]
+    fn bullette_template_instantiates_cleanly() {
+        use crate::actors::creatures::bullettes::BULLETTE_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&BULLETTE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let bullette = &e.actors[&id];
+        // Verify the headline stats: large footprint, high HP, AC 17.
+        assert_eq!(bullette.size(), crate::engine::types::Size::Large);
+        assert!(bullette.max_hitpoints() >= 50);
+        assert_eq!(bullette.armor_class(), 17);
+        // Three signature actions are in the loadout.
+        assert!(bullette.find_action("bullette bite").is_some());
+        assert!(bullette.find_action("bullette multiattack").is_some());
+        assert!(bullette.find_action("bullette deadly leap").is_some());
+    }
+
+    /// Bone Devil template: CR-9 fiend envelope: immune to fire +
+    /// poison, resistant to cold, can't be poisoned. Verifies the
+    /// devil immunity envelope plus the multi/sting/claws loadout.
+    #[test]
+    fn bone_devil_template_carries_devil_envelope() {
+        use crate::actors::creatures::bone_devils::BONE_DEVIL_TEMPLATE;
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&BONE_DEVIL_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let dev = &e.actors[&id];
+        assert!(dev.is_immune_to(DamageType::Fire));
+        assert!(dev.is_immune_to(DamageType::Poison));
+        assert!(dev.is_immune_to_condition(Condition::Poisoned));
+        assert!(dev.find_action("bone devil multiattack").is_some());
+        assert!(dev.find_action("bone devil sting").is_some());
+    }
+
+    /// Potion of Heroism: drinking the potion grants 10 temp HP and the
+    /// Heroic condition.
+    #[test]
+    fn potion_of_heroism_grants_temp_hp_and_heroic() {
+        use crate::actions::action_template::Action;
+        use crate::actions::item_actions::DRINK_POTION_OF_HEROISM;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::POTION_OF_HEROISM;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Give the fighter a potion in their inventory so the validate
+        // hook passes.
+        e.actors.get_mut(&f).unwrap().pickup_item(&POTION_OF_HEROISM);
+        assert!(e.actors[&f].has_item_named("Potion of Heroism"));
+        let effects = DRINK_POTION_OF_HEROISM.side_effects(&mut e, f, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert_eq!(e.actors[&f].temp_hp(), 10);
+        assert!(e.actors[&f].has_condition(Condition::Heroic));
+        // Potion consumed.
+        assert!(!e.actors[&f].has_item_named("Potion of Heroism"));
+    }
+
+    /// Potion of Invisibility: drinking applies the Invisible condition.
+    #[test]
+    fn potion_of_invisibility_grants_invisible() {
+        use crate::actions::action_template::Action;
+        use crate::actions::item_actions::DRINK_POTION_OF_INVISIBILITY;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::POTION_OF_INVISIBILITY;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .pickup_item(&POTION_OF_INVISIBILITY);
+        let effects =
+            DRINK_POTION_OF_INVISIBILITY.side_effects(&mut e, f, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&f].has_condition(Condition::Invisible));
+        assert!(!e.actors[&f].has_item_named("Potion of Invisibility"));
+    }
+
+    /// New conditions all sit in the dispellable-buff table so Dispel
+    /// Magic can rip them off cleanly.
+    #[test]
+    fn new_buff_conditions_are_dispellable() {
+        assert!(Condition::BigbysHanded.is_dispellable_buff());
+        assert!(Condition::Transformed.is_dispellable_buff());
+        assert!(Condition::DivineStriking.is_dispellable_buff());
+        assert!(Condition::TripAttacking.is_dispellable_buff());
+    }
 }

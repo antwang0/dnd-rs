@@ -4,7 +4,7 @@ use crate::actions::class_features::{
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GREATSWORD;
 use crate::actions::spells::{
-    BLESS, BLINDING_SMITE, BRANDING_SMITE, COMPELLED_DUEL, CURE_WOUNDS, HEALING_WORD,
+    AURA_OF_LIFE, BLESS, BLINDING_SMITE, BRANDING_SMITE, COMPELLED_DUEL, CURE_WOUNDS, HEALING_WORD,
     LESSER_RESTORATION, SEARING_SMITE, SHIELD_OF_FAITH, WRATHFUL_SMITE,
 };
 use crate::actors::actor_template::CreatureTemplate;
@@ -47,6 +47,12 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&WRATHFUL_SMITE);
     actions.push(&BRANDING_SMITE);
     actions.push(&BLINDING_SMITE);
+    // Aura of Life — lv4 abjuration, concentration; allies in 30ft sphere
+    // gain DeathWarded (next killing-blow drop intercepted) for the
+    // duration. Bumps the paladin into the lv4 slot table; combined with
+    // the half-caster ramp below it gives the late-game paladin a true
+    // mass-save-the-party button alongside the smite primes.
+    actions.push(&*AURA_OF_LIFE);
     CreatureTemplate {
         name: "Paladin",
         glyph: 'P',
@@ -66,11 +72,11 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         cr: 1.5,
         size: Size::Medium,
         actions,
-        // Half-caster ramp: 4 level-1, 3 level-2, 1 level-3. Matches
-        // level-7 RAW — bumped from level-5 to support the lv3 Blinding
-        // Smite addition and keep enough level-1 slots for both Bless
-        // and Divine Smite spam.
-        spell_slots_by_level: vec![4, 3, 1],
+        // Half-caster ramp: 4/3/1/1. Adds a level-4 slot for the new
+        // Aura of Life cast; the prior 4/3/1 envelope is preserved on
+        // the lv1-3 tier so Bless / Divine Smite / Compelled Duel /
+        // Blinding Smite spam stays unchanged.
+        spell_slots_by_level: vec![4, 3, 1, 1],
         rolls_death_saves: true,
         damage_modifiers: HashMap::new(),
         // Paladins are proficient in WIS and CHA saves (5e PHB).

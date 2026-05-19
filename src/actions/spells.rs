@@ -13187,3 +13187,295 @@ impl Action for SickeningRadiance {
 
 pub static SICKENING_RADIANCE: LazyLock<SickeningRadiance> =
     LazyLock::new(|| SickeningRadiance {});
+
+/// Bigby's Hand — level-5 evocation, concentration. The caster summons a
+/// fist-sized spectral force-hand that follows them around mauling
+/// targets. RAW exposes four activation modes (clenched fist, grasping
+/// hand, forceful hand, interposing hand); we collapse to the headline
+/// "+force damage on every attack" envelope — a persistent +1d10 force
+/// rider on every weapon swing the caster lands (slots into the
+/// OnHitRider table next to Crown of Stars). Self-buff, no targeting.
+/// Concentration so re-casting drops cleanly.
+pub struct BigbysHand {}
+
+impl Action for BigbysHand {
+    fn name(&self) -> &str {
+        "bigby's hand"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bh", "bigby", "hand"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        // Damage lands via the per-hit rider, not directly on cast.
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::BigbysHanded,
+                timer: ConditionTimer::Permanent,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Bigby's Hand",
+                    vec![(caster_id, Condition::BigbysHanded)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static BIGBYS_HAND: LazyLock<BigbysHand> = LazyLock::new(|| BigbysHand {});
+
+/// Tenser's Transformation — level-6 transmutation, concentration. The
+/// caster channels arcane force into their body: they gain 50 temp HP
+/// (the explicit RAW "temporary hit points" lane) AND advantage on
+/// weapon attack rolls for the duration (the `Transformed` condition
+/// joins `grants_self_attack_advantage`). RAW additionally gives +2d12
+/// force damage on weapon hits and proficiency in all weapons / CON
+/// saves; we skip those clauses since they'd need per-class weapon
+/// bookkeeping. The 50 temp HP + advantage envelope is load-bearing
+/// enough to make the spell shine. Self-only.
+pub struct TensersTransformation {}
+
+impl Action for TensersTransformation {
+    fn name(&self) -> &str {
+        "tenser's transformation"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["tt", "tenser", "transformation"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![
+            Box::new(GainTempHp {
+                actor_id: caster_id,
+                amount: 50,
+            }),
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::Transformed,
+                timer: ConditionTimer::Permanent,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Tenser's Transformation",
+                    vec![(caster_id, Condition::Transformed)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static TENSERS_TRANSFORMATION: LazyLock<TensersTransformation> =
+    LazyLock::new(|| TensersTransformation {});
+
+/// Aura of Life — level-4 paladin abjuration, concentration. The paladin
+/// emits a 30-foot aura (6-tile radius); the caster and every ally
+/// inside the aura gain the DeathWarded condition for the duration —
+/// the next hit that would drop them to 0 HP instead leaves them at 1.
+/// We collapse the RAW "max-HP restoration if reduced to 0" half into
+/// the existing DeathWard mechanic so the aura plays well with the
+/// engine's killing-blow interception path. Concentration-bound on the
+/// caster; the aura's ally-only partition uses `ally_burst_targets`.
+pub struct AuraOfLife {}
+
+impl Action for AuraOfLife {
+    fn name(&self) -> &str {
+        "aura of life"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["aol", "aura-life"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        // The aura grants death-ward protection — not strictly a heal,
+        // but the AI's support pipeline should consider it alongside
+        // healing actions when the party is low.
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let center = caster.location();
+        const RADIUS: isize = 6;
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut conditions: Vec<(usize, Condition)> = Vec::new();
+        // Allies (including the caster) in radius receive DeathWarded.
+        // `ally_burst_targets` includes the caster if they sit in the
+        // burst — and they always do, since the aura is centered on
+        // them.
+        for tid in encounter.ally_burst_targets(caster_id, center, RADIUS) {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::DeathWarded,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            conditions.push((tid, Condition::DeathWarded));
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Aura of Life", conditions),
+        }));
+        effects
+    }
+}
+
+pub static AURA_OF_LIFE: LazyLock<AuraOfLife> = LazyLock::new(|| AuraOfLife {});
+
+/// Aganazzar's Scorcher — level-2 evocation. Roaring flames erupt in a
+/// 30ft line (RAW); we approximate as a 3-tile burst at the target
+/// point. Every creature in the area makes a DEX save vs the caster's
+/// spell DC: fail = full 3d8 fire damage, pass = half. Shared damage
+/// roll across all victims. Enemy-only partition keeps allies safe
+/// inside the line — same simplification as Burning Hands / Cone of
+/// Cold use. No concentration.
+pub struct AganazzarsScorcher {}
+
+impl Action for AganazzarsScorcher {
+    fn name(&self) -> &str {
+        "aganazzar's scorcher"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["scorcher", "aganazzar"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 3 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30ft RAW line — origin must be close to caster.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        const RADIUS: isize = 3;
+        let raw = encounter.roll(&Dice::new(3, 8));
+        encounter.log(format!(
+            "  aganazzar's scorcher: 3d8({}) shared fire",
+            raw
+        ));
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
+            let save = encounter.roll_save(tid, AbilityScoreType::Dexterity, dc);
+            let dmg = if save.passed() { raw / 2 } else { raw };
+            if dmg == 0 {
+                continue;
+            }
+            effects.push(Box::new(DealDamage {
+                actor_id: tid,
+                amount: dmg,
+                damage_type: DamageType::Fire,
+            }));
+        }
+        effects
+    }
+}
+
+pub static AGANAZZARS_SCORCHER: LazyLock<AganazzarsScorcher> =
+    LazyLock::new(|| AganazzarsScorcher {});

@@ -2,7 +2,9 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use crate::{
-    actions::action_template::{Action, TargetingSchema},
+    actions::action_template::{
+        Action, TargetingSchema, bonus_action_only, free_cost,
+    },
     conditions::{Condition, ConditionTimer},
     engine::{
         action_overrides::ActionOverride,
@@ -53,7 +55,7 @@ impl Action for SecondWind {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::BonusAction]
+        bonus_action_only()
     }
 
     fn custom_validate_input(
@@ -133,7 +135,7 @@ impl Action for ActionSurge {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
         // RAW: Action Surge is "no action required" — no cost.
-        Vec::new()
+        free_cost()
     }
 
     fn custom_validate_input(
@@ -209,7 +211,7 @@ impl Action for CunningDash {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::BonusAction]
+        bonus_action_only()
     }
 
     fn side_effects(
@@ -265,7 +267,7 @@ impl Action for CunningDisengage {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::BonusAction]
+        bonus_action_only()
     }
 
     fn side_effects(
@@ -316,7 +318,7 @@ impl Action for CunningHide {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::BonusAction]
+        bonus_action_only()
     }
 
     fn side_effects(
@@ -378,7 +380,7 @@ impl Action for Indomitable {
     ) -> Vec<Resource> {
         // No action / bonus action cost — RAW: "no action required",
         // just spend the feature.
-        Vec::new()
+        free_cost()
     }
 
     fn custom_validate_input(
@@ -454,7 +456,7 @@ impl Action for Rage {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::BonusAction]
+        bonus_action_only()
     }
 
     fn custom_validate_input(
@@ -769,7 +771,7 @@ impl Action for StunningStrike {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::BonusAction]
+        bonus_action_only()
     }
     fn custom_validate_input(
         &self,
@@ -849,7 +851,7 @@ impl Action for PatientDefense {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::BonusAction]
+        bonus_action_only()
     }
     fn side_effects(
         &self,
@@ -912,7 +914,7 @@ impl Action for BardicInspiration {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::BonusAction]
+        bonus_action_only()
     }
     fn custom_validate_input(
         &self,
@@ -1121,7 +1123,7 @@ impl Action for FlurryOfBlows {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::BonusAction]
+        bonus_action_only()
     }
     fn custom_validate_input(
         &self,
@@ -1156,3 +1158,167 @@ impl Action for FlurryOfBlows {
 }
 
 pub static FLURRY_OF_BLOWS: LazyLock<FlurryOfBlows> = LazyLock::new(|| FlurryOfBlows {});
+
+/// Class-feature tag for the Cleric's Divine Strike (5e level-8 RAW;
+/// once per long rest in our model). RAW exposes Divine Strike as a
+/// passive "+1d8 typed damage on weapon hits" at level 8, but we model
+/// it as an explicit bonus-action prime (mirrors the Smiting pattern)
+/// so the cleric has a flavorful spike-damage button paired with the
+/// Channel Divinity: Turn Undead lane.
+pub const DIVINE_STRIKE_TAG: &str = "cleric.divine_strike";
+
+/// Divine Strike — Cleric feature, bonus action. Spends the once-per-rest
+/// feature to prime the cleric's next melee hit with +1d8 radiant
+/// damage (consumed at the hit site in `resolve_attack` via the
+/// OnHitRider table — see the `DivineStriking` rider entry). Tick-down
+/// timer caps the prime to 2 rounds so an idle cleric doesn't carry
+/// the prime across rests.
+pub struct DivineStrike {}
+
+impl Action for DivineStrike {
+    fn name(&self) -> &str {
+        "divine strike"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dstrike", "cd-strike"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        // Indirect: the rider lands on the next hit, not on cast.
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.is_combat_active()
+                && a.feature_available(DIVINE_STRIKE_TAG)
+                && !a.has_condition(Condition::DivineStriking)
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(DIVINE_STRIKE_TAG);
+        }
+        encounter.log(
+            "  divine strike: cleric's next melee hit will land with radiant fury."
+                .to_string(),
+        );
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::DivineStriking,
+            timer: ConditionTimer::Rounds(2),
+        })]
+    }
+}
+
+pub static DIVINE_STRIKE: LazyLock<DivineStrike> = LazyLock::new(|| DivineStrike {});
+
+/// Class-feature tag for the Fighter's Trip Attack Battle Master
+/// maneuver (once per long rest). RAW exposes maneuvers as a pool of
+/// superiority dice; we collapse to a single charge per rest so the
+/// once-per-rest gating pattern stays uniform with Second Wind / Action
+/// Surge / Indomitable.
+pub const TRIP_ATTACK_TAG: &str = "fighter.trip_attack";
+
+/// Trip Attack — Fighter Battle Master maneuver. Bonus action; primes
+/// the next melee weapon hit: on connect, the target makes a STR save
+/// vs the fighter's maneuver DC (8 + prof + STR); on fail, they're
+/// knocked Prone. RAW's superiority-die damage rider is skipped; the
+/// prone-on-fail half is the load-bearing tactical effect. One-shot
+/// — the OnHitRider table strips the prime the moment a melee swing
+/// lands. Tick-down timer (2 rounds) caps the prime if the fighter
+/// can't connect.
+pub struct TripAttack {}
+
+impl Action for TripAttack {
+    fn name(&self) -> &str {
+        "trip attack"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["trip", "ta"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.is_combat_active()
+                && a.feature_available(TRIP_ATTACK_TAG)
+                && !a.has_condition(Condition::TripAttacking)
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(TRIP_ATTACK_TAG);
+        }
+        encounter.log(
+            "  trip attack: fighter's next hit forces a STR save vs prone."
+                .to_string(),
+        );
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::TripAttacking,
+            timer: ConditionTimer::Rounds(2),
+        })]
+    }
+}
+
+pub static TRIP_ATTACK: LazyLock<TripAttack> = LazyLock::new(|| TripAttack {});

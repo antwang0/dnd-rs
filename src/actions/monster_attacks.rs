@@ -2,7 +2,9 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use crate::{
-    actions::action_template::{Action, MELEE_REACH, TargetingSchema, first_target_id},
+    actions::action_template::{
+        Action, MELEE_REACH, TargetingSchema, bonus_action_only, first_target_id,
+    },
     conditions::{Condition, ConditionTimer},
     engine::{
         action_overrides::ActionOverride,
@@ -747,7 +749,7 @@ impl Action for FrightfulHowl {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::BonusAction]
+        bonus_action_only()
     }
     fn side_effects(
         &self,
@@ -1124,7 +1126,7 @@ impl Action for FrightfulPresence {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::BonusAction]
+        bonus_action_only()
     }
     fn side_effects(
         &self,
@@ -2703,7 +2705,7 @@ impl Action for RecklessAttack {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::BonusAction]
+        bonus_action_only()
     }
     fn side_effects(
         &self,
@@ -4767,7 +4769,7 @@ impl Action for StormGiantLightningStrike {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::BonusAction]
+        bonus_action_only()
     }
     fn side_effects(
         &self,
@@ -5480,3 +5482,209 @@ impl Action for StoneGolemSlow {
 }
 
 pub static STONE_GOLEM_SLOW: LazyLock<StoneGolemSlow> = LazyLock::new(|| StoneGolemSlow {});
+
+/// Bullette Bite — STR-based 4d12+STR piercing melee, reach 1. The
+/// bullette's signature crunch — averages ~26 piercing per hit. No
+/// rider effects; pure damage. Stays a `SimpleWeapon` so the bullette's
+/// loadout can mix this with the Deadly Leap follow-up cleanly.
+pub static BULLETTE_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "bullette bite",
+    aliases: &["bbite", "bullette-bite"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(4, 12),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Bullette Deadly Leap — Action; the bullette jumps onto a target,
+/// landing with crushing force. We model as a single melee swing dealing
+/// 3d6+STR bludgeoning, plus the target makes a STR save vs DC 16 or
+/// is knocked Prone. The leap is RAW reserved for the Bullette's bonus
+/// "Deadly Leap" action; we expose it as a regular Action lane so the
+/// AI can pick between Bite and Leap based on whether knocking the
+/// target prone (e.g. setting up an ally's melee crit window) is worth
+/// the lower damage tier.
+pub struct BulletteDeadlyLeap {}
+
+impl Action for BulletteDeadlyLeap {
+    fn name(&self) -> &str {
+        "bullette deadly leap"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["leap", "bleap"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "deadly leap",
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(3, 6),
+            DamageType::Bludgeoning,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        const DC: i32 = 16;
+        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, DC);
+        if !save.passed() {
+            encounter.log(format!(
+                "  deadly leap: actor #{} fails STR save and is knocked Prone",
+                target_id
+            ));
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Prone,
+                timer: ConditionTimer::Permanent,
+            }));
+        }
+        effects
+    }
+}
+
+pub static BULLETTE_DEADLY_LEAP: LazyLock<BulletteDeadlyLeap> =
+    LazyLock::new(|| BulletteDeadlyLeap {});
+
+/// Bullette Multiattack — Action: 2 bites. The bullette's RAW
+/// multiattack is one Bite; we double it so the CR-5 bullette can keep
+/// pace with the other CR-5 boss-tier templates (manticore, etc.)
+/// without needing to chain back-to-back Action picks.
+pub static BULLETTE_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "bullette multiattack",
+    sub_attack: &BULLETTE_BITE,
+    count: 2,
+});
+
+/// Bone Devil Sting — STR-based 2d8+STR piercing melee, reach 2. On
+/// hit, the target makes a CON save vs DC 14 or takes an additional
+/// 5d6 poison damage AND is Poisoned for 10 rounds. The sting is the
+/// bone devil's signature finisher — mirrors the wyvern stinger shape
+/// with a smaller poison rider but a lasting Poisoned-on-fail clause.
+pub struct BoneDevilSting {}
+
+impl Action for BoneDevilSting {
+    fn name(&self) -> &str {
+        "bone devil sting"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bdsting", "tailsting"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(2)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Poison]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "sting",
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(2, 8),
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        const DC: i32 = 14;
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, DC);
+        let raw = encounter.roll(&Dice::new(5, 6));
+        let poison = if save.passed() { raw / 2 } else { raw };
+        encounter.log(format!(
+            "  bone devil poison: 5d6({}) = {} poison{}",
+            raw,
+            poison,
+            if save.passed() { " (saved)" } else { "" }
+        ));
+        if poison > 0 {
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: poison,
+                damage_type: DamageType::Poison,
+            }));
+        }
+        if !save.passed() {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Poisoned,
+                timer: ConditionTimer::Rounds(10),
+            }));
+        }
+        effects
+    }
+}
+
+pub static BONE_DEVIL_STING: LazyLock<BoneDevilSting> =
+    LazyLock::new(|| BoneDevilSting {});
+
+/// Bone Devil Claws — STR-based 1d8+STR slashing melee, reach 1. The
+/// devil's secondary attack lane; pairs with the Sting in a Multiattack
+/// (RAW: 2 claws + 1 sting per Action).
+pub static BONE_DEVIL_CLAWS: SimpleWeapon = SimpleWeapon {
+    display_name: "bone devil claws",
+    aliases: &["bdclaws"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Bone Devil Multiattack — 2 claws + 1 sting per Action via the
+/// `CompoundAttack` wrapper. The devil's full opening salvo: a Sting +
+/// double Claws can ladder up to ~40 damage on a single round.
+pub static BONE_DEVIL_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "bone devil multiattack",
+    // The Sting itself runs the save + Poisoned install; the
+    // CompoundAttack wrapper just unspools the swing for one
+    // Action's worth of resources.
+    parts: vec![(&BONE_DEVIL_CLAWS, 2), (&*BONE_DEVIL_STING, 1)],
+});

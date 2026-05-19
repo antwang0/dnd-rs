@@ -1,4 +1,6 @@
-use crate::actions::class_features::{TURN_UNDEAD, TURN_UNDEAD_TAG};
+use crate::actions::class_features::{
+    DIVINE_STRIKE, DIVINE_STRIKE_TAG, TURN_UNDEAD, TURN_UNDEAD_TAG,
+};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
     AID, ANIMATE_DEAD, AURA_OF_VITALITY, BANE, BEACON_OF_HOPE, BESTOW_CURSE, BLESS, CALM_EMOTIONS,
@@ -94,6 +96,12 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*FLAME_STRIKE);
     // Turn Undead — Cleric Channel Divinity, once per long rest.
     actions.push(&*TURN_UNDEAD);
+    // Divine Strike — Cleric class feature (RAW: passive at level 8; we
+    // model it as a once-per-rest bonus-action prime that lands +1d8
+    // radiant on the next melee hit via the OnHitRider table). Pairs
+    // well with the cleric's melee cantrip (Thorn Whip) and weapon
+    // attacks for the rare hit-and-spike moment.
+    actions.push(&*DIVINE_STRIKE);
     // Latest cross-school additions: lv3 Animate Dead (necromancy ally
     // spawn) + Spirit Shroud (concentration on-hit cold rider), and the
     // lv8 Holy Aura (concentration save-advantage burst aura).
@@ -146,7 +154,7 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Clerics are proficient in WIS and CHA saves (5e PHB).
         proficient_saves: HashSet::from([AbilityScoreType::Wisdom, AbilityScoreType::Charisma]),
         condition_immunities: HashSet::new(),
-        features: HashSet::from([TURN_UNDEAD_TAG]),
+        features: HashSet::from([TURN_UNDEAD_TAG, DIVINE_STRIKE_TAG]),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),
         legendary_resistances: 0,
