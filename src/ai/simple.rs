@@ -182,6 +182,16 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3m''. Wind Wall — level-3 caster concentration self-buff
+        //       (ranged-attack disadvantage). Fire when an enemy sits
+        //       at long range so the deflection rider matters this
+        //       fight. Slot-cheap (lv3) and the bigger concentration
+        //       buffs above (Bigby's Hand / Tenser's / Investiture)
+        //       take priority via earlier branches.
+        if let Some(aei) = try_wind_wall(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3n. Aura of Life — level-4 paladin concentration aura. Fire
         //     when at least one ally is clustered in the aura radius
         //     and a fight has started.
@@ -567,6 +577,29 @@ fn try_investiture_of_flame(
     )
 }
 
+/// Wind Wall — level-3 evocation, concentration. Self-buff that imposes
+/// disadvantage on ranged attacks against the caster. Concentration-
+/// gated; fire when at least one enemy with a ranged weapon is within
+/// ~20 tiles (50ft) so the buff matters this round. We approximate
+/// "ranged threat" by checking any enemy within range — the engine
+/// doesn't model intent, but the disadvantage rider lands the moment
+/// any ranged attack arrives so the buff is cheap insurance.
+fn try_wind_wall(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    // 20 tiles ≈ 50ft — typical longbow range. If no enemy can shoot
+    // us yet, skip; the concentration slot is better held for an
+    // active fight.
+    try_self_buff_concentration(
+        encounter,
+        actor_id,
+        "wind wall",
+        Condition::WindWalled,
+        20,
+    )
+}
+
 /// Aura of Life — level-4 paladin concentration aura. Fires when at
 /// least one ally sits in the 30ft radius and a hostile is engaged.
 /// Concentration-gated; skip re-cast when the caster already holds the
@@ -818,7 +851,14 @@ fn try_smite_spell(
         return None;
     }
     // Slot-cheapest first — preserves higher slots for emergencies.
-    for name in ["searing smite", "wrathful smite", "branding smite", "blinding smite"] {
+    for name in [
+        "searing smite",
+        "wrathful smite",
+        "branding smite",
+        "blinding smite",
+        "staggering smite",
+        "banishing smite",
+    ] {
         if let Some(aei) = try_self_action(encounter, actor_id, name) {
             return Some(aei);
         }
@@ -1892,6 +1932,13 @@ mod tests {
             let _ = e.instantiate_creature(&AIR_ELEMENTAL_TEMPLATE, Coordinate::new(8, 18), 1, 36);
             let _ = e.instantiate_creature(&EARTH_ELEMENTAL_TEMPLATE, Coordinate::new(11, 18), 1, 37);
             let _ = e.instantiate_creature(&BALOR_TEMPLATE, Coordinate::new(14, 18), 1, 38);
+            // Newest addition: Glabrezu (CR 9 demon with 4-swing multi —
+            // 2 pincers + 2 fists). Verifies the AI handles the
+            // mid-tier demon's high-volume multiattack without stalling
+            // on the standard demon envelope (poison/cold/fire/lightning
+            // resistance + Charmed/Frightened/Poisoned condition immunity).
+            use crate::actors::creatures::glabrezus::GLABREZU_TEMPLATE;
+            let _ = e.instantiate_creature(&GLABREZU_TEMPLATE, Coordinate::new(17, 18), 1, 39);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

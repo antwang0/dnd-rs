@@ -4,8 +4,9 @@ use crate::actions::class_features::{
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GREATSWORD;
 use crate::actions::spells::{
-    AURA_OF_LIFE, BLESS, BLINDING_SMITE, BRANDING_SMITE, COMPELLED_DUEL, CURE_WOUNDS, HEALING_WORD,
-    LESSER_RESTORATION, SEARING_SMITE, SHIELD_OF_FAITH, WRATHFUL_SMITE,
+    AURA_OF_LIFE, BANISHING_SMITE, BLESS, BLINDING_SMITE, BRANDING_SMITE, COMPELLED_DUEL,
+    CURE_WOUNDS, HEALING_WORD, LESSER_RESTORATION, SEARING_SMITE, SHIELD_OF_FAITH,
+    STAGGERING_SMITE, WRATHFUL_SMITE,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size};
@@ -47,6 +48,12 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&WRATHFUL_SMITE);
     actions.push(&BRANDING_SMITE);
     actions.push(&BLINDING_SMITE);
+    // Higher-tier smite primes — lv4 Staggering Smite (psychic + WIS-save
+    // Stunned-1) and lv5 Banishing Smite (force + HP≤50 auto-banish via
+    // the Mazed envelope). Slot cost climbs but the rider impact does
+    // too; the half-caster slot bump below fuels both.
+    actions.push(&STAGGERING_SMITE);
+    actions.push(&BANISHING_SMITE);
     // Aura of Life — lv4 abjuration, concentration; allies in 30ft sphere
     // gain DeathWarded (next killing-blow drop intercepted) for the
     // duration. Bumps the paladin into the lv4 slot table; combined with
@@ -72,11 +79,12 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         cr: 1.5,
         size: Size::Medium,
         actions,
-        // Half-caster ramp: 4/3/1/1. Adds a level-4 slot for the new
-        // Aura of Life cast; the prior 4/3/1 envelope is preserved on
-        // the lv1-3 tier so Bless / Divine Smite / Compelled Duel /
-        // Blinding Smite spam stays unchanged.
-        spell_slots_by_level: vec![4, 3, 1, 1],
+        // Half-caster ramp: 4/3/3/2/1. Bumps lv3 → 3 slots and adds a
+        // lv5 slot for Banishing Smite; lv4 stays at 2 to fuel Aura of
+        // Life + Staggering Smite. Earlier 4/3/1 envelope is preserved
+        // on lv1-2 so Bless / Divine Smite / Compelled Duel spam stays
+        // unchanged.
+        spell_slots_by_level: vec![4, 3, 3, 2, 1],
         rolls_death_saves: true,
         damage_modifiers: HashMap::new(),
         // Paladins are proficient in WIS and CHA saves (5e PHB).

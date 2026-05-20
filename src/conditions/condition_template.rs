@@ -542,6 +542,36 @@ pub enum Condition {
     /// also bursts 5d10 psychic on cast. Distinct from `Restrained` so
     /// the concentration cleanup can drop just this mark cleanly.
     MentallyImprisoned,
+    /// Otiluke's Resilient Sphere (5e level-4 evocation, concentration).
+    /// The target is encased in an indestructible sphere of force.
+    /// Mechanically: zero movement, the target can't take actions or
+    /// reactions that require leaving the sphere — we collapse to a
+    /// `blocks_action_economy` envelope. Attacks against them have
+    /// advantage (the sphere immobilizes a flailing target) and DEX saves
+    /// are at disadvantage. Concentration-bound on the caster; dropping
+    /// concentration shatters the sphere cleanly.
+    Sphered,
+    /// Wind Wall (5e level-3 evocation, concentration). The holder stands
+    /// behind a vertical wall of strong wind: ranged attacks against them
+    /// have disadvantage (RAW: arrows / bolts deflect, breath weapons and
+    /// gases dissipate). Melee swings are unaffected. Concentration-bound
+    /// on the caster — dropping concentration ends the wall. Distinct
+    /// from `Blurred` / `Foreseen` so a wind-walled actor stacks cleanly
+    /// with a separate visual buff.
+    WindWalled,
+    /// Staggering Smite primed (5e level-4 paladin enchantment, bonus
+    /// action). +4d6 psychic rider on the primed hit; target makes a WIS
+    /// save vs the caster's CHA-based DC or is Stunned until the end of
+    /// the paladin's next turn. One-shot — consumed when the rider lands.
+    /// Tick-down timer keeps a swing-less prime from dangling indefinitely.
+    StaggeringSmiting,
+    /// Banishing Smite primed (5e level-5 paladin abjuration, bonus
+    /// action). +5d10 force rider on the primed hit; if the rider reduces
+    /// the target to HP <= 50, the target is also Banished (we collapse
+    /// the demi-plane mechanic to a 10-round inert envelope via the
+    /// existing `Mazed` condition — same end-state, distinct log line).
+    /// One-shot — the rider table strips this flag the moment it lands.
+    BanishingSmiting,
 }
 
 impl Condition {
@@ -632,6 +662,10 @@ impl Condition {
             Condition::TripAttacking => "primed to trip",
             Condition::InvestedInFlame => "invested with flame",
             Condition::MentallyImprisoned => "mentally imprisoned",
+            Condition::Sphered => "trapped in a resilient sphere",
+            Condition::WindWalled => "sheltered by a wind wall",
+            Condition::StaggeringSmiting => "primed to stagger",
+            Condition::BanishingSmiting => "primed to banish",
         }
     }
 
@@ -648,6 +682,7 @@ impl Condition {
                 | Condition::Asleep
                 | Condition::Petrified
                 | Condition::Mazed
+                | Condition::Sphered
         )
     }
 
@@ -697,6 +732,9 @@ impl Condition {
                 | Condition::DivineStriking
                 | Condition::TripAttacking
                 | Condition::InvestedInFlame
+                | Condition::WindWalled
+                | Condition::StaggeringSmiting
+                | Condition::BanishingSmiting
         )
     }
 
@@ -724,6 +762,7 @@ impl Condition {
                 | Condition::Dancing
                 | Condition::Mazed
                 | Condition::MentallyImprisoned
+                | Condition::Sphered
         )
     }
 
@@ -748,6 +787,7 @@ impl Condition {
                 | Condition::Feebled
                 | Condition::Dancing
                 | Condition::MentallyImprisoned
+                | Condition::Sphered
         )
     }
 
@@ -784,6 +824,7 @@ impl Condition {
                 | Condition::GuidingBoltLit
                 | Condition::Dancing
                 | Condition::MentallyImprisoned
+                | Condition::Sphered
         )
     }
 
@@ -792,6 +833,8 @@ impl Condition {
     /// `Warded` / `Daylit` are *not* in this list — they impose
     /// disadvantage only against undead / fiend attackers, which needs
     /// attacker-side state to evaluate; the call site handles them.
+    /// `WindWalled` is *not* in this list — it imposes disadvantage only
+    /// on ranged attacks (see `imposes_disadvantage_to_ranged_attackers`).
     pub fn imposes_disadvantage_to_attackers(&self) -> bool {
         matches!(
             self,
@@ -803,13 +846,25 @@ impl Condition {
         )
     }
 
+    /// True if *ranged* attacks targeting the holder get disadvantage but
+    /// melee attacks are unaffected. The 5e Wind Wall clause is the
+    /// canonical case — arrows / bolts deflect, swords don't. Read by
+    /// `compute_attack_mode` only when `!is_melee` so a wind-walled
+    /// caster still eats melee damage normally.
+    pub fn imposes_disadvantage_to_ranged_attackers(&self) -> bool {
+        matches!(self, Condition::WindWalled)
+    }
+
     /// True if the holder cannot take Reactions while this condition is
     /// up. Covers the explicit `NoReaction` lockout and the new `Confused`
     /// clause (RAW: chaos table prevents reactions). Read by
     /// `can_consume_resource` alongside the `blocks_action_economy` cohort
     /// so the gate has one chokepoint per resource lane.
     pub fn blocks_reactions(&self) -> bool {
-        matches!(self, Condition::NoReaction | Condition::Confused)
+        matches!(
+            self,
+            Condition::NoReaction | Condition::Confused | Condition::Sphered
+        )
     }
 }
 

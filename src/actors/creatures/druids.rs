@@ -84,6 +84,11 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // (Moonbeam, Heat Metal) without stacking — adds a single-target /
     // small-cluster fire option to the kit.
     actions.push(&*crate::actions::spells::FLAMING_SPHERE);
+    // Wind Wall — lv3 evocation, druid-themed (RAW: druid / ranger
+    // spell list). Self-buff that imposes ranged-attack disadvantage
+    // on incoming arrows / bolts — fits the wandering-naturalist
+    // archetype that the druid kit centers on.
+    actions.push(&*crate::actions::spells::WIND_WALL);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

@@ -194,6 +194,15 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::GREASE);
     actions.push(&*crate::actions::spells::FLAMING_SPHERE);
     actions.push(&*crate::actions::spells::BLADE_BARRIER);
+    // Latest control / utility additions: lv3 Wind Wall (self-buff that
+    // imposes ranged-attack disadvantage on attackers, concentration),
+    // lv4 Evard's Black Tentacles (DEX-save burst 3d6 bludgeoning +
+    // Restrained-on-fail concentration), lv4 Otiluke's Resilient
+    // Sphere (single-target DEX-save inert envelope concentration —
+    // rounds out the wizard's prison kit alongside Forcecage / Maze).
+    actions.push(&*crate::actions::spells::WIND_WALL);
+    actions.push(&*crate::actions::spells::EVARDS_BLACK_TENTACLES);
+    actions.push(&*crate::actions::spells::OTILUKES_RESILIENT_SPHERE);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

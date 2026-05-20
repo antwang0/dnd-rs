@@ -5878,3 +5878,47 @@ impl Action for BalorFireAura {
 }
 
 pub static BALOR_FIRE_AURA: LazyLock<BalorFireAura> = LazyLock::new(|| BalorFireAura {});
+
+/// Glabrezu Pincer — STR-based 2d10 + STR bludgeoning melee, reach 1.
+/// The Glabrezu has two of these as part of its multiattack. RAW: the
+/// pincer crushes for big damage on the front-line tank; we collapse
+/// the "grapple on hit" rider — it's a flavor mechanic that doesn't
+/// land any new conditions our pool cares about beyond Grappled, and
+/// the rider would obscure the more meaningful 4-attack multi.
+pub static GLABREZU_PINCER: SimpleWeapon = SimpleWeapon {
+    display_name: "glabrezu pincer",
+    aliases: &["gpincer"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 10),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Glabrezu Fist — STR-based 2d4 + STR bludgeoning melee, reach 1. The
+/// glabrezu's secondary attack lane; pairs with the pincers in its
+/// 4-swing multiattack (2 pincers + 2 fists per Action).
+pub static GLABREZU_FIST: SimpleWeapon = SimpleWeapon {
+    display_name: "glabrezu fist",
+    aliases: &["gfist"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 4),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Glabrezu Multiattack — 2 pincers + 2 fists per Action via the
+/// `CompoundAttack` wrapper. The glabrezu's signature opening salvo: a
+/// 4-swing volley that out-damages most CR-9 monsters by ramming four
+/// 2d10 / 2d4 hits onto a single target.
+pub static GLABREZU_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "glabrezu multiattack",
+    parts: vec![(&GLABREZU_PINCER, 2), (&GLABREZU_FIST, 2)],
+});

@@ -1140,6 +1140,9 @@ impl ActorInstance {
             && !self.has_condition(Condition::Incapacitated)
             && !self.has_condition(Condition::Stunned)
             && !self.has_condition(Condition::Restrained)
+            // A Sphered creature is fully encased and can't reactively
+            // dodge incoming attacks — the sphere holds them in place.
+            && !self.has_condition(Condition::Sphered)
     }
 
     pub fn set_dodging(&mut self, on: bool) {

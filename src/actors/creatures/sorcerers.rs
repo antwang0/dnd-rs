@@ -93,6 +93,13 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // lane (Haste / Polymorph would lose to it, which is the design intent).
     actions.push(&*crate::actions::spells::GREASE);
     actions.push(&*crate::actions::spells::FLAMING_SPHERE);
+    // Latest control additions: lv3 Wind Wall (self-buff ranged-attack
+    // disadvantage) + lv4 Otiluke's Resilient Sphere (single-target
+    // inert envelope concentration). Skip Black Tentacles — RAW
+    // wizard-only (a sorcerer's spells-known cap is tight enough that
+    // the AoE niche is filled by Fireball / Cone of Cold / Sunburst).
+    actions.push(&*crate::actions::spells::WIND_WALL);
+    actions.push(&*crate::actions::spells::OTILUKES_RESILIENT_SPHERE);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

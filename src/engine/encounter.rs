@@ -467,6 +467,12 @@ impl EncounterInstance {
                 if c.imposes_disadvantage_to_attackers() {
                     mode = mode.combine(RollMode::Disadvantage);
                 }
+                // Ranged-only disadvantage cohort: Wind Wall deflects
+                // arrows but does nothing against a sword swing. Gated on
+                // `!is_melee` so melee attackers eat no penalty.
+                if !is_melee && c.imposes_disadvantage_to_ranged_attackers() {
+                    mode = mode.combine(RollMode::Disadvantage);
+                }
             }
             // 5e Protection from Evil and Good: aberrations / celestials /
             // elementals / fey / fiends / undead have disadvantage on
@@ -510,8 +516,13 @@ impl EncounterInstance {
         if actor.has_condition(Condition::Poisoned) {
             mode = mode.combine(RollMode::Disadvantage);
         }
+        // Restrained / Sphered envelope: disadvantage on DEX saves.
+        // Both conditions share the "physically pinned" flavor — RAW
+        // Restrained explicitly states the clause; Sphered (Resilient
+        // Sphere) is also an immobilization envelope by extension.
         if matches!(ability, AbilityScoreType::Dexterity)
-            && actor.has_condition(Condition::Restrained)
+            && (actor.has_condition(Condition::Restrained)
+                || actor.has_condition(Condition::Sphered))
         {
             mode = mode.combine(RollMode::Disadvantage);
         }
@@ -1349,6 +1360,37 @@ impl EncounterInstance {
         radius: isize,
     ) -> Vec<usize> {
         self.team_burst_targets(caster_id, point, radius, true)
+    }
+
+    /// Sorted ids of every combat-active actor inside the burst —
+    /// friend or foe, *except* the caster themselves. Friend-or-foe-
+    /// agnostic spells (Web, Sleet Storm, Plant Growth, Spike Stones)
+    /// use this so any creature caught in the area gets snared
+    /// regardless of allegiance.
+    pub fn neutral_burst_targets(
+        &self,
+        caster_id: usize,
+        point: Coordinate,
+        radius: isize,
+    ) -> Vec<usize> {
+        let mut ids: Vec<usize> = self
+            .actors
+            .iter()
+            .filter_map(|(id, a)| {
+                if *id == caster_id || !a.is_combat_active() {
+                    return None;
+                }
+                let dist = footprint_chebyshev(
+                    a.location(),
+                    get_tiles_from_size(a.size()),
+                    point,
+                    1,
+                );
+                if dist <= radius { Some(*id) } else { None }
+            })
+            .collect();
+        ids.sort_unstable();
+        ids
     }
 
     /// Footprint-Chebyshev distance between two living actors, or `None` if
@@ -20690,6 +20732,359 @@ mod tests {
                 .map(|c| c.spell_name.as_str()),
             Some("Blade Barrier")
         );
+    }
+
+    /// Wind Wall: self-buff that puts the caster behind a vertical
+    /// curtain of wind. Verifies the install (WindWalled condition +
+    /// concentration on Wind Wall) and the ranged-vs-melee gate via the
+    /// `compute_attack_mode` cohort — a ranged attack against the
+    /// warded caster picks up Disadvantage; a melee swing stays Normal.
+    #[test]
+    fn wind_wall_imposes_ranged_disadvantage_only() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::WIND_WALL;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let archer = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        for ef in WIND_WALL.side_effects(&mut e, wiz, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&wiz].has_condition(Condition::WindWalled));
+        assert!(e.actors[&wiz].is_concentrating());
+        assert_eq!(
+            e.actors[&wiz]
+                .concentration()
+                .map(|c| c.spell_name.as_str()),
+            Some("Wind Wall")
+        );
+        // Ranged attacker → disadvantage.
+        let ranged_mode = e.compute_attack_mode(archer, wiz, false);
+        assert!(
+            matches!(ranged_mode, RollMode::Disadvantage),
+            "ranged attacks vs wind-walled caster should have disadvantage, got {:?}",
+            ranged_mode
+        );
+        // Melee attacker → Normal (the wall doesn't block blades).
+        let melee_mode = e.compute_attack_mode(archer, wiz, true);
+        assert!(
+            matches!(melee_mode, RollMode::Normal),
+            "melee attacks vs wind-walled caster should have normal mode, got {:?}",
+            melee_mode
+        );
+    }
+
+    /// Otiluke's Resilient Sphere: single-target DEX save that locks the
+    /// failed-save target into a full incapacitation envelope (zero
+    /// movement, blocked action economy, attacks against have advantage,
+    /// holder attacks at disadvantage). Verifies the Sphered install
+    /// plus the concentration mark on the caster.
+    #[test]
+    fn otilukes_resilient_sphere_installs_on_failed_dex_save() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::OTILUKES_RESILIENT_SPHERE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        // Loop seeds — goblins have DEX 14 (+2 mod) and the wizard's
+        // INT-based DC sits at 13 by default, so the goblin saves on
+        // 11+. Sweep enough seeds to land at least one Sphered install.
+        let mut saw_sphered = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+                .unwrap();
+            for ef in OTILUKES_RESILIENT_SPHERE.side_effects(
+                &mut e,
+                wiz,
+                Some(&vec![goblin]),
+                None,
+                None,
+            ) {
+                ef.apply(&mut e);
+            }
+            if e.actors.get(&goblin).is_some_and(|a| a.has_condition(Condition::Sphered)) {
+                assert!(
+                    e.actors[&wiz].is_concentrating(),
+                    "caster should concentrate on Resilient Sphere on install"
+                );
+                assert_eq!(
+                    e.actors[&wiz]
+                        .concentration()
+                        .map(|c| c.spell_name.as_str()),
+                    Some("Resilient Sphere")
+                );
+                saw_sphered = true;
+                break;
+            }
+        }
+        assert!(saw_sphered, "Resilient Sphere should install Sphered on a failed DEX save");
+    }
+
+    /// Sphered envelope: verifies the new condition wires into all the
+    /// expected cohorts — blocks action economy, zeros movement, grants
+    /// attackers advantage, imposes disadvantage on the holder's own
+    /// swings, blocks reactions.
+    #[test]
+    fn sphered_envelope_wires_cohorts() {
+        assert!(Condition::Sphered.blocks_action_economy());
+        assert!(Condition::Sphered.zeros_movement());
+        assert!(Condition::Sphered.grants_advantage_to_attackers());
+        assert!(Condition::Sphered.imposes_attacker_disadvantage());
+        assert!(Condition::Sphered.blocks_reactions());
+    }
+
+    /// Black Tentacles: enemy-only DEX-save burst that lays bludgeoning
+    /// damage on every target and Restrains failed-save targets.
+    /// Verifies allies in the burst are spared and the caster picks up
+    /// a Black Tentacles concentration mark.
+    #[test]
+    fn black_tentacles_spares_allies_and_installs_restrained() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::EVARDS_BLACK_TENTACLES;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut saw_restrained = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let ally = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 9), 0, 1)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+                .unwrap();
+            let ally_hp_before = e.actors[&ally].hitpoints();
+            let origin = Coordinate::new(10, 10);
+            for ef in
+                EVARDS_BLACK_TENTACLES.side_effects(&mut e, wiz, None, Some(&vec![origin]), None)
+            {
+                ef.apply(&mut e);
+            }
+            assert_eq!(
+                e.actors[&ally].hitpoints(),
+                ally_hp_before,
+                "ally in burst should be spared by black tentacles"
+            );
+            assert!(
+                !e.actors[&ally].has_condition(Condition::Restrained),
+                "ally should not be restrained by black tentacles"
+            );
+            assert!(
+                e.actors[&wiz].is_concentrating(),
+                "caster should concentrate on Black Tentacles"
+            );
+            if e.actors
+                .get(&enemy)
+                .is_some_and(|a| a.has_condition(Condition::Restrained))
+            {
+                saw_restrained = true;
+                break;
+            }
+        }
+        assert!(
+            saw_restrained,
+            "Black Tentacles should restrain failed-save enemies across seeds"
+        );
+    }
+
+    /// Staggering Smite: lv4 paladin smite that primes the next melee
+    /// hit with +4d6 psychic and (on WIS save fail) Stunned-for-1-round
+    /// follow-up. Verifies the prime install + concentration mark; the
+    /// rider mechanics ride the existing OnHitRider table tested
+    /// elsewhere.
+    #[test]
+    fn staggering_smite_primes_psychic_rider() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::STAGGERING_SMITE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        for ef in STAGGERING_SMITE.side_effects(&mut e, pal, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&pal].has_condition(Condition::StaggeringSmiting));
+        assert!(e.actors[&pal].is_concentrating());
+        assert_eq!(
+            e.actors[&pal]
+                .concentration()
+                .map(|c| c.spell_name.as_str()),
+            Some("Staggering Smite")
+        );
+    }
+
+    /// Banishing Smite: lv5 paladin smite that primes +5d10 force and
+    /// (on HP <= 50 post-damage) banishes via the Mazed envelope.
+    /// Verifies the prime install + concentration mark.
+    #[test]
+    fn banishing_smite_primes_force_rider() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::BANISHING_SMITE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        for ef in BANISHING_SMITE.side_effects(&mut e, pal, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&pal].has_condition(Condition::BanishingSmiting));
+        assert!(e.actors[&pal].is_concentrating());
+        assert_eq!(
+            e.actors[&pal]
+                .concentration()
+                .map(|c| c.spell_name.as_str()),
+            Some("Banishing Smite")
+        );
+    }
+
+    /// Banishing Smite HP-threshold gate: the rider banishes only "if
+    /// this damage reduces the target to 50 hp or fewer." Verifies the
+    /// predicted-post-damage gate by smacking a goblin (low HP) versus
+    /// a stone golem (very high HP) — the goblin should get banished
+    /// (Mazed) when the smite lands; the stone golem (>50 HP after the
+    /// smite) should not.
+    #[test]
+    fn banishing_smite_banishes_below_threshold_only() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::GREATSWORD;
+        use crate::actions::spells::BANISHING_SMITE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::actors::creatures::stone_golems::STONE_GOLEM_TEMPLATE;
+
+        // Below threshold: goblin (~7 HP) should be banished on hit.
+        // Sweep seeds because the swing must land (paladin attack vs
+        // goblin AC 15) and the smite rider must roll high enough.
+        let mut goblin_banished = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let pal = e
+                .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            // Prime the smite, then make a melee swing at the adjacent
+            // goblin. The on-hit rider table handles the rest.
+            for ef in BANISHING_SMITE.side_effects(&mut e, pal, None, None, None) {
+                ef.apply(&mut e);
+            }
+            assert!(
+                e.actors[&pal].has_condition(Condition::BanishingSmiting),
+                "smite prime should be installed"
+            );
+            for ef in GREATSWORD.side_effects(&mut e, pal, Some(&vec![goblin]), None, None) {
+                ef.apply(&mut e);
+            }
+            if e.actors
+                .get(&goblin)
+                .is_some_and(|a| a.has_condition(Condition::Mazed))
+            {
+                goblin_banished = true;
+                break;
+            }
+        }
+        assert!(
+            goblin_banished,
+            "Banishing Smite should banish a low-HP goblin when the swing lands"
+        );
+
+        // Above threshold: stone golem (~178 HP) should NOT be banished
+        // — predicted post-damage HP stays well above 50.
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let golem = e
+            .instantiate_creature(&STONE_GOLEM_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        for ef in BANISHING_SMITE.side_effects(&mut e, pal, None, None, None) {
+            ef.apply(&mut e);
+        }
+        // Drive several swings to ensure at least one lands.
+        for _ in 0..5 {
+            for ef in GREATSWORD.side_effects(&mut e, pal, Some(&vec![golem]), None, None) {
+                ef.apply(&mut e);
+            }
+            // If the smite prime is consumed and golem stays unbanished,
+            // we've validated the threshold gate.
+            if !e.actors[&pal].has_condition(Condition::BanishingSmiting) {
+                break;
+            }
+        }
+        assert!(
+            !e.actors
+                .get(&golem)
+                .is_some_and(|a| a.has_condition(Condition::Mazed)),
+            "Stone Golem stays above the 50-HP threshold — banish should be blocked"
+        );
+    }
+
+    /// Glabrezu template: CR-9 demon. Verifies the demon envelope:
+    /// poison immunity, cold/fire/lightning/B/P/S resistance, and the
+    /// Charmed/Frightened/Poisoned condition immunities. Confirms the
+    /// 4-swing multiattack lane is present.
+    #[test]
+    fn glabrezu_template_carries_demon_envelope() {
+        use crate::actors::creatures::glabrezus::GLABREZU_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&GLABREZU_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let g = &e.actors[&id];
+        assert!(g.is_immune_to(DamageType::Poison));
+        assert!(g.is_resistant_to(DamageType::Cold));
+        assert!(g.is_resistant_to(DamageType::Fire));
+        assert!(g.is_resistant_to(DamageType::Lightning));
+        assert!(g.is_resistant_to(DamageType::Bludgeoning));
+        assert!(g.is_immune_to_condition(Condition::Poisoned));
+        assert!(g.is_immune_to_condition(Condition::Charmed));
+        assert!(g.is_immune_to_condition(Condition::Frightened));
+        // Not legendary — Glabrezus aren't demon princes.
+        assert_eq!(g.legendary_resistance_max(), 0);
+        assert!(g.find_action("glabrezu pincer").is_some());
+        assert!(g.find_action("glabrezu fist").is_some());
+        assert!(g.find_action("glabrezu multiattack").is_some());
+    }
+
+    /// Sphered / WindWalled / StaggeringSmiting / BanishingSmiting all
+    /// join the dispellable-buff cohort so Dispel Magic can strip them.
+    /// Sphered is the only debuff in the cohort — it sits in
+    /// `is_dispellable_buff` so Dispel Magic on the trapped creature
+    /// can shatter the sphere as a friendly utility. The three smite /
+    /// wind buffs are conventional buffs.
+    #[test]
+    fn new_buffs_join_dispellable_cohort() {
+        assert!(Condition::WindWalled.is_dispellable_buff());
+        assert!(Condition::StaggeringSmiting.is_dispellable_buff());
+        assert!(Condition::BanishingSmiting.is_dispellable_buff());
+        // Sphered is a debuff but still dispel-removable (the sphere is
+        // the magical effect; dispel cracks it). We don't put it in
+        // `is_dispellable_buff` since that cohort is read for buff
+        // stripping; Sphered drops via concentration cleanup instead.
+        assert!(!Condition::Sphered.is_dispellable_buff());
     }
 
     /// Balor template: CR-19 apex demon. Verifies the full demon

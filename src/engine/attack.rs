@@ -215,8 +215,10 @@ pub fn resolve_attack_outcome(
         // Roll the rider damage only if the rider actually has dice —
         // primes whose entire effect is the follow-up (Stunning Strike:
         // no damage, just a stun save) declare 0 dice so the damage
-        // line and the DealDamage push are skipped.
-        if rider.dice.count > 0 {
+        // line and the DealDamage push are skipped. Capture the rolled
+        // total so the follow-up's optional `hp_threshold` gate can
+        // predict the target's post-damage HP without re-rolling.
+        let rider_total = if rider.dice.count > 0 {
             let total = roll_rider(encounter, rider.dice, is_crit);
             encounter.log(format!(
                 "  {}: +{} {:?}",
@@ -227,14 +229,24 @@ pub fn resolve_attack_outcome(
                 amount: total,
                 damage_type: rider.damage_type,
             }));
-        }
+            total
+        } else {
+            0
+        };
         if rider.consume_on_trigger
             && let Some(caster) = encounter.actors.get_mut(&p.caster_id)
         {
             caster.remove_condition(rider.condition);
         }
         if let Some(follow) = rider.follow_up {
-            apply_smite_follow_up(encounter, &mut effects, p.caster_id, p.target_id, follow);
+            apply_smite_follow_up(
+                encounter,
+                &mut effects,
+                p.caster_id,
+                p.target_id,
+                follow,
+                rider_total + damage,
+            );
         }
     }
     // Melee-only retaliation table: any condition the *target* holds that
@@ -389,7 +401,7 @@ pub struct OnHitRider {
 pub struct SmiteFollowUp {
     /// Save the target rolls (CON for Blinding Smite, WIS for Wrathful
     /// Smite). `None` skips the save entirely — the condition lands
-    /// unconditionally on the consuming hit.
+    /// unconditionally on the consuming hit (subject to `hp_threshold`).
     pub save_ability: Option<AbilityScoreType>,
     /// Ability whose mod feeds the caster's spell save DC. Ignored when
     /// `save_ability` is `None` (no save means no DC).
@@ -398,13 +410,19 @@ pub struct SmiteFollowUp {
     pub timer: ConditionTimer,
     /// Log-friendly tag ("blinding smite blind", "wrathful smite fear").
     pub label: &'static str,
+    /// Optional post-damage HP gate. Banishing Smite RAW: the rider lands
+    /// only "if this damage reduces the target to 50 hp or fewer." We
+    /// fold this into the smite follow-up site by predicting post-damage
+    /// HP as `current_hp - rider_damage` and gating the apply on that.
+    /// `None` (the default) skips the gate.
+    pub hp_threshold: Option<u32>,
 }
 
 /// Build the caster-side on-hit rider table. Returned by value rather
 /// than declared `const` because `Dice::new` isn't a const fn — but the
 /// runtime cost is one stack-allocated array of plain data, so the
 /// indirection is free.
-fn on_hit_riders() -> [OnHitRider; 12] {
+fn on_hit_riders() -> [OnHitRider; 14] {
     [
         OnHitRider {
             condition: Condition::CrusadersMantled,
@@ -480,6 +498,7 @@ fn on_hit_riders() -> [OnHitRider; 12] {
                 apply: Condition::Burning,
                 timer: ConditionTimer::Rounds(3),
                 label: "searing smite ignite",
+                hp_threshold: None,
             }),
         },
         // 5e Wrathful Smite — 1st-level. +1d6 psychic on the primed hit;
@@ -498,6 +517,7 @@ fn on_hit_riders() -> [OnHitRider; 12] {
                 apply: Condition::Frightened,
                 timer: ConditionTimer::Rounds(10),
                 label: "wrathful smite fear",
+                hp_threshold: None,
             }),
         },
         // 5e Branding Smite — 2nd-level. +2d6 radiant; target glows
@@ -518,6 +538,7 @@ fn on_hit_riders() -> [OnHitRider; 12] {
                 apply: Condition::Outlined,
                 timer: ConditionTimer::Rounds(10),
                 label: "branding smite brand",
+                hp_threshold: None,
             }),
         },
         // 5e Blinding Smite — 3rd-level. +3d8 radiant; target makes CON
@@ -535,6 +556,7 @@ fn on_hit_riders() -> [OnHitRider; 12] {
                 apply: Condition::Blinded,
                 timer: ConditionTimer::Rounds(10),
                 label: "blinding smite blind",
+                hp_threshold: None,
             }),
         },
         // 5e Monk Stunning Strike — bonus action prime; on the next
@@ -555,6 +577,7 @@ fn on_hit_riders() -> [OnHitRider; 12] {
                 apply: Condition::Stunned,
                 timer: ConditionTimer::Rounds(1),
                 label: "stunning strike stun",
+                hp_threshold: None,
             }),
         },
         // 5e Cleric Divine Strike (level 8 class feature, here exposed as
@@ -589,6 +612,55 @@ fn on_hit_riders() -> [OnHitRider; 12] {
                 apply: Condition::Prone,
                 timer: ConditionTimer::Permanent,
                 label: "trip attack prone",
+                hp_threshold: None,
+            }),
+        },
+        // 5e Staggering Smite — 4th-level paladin enchantment, bonus
+        // action prime. +4d6 psychic on the primed hit; target makes a
+        // WIS save vs the caster's CHA-based DC or is Stunned until the
+        // end of the paladin's next turn (we model as 1 round). One-shot.
+        OnHitRider {
+            condition: Condition::StaggeringSmiting,
+            dice: Dice::new(4, 6),
+            label: "staggering smite",
+            damage_type: DamageType::Psychic,
+            melee_only: true,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: Some(AbilityScoreType::Wisdom),
+                dc_ability: AbilityScoreType::Charisma,
+                apply: Condition::Stunned,
+                timer: ConditionTimer::Rounds(1),
+                label: "staggering smite stun",
+                hp_threshold: None,
+            }),
+        },
+        // 5e Banishing Smite — 5th-level paladin abjuration, bonus
+        // action prime. +5d10 force on the primed hit; if the target
+        // ends the swing at 50 HP or fewer they are banished. We model
+        // the banishment via the existing `Mazed` envelope (zero
+        // movement + blocked action economy + blocked reactions) for
+        // 10 rounds — distinct log line, identical end-state. The HP
+        // threshold gate is evaluated at the smite-follow-up site (see
+        // `apply_smite_follow_up`'s threshold extension below).
+        OnHitRider {
+            condition: Condition::BanishingSmiting,
+            dice: Dice::new(5, 10),
+            label: "banishing smite",
+            damage_type: DamageType::Force,
+            melee_only: true,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                // No save — RAW: the banish is auto-apply if HP ≤ 50.
+                save_ability: None,
+                dc_ability: AbilityScoreType::Charisma,
+                apply: Condition::Mazed,
+                timer: ConditionTimer::Rounds(10),
+                label: "banishing smite banish",
+                // RAW: only banished "if this damage reduces the target
+                // to 50 hp or fewer." We honor the gate by predicting
+                // post-damage HP at the smite follow-up site.
+                hp_threshold: Some(50),
             }),
         },
     ]
@@ -598,13 +670,35 @@ fn on_hit_riders() -> [OnHitRider; 12] {
 /// spells stack on top of their bonus damage. `save_ability: None`
 /// auto-applies the condition on hit (Branding Smite, Searing Smite's
 /// ignite); `Some(ability)` rolls that save against the caster's DC.
+/// `total_damage` is the swing's combined weapon + rider damage value —
+/// used to predict the target's post-damage HP for `hp_threshold` gates
+/// (Banishing Smite RAW: banishes "if this damage reduces the target to
+/// 50 hp or fewer"). `0` is fine for follow-ups with no threshold set.
 fn apply_smite_follow_up(
     encounter: &mut EncounterInstance,
     effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
     caster_id: usize,
     target_id: usize,
     follow: SmiteFollowUp,
+    total_damage: u32,
 ) {
+    // HP-threshold gate (Banishing Smite). Predict post-damage HP as
+    // `current_hp - total_damage` and bail if the target would still be
+    // above the threshold. Saturating-sub keeps the math clean when the
+    // hit would drop them past zero (the threshold still triggers).
+    if let Some(threshold) = follow.hp_threshold {
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return;
+        };
+        let predicted = target.hitpoints().saturating_sub(total_damage);
+        if predicted > threshold {
+            encounter.log(format!(
+                "  {}: target stays above {} HP threshold (predicted {} HP)",
+                follow.label, threshold, predicted
+            ));
+            return;
+        }
+    }
     let Some(save_ability) = follow.save_ability else {
         encounter.log(format!("  {}: auto-apply on hit", follow.label));
         effects.push(Box::new(ApplyCondition {

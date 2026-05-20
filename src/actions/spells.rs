@@ -1302,7 +1302,6 @@ impl Action for Web {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
         let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
             return Vec::new();
         };
@@ -1314,26 +1313,13 @@ impl Action for Web {
             TargetingSchema::Burst { radius } => radius,
             _ => return Vec::new(),
         };
-        let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
-        ids.sort_unstable();
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         let mut conditions = Vec::new();
-        for tid in ids {
-            let Some(target) = encounter.actors.get(&tid) else {
-                continue;
-            };
-            if tid == caster_id || !target.is_combat_active() {
-                continue;
-            }
-            let dist = footprint_chebyshev(
-                target.location(),
-                get_tiles_from_size(target.size()),
-                point,
-                1,
-            );
-            if dist > radius {
-                continue;
-            }
+        // Web is friend-or-foe agnostic — every creature in the burst
+        // (except the caster) makes a DEX save. `neutral_burst_targets`
+        // captures that policy in one chokepoint instead of an ad-hoc
+        // loop over `actors.keys()`.
+        for tid in encounter.neutral_burst_targets(caster_id, point, radius) {
             let save = encounter.roll_save(tid, AbilityScoreType::Dexterity, dc);
             if !save.passed() {
                 effects.push(Box::new(ApplyCondition {
@@ -1347,13 +1333,7 @@ impl Action for Web {
         if !conditions.is_empty() {
             effects.push(Box::new(StartConcentration {
                 caster_id,
-                data: ConcentrationData {
-                    spell_name: "Web".to_string(),
-                    conditions,
-                    attack_buffs: Vec::new(),
-                    save_buffs: Vec::new(),
-                    breaks_on_attack: false,
-                },
+                data: ConcentrationData::with_conditions("Web", conditions),
             }));
         }
         effects
@@ -9924,6 +9904,35 @@ pub static BLINDING_SMITE: SmiteSpell = SmiteSpell {
     concentration_name: "Blinding Smite",
 };
 
+/// Staggering Smite — 4th-level paladin enchantment, bonus action,
+/// concentration. Primes the next melee hit with +4d6 psychic damage
+/// and a WIS save (vs the paladin's CHA-based DC) gates Stunned-for-1-
+/// round on fail. The lv4 slot tier slots cleanly between Blinding
+/// Smite (lv3 radiant + blind) and Banishing Smite (lv5 force + banish)
+/// on the smite spell ladder.
+pub static STAGGERING_SMITE: SmiteSpell = SmiteSpell {
+    display_name: "staggering smite",
+    aliases: &["staggering", "smite-stagger", "smite-stun"],
+    spell_slot_lvl: 4,
+    prime: Condition::StaggeringSmiting,
+    concentration_name: "Staggering Smite",
+};
+
+/// Banishing Smite — 5th-level paladin abjuration, bonus action,
+/// concentration. Primes the next melee hit with +5d10 force damage;
+/// if the hit reduces the target to 50 HP or fewer the target is
+/// banished (we collapse the demi-plane mechanic to a 10-round inert
+/// envelope via `Condition::Mazed` — same end-state, distinct log
+/// line). The HP threshold gate is evaluated at the on-hit rider site
+/// via the `hp_threshold: Some(50)` field on the rider's follow-up.
+pub static BANISHING_SMITE: SmiteSpell = SmiteSpell {
+    display_name: "banishing smite",
+    aliases: &["banishing", "smite-banish"],
+    spell_slot_lvl: 5,
+    prime: Condition::BanishingSmiting,
+    concentration_name: "Banishing Smite",
+};
+
 /// Flame Strike — 5th-level evocation. A column of divine fire descends
 /// on a tile within 60ft (24 tiles); every creature whose footprint is
 /// within a 2-tile (10ft) radius of the point makes a DEX save vs the
@@ -14226,3 +14235,263 @@ impl Action for BladeBarrier {
 }
 
 pub static BLADE_BARRIER: LazyLock<BladeBarrier> = LazyLock::new(|| BladeBarrier {});
+
+/// Wind Wall — level-3 evocation, concentration. The caster conjures a
+/// vertical curtain of strong wind on themselves. Ranged attacks against
+/// the warded caster have disadvantage (RAW: arrows / bolts deflect,
+/// gases dissipate) but melee swings are unaffected — the wall blocks
+/// the air, not the blade. We model as a self-buff (`WindWalled`
+/// condition) tied to concentration so dropping concentration ends the
+/// wall cleanly. The is-melee gate lives on the engine's
+/// `imposes_disadvantage_to_ranged_attackers` cohort.
+pub struct WindWall {}
+
+impl Action for WindWall {
+    fn name(&self) -> &str {
+        "wind wall"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ww", "wind"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Don't burn a slot re-casting when the wall is already up.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_combat_active() && !a.has_condition(Condition::WindWalled))
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::WindWalled,
+                // 10 rounds = 1 minute RAW.
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Wind Wall",
+                    vec![(caster_id, Condition::WindWalled)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static WIND_WALL: LazyLock<WindWall> = LazyLock::new(|| WindWall {});
+
+/// Evard's Black Tentacles — level-4 conjuration, concentration. A
+/// writhing mass of tentacles fills a 20-foot square (we model as a
+/// 2-tile-radius burst centered on the caster's chosen tile). Every
+/// enemy whose footprint touches the burst makes a DEX save vs the
+/// caster's spell DC; on fail, they take 3d6 bludgeoning AND are
+/// Restrained for the spell's duration. On save, they take half and
+/// avoid the Restrained rider. Concentration-bound on the caster;
+/// dropping concentration releases every restrained victim.
+pub struct EvardsBlackTentacles {}
+
+impl Action for EvardsBlackTentacles {
+    fn name(&self) -> &str {
+        "black tentacles"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["tentacles", "evards", "ebt"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 20ft square ≈ 2-tile Chebyshev burst (≈10ft radius).
+        TargetingSchema::Burst { radius: 2 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 90 ft = 36 tiles.
+        Some(36)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]);
+        // Damage burst: half on save, full on fail. The save vector tells
+        // us which targets failed → those get Restrained.
+        let (mut effects, saves) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            2,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(3, 6),
+            DamageType::Bludgeoning,
+            "black tentacles",
+        );
+        // Tag failed-save targets with Restrained for the duration. The
+        // concentration mark captures the restrained ids so dropping
+        // concentration releases them cleanly.
+        let mut conditions: Vec<(usize, Condition)> = Vec::new();
+        for (tid, passed) in saves {
+            if !passed {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: tid,
+                    condition: Condition::Restrained,
+                    // 10 rounds = 1 minute RAW.
+                    timer: ConditionTimer::Rounds(10),
+                }));
+                conditions.push((tid, Condition::Restrained));
+            }
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Black Tentacles", conditions),
+        }));
+        effects
+    }
+}
+
+pub static EVARDS_BLACK_TENTACLES: LazyLock<EvardsBlackTentacles> =
+    LazyLock::new(|| EvardsBlackTentacles {});
+
+/// Otiluke's Resilient Sphere — level-4 evocation, concentration. The
+/// caster encases a single target in a sphere of force. The target
+/// makes a DEX save vs the caster's spell DC; on fail, they're Sphered
+/// (a full incapacitation envelope: zero movement, blocked action
+/// economy, attacks against have advantage, attacks they make have
+/// disadvantage). On save, the spell fizzles. Concentration-bound so
+/// re-cast / drop concentration shatters the sphere cleanly.
+pub struct OtilukesResilientSphere {}
+
+impl Action for OtilukesResilientSphere {
+    fn name(&self) -> &str {
+        "resilient sphere"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sphere", "ors", "otilukes"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Sphered,
+                // 10 rounds = 1 minute RAW.
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Resilient Sphere",
+                    vec![(target_id, Condition::Sphered)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static OTILUKES_RESILIENT_SPHERE: LazyLock<OtilukesResilientSphere> =
+    LazyLock::new(|| OtilukesResilientSphere {});

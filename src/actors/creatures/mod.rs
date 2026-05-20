@@ -32,6 +32,7 @@ pub mod gargoyles;
 pub mod gelatinous_cubes;
 pub mod ghosts;
 pub mod ghouls;
+pub mod glabrezus;
 pub mod gnolls;
 pub mod goblin_bosses;
 pub mod goblins;
