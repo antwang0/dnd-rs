@@ -527,6 +527,21 @@ pub enum Condition {
     /// moment it lands. Tick-down timer caps the prime so an idle
     /// fighter doesn't carry the maneuver across rests.
     TripAttacking,
+    /// Invested with Flame (5e level-6 transmutation, concentration). The
+    /// caster's body burns with elemental fire: they gain resistance to
+    /// fire damage (via the generic `DamageResistant` model) and any
+    /// creature within reach that hits them with a melee attack takes
+    /// 1d10 fire damage in retaliation. Shape mirrors `FireShielded` but
+    /// the spell is concentration-bound on the caster and self-only.
+    /// Cleared on concentration drop.
+    InvestedInFlame,
+    /// Mental Prison — RAW: imprisoned for the duration in an illusion
+    /// of agony. We model the load-bearing half as a Restrained envelope
+    /// (movement zero, attacks with disadvantage, attacks against have
+    /// advantage). Concentration-bound on the caster; the install rider
+    /// also bursts 5d10 psychic on cast. Distinct from `Restrained` so
+    /// the concentration cleanup can drop just this mark cleanly.
+    MentallyImprisoned,
 }
 
 impl Condition {
@@ -615,6 +630,8 @@ impl Condition {
             Condition::Transformed => "transformed",
             Condition::DivineStriking => "primed with divine strike",
             Condition::TripAttacking => "primed to trip",
+            Condition::InvestedInFlame => "invested with flame",
+            Condition::MentallyImprisoned => "mentally imprisoned",
         }
     }
 
@@ -679,6 +696,7 @@ impl Condition {
                 | Condition::Transformed
                 | Condition::DivineStriking
                 | Condition::TripAttacking
+                | Condition::InvestedInFlame
         )
     }
 
@@ -705,6 +723,7 @@ impl Condition {
                 | Condition::Entangled
                 | Condition::Dancing
                 | Condition::Mazed
+                | Condition::MentallyImprisoned
         )
     }
 
@@ -728,6 +747,7 @@ impl Condition {
                 | Condition::Dominated
                 | Condition::Feebled
                 | Condition::Dancing
+                | Condition::MentallyImprisoned
         )
     }
 
@@ -763,6 +783,7 @@ impl Condition {
                 | Condition::Petrified
                 | Condition::GuidingBoltLit
                 | Condition::Dancing
+                | Condition::MentallyImprisoned
         )
     }
 

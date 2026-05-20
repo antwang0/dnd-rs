@@ -175,17 +175,6 @@ impl Action for Dash {
         TargetingSchema::NoArgs
     }
 
-    fn cost(
-        &self,
-        _encounter: &EncounterInstance,
-        _caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
-
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -291,17 +280,6 @@ impl Action for Dodge {
         false
     }
 
-    fn cost(
-        &self,
-        _encounter: &EncounterInstance,
-        _caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
-
     fn side_effects(
         &self,
         _encounter: &mut EncounterInstance,
@@ -338,17 +316,6 @@ impl Action for Disengage {
 
     fn is_harmful(&self) -> bool {
         false
-    }
-
-    fn cost(
-        &self,
-        _encounter: &EncounterInstance,
-        _caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
 
     fn side_effects(
@@ -412,16 +379,6 @@ impl Action for Help {
             return false;
         };
         target.team() == caster.team() && target.is_combat_active()
-    }
-    fn cost(
-        &self,
-        _encounter: &EncounterInstance,
-        _caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -499,16 +456,6 @@ impl Action for Shove {
     fn deals_damage(&self) -> bool {
         false
     }
-    fn cost(
-        &self,
-        _encounter: &EncounterInstance,
-        _caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -563,16 +510,6 @@ impl Action for Grapple {
     }
     fn deals_damage(&self) -> bool {
         false
-    }
-    fn cost(
-        &self,
-        _encounter: &EncounterInstance,
-        _caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,

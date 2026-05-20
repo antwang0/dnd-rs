@@ -591,6 +591,13 @@ impl ActorInstance {
         if self.has_condition(Condition::Globed) {
             amt /= 2;
         }
+        // 5e Investiture of Flame: caster gains fire resistance for the
+        // duration. Lives here rather than on `damage_modifiers` so the
+        // resistance drops cleanly when concentration ends without
+        // touching the template's static modifier table.
+        if dt == DamageType::Fire && self.has_condition(Condition::InvestedInFlame) {
+            amt /= 2;
+        }
         amt
     }
 

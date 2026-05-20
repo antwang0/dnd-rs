@@ -216,6 +216,61 @@ fn spell_attack_outcome(
     (effects, total_dmg)
 }
 
+/// Resolve an enemy-only AoE burst where each victim makes a save for
+/// half damage off a *shared* damage roll. The roll fires once and is
+/// halved on per-target saves — matches 5e's standard AoE semantics
+/// (Fireball / Cone of Cold / Aganazzar's Scorcher / Dawn / Fire Storm
+/// / Tidal Wave / Mental Prison's burst-variant). Allies inside the
+/// radius are spared via `enemy_burst_targets`.
+///
+/// Returns `(damage_effects, per_target_save_results)`. The save vector
+/// is `(target_id, passed)` for every actor that took the save —
+/// callers that want to attach a per-target rider on fail (Tidal Wave's
+/// Prone, Mental Prison's Restrained, etc.) can iterate the list and
+/// queue the follow-up condition without re-walking the burst.
+///
+/// Logging shape:
+/// - One "  {name}: {dice}({roll}) shared {damage_type}" line at the
+///   top, identical to the legacy hand-rolled bursts.
+/// - Each target's save line is emitted by `roll_save` directly.
+///
+/// Centralizes the loop body that ~10 enemy-burst spells reimplement.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn enemy_burst_save_for_half(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    point: Coordinate,
+    radius: isize,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    dice: Dice,
+    damage_type: DamageType,
+    action_name: &str,
+) -> (Vec<Box<dyn ApplicableSideEffect>>, Vec<(usize, bool)>) {
+    let raw = encounter.roll(&dice);
+    encounter.log(format!(
+        "  {}: {}({}) shared {:?}",
+        action_name, dice, raw, damage_type
+    ));
+    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+    let mut saves: Vec<(usize, bool)> = Vec::new();
+    for tid in encounter.enemy_burst_targets(caster_id, point, radius) {
+        let save = encounter.roll_save(tid, save_ability, dc);
+        let passed = save.passed();
+        let dmg = if passed { raw / 2 } else { raw };
+        saves.push((tid, passed));
+        if dmg == 0 {
+            continue;
+        }
+        effects.push(Box::new(DealDamage {
+            actor_id: tid,
+            amount: dmg,
+            damage_type,
+        }));
+    }
+    (effects, saves)
+}
+
 /// Roll a damage burst against a target's saving throw, halving on
 /// success. Returns `(damage, save_passed)` so callers can branch on
 /// the save (e.g. attach a rider only on fail). The roll + save log
@@ -278,17 +333,7 @@ impl Action for SacredFlame {
         vec![DamageType::Radiant]
     }
 
-    fn cost(
-        &self,
-        _encounter: &EncounterInstance,
-        _caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        // Cantrip — costs an Action only, no spell slot consumed.
-        vec![Resource::Action]
-    }
+    // Cantrip — uses the default `cost()` (single Action, no spell slot).
 
     fn side_effects(
         &self,
@@ -446,17 +491,7 @@ impl Action for SacredBurst {
         vec![DamageType::Radiant]
     }
 
-    fn cost(
-        &self,
-        _encounter: &EncounterInstance,
-        _caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        // Cantrip — Action only, no spell slot.
-        vec![Resource::Action]
-    }
+    // Cantrip — uses the default `cost()` (single Action, no spell slot).
 
     fn side_effects(
         &self,
@@ -688,17 +723,7 @@ impl Action for FireBolt {
         true
     }
 
-    fn cost(
-        &self,
-        _encounter: &EncounterInstance,
-        _caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        // Cantrip — Action only.
-        vec![Resource::Action]
-    }
+    // Cantrip — uses the default `cost()` (single Action, no spell slot).
 
     fn side_effects(
         &self,
@@ -2015,17 +2040,7 @@ impl Action for AcidSplash {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Acid]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        // Cantrip — no spell slot cost.
-        vec![Resource::Action]
-    }
+    // Cantrip — uses the default `cost()` (single Action, no spell slot).
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -5158,17 +5173,7 @@ impl Action for TrueStrike {
     fn deals_damage(&self) -> bool {
         false
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        // Cantrip — Action only.
-        vec![Resource::Action]
-    }
+    // Cantrip — uses the default `cost()` (single Action, no spell slot).
     fn side_effects(
         &self,
         _encounter: &mut EncounterInstance,
@@ -11589,17 +11594,7 @@ impl Action for MagicStone {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Bludgeoning]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        // Cantrip — Action only.
-        vec![Resource::Action]
-    }
+    // Cantrip — uses the default `cost()` (single Action, no spell slot).
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -12344,30 +12339,22 @@ impl Action for FireStorm {
             AbilityScoreType::Wisdom,
             AbilityScoreType::Intelligence,
         ]);
-        let raw = encounter.roll(&Dice::new(7, 10));
-        encounter.log(format!(
-            "  fire storm: 7d10({}) fire engulfs the radius",
-            raw
-        ));
         // 5e RAW lets the caster shape the storm as ten contiguous 10ft
         // cubes — players use it to skirt allies. We approximate with
         // the enemy-only burst partition so allies in the radius are
         // spared (matches the load-bearing "caster chooses the
         // silhouette" intent of the spell).
-        const RADIUS: isize = 4;
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
-            let save = encounter.roll_save(tid, AbilityScoreType::Dexterity, dc);
-            let dmg = if save.passed() { raw / 2 } else { raw };
-            if dmg == 0 {
-                continue;
-            }
-            effects.push(Box::new(DealDamage {
-                actor_id: tid,
-                amount: dmg,
-                damage_type: DamageType::Fire,
-            }));
-        }
+        let (effects, _) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            4,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(7, 10),
+            DamageType::Fire,
+            "fire storm",
+        );
         effects
     }
 }
@@ -12877,17 +12864,7 @@ impl Action for Frostbite {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Cold]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        // Cantrip — Action only.
-        vec![Resource::Action]
-    }
+    // Cantrip — uses the default `cost()` (single Action, no spell slot).
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -13450,32 +13427,473 @@ impl Action for AganazzarsScorcher {
         let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
             return Vec::new();
         };
-        const RADIUS: isize = 3;
-        let raw = encounter.roll(&Dice::new(3, 8));
-        encounter.log(format!(
-            "  aganazzar's scorcher: 3d8({}) shared fire",
-            raw
-        ));
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
-            let save = encounter.roll_save(tid, AbilityScoreType::Dexterity, dc);
-            let dmg = if save.passed() { raw / 2 } else { raw };
-            if dmg == 0 {
-                continue;
-            }
-            effects.push(Box::new(DealDamage {
-                actor_id: tid,
-                amount: dmg,
-                damage_type: DamageType::Fire,
-            }));
-        }
+        let (effects, _) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            3,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(3, 8),
+            DamageType::Fire,
+            "aganazzar's scorcher",
+        );
         effects
     }
 }
 
 pub static AGANAZZARS_SCORCHER: LazyLock<AganazzarsScorcher> =
     LazyLock::new(|| AganazzarsScorcher {});
+
+/// Acid Arrow — level-2 evocation. Ranged spell attack against one target:
+/// 4d4 acid on hit, half damage on miss. Per RAW the spell also splashes
+/// 2d4 acid "at the end of its next turn" on hit — we collapse that into
+/// a single combined damage roll at cast time (4d4 immediate + 2d4
+/// follow-up) so the engine doesn't need a per-actor deferred-damage
+/// queue. Miss still drops the splash (consistent with the engine's
+/// "miss does nothing but core damage" model).
+///
+/// Spellcasting ability defaults to INT (wizard primary); sorcerer
+/// multiclass would CHA, but acid arrow lives on the wizard/sorcerer
+/// list and INT is the safe default for both.
+pub struct AcidArrow {}
+
+impl Action for AcidArrow {
+    fn name(&self) -> &str {
+        "acid arrow"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["arrow", "aa"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 90ft RAW = 36 tiles.
+        Some(36)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Acid]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
+        // Combined 4d4 immediate + 2d4 splash → 6d4 on hit (5e RAW: full
+        // immediate + full splash). Half damage on miss only covers the
+        // splash dice per RAW: "half damage on a miss and no splash" →
+        // 2d4 on miss. We model the miss-half as a manual fallback below
+        // because `spell_attack` discards the miss path entirely.
+        let (effects, dmg) = spell_attack_outcome(
+            encounter,
+            caster_id,
+            target_id,
+            "acid arrow",
+            attack_bonus,
+            Dice::new(4, 4),
+            0,
+            DamageType::Acid,
+            false,
+        );
+        if dmg > 0 {
+            // Hit: append the 2d4 splash. Logged separately so the
+            // breakdown stays legible.
+            let splash = encounter.roll(&Dice::new(2, 4));
+            encounter.log(format!("  acid arrow splash: 2d4({}) acid", splash));
+            let mut all = effects;
+            all.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: splash,
+                damage_type: DamageType::Acid,
+            }));
+            return all;
+        }
+        // Miss: the splash still drips for half damage per RAW.
+        let half_splash = encounter.roll(&Dice::new(2, 4)) / 2;
+        if half_splash == 0 {
+            return effects;
+        }
+        encounter.log(format!(
+            "  acid arrow miss splash: 2d4/2 = {} acid",
+            half_splash
+        ));
+        let mut all = effects;
+        all.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: half_splash,
+            damage_type: DamageType::Acid,
+        }));
+        all
+    }
+}
+
+pub static ACID_ARROW: LazyLock<AcidArrow> = LazyLock::new(|| AcidArrow {});
+
+/// Tidal Wave — level-3 conjuration. A 30-foot cube of water crashes
+/// down: every creature in the area makes a DEX save vs the caster's
+/// spell DC. Fail: 4d8 bludgeoning + Prone (the wave sweeps them off
+/// their feet). Pass: half damage, no prone. Allies are spared via the
+/// enemy_burst_targets partition (the AI-friendliest simplification of
+/// RAW's "everyone in the cube"). No concentration.
+pub struct TidalWave {}
+
+impl Action for TidalWave {
+    fn name(&self) -> &str {
+        "tidal wave"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wave", "tw"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 30ft cube ≈ 3-tile radius (Chebyshev).
+        TargetingSchema::Burst { radius: 3 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120ft to the burst origin = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]);
+        let (mut effects, saves) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            3,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(4, 8),
+            DamageType::Bludgeoning,
+            "tidal wave",
+        );
+        // Failed-save targets are knocked Prone by the breaker wave.
+        for (tid, passed) in saves {
+            if !passed {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: tid,
+                    condition: Condition::Prone,
+                    timer: ConditionTimer::Permanent,
+                }));
+            }
+        }
+        effects
+    }
+}
+
+pub static TIDAL_WAVE: LazyLock<TidalWave> = LazyLock::new(|| TidalWave {});
+
+/// Dawn — level-5 evocation, concentration. The caster summons a 30ft-
+/// radius cylinder of sunlight. Every enemy in the area makes a CON
+/// save: fail = full 4d10 radiant, pass = half. We collapse the
+/// per-round sustained-cylinder RAW into a one-shot install at cast
+/// time (matches our Sickening Radiance simplification). Concentration-
+/// bound on the caster; dropping concentration ends the dawn.
+pub struct Dawn {}
+
+impl Action for Dawn {
+    fn name(&self) -> &str {
+        "dawn"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sunlight"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 30ft radius ≈ 6-tile Chebyshev burst.
+        TargetingSchema::Burst { radius: 6 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60ft to the burst origin = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Radiant]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+        ]);
+        let (mut effects, _) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            6,
+            AbilityScoreType::Constitution,
+            dc,
+            Dice::new(4, 10),
+            DamageType::Radiant,
+            "dawn",
+        );
+        // Concentration mark — dropping cleans up the dawn marker.
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::new("Dawn"),
+        }));
+        effects
+    }
+}
+
+pub static DAWN: LazyLock<Dawn> = LazyLock::new(|| Dawn {});
+
+/// Mental Prison — level-6 illusion, concentration. Single target makes
+/// an INT save vs the caster's spell DC. Fail: 5d10 psychic + the target
+/// is `MentallyImprisoned` for the duration (movement zero, attacks with
+/// disadvantage, attackers gain advantage — the full Restrained envelope
+/// plus the illusory-prison flavor). Pass: half damage, no prison.
+/// Concentration-bound on the caster. A target who fails the save can
+/// try again at the end of each of their turns RAW — we collapse to a
+/// duration-bound install for simplicity. The 5d10 hits psychic, so
+/// psychic immunity (Mind Flayer / Death Knight) cleanly zero-ifies the
+/// damage without breaking the imprison effect.
+pub struct MentalPrison {}
+
+impl Action for MentalPrison {
+    fn name(&self) -> &str {
+        "mental prison"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mp", "prison"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60ft RAW = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Psychic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+        ]);
+        let (dmg, passed) = save_for_half_damage(
+            encounter,
+            target_id,
+            AbilityScoreType::Intelligence,
+            dc,
+            Dice::new(5, 10),
+            DamageType::Psychic,
+            "mental prison",
+        );
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        if dmg > 0 {
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: dmg,
+                damage_type: DamageType::Psychic,
+            }));
+        }
+        let mut conditions: Vec<(usize, Condition)> = Vec::new();
+        if !passed {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::MentallyImprisoned,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            conditions.push((target_id, Condition::MentallyImprisoned));
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Mental Prison", conditions),
+        }));
+        effects
+    }
+}
+
+pub static MENTAL_PRISON: LazyLock<MentalPrison> = LazyLock::new(|| MentalPrison {});
+
+/// Investiture of Flame — level-6 transmutation, concentration. The
+/// caster wreathes themselves in flames: they gain resistance to fire
+/// (read by `effective_damage`'s Invested-in-Flame branch), and every
+/// melee attacker takes 1d10 fire damage in retaliation (handled by the
+/// `resolve_attack` reflect alongside Fire Shield / Armor of Agathys).
+/// Self-only, concentration-bound; no save / no target. The 4d8 fire
+/// emanation rider in RAW is omitted — the load-bearing buff is the
+/// resistance + melee retaliation envelope.
+pub struct InvestitureOfFlame {}
+
+impl Action for InvestitureOfFlame {
+    fn name(&self) -> &str {
+        "investiture of flame"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["iof", "flameinvest"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Already invested → don't re-cast and burn a level-6 slot.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.has_condition(Condition::InvestedInFlame))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        encounter.log("  investiture of flame: your body erupts in flame.".to_string());
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::InvestedInFlame,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Investiture of Flame",
+                    vec![(caster_id, Condition::InvestedInFlame)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static INVESTITURE_OF_FLAME: LazyLock<InvestitureOfFlame> =
+    LazyLock::new(|| InvestitureOfFlame {});

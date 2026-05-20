@@ -75,6 +75,10 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::FIRE_STORM);
     // Level 9 — the apex druid spell.
     actions.push(&*STORM_OF_VENGEANCE);
+    // Latest druid additions: lv3 Tidal Wave (water-themed CON-save bludgeoning
+    // + prone burst) and lv5 Dawn (radiant CON-save concentration burst).
+    actions.push(&*crate::actions::spells::TIDAL_WAVE);
+    actions.push(&*crate::actions::spells::DAWN);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

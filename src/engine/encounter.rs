@@ -20278,5 +20278,268 @@ mod tests {
         assert!(Condition::Transformed.is_dispellable_buff());
         assert!(Condition::DivineStriking.is_dispellable_buff());
         assert!(Condition::TripAttacking.is_dispellable_buff());
+        assert!(Condition::InvestedInFlame.is_dispellable_buff());
+    }
+
+    /// Acid Arrow: on hit deals 4d4 + 2d4 splash acid; on miss the
+    /// splash still drips for half damage. The dual-damage path is
+    /// the load-bearing piece that distinguishes Acid Arrow from a
+    /// vanilla single-die spell attack. Sweep seeds so we exercise
+    /// both branches across runs.
+    #[test]
+    fn acid_arrow_deals_acid_damage_across_seeds() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::ACID_ARROW;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut saw_hit = false;
+        let mut saw_splash = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+                .unwrap();
+            let before = e.actors[&goblin].hitpoints();
+            for ef in ACID_ARROW.side_effects(&mut e, wiz, Some(&vec![goblin]), None, None) {
+                ef.apply(&mut e);
+            }
+            if !e.actors.contains_key(&goblin) {
+                saw_hit = true;
+                saw_splash = true;
+                break;
+            }
+            let dmg = before - e.actors[&goblin].hitpoints();
+            if dmg >= 8 {
+                saw_hit = true;
+            }
+            if dmg > 0 {
+                saw_splash = true;
+            }
+            if saw_hit && saw_splash {
+                break;
+            }
+        }
+        assert!(saw_splash, "acid arrow should deal at least splash damage");
+        assert!(saw_hit, "acid arrow should land a hit across seeds");
+    }
+
+    /// Tidal Wave: enemy-only DEX-save bludgeoning burst that knocks
+    /// failed-save targets Prone. Verifies allies in the area are
+    /// spared and at least one failed-save enemy ends up Prone.
+    #[test]
+    fn tidal_wave_burst_knocks_enemies_prone_spares_allies() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::TIDAL_WAVE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut saw_prone = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let ally = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 9), 0, 1)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+                .unwrap();
+            let ally_hp_before = e.actors[&ally].hitpoints();
+            let origin = Coordinate::new(10, 10);
+            for ef in TIDAL_WAVE.side_effects(&mut e, wiz, None, Some(&vec![origin]), None) {
+                ef.apply(&mut e);
+            }
+            assert_eq!(
+                e.actors[&ally].hitpoints(),
+                ally_hp_before,
+                "ally in burst should be spared"
+            );
+            if e.actors
+                .get(&enemy)
+                .is_some_and(|a| a.has_condition(Condition::Prone))
+            {
+                saw_prone = true;
+                break;
+            }
+        }
+        assert!(saw_prone, "tidal wave should knock failed-save enemies prone");
+    }
+
+    /// Dawn: enemy-only CON-save radiant burst with concentration mark
+    /// on the caster. Verifies allies in the radius are spared and the
+    /// caster ends up concentrating on Dawn.
+    #[test]
+    fn dawn_spares_allies_and_installs_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::DAWN;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 9), 0, 1)
+            .unwrap();
+        let _enemy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        let ally_hp_before = e.actors[&ally].hitpoints();
+        let origin = Coordinate::new(10, 10);
+        for ef in DAWN.side_effects(&mut e, wiz, None, Some(&vec![origin]), None) {
+            ef.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&ally].hitpoints(),
+            ally_hp_before,
+            "ally in burst should be spared by dawn"
+        );
+        assert!(
+            e.actors[&wiz].is_concentrating(),
+            "caster should concentrate on Dawn"
+        );
+        assert_eq!(
+            e.actors[&wiz]
+                .concentration()
+                .map(|c| c.spell_name.as_str()),
+            Some("Dawn")
+        );
+    }
+
+    /// Mental Prison: failed INT save installs MentallyImprisoned on
+    /// the target, marks caster concentration. Test against a low-INT
+    /// goblin so the fail is reliable across seeds.
+    #[test]
+    fn mental_prison_imprisons_low_int_target() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::MENTAL_PRISON;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut saw_imprison = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+                .unwrap();
+            for ef in MENTAL_PRISON.side_effects(&mut e, wiz, Some(&vec![goblin]), None, None) {
+                ef.apply(&mut e);
+            }
+            // Goblin may be killed outright by the 5d10 psychic — that
+            // counts as a success either way (the spell did its job).
+            if !e.actors.contains_key(&goblin)
+                || e.actors[&goblin].has_condition(Condition::MentallyImprisoned)
+            {
+                saw_imprison = true;
+                break;
+            }
+        }
+        assert!(
+            saw_imprison,
+            "mental prison should land on low-INT goblin across seeds"
+        );
+    }
+
+    /// Investiture of Flame: self-buff installs InvestedInFlame + a
+    /// concentration mark; the holder takes half fire damage while up.
+    #[test]
+    fn investiture_of_flame_installs_self_buff_and_resists_fire() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::INVESTITURE_OF_FLAME;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        for ef in INVESTITURE_OF_FLAME.side_effects(&mut e, wiz, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&wiz].has_condition(Condition::InvestedInFlame));
+        assert!(e.actors[&wiz].is_concentrating());
+        // Half-fire-damage check: with the buff up, 20 fire damage
+        // should land as 10 HP loss.
+        let actor = &e.actors[&wiz];
+        assert_eq!(actor.effective_damage(20, DamageType::Fire), 10);
+        // Non-fire damage is untouched.
+        assert_eq!(actor.effective_damage(20, DamageType::Cold), 20);
+    }
+
+    /// Air Elemental template: CR-5 flying elemental with multi-slam,
+    /// poison immunity, lightning + thunder resistance, and the full
+    /// elemental condition-immunity envelope.
+    #[test]
+    fn air_elemental_template_carries_elemental_envelope() {
+        use crate::actors::creatures::air_elementals::AIR_ELEMENTAL_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&AIR_ELEMENTAL_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let ae = &e.actors[&id];
+        assert!(ae.is_immune_to(DamageType::Poison));
+        assert!(ae.is_resistant_to(DamageType::Lightning));
+        assert!(ae.is_resistant_to(DamageType::Thunder));
+        assert!(ae.is_immune_to_condition(Condition::Poisoned));
+        assert!(ae.is_immune_to_condition(Condition::Petrified));
+        assert!(ae.find_action("air slam").is_some());
+        assert!(ae.find_action("air elemental multiattack").is_some());
+    }
+
+    /// Earth Elemental template: CR-5 elemental with thunder
+    /// vulnerability (RAW), heavy slam dice (4d8), and the full
+    /// elemental condition-immunity envelope. Verifies the
+    /// vulnerability lane works through effective_damage.
+    #[test]
+    fn earth_elemental_template_is_vulnerable_to_thunder() {
+        use crate::actors::creatures::earth_elementals::EARTH_ELEMENTAL_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&EARTH_ELEMENTAL_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let ee = &e.actors[&id];
+        assert!(ee.is_vulnerable_to(DamageType::Thunder));
+        assert!(ee.is_immune_to(DamageType::Poison));
+        assert!(ee.is_resistant_to(DamageType::Bludgeoning));
+        assert_eq!(ee.effective_damage(10, DamageType::Thunder), 20);
+        assert!(ee.find_action("earth elemental multiattack").is_some());
+    }
+
+    /// Balor template: CR-19 apex demon. Verifies the full demon
+    /// envelope: fire + poison immunity, cold + lightning + B/P/S
+    /// resistance, charmed/frightened/poisoned condition immunity,
+    /// Legendary Resistance 3/Day, and the four signature attack lanes.
+    #[test]
+    fn balor_template_carries_apex_demon_envelope() {
+        use crate::actors::creatures::balors::BALOR_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&BALOR_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let b = &e.actors[&id];
+        assert!(b.is_immune_to(DamageType::Fire));
+        assert!(b.is_immune_to(DamageType::Poison));
+        assert!(b.is_resistant_to(DamageType::Cold));
+        assert!(b.is_resistant_to(DamageType::Lightning));
+        assert!(b.is_immune_to_condition(Condition::Poisoned));
+        assert!(b.is_immune_to_condition(Condition::Frightened));
+        assert!(b.is_immune_to_condition(Condition::Charmed));
+        assert_eq!(b.legendary_resistance_max(), 3);
+        assert!(b.find_action("balor longsword").is_some());
+        assert!(b.find_action("balor whip").is_some());
+        assert!(b.find_action("balor multiattack").is_some());
+        assert!(b.find_action("balor fire aura").is_some());
     }
 }

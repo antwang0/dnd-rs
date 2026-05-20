@@ -250,17 +250,6 @@ impl Action for Bite {
         Some(MELEE_REACH)
     }
 
-    fn cost(
-        &self,
-        _encounter: &EncounterInstance,
-        _caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
-
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -311,17 +300,6 @@ impl Action for TripAttack {
 
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Bludgeoning]
-    }
-
-    fn cost(
-        &self,
-        _encounter: &EncounterInstance,
-        _caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
 
     fn side_effects(
@@ -399,17 +377,6 @@ impl Action for AcidSpit {
 
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Acid]
-    }
-
-    fn cost(
-        &self,
-        _encounter: &EncounterInstance,
-        _caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
 
     fn side_effects(
@@ -1208,16 +1175,6 @@ impl Action for LifeDrain {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Necrotic]
-    }
-    fn cost(
-        &self,
-        _encounter: &EncounterInstance,
-        _caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -4278,19 +4235,9 @@ impl Action for MindFlayerMindBlast {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Psychic]
     }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        // 5e mind flayer's Mind Blast is a recharge 5-6 ability; we
-        // collapse to a regular Action with no recharge gate (the AI
-        // already paces it via the higher-leverage gating heuristics).
-        vec![Resource::Action]
-    }
+    // 5e mind flayer's Mind Blast is a recharge 5-6 ability; we
+    // collapse to a regular Action (the trait default) with no recharge
+    // gate (the AI already paces it via higher-leverage gating heuristics).
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -4899,16 +4846,6 @@ impl Action for MedusaPetrifyingGaze {
     }
     fn damage_types(&self) -> Vec<DamageType> {
         Vec::new()
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
     fn side_effects(
         &self,
@@ -5688,3 +5625,256 @@ pub static BONE_DEVIL_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Compoun
     // Action's worth of resources.
     parts: vec![(&BONE_DEVIL_CLAWS, 2), (&*BONE_DEVIL_STING, 1)],
 });
+
+/// Air Elemental Slam — STR-based 2d8 + STR bludgeoning melee, reach 1.
+/// Distinct damage envelope from the fire elemental's burn-touch — air
+/// elementals hit harder per swing but lack the ignition rider.
+pub static AIR_ELEMENTAL_SLAM: SimpleWeapon = SimpleWeapon {
+    display_name: "air slam",
+    aliases: &["aslam"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 8),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Air Elemental Multiattack — 2 slams per Action via the standard
+/// `Multiattack` wrapper. The air elemental's full opening salvo.
+pub static AIR_ELEMENTAL_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "air elemental multiattack",
+    sub_attack: &AIR_ELEMENTAL_SLAM,
+    count: 2,
+});
+
+/// Earth Elemental Slam — STR-based 4d8 + STR bludgeoning melee, reach 1.
+/// Much heavier per-swing than the air variant — the earth elemental's
+/// signature is its slow-but-brutal slam. Reach is melee per MM RAW.
+pub static EARTH_ELEMENTAL_SLAM: SimpleWeapon = SimpleWeapon {
+    display_name: "earth slam",
+    aliases: &["eslam"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(4, 8),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Earth Elemental Multiattack — 2 slams per Action. Mirrors the air
+/// elemental wrapper but with the heavier per-slam dice.
+pub static EARTH_ELEMENTAL_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "earth elemental multiattack",
+    sub_attack: &EARTH_ELEMENTAL_SLAM,
+    count: 2,
+});
+
+/// Balor Longsword — STR-based 3d8 + STR slashing melee, reach 2 (10ft
+/// per MM). On hit, the target takes an extra 3d8 lightning damage from
+/// the flaming runes on the blade. We collapse the RAW "magical
+/// longsword + 3d8 fire on hit" into "longsword damage + 3d8 lightning"
+/// to keep the apex demon's damage envelope mixed (lightning is rarely
+/// resisted at high CR).
+pub struct BalorLongsword {}
+
+impl Action for BalorLongsword {
+    fn name(&self) -> &str {
+        "balor longsword"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["blongsword", "bl-sword"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(2)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Slashing, DamageType::Lightning]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "balor longsword",
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(3, 8),
+            DamageType::Slashing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        // Lightning runes rider — fires on hit only (effects non-empty).
+        let bolt = encounter.roll(&Dice::new(3, 8));
+        encounter.log(format!(
+            "  balor runes: 3d8({}) = {} lightning",
+            bolt, bolt
+        ));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: bolt,
+            damage_type: DamageType::Lightning,
+        }));
+        effects
+    }
+}
+
+pub static BALOR_LONGSWORD: LazyLock<BalorLongsword> = LazyLock::new(|| BalorLongsword {});
+
+/// Balor Lightning Whip — STR-based 2d6 + STR slashing reach attack,
+/// reach 12 (30ft). On hit, deals an extra 3d6 lightning damage. The
+/// reach is the balor's stand-off lane: pull targets in or jab past
+/// the line. Mirrors the BalorLongsword's slashing + lightning split
+/// but with smaller dice and longer reach.
+pub struct BalorWhip {}
+
+impl Action for BalorWhip {
+    fn name(&self) -> &str {
+        "balor whip"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bwhip", "lwhip"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(12)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Slashing, DamageType::Lightning]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "balor whip",
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(2, 6),
+            DamageType::Slashing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        let bolt = encounter.roll(&Dice::new(3, 6));
+        encounter.log(format!(
+            "  balor whip lightning: 3d6({}) = {} lightning",
+            bolt, bolt
+        ));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: bolt,
+            damage_type: DamageType::Lightning,
+        }));
+        effects
+    }
+}
+
+pub static BALOR_WHIP: LazyLock<BalorWhip> = LazyLock::new(|| BalorWhip {});
+
+/// Balor Multiattack — 1 longsword + 1 whip per Action via
+/// `CompoundAttack`. The full apex-demon opening salvo: a longsword
+/// (3d8 slash + 3d8 lightning) and a whip (2d6 slash + 3d6 lightning)
+/// can ladder up to ~50-60 damage on a single target in one round.
+pub static BALOR_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "balor multiattack",
+    parts: vec![(&*BALOR_LONGSWORD, 1), (&*BALOR_WHIP, 1)],
+});
+
+/// Balor Fire Aura — bonus-action burst that ignites every actor whose
+/// footprint touches the balor's. 5e RAW: "any creature that touches
+/// the balor or hits it with a melee attack while within 5ft takes 10
+/// fire damage." We hoist the trigger off the per-hit path into a
+/// once-per-turn bonus-action burst so the aura is visible in the log
+/// and the AI can prioritize it explicitly: every adjacent enemy eats
+/// 3d6 fire (no save). Pure burst — no rider, no concentration.
+pub struct BalorFireAura {}
+
+impl Action for BalorFireAura {
+    fn name(&self) -> &str {
+        "balor fire aura"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["faura", "balor-aura"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let center = caster.location();
+        // Adjacent enemies only — 1-tile gap = footprint-adjacent.
+        // The Fire Aura RAW is "within 5ft", so radius 1 captures the
+        // ring of touching footprints.
+        let raw = encounter.roll(&Dice::new(3, 6));
+        encounter.log(format!(
+            "  balor fire aura: 3d6({}) shared fire to adjacent enemies",
+            raw
+        ));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in encounter.enemy_burst_targets(caster_id, center, 1) {
+            effects.push(Box::new(DealDamage {
+                actor_id: tid,
+                amount: raw,
+                damage_type: DamageType::Fire,
+            }));
+        }
+        effects
+    }
+}
+
+pub static BALOR_FIRE_AURA: LazyLock<BalorFireAura> = LazyLock::new(|| BalorFireAura {});

@@ -79,6 +79,13 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*POWER_WORD_KILL);
     actions.push(&*METEOR_SWARM);
     actions.push(&*crate::actions::spells::MASS_POLYMORPH);
+    // Latest spell additions: lv2 Acid Arrow, lv3 Tidal Wave, lv5 Dawn,
+    // lv6 Investiture of Flame. Round out the sorcerer's mid-tier
+    // blaster lineup with the new water / radiant / self-buff options.
+    actions.push(&*crate::actions::spells::ACID_ARROW);
+    actions.push(&*crate::actions::spells::TIDAL_WAVE);
+    actions.push(&*crate::actions::spells::DAWN);
+    actions.push(&*crate::actions::spells::INVESTITURE_OF_FLAME);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

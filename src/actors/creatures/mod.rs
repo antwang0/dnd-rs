@@ -1,5 +1,7 @@
 pub mod aboleths;
+pub mod air_elementals;
 pub mod animated_armors;
+pub mod balors;
 pub mod bandit_captains;
 pub mod bandits;
 pub mod banshees;
@@ -20,6 +22,7 @@ pub mod doppelgangers;
 pub mod dragons;
 pub mod drow;
 pub mod druids;
+pub mod earth_elementals;
 pub mod erinyes;
 pub mod fighters;
 pub mod fire_elementals;

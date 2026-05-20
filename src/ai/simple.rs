@@ -173,6 +173,15 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3m'. Investiture of Flame — level-6 caster concentration
+        //      self-buff (fire resistance + 1d10 fire melee retaliation).
+        //      Fire when at least one enemy is in attack reach so the
+        //      melee retaliation will trigger this round. Mirrors the
+        //      Bigby's Hand / Tenser's Transformation gates.
+        if let Some(aei) = try_investiture_of_flame(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3n. Aura of Life — level-4 paladin concentration aura. Fire
         //     when at least one ally is clustered in the aura radius
         //     and a fight has started.
@@ -495,17 +504,13 @@ fn try_spirit_shroud(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    let actor = encounter.actors.get(&actor_id)?;
-    if actor.is_concentrating() {
-        return None;
-    }
-    if actor.has_condition(Condition::SpiritShrouded) {
-        return None;
-    }
-    if !any_enemy_within(encounter, actor_id, 1) {
-        return None;
-    }
-    try_self_action(encounter, actor_id, "spirit shroud")
+    try_self_buff_concentration(
+        encounter,
+        actor_id,
+        "spirit shroud",
+        Condition::SpiritShrouded,
+        1,
+    )
 }
 
 /// Bigby's Hand — level-5 wizard concentration self-buff. The on-hit
@@ -516,19 +521,13 @@ fn try_bigbys_hand(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    let actor = encounter.actors.get(&actor_id)?;
-    if actor.is_concentrating() {
-        return None;
-    }
-    if actor.has_condition(Condition::BigbysHanded) {
-        return None;
-    }
-    // 8 tiles ≈ 20ft — engagement radius for caster's typical fire-bolt /
-    // ray-of-frost reach. Don't burn a level-5 slot in an empty room.
-    if !any_enemy_within(encounter, actor_id, 8) {
-        return None;
-    }
-    try_self_action(encounter, actor_id, "bigby's hand")
+    try_self_buff_concentration(
+        encounter,
+        actor_id,
+        "bigby's hand",
+        Condition::BigbysHanded,
+        8,
+    )
 }
 
 /// Tenser's Transformation — level-6 wizard concentration self-buff.
@@ -538,18 +537,34 @@ fn try_tensers_transformation(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    let actor = encounter.actors.get(&actor_id)?;
-    if actor.is_concentrating() {
-        return None;
-    }
-    if actor.has_condition(Condition::Transformed) {
-        return None;
-    }
     // 30ft engagement radius — same envelope as Holy Aura's gate.
-    if !any_enemy_within(encounter, actor_id, 12) {
-        return None;
-    }
-    try_self_action(encounter, actor_id, "tenser's transformation")
+    try_self_buff_concentration(
+        encounter,
+        actor_id,
+        "tenser's transformation",
+        Condition::Transformed,
+        12,
+    )
+}
+
+/// Investiture of Flame — level-6 caster concentration self-buff. The
+/// holder gains fire resistance and 1d10 fire retaliation on melee
+/// hits. Concentration-gated; skip when already invested (the install
+/// site's `custom_validate_input` also blocks this, but the explicit
+/// gate keeps the picker from re-considering the action on every turn).
+/// Engagement gate: at least one enemy within 6 tiles (~15ft) so a
+/// melee swing actually arrives before the buff times out.
+fn try_investiture_of_flame(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_self_buff_concentration(
+        encounter,
+        actor_id,
+        "investiture of flame",
+        Condition::InvestedInFlame,
+        6,
+    )
 }
 
 /// Aura of Life — level-4 paladin concentration aura. Fires when at
@@ -717,6 +732,37 @@ fn try_self_action(
     let action = encounter.actors.get(&actor_id)?.find_action(action_name)?;
     let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
     aei.validate(encounter).then_some(aei)
+}
+
+/// Shared gate for concentration-bound self-buff heuristics. Returns
+/// the `try_self_action` result iff:
+/// - the caster exists,
+/// - the caster is not already concentrating,
+/// - the caster does not already hold `installed_marker` (skip re-cast),
+/// - at least one combat-active enemy is within `engage_radius` tiles
+///   (don't burn the slot in an empty room).
+///
+/// Used by `try_bigbys_hand` / `try_tensers_transformation` /
+/// `try_investiture_of_flame` / `try_spirit_shroud` — every
+/// concentration-bound self-buff with the same three-step gate.
+fn try_self_buff_concentration(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    action_name: &str,
+    installed_marker: Condition,
+    engage_radius: isize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() {
+        return None;
+    }
+    if actor.has_condition(installed_marker) {
+        return None;
+    }
+    if !any_enemy_within(encounter, actor_id, engage_radius) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, action_name)
 }
 
 /// Barbarian Rage trigger: a barbarian who isn't already Raging fires
@@ -1833,6 +1879,19 @@ mod tests {
             use crate::actors::creatures::bullettes::BULLETTE_TEMPLATE;
             let _ = e.instantiate_creature(&BULLETTE_TEMPLATE, Coordinate::new(2, 18), 1, 34);
             let _ = e.instantiate_creature(&BONE_DEVIL_TEMPLATE, Coordinate::new(5, 18), 1, 35);
+            // Newest additions: Air Elemental (CR 5 flying elemental with
+            // 2-slam multi), Earth Elemental (CR 5 heavy slam + thunder
+            // vulnerability), Balor (CR 19 apex demon with longsword +
+            // whip multi + Fire Aura bonus action + LR 3/Day). Verifies
+            // the AI handles the new elemental envelopes (poison-immunity
+            // + condition-immunity stack) and the boss-tier demon's
+            // multi-lane attack picker without stalling on the LR gate.
+            use crate::actors::creatures::air_elementals::AIR_ELEMENTAL_TEMPLATE;
+            use crate::actors::creatures::balors::BALOR_TEMPLATE;
+            use crate::actors::creatures::earth_elementals::EARTH_ELEMENTAL_TEMPLATE;
+            let _ = e.instantiate_creature(&AIR_ELEMENTAL_TEMPLATE, Coordinate::new(8, 18), 1, 36);
+            let _ = e.instantiate_creature(&EARTH_ELEMENTAL_TEMPLATE, Coordinate::new(11, 18), 1, 37);
+            let _ = e.instantiate_creature(&BALOR_TEMPLATE, Coordinate::new(14, 18), 1, 38);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

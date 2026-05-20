@@ -273,6 +273,27 @@ pub fn resolve_attack_outcome(
             damage_type: DamageType::Cold,
         }));
     }
+    // 5e Investiture of Flame: melee attackers eat 1d10 fire damage in
+    // retaliation. Mirrors the Fire Shield reflect (concentration-bound,
+    // self-only) with the smaller die and the broader fire resistance
+    // baked into the condition's install site. Skips on miss.
+    if p.is_melee
+        && encounter
+            .actors
+            .get(&p.target_id)
+            .is_some_and(|a| a.has_condition(crate::conditions::Condition::InvestedInFlame))
+    {
+        let reflect = encounter.roll(&Dice::new(1, 10));
+        encounter.log(format!(
+            "  investiture of flame: 1d10({}) fire reflected",
+            reflect
+        ));
+        effects.push(Box::new(DealDamage {
+            actor_id: p.caster_id,
+            amount: reflect,
+            damage_type: DamageType::Fire,
+        }));
+    }
     (effects, damage)
 }
 

@@ -175,6 +175,17 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::AGANAZZARS_SCORCHER);
     actions.push(&*crate::actions::spells::BIGBYS_HAND);
     actions.push(&*crate::actions::spells::TENSERS_TRANSFORMATION);
+    // Latest spell additions: lv2 Acid Arrow (single-target attack +
+    // splash), lv3 Tidal Wave (DEX-save bludgeoning + prone burst), lv5
+    // Dawn (CON-save radiant burst concentration), lv6 Mental Prison
+    // (INT-save psychic + Restrained-envelope concentration), lv6
+    // Investiture of Flame (self-buff with fire-melee retaliation +
+    // fire resistance, concentration).
+    actions.push(&*crate::actions::spells::ACID_ARROW);
+    actions.push(&*crate::actions::spells::TIDAL_WAVE);
+    actions.push(&*crate::actions::spells::DAWN);
+    actions.push(&*crate::actions::spells::MENTAL_PRISON);
+    actions.push(&*crate::actions::spells::INVESTITURE_OF_FLAME);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

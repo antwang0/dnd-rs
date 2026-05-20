@@ -48,17 +48,6 @@ impl Action for DrinkHealingPotion {
         true
     }
 
-    fn cost(
-        &self,
-        _encounter: &EncounterInstance,
-        _caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
-
     fn custom_validate_input(
         &self,
         encounter: &EncounterInstance,
@@ -219,17 +208,6 @@ impl Action for ReadFireballScroll {
         true
     }
 
-    fn cost(
-        &self,
-        _encounter: &EncounterInstance,
-        _caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
-
     fn custom_validate_input(
         &self,
         encounter: &EncounterInstance,
@@ -318,17 +296,6 @@ impl Action for ReadMagicMissileScroll {
         true
     }
 
-    fn cost(
-        &self,
-        _encounter: &EncounterInstance,
-        _caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
-    }
-
     fn custom_validate_input(
         &self,
         encounter: &EncounterInstance,
@@ -405,17 +372,6 @@ impl Action for DrinkAntitoxin {
 
     fn is_harmful(&self) -> bool {
         false
-    }
-
-    fn cost(
-        &self,
-        _encounter: &EncounterInstance,
-        _caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
 
     fn custom_validate_input(
@@ -665,17 +621,6 @@ impl Action for DrinkPotionOfInvisibility {
 
     fn is_harmful(&self) -> bool {
         false
-    }
-
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        vec![Resource::Action]
     }
 
     fn custom_validate_input(
