@@ -237,64 +237,106 @@ pub fn resolve_attack_outcome(
             apply_smite_follow_up(encounter, &mut effects, p.caster_id, p.target_id, follow);
         }
     }
-    // 5e Fire Shield: if the target is fire-shielded and this was a melee
-    // attack, the attacker takes 2d8 fire damage in retaliation. We tag
-    // the reflective DealDamage onto the attacker — resolves through the
-    // standard damage pipeline (immunity / resistance respected).
-    if p.is_melee
-        && encounter
-            .actors
-            .get(&p.target_id)
-            .is_some_and(|a| a.has_condition(crate::conditions::Condition::FireShielded))
-    {
-        let reflect = encounter.roll(&Dice::new(2, 8));
-        encounter.log(format!("  fire shield: 2d8({}) fire reflected", reflect));
-        effects.push(Box::new(DealDamage {
-            actor_id: p.caster_id,
-            amount: reflect,
-            damage_type: DamageType::Fire,
-        }));
-    }
-    // 5e Armor of Agathys: melee attackers eat flat cold damage in
-    // retaliation. Static 5 damage per RAW (we don't scale by slot
-    // level — the spell's install site sets the temp HP). Symmetric
-    // shape with the Fire Shield reflect above. Skips on miss (no
-    // attack roll → no melee contact).
-    if p.is_melee
-        && encounter
-            .actors
-            .get(&p.target_id)
-            .is_some_and(|a| a.has_condition(crate::conditions::Condition::AgathysShielded))
-    {
-        encounter.log("  armor of agathys: 5 cold reflected".to_string());
-        effects.push(Box::new(DealDamage {
-            actor_id: p.caster_id,
-            amount: 5,
-            damage_type: DamageType::Cold,
-        }));
-    }
-    // 5e Investiture of Flame: melee attackers eat 1d10 fire damage in
-    // retaliation. Mirrors the Fire Shield reflect (concentration-bound,
-    // self-only) with the smaller die and the broader fire resistance
-    // baked into the condition's install site. Skips on miss.
-    if p.is_melee
-        && encounter
-            .actors
-            .get(&p.target_id)
-            .is_some_and(|a| a.has_condition(crate::conditions::Condition::InvestedInFlame))
-    {
-        let reflect = encounter.roll(&Dice::new(1, 10));
-        encounter.log(format!(
-            "  investiture of flame: 1d10({}) fire reflected",
-            reflect
-        ));
-        effects.push(Box::new(DealDamage {
-            actor_id: p.caster_id,
-            amount: reflect,
-            damage_type: DamageType::Fire,
-        }));
+    // Melee-only retaliation table: any condition the *target* holds that
+    // bounces damage back at a melee attacker (Fire Shield 2d8 fire,
+    // Armor of Agathys 5 cold, Investiture of Flame 1d10 fire). Each
+    // entry plugs in here without re-implementing the "target has cond?
+    // → roll → log → push DealDamage(attacker)" dance. The reflected
+    // damage resolves through the standard damage pipeline so the
+    // attacker's typed immunity / resistance / vulnerability is honored.
+    if p.is_melee {
+        for rider in melee_reflect_riders() {
+            if !encounter
+                .actors
+                .get(&p.target_id)
+                .is_some_and(|a| a.has_condition(rider.condition))
+            {
+                continue;
+            }
+            let amount = match rider.damage {
+                ReflectDamage::Flat(n) => {
+                    encounter.log(format!(
+                        "  {}: {} {:?} reflected",
+                        rider.label, n, rider.damage_type
+                    ));
+                    n
+                }
+                ReflectDamage::Dice(dice) => {
+                    let rolled = encounter.roll(&dice);
+                    encounter.log(format!(
+                        "  {}: {}({}) {:?} reflected",
+                        rider.label, dice, rolled, rider.damage_type
+                    ));
+                    rolled
+                }
+            };
+            effects.push(Box::new(DealDamage {
+                actor_id: p.caster_id,
+                amount,
+                damage_type: rider.damage_type,
+            }));
+        }
     }
     (effects, damage)
+}
+
+/// Damage payload for a melee retaliation rider. Some shields roll dice
+/// (Fire Shield 2d8, Investiture of Flame 1d10); others deal flat damage
+/// (Armor of Agathys 5). Captured as an enum so the rider table stays a
+/// flat array of plain-data entries.
+#[derive(Clone, Copy)]
+pub enum ReflectDamage {
+    Dice(Dice),
+    Flat(u32),
+}
+
+/// A target-side "creature hit me in melee, take this damage back" rider.
+/// Mirrors `OnHitRider` in shape but lives on the *target* of the swing
+/// rather than the caster: any actor who holds `condition` reflects
+/// `damage` of `damage_type` onto every melee attacker that connects.
+#[derive(Clone, Copy)]
+pub struct MeleeReflectRider {
+    pub condition: Condition,
+    pub damage: ReflectDamage,
+    pub damage_type: DamageType,
+    /// Log-friendly tag ("fire shield", "armor of agathys", ...).
+    pub label: &'static str,
+}
+
+/// Build the melee retaliation rider table. Symmetric with `on_hit_riders`
+/// but consumed at the target side of `resolve_attack_outcome`. Returned
+/// by value rather than declared `const` because `Dice::new` isn't a
+/// const fn — the runtime cost is one stack-allocated array.
+fn melee_reflect_riders() -> [MeleeReflectRider; 3] {
+    [
+        // 5e Fire Shield — 2d8 fire on every melee contact. Concentration-
+        // free, self-only; the warm / cool variant only matters for the
+        // resistance lane (we collapse to a single Fire Shield condition).
+        MeleeReflectRider {
+            condition: Condition::FireShielded,
+            damage: ReflectDamage::Dice(Dice::new(2, 8)),
+            damage_type: DamageType::Fire,
+            label: "fire shield",
+        },
+        // 5e Armor of Agathys — flat 5 cold on melee contact. We don't
+        // scale with slot level (the spell's install site sets the temp
+        // HP buffer instead). Mirrors Fire Shield's shape but cheaper.
+        MeleeReflectRider {
+            condition: Condition::AgathysShielded,
+            damage: ReflectDamage::Flat(5),
+            damage_type: DamageType::Cold,
+            label: "armor of agathys",
+        },
+        // 5e Investiture of Flame — 1d10 fire on melee contact. Smaller
+        // die than Fire Shield (concentration-bound on the caster, paired
+        // with the broader fire resistance baked into the install).
+        MeleeReflectRider {
+            condition: Condition::InvestedInFlame,
+            damage: ReflectDamage::Dice(Dice::new(1, 10)),
+            damage_type: DamageType::Fire,
+            label: "investiture of flame",
+        },
+    ]
 }
 
 /// Roll a single rider die for an on-hit bonus, doubling on crit per

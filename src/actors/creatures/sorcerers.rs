@@ -86,6 +86,13 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::TIDAL_WAVE);
     actions.push(&*crate::actions::spells::DAWN);
     actions.push(&*crate::actions::spells::INVESTITURE_OF_FLAME);
+    // Latest sorcerer additions: lv1 Grease (DEX-save prone burst), lv2
+    // Flaming Sphere (concentration fire burst). Both fit the blaster
+    // archetype — Grease as a cheap lv1 disabler, Flaming Sphere as a
+    // mid-cost AoE that pairs well with the sorcerer's concentration
+    // lane (Haste / Polymorph would lose to it, which is the design intent).
+    actions.push(&*crate::actions::spells::GREASE);
+    actions.push(&*crate::actions::spells::FLAMING_SPHERE);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

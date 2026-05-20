@@ -79,6 +79,11 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // + prone burst) and lv5 Dawn (radiant CON-save concentration burst).
     actions.push(&*crate::actions::spells::TIDAL_WAVE);
     actions.push(&*crate::actions::spells::DAWN);
+    // Flaming Sphere — druid lv2 conjuration. Concentration-bound fire
+    // burst that pairs with the druid's other concentration loops
+    // (Moonbeam, Heat Metal) without stacking — adds a single-target /
+    // small-cluster fire option to the kit.
+    actions.push(&*crate::actions::spells::FLAMING_SPHERE);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

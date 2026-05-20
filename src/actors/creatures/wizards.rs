@@ -186,6 +186,14 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::DAWN);
     actions.push(&*crate::actions::spells::MENTAL_PRISON);
     actions.push(&*crate::actions::spells::INVESTITURE_OF_FLAME);
+    // Latest spell additions: lv1 Grease (DEX-save prone burst), lv2
+    // Flaming Sphere (DEX-save fire burst, concentration), lv6 Blade
+    // Barrier (DEX-save slashing burst, concentration). Grease + Flaming
+    // Sphere are core wizard staples; Blade Barrier slots cleanly into
+    // the lv6 evocation lane alongside Globe of Invulnerability.
+    actions.push(&*crate::actions::spells::GREASE);
+    actions.push(&*crate::actions::spells::FLAMING_SPHERE);
+    actions.push(&*crate::actions::spells::BLADE_BARRIER);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

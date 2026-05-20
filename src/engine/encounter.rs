@@ -20517,6 +20517,181 @@ mod tests {
         assert!(ee.find_action("earth elemental multiattack").is_some());
     }
 
+    /// Grease: enemy-only DEX-save burst that knocks failed-save targets
+    /// Prone (no damage). Verifies allies in the radius are spared and at
+    /// least one failed-save enemy ends up Prone across seeds.
+    #[test]
+    fn grease_knocks_enemies_prone_spares_allies() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::GREASE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut saw_prone = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let ally = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 9), 0, 1)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+                .unwrap();
+            let ally_hp_before = e.actors[&ally].hitpoints();
+            let origin = Coordinate::new(10, 10);
+            for ef in GREASE.side_effects(&mut e, wiz, None, Some(&vec![origin]), None) {
+                ef.apply(&mut e);
+            }
+            // Grease deals no damage — ally HP must be untouched.
+            assert_eq!(
+                e.actors[&ally].hitpoints(),
+                ally_hp_before,
+                "ally in burst should be spared by grease (and take no damage)"
+            );
+            assert!(
+                !e.actors[&ally].has_condition(Condition::Prone),
+                "ally should not be knocked prone by grease"
+            );
+            if e.actors
+                .get(&enemy)
+                .is_some_and(|a| a.has_condition(Condition::Prone))
+            {
+                saw_prone = true;
+                break;
+            }
+        }
+        assert!(saw_prone, "grease should knock failed-save enemies prone");
+    }
+
+    /// Flaming Sphere: enemy-only DEX-save fire burst with concentration
+    /// mark on the caster. Verifies allies in the burst are spared and the
+    /// caster ends up concentrating on Flaming Sphere.
+    #[test]
+    fn flaming_sphere_spares_allies_and_installs_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::FLAMING_SPHERE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 9), 0, 1)
+            .unwrap();
+        let _enemy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        let ally_hp_before = e.actors[&ally].hitpoints();
+        let origin = Coordinate::new(10, 10);
+        for ef in FLAMING_SPHERE.side_effects(&mut e, wiz, None, Some(&vec![origin]), None) {
+            ef.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&ally].hitpoints(),
+            ally_hp_before,
+            "ally in burst should be spared by flaming sphere"
+        );
+        assert!(
+            e.actors[&wiz].is_concentrating(),
+            "caster should concentrate on Flaming Sphere"
+        );
+        assert_eq!(
+            e.actors[&wiz]
+                .concentration()
+                .map(|c| c.spell_name.as_str()),
+            Some("Flaming Sphere")
+        );
+    }
+
+    /// Guardian of Faith: enemy-only radiant burst with flat 20/10 damage
+    /// (no dice roll — fail=20, save=10). Verifies allies are spared and
+    /// no concentration mark is installed (the guardian is RAW non-conc).
+    #[test]
+    fn guardian_of_faith_spares_allies_no_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::GUARDIAN_OF_FAITH;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 9), 0, 1)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        let ally_hp_before = e.actors[&ally].hitpoints();
+        let enemy_hp_before = e.actors[&enemy].hitpoints();
+        let origin = Coordinate::new(10, 10);
+        for ef in GUARDIAN_OF_FAITH.side_effects(&mut e, cleric, None, Some(&vec![origin]), None) {
+            ef.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&ally].hitpoints(),
+            ally_hp_before,
+            "ally in burst should be spared"
+        );
+        // Enemy should have taken some radiant damage (10 on save, 20 on fail).
+        // Goblins are squishy (7 HP) so either lands as a kill or near it.
+        let enemy_hp_after = e.actors.get(&enemy).map(|a| a.hitpoints()).unwrap_or(0);
+        assert!(
+            enemy_hp_after < enemy_hp_before,
+            "enemy should take radiant damage from guardian of faith"
+        );
+        assert!(
+            !e.actors[&cleric].is_concentrating(),
+            "guardian of faith is not concentration-bound"
+        );
+    }
+
+    /// Blade Barrier: enemy-only DEX-save slashing burst (6d10) with
+    /// concentration mark on the caster. Verifies allies are spared and
+    /// the caster ends up concentrating on Blade Barrier.
+    #[test]
+    fn blade_barrier_spares_allies_and_installs_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::BLADE_BARRIER;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 9), 0, 1)
+            .unwrap();
+        let _enemy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        let ally_hp_before = e.actors[&ally].hitpoints();
+        let origin = Coordinate::new(10, 10);
+        for ef in BLADE_BARRIER.side_effects(&mut e, cleric, None, Some(&vec![origin]), None) {
+            ef.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&ally].hitpoints(),
+            ally_hp_before,
+            "ally in burst should be spared by blade barrier"
+        );
+        assert!(
+            e.actors[&cleric].is_concentrating(),
+            "caster should concentrate on Blade Barrier"
+        );
+        assert_eq!(
+            e.actors[&cleric]
+                .concentration()
+                .map(|c| c.spell_name.as_str()),
+            Some("Blade Barrier")
+        );
+    }
+
     /// Balor template: CR-19 apex demon. Verifies the full demon
     /// envelope: fire + poison immunity, cold + lightning + B/P/S
     /// resistance, charmed/frightened/poisoned condition immunity,

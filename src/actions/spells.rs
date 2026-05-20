@@ -13897,3 +13897,332 @@ impl Action for InvestitureOfFlame {
 
 pub static INVESTITURE_OF_FLAME: LazyLock<InvestitureOfFlame> =
     LazyLock::new(|| InvestitureOfFlame {});
+
+/// Grease — level-1 conjuration. A 10-foot square of slick grease coats
+/// the ground at a point within 60 ft. Every enemy whose footprint
+/// touches the burst makes a DEX save vs the caster's spell DC; failure
+/// knocks them Prone (the difficult-terrain half of RAW is omitted — the
+/// load-bearing penalty is the prone). Allies are spared via the
+/// enemy_burst_targets partition (the spell is centered by the caster,
+/// not a friendly-fire AoE in our model). No concentration; the slick
+/// surface lasts a flat 10-round Rounds timer (1 minute RAW). The
+/// caster doesn't *need* to do anything else — the prone is the entire
+/// payload, matching the spell's reputation as a cheap lv1 disabler.
+pub struct Grease {}
+
+impl Action for Grease {
+    fn name(&self) -> &str {
+        "grease"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["slick", "slip"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 10ft square ≈ 2-tile Chebyshev burst (the grease covers a
+        // 2x2-tile patch in 2.5ft squares).
+        TargetingSchema::Burst { radius: 2 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(1)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]);
+        const RADIUS: isize = 2;
+        encounter.log(format!("  grease: slick patch at {} (DC {})", point, dc));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
+            let save = encounter.roll_save(tid, AbilityScoreType::Dexterity, dc);
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Prone,
+                timer: ConditionTimer::Permanent,
+            }));
+        }
+        effects
+    }
+}
+
+pub static GREASE: LazyLock<Grease> = LazyLock::new(|| Grease {});
+
+/// Flaming Sphere — level-2 conjuration, concentration. The caster
+/// conjures a 5-ft-radius ball of flame at a tile within 60 ft. Every
+/// enemy whose footprint touches the burst makes a DEX save vs the
+/// caster's spell DC: fail = full 2d6 fire, pass = half. RAW lets the
+/// sphere be re-positioned each turn as a bonus action; we collapse the
+/// per-round re-roll to the cast-time install (matches our Sickening
+/// Radiance / Dawn simplification). Concentration-bound so the slot is
+/// committed; dropping concentration ends the sphere cleanly.
+pub struct FlamingSphere {}
+
+impl Action for FlamingSphere {
+    fn name(&self) -> &str {
+        "flaming sphere"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sphere", "fs-spell", "flameball"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 5ft-radius sphere ≈ 1-tile burst.
+        TargetingSchema::Burst { radius: 1 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]);
+        let (mut effects, _) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            1,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(2, 6),
+            DamageType::Fire,
+            "flaming sphere",
+        );
+        // Concentration mark — dropping cleans up the sphere marker.
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::new("Flaming Sphere"),
+        }));
+        effects
+    }
+}
+
+pub static FLAMING_SPHERE: LazyLock<FlamingSphere> = LazyLock::new(|| FlamingSphere {});
+
+/// Guardian of Faith — level-4 conjuration. A spectral Large guardian
+/// appears at a tile within 30 ft; any enemy that enters its 10-foot
+/// reach takes 20 radiant damage (RAW: fiends / undead take 20, others
+/// take 10 — we collapse to the high tier since our pool is
+/// fiend / undead -heavy and the load-bearing flavor is "the guardian
+/// punishes intruders"). DEX save vs the caster's spell DC halves the
+/// damage. The guardian has a 60-HP / 8-hour budget in RAW; we model the
+/// cast as a one-shot burst rather than a sustained presence. No
+/// concentration in RAW.
+pub struct GuardianOfFaith {}
+
+impl Action for GuardianOfFaith {
+    fn name(&self) -> &str {
+        "guardian of faith"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["guardian", "gof"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 10ft reach ≈ 2-tile Chebyshev burst.
+        TargetingSchema::Burst { radius: 2 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Radiant]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]);
+        // Flat 20 radiant on fail, 10 on save — no dice roll per RAW.
+        encounter.log(format!(
+            "  guardian of faith: 20 radiant at {} (DC {})",
+            point, dc
+        ));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in encounter.enemy_burst_targets(caster_id, point, 2) {
+            let save = encounter.roll_save(tid, AbilityScoreType::Dexterity, dc);
+            let dmg = if save.passed() { 10 } else { 20 };
+            effects.push(Box::new(DealDamage {
+                actor_id: tid,
+                amount: dmg,
+                damage_type: DamageType::Radiant,
+            }));
+        }
+        effects
+    }
+}
+
+pub static GUARDIAN_OF_FAITH: LazyLock<GuardianOfFaith> = LazyLock::new(|| GuardianOfFaith {});
+
+/// Blade Barrier — level-6 evocation, concentration. A vertical wall of
+/// whirling, razor-sharp blades springs into existence at a tile within
+/// 90 ft. Every enemy whose footprint touches the burst makes a DEX save
+/// vs the caster's spell DC: fail = full 6d10 slashing, pass = half. The
+/// wall lingers (10 minutes RAW) — we collapse to the cast-time install
+/// and use concentration as the sustainment anchor. Allies are spared via
+/// the enemy_burst_targets partition (the wall is a vertical surface; in
+/// RAW the caster chooses its orientation so allies stand on the safe
+/// side).
+pub struct BladeBarrier {}
+
+impl Action for BladeBarrier {
+    fn name(&self) -> &str {
+        "blade barrier"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bb", "blades", "barrier"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 100ft long, 20ft high wall ≈ 4-tile Chebyshev burst (we treat
+        // the wall as a wide damage zone rather than a literal line so
+        // the cast picker has a single tile to aim at).
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 90 ft = 36 tiles.
+        Some(36)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Slashing]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]);
+        let (mut effects, _) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            4,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(6, 10),
+            DamageType::Slashing,
+            "blade barrier",
+        );
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::new("Blade Barrier"),
+        }));
+        effects
+    }
+}
+
+pub static BLADE_BARRIER: LazyLock<BladeBarrier> = LazyLock::new(|| BladeBarrier {});

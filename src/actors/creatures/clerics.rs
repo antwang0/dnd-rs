@@ -118,6 +118,12 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Level-7 apex anti-enemy radiant burst with HP-tiered conditions.
     // Pairs with Resurrection for the cleric's level-7 slot economy.
     actions.push(&*HOLY_WORD);
+    // Latest cleric additions: lv4 Guardian of Faith (radiant burst,
+    // flat-20 / save-half) and lv6 Blade Barrier (concentration slashing
+    // burst). Both round out the cleric's high-tier damage lane with
+    // mid-cost AoE options between Flame Strike (lv5) and Sunburst (lv8).
+    actions.push(&*crate::actions::spells::GUARDIAN_OF_FAITH);
+    actions.push(&*crate::actions::spells::BLADE_BARRIER);
     CreatureTemplate {
         name: "Cleric",
         glyph: 'C',
