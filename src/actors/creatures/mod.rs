@@ -63,6 +63,7 @@ pub mod pit_fiends;
 pub mod rangers;
 pub mod rogues;
 pub mod salamanders;
+pub mod shambling_mounds;
 pub mod skeletons;
 pub mod slimes;
 pub mod solars;

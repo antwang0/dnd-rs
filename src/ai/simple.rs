@@ -215,6 +215,15 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3q. Shillelagh — druid bonus-action cantrip prime that adds
+        //     +1d8 force damage to the next melee weapon hit. Fire when
+        //     an enemy is footprint-adjacent so the prime is consumed
+        //     this turn. Slot-free (cantrip) so it stays on the bonus-
+        //     action lane without competing with leveled smites.
+        if let Some(aei) = try_shillelagh(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 4. Bless — round 1 self+ally buff. Only valid before we're
         //    already concentrating on something.
         if let Some(aei) = try_bless(encounter, actor_id) {
@@ -658,6 +667,23 @@ fn try_trip_attack(
         return None;
     }
     try_self_action(encounter, actor_id, "trip attack")
+}
+
+/// Druid Shillelagh — bonus-action cantrip prime that adds +1d8 force
+/// damage to the next melee weapon hit. Fire when an enemy is
+/// footprint-adjacent so the prime is consumed by the druid's swing
+/// this turn. The action itself custom-validates `!has_condition
+/// (Shillelaghed)` so the AI never double-primes. Free (no slot
+/// consumed) so it stays on the bonus-action lane without competing
+/// with the leveled-slot smites.
+fn try_shillelagh(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    if !any_enemy_within(encounter, actor_id, 0) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "shillelagh")
 }
 
 /// Foresight — level-9 single-target ally buff. Pick the highest-HP
@@ -1952,6 +1978,19 @@ mod tests {
             use crate::actors::creatures::vrocks::VROCK_TEMPLATE;
             let _ = e.instantiate_creature(&MARILITH_TEMPLATE, Coordinate::new(20, 18), 1, 40);
             let _ = e.instantiate_creature(&VROCK_TEMPLATE, Coordinate::new(23, 18), 1, 41);
+            // Newest addition: Shambling Mound (CR 5 plant) — exercises
+            // the 2-slam multiattack and the engulf grapple rider via
+            // the AI's focus-fire picker, plus the new VitriolicSphere /
+            // MaximiliansEarthenGrasp / Shillelagh spells get rolled
+            // through the wizard / druid loadouts above (lv2 / lv4 acid
+            // + drip + bonus-action force prime).
+            use crate::actors::creatures::shambling_mounds::SHAMBLING_MOUND_TEMPLATE;
+            let _ = e.instantiate_creature(
+                &SHAMBLING_MOUND_TEMPLATE,
+                Coordinate::new(26, 18),
+                1,
+                42,
+            );
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

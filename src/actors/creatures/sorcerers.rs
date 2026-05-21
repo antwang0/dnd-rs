@@ -101,6 +101,15 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // the AoE niche is filled by Fireball / Cone of Cold / Sunburst).
     actions.push(&*crate::actions::spells::WIND_WALL);
     actions.push(&*crate::actions::spells::OTILUKES_RESILIENT_SPHERE);
+    // Maximilian's Earthen Grasp (lv2) — single-target restraint +
+    // 2d6 per round DoT. Sorcerers / wizards / druids all share the
+    // spell RAW; the CHA-anchored DC keeps the sorcerer's pick punchy.
+    actions.push(&*crate::actions::spells::MAXIMILIANS_EARTHEN_GRASP);
+    // Vitriolic Sphere (lv4) — acid AoE with a delayed-drip rider on
+    // failed-save targets. Slots between Fireball (lv3) and Cone of
+    // Cold (lv5) in the sorcerer's blaster line; the residual drip
+    // makes it a stronger pick when fire / cold resistance is dense.
+    actions.push(&*crate::actions::spells::VITRIOLIC_SPHERE);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

@@ -205,6 +205,15 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::WIND_WALL);
     actions.push(&*crate::actions::spells::EVARDS_BLACK_TENTACLES);
     actions.push(&*crate::actions::spells::OTILUKES_RESILIENT_SPHERE);
+    // Maximilian's Earthen Grasp (lv2) — single-target restraint with
+    // per-round 2d6 bludgeoning drip. Cheaper alternative to the lv4
+    // Black Tentacles AoE when only one threat needs locking down.
+    actions.push(&*crate::actions::spells::MAXIMILIANS_EARTHEN_GRASP);
+    // Vitriolic Sphere (lv4) — acid AoE with a delayed 5d4 drip on
+    // failed-save targets. Sits between Fireball (lv3) and Cone of
+    // Cold (lv5); the residual drip punches through resistance better
+    // than a flat-damage rival.
+    actions.push(&*crate::actions::spells::VITRIOLIC_SPHERE);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

@@ -6088,3 +6088,103 @@ impl Action for VrockScreech {
 }
 
 pub static VROCK_SCREECH: LazyLock<VrockScreech> = LazyLock::new(|| VrockScreech {});
+
+/// Shambling Mound slam — STR-based 2d8+STR bludgeoning melee, reach 1.
+/// The single-target swing of the Shambling Mound's two-slam multiattack.
+/// No rider — the slam carries the load-bearing damage; the engulf
+/// lane handles the grapple rider separately.
+pub static SHAMBLING_MOUND_SLAM: SimpleWeapon = SimpleWeapon {
+    display_name: "shambling slam",
+    aliases: &["sslam", "sm-slam"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 8),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Shambling Mound multiattack — 2 slams per Action via the standard
+/// Multiattack wrapper. Single-target heavy melee burst with no
+/// engulf rider; the engulf attack is its own action lane (a separate
+/// pick the mound can take when a grappled victim is the goal).
+pub static SHAMBLING_MOUND_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "shambling mound multiattack",
+    sub_attack: &SHAMBLING_MOUND_SLAM,
+    count: 2,
+});
+
+/// Shambling Mound engulf — a special melee attack that wraps the
+/// target in vines. We model the load-bearing half: a STR-based attack
+/// roll vs the target's AC (reach 1, melee). On hit: 2d8+STR
+/// bludgeoning AND the target makes a DC 14 STR save or is Grappled
+/// (zero movement) for 10 rounds. RAW also has the engulfed victim
+/// being unable to breathe and taking 2d8 per round, but we collapse
+/// to the grapple + initial damage envelope so the rider is one save,
+/// one log line, and consistent with the Mimic's Adhered shape.
+pub struct ShamblingMoundEngulf {}
+
+impl Action for ShamblingMoundEngulf {
+    fn name(&self) -> &str {
+        "shambling engulf"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["engulf", "sm-engulf"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // Resolve the attack as a standard 2d8+STR bludgeoning swing.
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            self.name(),
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(2, 8),
+            DamageType::Bludgeoning,
+            true,
+        );
+        // On a miss the helper returned no damage effects — bail before
+        // queueing the save / grapple rider.
+        if effects.is_empty() {
+            return effects;
+        }
+        // On hit: STR save vs DC 14 (5e RAW for Shambling Mound's
+        // engulf save). Targets that fail get Grappled for 10 rounds —
+        // long enough to feel like an engulf, short enough that the
+        // engagement can't carry into another encounter.
+        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, 14);
+        if !save.passed() {
+            effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Grappled,
+                timer: ConditionTimer::Rounds(10),
+            }));
+        }
+        effects
+    }
+}
+
+pub static SHAMBLING_MOUND_ENGULF: LazyLock<ShamblingMoundEngulf> =
+    LazyLock::new(|| ShamblingMoundEngulf {});

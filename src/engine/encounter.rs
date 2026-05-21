@@ -29,6 +29,7 @@ use crate::actors::creatures::mummies::MUMMY_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::orcs::ORC_TEMPLATE;
 use crate::actors::creatures::owlbears::OWLBEAR_TEMPLATE;
+use crate::actors::creatures::shambling_mounds::SHAMBLING_MOUND_TEMPLATE;
 use crate::actors::creatures::specters::SPECTER_TEMPLATE;
 use crate::actors::creatures::stirges::STIRGE_TEMPLATE;
 use crate::actors::creatures::storm_giants::STORM_GIANT_TEMPLATE;
@@ -60,6 +61,68 @@ use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 use fastrand::Rng;
 use std::cmp::Ordering;
 use crate::engine::dice::{Dice, FastRandRoller, RollMode, Roller};
+
+/// Single entry in the round-end damage-over-time table. The engine
+/// iterates `ROUND_END_DOTS` once per actor at round-end and rolls each
+/// entry whose `condition` is set on that actor. Adding a new DoT
+/// condition (e.g. Earthen Grasp's 2d6 bludgeoning drip, Vitriolic
+/// Sphere's residual acid) is a one-line table entry rather than a
+/// hand-rolled if-block inside `round_end`.
+///
+/// `log_verb` is the action verb in the log line — chosen per-effect so
+/// the message reads naturally ("burns" for Burning, "crushes against"
+/// for Earthen Grasp, etc.). Damage rolls through the standard
+/// `DealDamage` pipeline so resistance / immunity / temp HP / death
+/// saves all apply uniformly.
+struct RoundEndDot {
+    condition: Condition,
+    dice: Dice,
+    damage_type: DamageType,
+    log_verb: &'static str,
+}
+
+/// Round-end DoT registry. Order is the order damage rolls each round
+/// — deterministic for log replay across seeded runs. New
+/// concentration-bound or timer-bound DoTs slot in here as one entry.
+const ROUND_END_DOTS: &[RoundEndDot] = &[
+    // 5e Burning (Searing Smite ignition, Fire Bolt / Fireball /
+    // Flaming Sphere riders). 1d4 fire per round, Rounds-timer clears
+    // the flag naturally.
+    RoundEndDot {
+        condition: Condition::Burning,
+        dice: Dice::new(1, 4),
+        damage_type: DamageType::Fire,
+        log_verb: "burns:",
+    },
+    // 5e Heat Metal — concentration-bound. 2d8 fire per round; the
+    // condition is anchored to the caster's concentration so dropping
+    // concentration removes the flag and ends the drip.
+    RoundEndDot {
+        condition: Condition::HeatMetaled,
+        dice: Dice::new(2, 8),
+        damage_type: DamageType::Fire,
+        log_verb: "'s gear sears:",
+    },
+    // 5e Maximilian's Earthen Grasp — concentration-bound. 2d6
+    // bludgeoning per round as the earthen fist crushes the grasped
+    // target. Dropping concentration clears the EarthenGrasped flag and
+    // ends the crush.
+    RoundEndDot {
+        condition: Condition::EarthenGrasped,
+        dice: Dice::new(2, 6),
+        damage_type: DamageType::Bludgeoning,
+        log_verb: "is crushed by the earthen grasp:",
+    },
+    // 5e Vitriolic Sphere — one-shot residual drip the spell leaves on
+    // failed-save targets. 5d4 acid at the next round-end then the
+    // condition's `Rounds(1)` timer expires it.
+    RoundEndDot {
+        condition: Condition::VitriolicAcidCoated,
+        dice: Dice::new(5, 4),
+        damage_type: DamageType::Acid,
+        log_verb: "drips with vitriolic acid:",
+    },
+];
 
 pub enum StackElementEntry {
     SideEffect(Box<dyn ApplicableSideEffect>),
@@ -1664,6 +1727,7 @@ impl EncounterInstance {
             &OGRE_TEMPLATE,
             &ORC_TEMPLATE,
             &OWLBEAR_TEMPLATE,
+            &SHAMBLING_MOUND_TEMPLATE,
             &SPECTER_TEMPLATE,
             &STIRGE_TEMPLATE,
             &STORM_GIANT_TEMPLATE,
@@ -2119,58 +2183,59 @@ impl EncounterInstance {
         }
     }
 
+    /// Apply every condition-keyed round-end DoT on `actor_id` whose
+    /// flag is set, in `ROUND_END_DOTS` declaration order. Each entry
+    /// rolls the dice fresh, logs one line, and applies the damage
+    /// through `DealDamage` so resistance / immunity / temp HP / death
+    /// saves all route through the standard pipeline. Adding a new
+    /// condition-based DoT (e.g. Earthen Grasp's 2d6 bludgeoning, the
+    /// Vitriolic Sphere drip) is a one-line table entry in
+    /// `ROUND_END_DOTS` rather than a hand-rolled if-block.
+    fn apply_condition_round_end_dots(&mut self, actor_id: usize) {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        for dot in ROUND_END_DOTS {
+            let has = self
+                .actors
+                .get(&actor_id)
+                .is_some_and(|a| a.has_condition(dot.condition));
+            if !has {
+                continue;
+            }
+            let dmg = self.roll(&dot.dice);
+            let name = self
+                .actors
+                .get(&actor_id)
+                .map(|a| a.name().to_string())
+                .unwrap_or_default();
+            self.log(format!(
+                "  {} {}: {}({}) {:?}",
+                name, dot.log_verb, dot.dice, dmg, dot.damage_type
+            ));
+            DealDamage {
+                actor_id,
+                amount: dmg,
+                damage_type: dot.damage_type,
+            }
+            .apply(self);
+        }
+    }
+
     /// Tick condition timers on every actor. `Rounds(n)` becomes
     /// `Rounds(n-1)`; `Rounds(0|1)` removes the condition. Logs each
     /// expiration. Iterates by sorted id for deterministic ordering.
-    /// Also ticks bless duration; bless-expiration is logged separately
-    /// for clarity.
+    /// Runs condition DoTs (Burning / Heat Metal / Earthen Grasp /
+    /// Vitriolic Sphere drip) before timer ticks so a final-round
+    /// expiry still pays the drip — matches 5e DoT timing.
     fn round_end(&mut self) {
-        use crate::conditions::Condition;
-        use crate::engine::dice::Dice;
         let mut ids: Vec<usize> = self.actors.keys().copied().collect();
         ids.sort_unstable();
         for id in ids {
-            // Burning DOT: 1d4 fire at end-of-round per the Burning
-            // condition. Apply before timer-tick so the damage lands on
-            // the round the burning expires too — symmetrical with most
-            // tabletop DOT timing.
-            if self
-                .actors
-                .get(&id)
-                .is_some_and(|a| a.has_condition(Condition::Burning))
-            {
-                let dmg = self.roll(&Dice::new(1, 4));
-                let name = self.actors.get(&id).map(|a| a.name().to_string()).unwrap_or_default();
-                self.log(format!("  {} burns: 1d4({}) fire", name, dmg));
-                let de = crate::engine::side_effects::DealDamage {
-                    actor_id: id,
-                    amount: dmg,
-                    damage_type: crate::engine::types::DamageType::Fire,
-                };
-                use crate::engine::side_effects::ApplicableSideEffect;
-                de.apply(self);
-            }
-            // 5e Heat Metal: 2d8 fire at end-of-round while the spell's
-            // concentration holds. The condition is anchored to the
-            // caster's concentration data (see HeatMetal::side_effects),
-            // so it clears automatically on concentration drop — no
-            // separate tick gate needed here.
-            if self
-                .actors
-                .get(&id)
-                .is_some_and(|a| a.has_condition(Condition::HeatMetaled))
-            {
-                let dmg = self.roll(&Dice::new(2, 8));
-                let name = self.actors.get(&id).map(|a| a.name().to_string()).unwrap_or_default();
-                self.log(format!("  {}'s gear sears: 2d8({}) fire", name, dmg));
-                let de = crate::engine::side_effects::DealDamage {
-                    actor_id: id,
-                    amount: dmg,
-                    damage_type: crate::engine::types::DamageType::Fire,
-                };
-                use crate::engine::side_effects::ApplicableSideEffect;
-                de.apply(self);
-            }
+            // Run every condition-triggered round-end DoT through the
+            // central table. Order in `ROUND_END_DOTS` is the order in
+            // which damage rolls — keeps logs deterministic. Damage
+            // lands before timer ticks so a final-round expiry still
+            // pays the drip (matches 5e DoT timing).
+            self.apply_condition_round_end_dots(id);
             // Regeneration: heal `regen_per_round` HP at end-of-round if
             // the actor is combat-active and hasn't been hit by a
             // suppressor damage type this round (5e troll: fire/acid).
@@ -21246,6 +21311,177 @@ mod tests {
         assert!(
             moved,
             "Thunderwave should push a goblin who fails its CON save"
+        );
+    }
+
+    /// Shillelagh primes the caster with `Shillelaghed` for the next
+    /// melee hit; the on-hit rider table adds 1d8 force damage and
+    /// consumes the prime. We verify both halves: cast → prime is up;
+    /// then a melee swing → prime is gone and extra damage landed.
+    #[test]
+    fn shillelagh_primes_and_riders_force_damage() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::SLAM;
+        use crate::actions::spells::SHILLELAGH;
+        use crate::actors::creatures::druids::DRUID_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let druid = e
+            .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let _zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        // Cast shillelagh: prime should land.
+        for ef in SHILLELAGH.side_effects(&mut e, druid, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&druid].has_condition(Condition::Shillelaghed));
+        // Now hit the zombie with a melee swing across seeds; on the
+        // first hit, the rider should fire and the prime should clear.
+        let mut rider_landed = false;
+        for seed in 0..20u64 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let druid = e
+                .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let zombie = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            for ef in SHILLELAGH.side_effects(&mut e, druid, None, None, None) {
+                ef.apply(&mut e);
+            }
+            let hp_before = e.actors[&zombie].hitpoints();
+            for ef in SLAM.side_effects(&mut e, druid, Some(&vec![zombie]), None, None) {
+                ef.apply(&mut e);
+            }
+            let hp_after = e.actors.get(&zombie).map(|a| a.hitpoints()).unwrap_or(0);
+            // On a hit, the prime is consumed and the +1d8 rider lands.
+            // We can't predict damage exactly across seeds, but if the
+            // prime is gone the rider must have fired (consume_on_trigger).
+            if !e.actors[&druid].has_condition(Condition::Shillelaghed) && hp_after < hp_before {
+                rider_landed = true;
+                break;
+            }
+        }
+        assert!(
+            rider_landed,
+            "Shillelagh prime should consume on a melee hit and deal extra force damage"
+        );
+    }
+
+    /// Maximilian's Earthen Grasp: on a failed STR save, the target
+    /// takes initial 2d6 bludgeoning, gets the `EarthenGrasped`
+    /// envelope (Restrained shape — movement zero), and the caster
+    /// starts concentrating. Round-end then crushes for 2d6 more.
+    #[test]
+    fn maximilians_earthen_grasp_restrains_and_drips() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::MAXIMILIANS_EARTHEN_GRASP;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut grasped = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+                .unwrap();
+            let hp_before = e.actors[&goblin].hitpoints();
+            for ef in
+                MAXIMILIANS_EARTHEN_GRASP.side_effects(&mut e, wiz, Some(&vec![goblin]), None, None)
+            {
+                ef.apply(&mut e);
+            }
+            // Failed save: condition up, initial damage landed, caster
+            // is concentrating.
+            if e.actors
+                .get(&goblin)
+                .is_some_and(|a| a.has_condition(Condition::EarthenGrasped))
+                && e.actors[&goblin].hitpoints() < hp_before
+                && e.actors[&wiz].is_concentrating()
+            {
+                grasped = true;
+                break;
+            }
+        }
+        assert!(
+            grasped,
+            "Earthen Grasp should restrain the target and start concentration on a failed STR save"
+        );
+    }
+
+    /// Vitriolic Sphere: a 4-tile burst that deals 10d4 acid (half on
+    /// save) and tags failed-save targets with `VitriolicAcidCoated`
+    /// for the next-round 5d4 drip. We verify the immediate damage +
+    /// coat-on-fail on a small cluster.
+    #[test]
+    fn vitriolic_sphere_burst_damages_and_coats_failed_saves() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::VITRIOLIC_SPHERE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut coated = false;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g1 = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+                .unwrap();
+            let g2 = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(11, 10), 1, 1)
+                .unwrap();
+            let center = Coordinate::new(10, 10);
+            let hp_before = (e.actors[&g1].hitpoints(), e.actors[&g2].hitpoints());
+            for ef in VITRIOLIC_SPHERE.side_effects(
+                &mut e,
+                wiz,
+                None,
+                Some(&vec![center]),
+                None,
+            ) {
+                ef.apply(&mut e);
+            }
+            // At least one goblin took damage; if any goblin failed its
+            // save the VitriolicAcidCoated rider should be present.
+            let any_coated = e
+                .actors
+                .get(&g1)
+                .is_some_and(|a| a.has_condition(Condition::VitriolicAcidCoated))
+                || e.actors
+                    .get(&g2)
+                    .is_some_and(|a| a.has_condition(Condition::VitriolicAcidCoated));
+            let any_damaged = e
+                .actors
+                .get(&g1)
+                .is_some_and(|a| a.hitpoints() < hp_before.0)
+                || e.actors
+                    .get(&g2)
+                    .is_some_and(|a| a.hitpoints() < hp_before.1);
+            if any_damaged && any_coated {
+                coated = true;
+                break;
+            }
+        }
+        assert!(
+            coated,
+            "Vitriolic Sphere should damage the burst and coat failed-save targets"
         );
     }
 

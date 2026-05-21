@@ -14664,3 +14664,297 @@ impl Action for LightningLure {
 }
 
 pub static LIGHTNING_LURE: LazyLock<LightningLure> = LazyLock::new(|| LightningLure {});
+
+/// Shillelagh — druid cantrip (transmutation). The caster imbues their
+/// melee weapon (RAW: club or quarterstaff) with sylvan magic, priming
+/// the next melee weapon hit with +1d8 force damage. RAW also lets the
+/// swing use WIS instead of STR for the attack / damage roll; we skip
+/// the stat-swap (the rider damage is the load-bearing portion of the
+/// buff). One-shot — the on-hit rider table strips the prime the moment
+/// a melee swing lands. Concentration-free per RAW (the spell has a
+/// 1-minute duration). Pairs with Thorn Whip on the druid's at-will
+/// melee lane: free action + bonus action route.
+pub struct Shillelagh {}
+
+impl Action for Shillelagh {
+    fn name(&self) -> &str {
+        "shillelagh"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["shil", "club"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        // Like Divine Smite — the rider damage lands on the *next* hit,
+        // not on this action's resolution. False keeps the AI's
+        // focus-fire pipeline from picking the prime over an actual
+        // attack.
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // RAW: bonus action (cantrip). No slot consumed.
+        crate::actions::action_template::bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Don't burn a bonus action re-priming a still-active prime.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_combat_active() && !a.has_condition(Condition::Shillelaghed))
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // 10-round prime window — RAW: 1 minute. Tick-down timer caps a
+        // swing-less prime so it can't dangle across rests.
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::Shillelaghed,
+            timer: ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static SHILLELAGH: LazyLock<Shillelagh> = LazyLock::new(|| Shillelagh {});
+
+/// Maximilian's Earthen Grasp — 2nd-level transmutation, concentration.
+/// A man-sized fist of magical earth erupts under the target. They make
+/// a STR save vs the caster's spell DC. On fail: 2d6 bludgeoning damage
+/// and the target is grasped (`EarthenGrasped` envelope — Restrained
+/// shape: zero movement, attack disadvantage, attacks against have
+/// advantage). On save: the spell fizzles. While the spell holds
+/// (concentration-bound on the caster), the fist crushes the target for
+/// 2d6 bludgeoning at every round-end via the `ROUND_END_DOTS` table.
+///
+/// Dropping concentration releases the grip cleanly. Pairs well with
+/// the druid / wizard's lv2 lane: a sticky single-target control that
+/// trickles damage on every round-end the fist holds.
+pub struct MaximiliansEarthenGrasp {}
+
+impl Action for MaximiliansEarthenGrasp {
+    fn name(&self) -> &str {
+        "earthen grasp"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["grasp", "earth", "meg"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30ft RAW = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Don't burn a slot to replace our own concentration. The
+        // AI's focus_fire pipeline tests every harmful single-target
+        // spell against `validate_input`; the gate keeps Earthen Grasp
+        // out of the picker when a more valuable buff already holds
+        // the concentration slot.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.is_concentrating())
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // RAW: wizard / druid / sorcerer pick the spell up — INT / WIS /
+        // CHA all viable. Best-of routes through the existing helper so
+        // multi-class casters anchor on the right stat.
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, dc);
+        if save.passed() {
+            encounter.log("  earthen grasp: target saves, fist crumbles".to_string());
+            return Vec::new();
+        }
+        let dmg = encounter.roll(&Dice::new(2, 6));
+        encounter.log(format!(
+            "  earthen grasp: 2d6({}) bludgeoning + Restrained",
+            dmg
+        ));
+        vec![
+            Box::new(DealDamage {
+                actor_id: target_id,
+                amount: dmg,
+                damage_type: DamageType::Bludgeoning,
+            }),
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::EarthenGrasped,
+                // 10 rounds = 1 minute RAW. Concentration anchors the
+                // real lifetime — dropping concentration releases the
+                // target before the timer expires.
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Earthen Grasp",
+                    vec![(target_id, Condition::EarthenGrasped)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static MAXIMILIANS_EARTHEN_GRASP: LazyLock<MaximiliansEarthenGrasp> =
+    LazyLock::new(|| MaximiliansEarthenGrasp {});
+
+/// Vitriolic Sphere — 4th-level evocation (sorcerer / wizard). A
+/// brilliant green ball of acid bursts in a 20-foot sphere (4-tile
+/// radius). Every enemy in the area makes a DEX save vs the caster's
+/// spell DC. On fail: 10d4 acid damage immediately, plus 5d4 acid at the
+/// next round-end (the `VitriolicAcidCoated` condition with a
+/// `Rounds(1)` timer; the central `ROUND_END_DOTS` table handles the
+/// drip). On save: half the immediate damage and no residual drip.
+///
+/// The delayed-drip rider makes the spell punish failed saves
+/// significantly harder than a flat AoE, slotting cleanly between
+/// Fireball (lv3, 8d6 immediate, no drip) and Cone of Cold (lv5, 8d8
+/// immediate, no drip).
+pub struct VitriolicSphere {}
+
+impl Action for VitriolicSphere {
+    fn name(&self) -> &str {
+        "vitriolic sphere"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["vitriol", "vs", "acid sphere"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 20ft RAW radius ≈ 4-tile Chebyshev burst.
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 150ft RAW = 60 tiles — caps at our typical map size.
+        Some(60)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Acid]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+        ]);
+        // Shared immediate damage with save-for-half semantics. The
+        // saves vector tells us which targets failed → those get the
+        // VitriolicAcidCoated residual drip rider.
+        let (mut effects, saves) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            4,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(10, 4),
+            DamageType::Acid,
+            "vitriolic sphere",
+        );
+        for (tid, passed) in saves {
+            if !passed {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: tid,
+                    condition: Condition::VitriolicAcidCoated,
+                    // One-shot drip — the central round-end DoT rolls the
+                    // 5d4 damage at round-end, then the Rounds(1) timer
+                    // expires the flag.
+                    timer: ConditionTimer::Rounds(1),
+                }));
+            }
+        }
+        effects
+    }
+}
+
+pub static VITRIOLIC_SPHERE: LazyLock<VitriolicSphere> =
+    LazyLock::new(|| VitriolicSphere {});

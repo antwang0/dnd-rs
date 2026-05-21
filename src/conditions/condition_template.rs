@@ -581,6 +581,32 @@ pub enum Condition {
     /// rider's load-bearing crowd-control effect is the prone tag.
     /// One-shot — the rider table strips this flag the moment it lands.
     ThunderousSmiting,
+    /// Shillelagh primed (5e cantrip, druid). The caster's club / staff /
+    /// quarterstaff is imbued with sylvan magic: the next melee weapon
+    /// hit deals an extra 1d8 force damage and the swing rolls vs the
+    /// caster's WIS modifier instead of STR (we collapse the swing-stat
+    /// swap since the rider damage is the load-bearing portion). One-shot
+    /// — the rider table strips this flag the moment it lands. Tick-down
+    /// timer caps the prime so a swing-less druid doesn't carry it across
+    /// rests. Concentration-free per RAW (the spell has a 1-minute
+    /// duration, not concentration).
+    Shillelaghed,
+    /// Grasped by Maximilian's Earthen Grasp (5e level-2 transmutation,
+    /// concentration). The target is held in a fist of magical earth:
+    /// Restrained envelope (zero movement, attack disadvantage, attacks
+    /// against have advantage) plus a 2d6 bludgeoning DoT at the end of
+    /// every round the spell holds. Concentration-bound on the caster;
+    /// dropping concentration releases the grip. Distinct from `Grappled`
+    /// / `Restrained` so the log line and concentration cleanup target
+    /// just this mark.
+    EarthenGrasped,
+    /// Coated in residual acid from Vitriolic Sphere (5e level-4
+    /// evocation). On a failed save, the target gets a one-tick acid
+    /// DoT: 5d4 acid at the next round-end, then the condition expires.
+    /// Distinct from the immediate damage on cast — the spell rolls
+    /// 10d4 acid immediately and queues this mark for the second-round
+    /// drip. Self-clears via `Rounds(1)` timer.
+    VitriolicAcidCoated,
 }
 
 impl Condition {
@@ -676,6 +702,9 @@ impl Condition {
             Condition::StaggeringSmiting => "primed to stagger",
             Condition::BanishingSmiting => "primed to banish",
             Condition::ThunderousSmiting => "primed with thunder",
+            Condition::Shillelaghed => "wielding a shillelagh",
+            Condition::EarthenGrasped => "crushed by an earthen grasp",
+            Condition::VitriolicAcidCoated => "coated in vitriolic acid",
         }
     }
 
@@ -746,6 +775,7 @@ impl Condition {
                 | Condition::StaggeringSmiting
                 | Condition::BanishingSmiting
                 | Condition::ThunderousSmiting
+                | Condition::Shillelaghed
         )
     }
 
@@ -774,6 +804,7 @@ impl Condition {
                 | Condition::Mazed
                 | Condition::MentallyImprisoned
                 | Condition::Sphered
+                | Condition::EarthenGrasped
         )
     }
 
@@ -799,6 +830,7 @@ impl Condition {
                 | Condition::Dancing
                 | Condition::MentallyImprisoned
                 | Condition::Sphered
+                | Condition::EarthenGrasped
         )
     }
 
@@ -836,6 +868,7 @@ impl Condition {
                 | Condition::Dancing
                 | Condition::MentallyImprisoned
                 | Condition::Sphered
+                | Condition::EarthenGrasped
         )
     }
 

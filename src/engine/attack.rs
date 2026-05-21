@@ -422,7 +422,7 @@ pub struct SmiteFollowUp {
 /// than declared `const` because `Dice::new` isn't a const fn — but the
 /// runtime cost is one stack-allocated array of plain data, so the
 /// indirection is free.
-fn on_hit_riders() -> [OnHitRider; 15] {
+fn on_hit_riders() -> [OnHitRider; 16] {
     [
         OnHitRider {
             condition: Condition::CrusadersMantled,
@@ -662,6 +662,22 @@ fn on_hit_riders() -> [OnHitRider; 15] {
                 // post-damage HP at the smite follow-up site.
                 hp_threshold: Some(50),
             }),
+        },
+        // 5e Shillelagh — druid cantrip prime. The caster's club /
+        // staff is wreathed in sylvan magic: the next melee weapon hit
+        // deals an extra 1d8 force damage. RAW also lets the swing use
+        // WIS instead of STR for the to-hit / damage roll; we skip the
+        // stat-swap (the +1d8 rider IS the load-bearing buff). One-shot
+        // — the rider table strips this flag the moment a melee swing
+        // lands. Concentration-free per RAW (1-minute duration).
+        OnHitRider {
+            condition: Condition::Shillelaghed,
+            dice: Dice::new(1, 8),
+            label: "shillelagh",
+            damage_type: DamageType::Force,
+            melee_only: true,
+            consume_on_trigger: true,
+            follow_up: None,
         },
         // 5e Thunderous Smite — 1st-level paladin evocation, bonus
         // action prime. +2d6 thunder on the primed hit; target makes a

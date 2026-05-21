@@ -89,6 +89,18 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // on incoming arrows / bolts — fits the wandering-naturalist
     // archetype that the druid kit centers on.
     actions.push(&*crate::actions::spells::WIND_WALL);
+    // Shillelagh — cantrip prime that primes the druid's next melee
+    // weapon hit with +1d8 force damage. Pairs with the scimitar /
+    // thorn-whip lane for a bonus-action prime + action melee swing
+    // route, scaling the druid's at-will burst.
+    actions.push(&*crate::actions::spells::SHILLELAGH);
+    // Maximilian's Earthen Grasp — lv2 transmutation, concentration.
+    // Sticky single-target restraint with a per-round bludgeoning
+    // drip. Fits the druid's "control + DoT" lane next to Moonbeam /
+    // Heat Metal — distinct from Spike Growth (which is movement-
+    // triggered) so the two can coexist on different concentration
+    // turns.
+    actions.push(&*crate::actions::spells::MAXIMILIANS_EARTHEN_GRASP);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',
