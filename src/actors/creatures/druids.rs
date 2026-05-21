@@ -101,6 +101,12 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // triggered) so the two can coexist on different concentration
     // turns.
     actions.push(&*crate::actions::spells::MAXIMILIANS_EARTHEN_GRASP);
+    // Guidance — divination cantrip (cleric / druid). Touch-range buff
+    // that applies Inspired (+3 flat-buff to next attack / save / check)
+    // on the target. Custom-validate gates against re-priming an already-
+    // inspired ally. Slots cleanly into the druid's bonus-cantrip lane
+    // next to Shillelagh.
+    actions.push(&*crate::actions::spells::GUIDANCE);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

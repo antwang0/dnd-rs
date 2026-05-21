@@ -9992,7 +9992,7 @@ pub static THUNDEROUS_SMITE: SmiteSpell = SmiteSpell {
 /// pull from this slice instead of restating the list inline. Keeping
 /// the order slot-cheap → slot-expensive matches the AI's "preserve
 /// higher slots for emergencies" heuristic.
-pub static ALL_SMITE_SPELLS: &[&'static SmiteSpell] = &[
+pub static ALL_SMITE_SPELLS: &[&SmiteSpell] = &[
     &SEARING_SMITE,
     &WRATHFUL_SMITE,
     &THUNDEROUS_SMITE,
@@ -14958,3 +14958,530 @@ impl Action for VitriolicSphere {
 
 pub static VITRIOLIC_SPHERE: LazyLock<VitriolicSphere> =
     LazyLock::new(|| VitriolicSphere {});
+
+/// Pick the damage type, from `candidates`, that lands the most raw HP on
+/// `target_id`. Vulnerability beats nothing beats resistance beats immunity.
+/// Ties prefer the earlier entry in `candidates` for deterministic logs.
+/// Returns the first listed type if the target isn't found (silent fallback).
+///
+/// Used by Chromatic Orb to pick from its six-element damage menu, but
+/// shaped generically so future "caster picks a damage type" spells
+/// (Elemental Bane, Elemental Affinity sorcerer) can reuse it.
+fn pick_damage_type_against_target(
+    encounter: &EncounterInstance,
+    target_id: usize,
+    candidates: &[DamageType],
+) -> DamageType {
+    use crate::engine::types::DamageModifier;
+    let Some(target) = encounter.actors.get(&target_id) else {
+        return candidates[0];
+    };
+    // Score: vuln = 2, none = 1, resist = 0, immune = -1. Higher wins.
+    let score = |dt: &&DamageType| -> i32 {
+        match target.damage_modifier(**dt) {
+            Some(DamageModifier::Vulnerability) => 2,
+            None => 1,
+            Some(DamageModifier::Resistance) => 0,
+            Some(DamageModifier::Immunity) => -1,
+        }
+    };
+    candidates
+        .iter()
+        .max_by_key(score)
+        .copied()
+        .unwrap_or(candidates[0])
+}
+
+/// Chromatic Orb — level-1 evocation (sorcerer / wizard). The caster hurls
+/// a sphere of energy at a single target within 90 ft (36 tiles) for 3d8
+/// damage of their choice from acid, cold, fire, lightning, poison, or
+/// thunder. RAW: ranged spell attack (d20 + INT / CHA vs AC). On hit:
+/// damage; on miss: nothing. We pick the type that maximizes effective
+/// damage against the target (`pick_damage_type_against_target`) — the
+/// caster's signature flexibility is exactly its strength.
+pub struct ChromaticOrb {}
+
+impl Action for ChromaticOrb {
+    fn name(&self) -> &str {
+        "chromatic orb"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["co", "orb"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 90ft = 36 tiles.
+        Some(36)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![
+            DamageType::Acid,
+            DamageType::Cold,
+            DamageType::Fire,
+            DamageType::Lightning,
+            DamageType::Poison,
+            DamageType::Thunder,
+        ]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(1)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // Pick caster spellcasting ability: prefer the higher of INT / CHA
+        // so a sorcerer (CHA) and a wizard (INT) both benefit. WIS is not
+        // in the list since RAW restricts Chromatic Orb to INT / CHA classes.
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let cast_ability =
+            if caster.ability_score(AbilityScoreType::Intelligence)
+                >= caster.ability_score(AbilityScoreType::Charisma)
+            {
+                AbilityScoreType::Intelligence
+            } else {
+                AbilityScoreType::Charisma
+            };
+        let attack_bonus = caster.spell_attack_modifier(cast_ability);
+        // Pick the damage type that maximizes effective damage on the
+        // target. Acid first (most creatures resist nothing; some oozes
+        // are immune which the picker handles).
+        let dt = pick_damage_type_against_target(
+            encounter,
+            target_id,
+            &[
+                DamageType::Acid,
+                DamageType::Cold,
+                DamageType::Fire,
+                DamageType::Lightning,
+                DamageType::Poison,
+                DamageType::Thunder,
+            ],
+        );
+        let label = format!("chromatic orb ({:?})", dt);
+        spell_attack(
+            encounter,
+            caster_id,
+            target_id,
+            &label,
+            attack_bonus,
+            Dice::new(3, 8),
+            dt,
+            false,
+        )
+    }
+}
+
+pub static CHROMATIC_ORB: LazyLock<ChromaticOrb> = LazyLock::new(|| ChromaticOrb {});
+
+/// Snilloc's Snowball Swarm — level-2 evocation (sorcerer / wizard). A
+/// flurry of magic snowballs explodes from a target point within 90 ft
+/// (36 tiles). Every creature in a 5-foot-radius (1-tile) burst makes a
+/// DEX save vs the caster's spell DC: pass = half, fail = full. 3d6 cold
+/// damage. Shares the burst-save-for-half shape with Shatter / Burning
+/// Hands — distinct from those by its cold typing and the small burst
+/// radius (closer to Acid Splash's footprint than to Fireball's reach).
+pub struct SnillocsSnowballSwarm {}
+
+impl Action for SnillocsSnowballSwarm {
+    fn name(&self) -> &str {
+        "snowball swarm"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["snowball", "snilloc", "sss"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 5ft radius = 1-tile burst on this grid.
+        TargetingSchema::Burst { radius: 1 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 90ft = 36 tiles.
+        Some(36)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Cold]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+        ]);
+        let (effects, _saves) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            1,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(3, 6),
+            DamageType::Cold,
+            "snowball swarm",
+        );
+        effects
+    }
+}
+
+pub static SNILLOCS_SNOWBALL_SWARM: LazyLock<SnillocsSnowballSwarm> =
+    LazyLock::new(|| SnillocsSnowballSwarm {});
+
+/// Mind Spike — level-2 divination (sorcerer / warlock / wizard). The
+/// caster drives a spike of psychic energy into a creature's mind. The
+/// target makes a WIS save vs the caster's spell DC: pass = half, fail
+/// = full. 3d8 psychic damage. RAW also lets the caster sense the
+/// target's location for 1 hour; we skip the tracking rider since the
+/// engine doesn't model fog-of-war. The single-target save-for-half
+/// shape slots cleanly next to Mind Sliver (cantrip, save-for-flat-
+/// debuff) and Psychic Lance (lv4, save-for-half + Incapacitated rider).
+pub struct MindSpike {}
+
+impl Action for MindSpike {
+    fn name(&self) -> &str {
+        "mind spike"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mspike", "ms-spike"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Psychic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+        ]);
+        let (dmg, _passed) = save_for_half_damage(
+            encounter,
+            target_id,
+            AbilityScoreType::Wisdom,
+            dc,
+            Dice::new(3, 8),
+            DamageType::Psychic,
+            "mind spike",
+        );
+        if dmg == 0 {
+            return Vec::new();
+        }
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: dmg,
+            damage_type: DamageType::Psychic,
+        })]
+    }
+}
+
+pub static MIND_SPIKE: LazyLock<MindSpike> = LazyLock::new(|| MindSpike {});
+
+/// Psychic Lance — level-4 enchantment (bard / sorcerer / warlock /
+/// wizard). The caster drives a beam of psychic energy into a single
+/// creature within 120 ft (48 tiles). The target makes an INT save vs
+/// the caster's spell DC: pass = half damage, fail = full damage AND
+/// Incapacitated until the end of the caster's next turn. 7d6 psychic.
+/// One of the few enchantments that lands hard control on a single
+/// target with no concentration tax — pairs well with the existing
+/// Maze / Otto's Dance lock-down lane but at a cheaper slot.
+pub struct PsychicLance {}
+
+impl Action for PsychicLance {
+    fn name(&self) -> &str {
+        "psychic lance"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["plance", "lance"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120ft = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        // RAW: "a creature you can see, OR a creature you name or describe".
+        // We require LOS to stay consistent with the rest of the targeted
+        // spell list — the name/describe clause needs party-knowledge state
+        // we don't model.
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Psychic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+        ]);
+        let (dmg, passed) = save_for_half_damage(
+            encounter,
+            target_id,
+            AbilityScoreType::Intelligence,
+            dc,
+            Dice::new(7, 6),
+            DamageType::Psychic,
+            "psychic lance",
+        );
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        if dmg > 0 {
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: dmg,
+                damage_type: DamageType::Psychic,
+            }));
+        }
+        // Incapacitated rider on a failed save — short timer so the
+        // crowd-control runs out by the caster's next turn (RAW: ends at
+        // the start of the caster's next turn). UntilStartOfNextTurn is
+        // the holder's timer, not the caster's, but it's the closest
+        // single-tick approximation; the AI doesn't lean on the precise
+        // expiry tick.
+        if !passed {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Incapacitated,
+                timer: ConditionTimer::UntilStartOfNextTurn,
+            }));
+        }
+        effects
+    }
+}
+
+pub static PSYCHIC_LANCE: LazyLock<PsychicLance> = LazyLock::new(|| PsychicLance {});
+
+/// Thunderclap — sorcerer / warlock / wizard cantrip. The caster claps
+/// their hands; every creature within 5 ft (1-tile burst centered on
+/// the caster, excluding the caster themselves) makes a CON save vs the
+/// caster's spell DC. On fail: 1d6 thunder. On success: nothing
+/// (cantrips don't half-on-save). Self-centered AoE — distinct from
+/// Sacred Burst (targets a tile) and Acid Splash (also targets a tile,
+/// hits one creature + adjacent). Doesn't require line-of-sight since
+/// the wave radiates outward from the caster.
+pub struct Thunderclap {}
+
+impl Action for Thunderclap {
+    fn name(&self) -> &str {
+        "thunderclap"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["tc", "clap"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Thunder]
+    }
+    // Cantrip — uses the default `cost()` (single Action, no spell slot).
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let center = caster.location();
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+        ]);
+        let raw = encounter.roll(&Dice::new(1, 6));
+        encounter.log(format!("  thunderclap: 1d6({}) = {} thunder", raw, raw));
+        // Iterate the 1-tile burst around the caster: every combat-active
+        // actor other than the caster gets a CON save. On fail, full
+        // damage; on success, nothing (cantrip).
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in encounter.actors_in_burst(center, 1) {
+            if tid == caster_id {
+                continue;
+            }
+            let save = encounter.roll_save(tid, AbilityScoreType::Constitution, dc);
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(DealDamage {
+                actor_id: tid,
+                amount: raw,
+                damage_type: DamageType::Thunder,
+            }));
+        }
+        effects
+    }
+}
+
+pub static THUNDERCLAP: LazyLock<Thunderclap> = LazyLock::new(|| Thunderclap {});
+
+/// Guidance — cleric / druid cantrip (divination). Touch range; the
+/// target gains the `Inspired` buff, adding +3 (the d4 / d6 average) to
+/// their next attack roll or save. RAW gives +1d4 to one ability check
+/// of the holder's choice — we approximate with the existing `Inspired`
+/// flat-buff lane since the engine collapses checks / attacks / saves
+/// into the same buff slot. Concentration-free per RAW (we model it as
+/// a short Rounds timer so it can't dangle across the entire dungeon).
+pub struct Guidance {}
+
+impl Action for Guidance {
+    fn name(&self) -> &str {
+        "guidance"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["gd", "guide"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Don't burn the action re-priming an already-inspired ally.
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| !a.has_condition(Condition::Inspired))
+    }
+    // Cantrip — uses the default `cost()` (single Action, no slot).
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Inspired,
+            // RAW: 1 minute (we cap at 10 rounds — the holder consumes
+            // the buff at their next attack / save anyway, so the timer
+            // is mostly defensive).
+            timer: ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static GUIDANCE: LazyLock<Guidance> = LazyLock::new(|| Guidance {});

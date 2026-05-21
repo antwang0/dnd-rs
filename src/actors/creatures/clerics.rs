@@ -124,6 +124,12 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // mid-cost AoE options between Flame Strike (lv5) and Sunburst (lv8).
     actions.push(&*crate::actions::spells::GUARDIAN_OF_FAITH);
     actions.push(&*crate::actions::spells::BLADE_BARRIER);
+    // Guidance — cleric / druid divination cantrip. Touch range; applies
+    // the Inspired flat-buff (+3 to next attack / save / check) on the
+    // target. Fills the "pre-fight ally prime" cantrip lane that was
+    // previously empty for clerics. Custom-validate gates against
+    // re-priming an already-inspired ally.
+    actions.push(&*crate::actions::spells::GUIDANCE);
     CreatureTemplate {
         name: "Cleric",
         glyph: 'C',

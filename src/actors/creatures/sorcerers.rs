@@ -110,6 +110,22 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Cold (lv5) in the sorcerer's blaster line; the residual drip
     // makes it a stronger pick when fire / cold resistance is dense.
     actions.push(&*crate::actions::spells::VITRIOLIC_SPHERE);
+    // Newest sorcerer additions:
+    //   - cantrip **Thunderclap**: self-centered 1-tile CON-save burst.
+    //   - lv1 **Chromatic Orb**: 3d8 ranged spell attack of best
+    //     damage type vs target. Fixes the sorcerer's stale lv1 lineup
+    //     (only Magic Missile / Burning Hands for offense).
+    //   - lv2 **Snilloc's Snowball Swarm**: cheap cold burst, fills the
+    //     sorcerer's lv2 AoE slot (Shatter is the only existing pick).
+    //   - lv2 **Mind Spike**: single-target psychic save-for-half, ranges
+    //     out to 60ft and bypasses AC.
+    //   - lv4 **Psychic Lance**: psychic save-for-half + Incapacitated
+    //     on fail, single-target soft lock-down at lv4.
+    actions.push(&*crate::actions::spells::THUNDERCLAP);
+    actions.push(&*crate::actions::spells::CHROMATIC_ORB);
+    actions.push(&*crate::actions::spells::SNILLOCS_SNOWBALL_SWARM);
+    actions.push(&*crate::actions::spells::MIND_SPIKE);
+    actions.push(&*crate::actions::spells::PSYCHIC_LANCE);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

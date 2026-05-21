@@ -96,6 +96,15 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // boss-killers; the warlock's apex damage button).
     actions.push(&*POWER_WORD_STUN);
     actions.push(&*POWER_WORD_KILL);
+    // Newest warlock additions:
+    //   - cantrip **Thunderclap**: self-centered CON-save burst.
+    //   - lv2 **Mind Spike**: single-target psychic save-for-half.
+    //   - lv4 **Psychic Lance**: psychic save-for-half + Incapacitated
+    //     rider on fail. Pair with Hex for a +1d6 necrotic rider on the
+    //     base damage.
+    actions.push(&*crate::actions::spells::THUNDERCLAP);
+    actions.push(&*crate::actions::spells::MIND_SPIKE);
+    actions.push(&*crate::actions::spells::PSYCHIC_LANCE);
     CreatureTemplate {
         name: "Warlock",
         // 'L' (uppercase) — distinct from 'l' (Lich), 'W' (Wolf glyph),

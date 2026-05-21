@@ -214,6 +214,19 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Cold (lv5); the residual drip punches through resistance better
     // than a flat-damage rival.
     actions.push(&*crate::actions::spells::VITRIOLIC_SPHERE);
+    // Newest wizard additions:
+    //   - cantrip **Thunderclap**: self-centered 1-tile CON-save burst.
+    //   - lv1 **Chromatic Orb**: 3d8 ranged spell attack of caster-picked
+    //     damage type (picker maximizes vs target resistance profile).
+    //   - lv2 **Snilloc's Snowball Swarm**: cheap cold 1-tile burst.
+    //   - lv2 **Mind Spike**: single-target psychic save-for-half.
+    //   - lv4 **Psychic Lance**: psychic save-for-half + Incapacitated
+    //     rider on fail — soft lock-down next to Polymorph / Confusion.
+    actions.push(&*crate::actions::spells::THUNDERCLAP);
+    actions.push(&*crate::actions::spells::CHROMATIC_ORB);
+    actions.push(&*crate::actions::spells::SNILLOCS_SNOWBALL_SWARM);
+    actions.push(&*crate::actions::spells::MIND_SPIKE);
+    actions.push(&*crate::actions::spells::PSYCHIC_LANCE);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.
