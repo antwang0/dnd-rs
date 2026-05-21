@@ -535,11 +535,89 @@ impl ApplicableSideEffect for AdjustSaveBuff {
     }
 }
 
+/// Forced-movement direction relative to an anchor point. `Toward` pulls
+/// the actor closer (Thorn Whip, Telekinesis pull); `Away` pushes them
+/// outward (Thunderwave, Repelling Blast). Both stop early when the actor
+/// can't legally advance further (wall, occupied tile, or — for Toward —
+/// reaches the anchor).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ForcedMoveDirection {
+    Toward,
+    Away,
+}
+
+/// Shared forced-movement step loop used by `PullActor` and `PushActor`.
+/// Walks the actor one tile per iteration along the line between their
+/// footprint and `anchor`, in the direction dictated by `dir`. 5e treats
+/// forced movement as not a willing move, so opportunity attacks don't
+/// fire here. Returns silently if the actor never moved.
+fn forced_move(
+    ei: &mut EncounterInstance,
+    actor_id: usize,
+    anchor: Coordinate,
+    max_tiles: u32,
+    dir: ForcedMoveDirection,
+    verb: &str,
+) {
+    use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+    let Some(actor) = ei.actors.get(&actor_id) else {
+        return;
+    };
+    let name = actor.name().to_string();
+    let my_size = get_tiles_from_size(actor.size());
+    let start = actor.location();
+    let mut from = start;
+    let mut last_good = from;
+    let mut remaining = max_tiles;
+    while remaining > 0 {
+        // For `Toward`, stop once the actor's footprint touches the
+        // anchor tile. For `Away`, no such stop — we keep walking outward
+        // until we run out of budget or hit an obstacle.
+        let (dx, dy) = match dir {
+            ForcedMoveDirection::Toward => {
+                if footprint_chebyshev(from, my_size, anchor, 1) == 0 {
+                    break;
+                }
+                (anchor.x - from.x, anchor.y - from.y)
+            }
+            ForcedMoveDirection::Away => {
+                // Standing exactly on the anchor — no outward direction
+                // to take; bail rather than pick an arbitrary axis.
+                if from == anchor {
+                    break;
+                }
+                (from.x - anchor.x, from.y - anchor.y)
+            }
+        };
+        let next = Coordinate::new(from.x + dx.signum(), from.y + dy.signum());
+        if next == from {
+            break;
+        }
+        if !ei.can_move_to(actor_id, next) {
+            break;
+        }
+        from = next;
+        last_good = next;
+        remaining -= 1;
+    }
+    if last_good == start {
+        return;
+    }
+    let dest = last_good;
+    if let Err(e) = ei.place_actor_at(actor_id, dest) {
+        ei.log(format!("forced move ({}) failed: {}", verb, e));
+        return;
+    }
+    ei.log(format!("{} is {} to {}.", name, verb, dest));
+    ei.pickup_items_at(actor_id, dest);
+}
+
 /// Forced movement toward a fixed point, up to `max_tiles` steps, without
 /// firing opportunity attacks (5e treats forced movement as not a willing
 /// move). The actor stops as soon as it can't legally advance further —
 /// blocked by a wall, another actor's footprint, or hitting the target.
-/// Used by Thorn Whip's pull, future Repelling Blast push, etc.
+/// Used by Thorn Whip's pull, Telekinesis, Lightning Lure's catch.
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
 pub struct PullActor {
     pub actor_id: usize,
@@ -549,46 +627,40 @@ pub struct PullActor {
 
 impl ApplicableSideEffect for PullActor {
     fn apply(&self, ei: &mut EncounterInstance) {
-        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+        forced_move(
+            ei,
+            self.actor_id,
+            self.toward,
+            self.max_tiles,
+            ForcedMoveDirection::Toward,
+            "pulled",
+        );
+    }
+}
 
-        let Some(actor) = ei.actors.get(&self.actor_id) else {
-            return;
-        };
-        let name = actor.name().to_string();
-        let my_size = get_tiles_from_size(actor.size());
-        let mut from = actor.location();
-        // 1×1 anchor target for the gap math — that's how 5e treats the
-        // tile we're being pulled toward.
-        let mut remaining = self.max_tiles;
-        let mut last_good = from;
-        while remaining > 0 {
-            let gap = footprint_chebyshev(from, my_size, self.toward, 1);
-            if gap == 0 {
-                break;
-            }
-            let step_x = (self.toward.x - from.x).signum();
-            let step_y = (self.toward.y - from.y).signum();
-            let next = Coordinate::new(from.x + step_x, from.y + step_y);
-            if next == from {
-                break;
-            }
-            if !ei.can_move_to(self.actor_id, next) {
-                break;
-            }
-            from = next;
-            last_good = next;
-            remaining -= 1;
-        }
-        if last_good == actor.location() {
-            return;
-        }
-        let dest = last_good;
-        if let Err(e) = ei.place_actor_at(self.actor_id, dest) {
-            ei.log(format!("PullActor failed: {}", e));
-            return;
-        }
-        ei.log(format!("{} is pulled to {}.", name, dest));
-        ei.pickup_items_at(self.actor_id, dest);
+/// Forced movement *away from* a fixed point — the symmetric counterpart
+/// to `PullActor`. Same no-opportunity-attack semantics; stops when the
+/// actor can't legally advance further (wall, occupied tile). Used by
+/// Thunderwave's push and any future shove / repelling effects.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct PushActor {
+    pub actor_id: usize,
+    /// The anchor the actor is pushed *away from*. Typically the caster's
+    /// location or the burst center.
+    pub from: Coordinate,
+    pub max_tiles: u32,
+}
+
+impl ApplicableSideEffect for PushActor {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        forced_move(
+            ei,
+            self.actor_id,
+            self.from,
+            self.max_tiles,
+            ForcedMoveDirection::Away,
+            "pushed",
+        );
     }
 }
 

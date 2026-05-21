@@ -6,7 +6,7 @@ use crate::actions::monster_attacks::GREATSWORD;
 use crate::actions::spells::{
     AURA_OF_LIFE, BANISHING_SMITE, BLESS, BLINDING_SMITE, BRANDING_SMITE, COMPELLED_DUEL,
     CURE_WOUNDS, HEALING_WORD, LESSER_RESTORATION, SEARING_SMITE, SHIELD_OF_FAITH,
-    STAGGERING_SMITE, WRATHFUL_SMITE,
+    STAGGERING_SMITE, THUNDEROUS_SMITE, WRATHFUL_SMITE,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size};
@@ -46,6 +46,7 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // spell (1 / 1 / 2 / 3); the half-caster slot table supports them.
     actions.push(&SEARING_SMITE);
     actions.push(&WRATHFUL_SMITE);
+    actions.push(&THUNDEROUS_SMITE);
     actions.push(&BRANDING_SMITE);
     actions.push(&BLINDING_SMITE);
     // Higher-tier smite primes — lv4 Staggering Smite (psychic + WIS-save

@@ -572,6 +572,15 @@ pub enum Condition {
     /// existing `Mazed` condition — same end-state, distinct log line).
     /// One-shot — the rider table strips this flag the moment it lands.
     BanishingSmiting,
+    /// Thunderous Smite primed (5e level-1 paladin evocation, bonus
+    /// action). +2d6 thunder rider on the primed hit; target makes a STR
+    /// save vs the paladin's CHA-based DC or is pushed 10 ft (4 tiles)
+    /// away and knocked Prone. We collapse the RAW "push 10 ft + prone"
+    /// rider to a Prone follow-up via the smite follow-up site, since the
+    /// push routes through the standard `PushActor` helper and the
+    /// rider's load-bearing crowd-control effect is the prone tag.
+    /// One-shot — the rider table strips this flag the moment it lands.
+    ThunderousSmiting,
 }
 
 impl Condition {
@@ -666,6 +675,7 @@ impl Condition {
             Condition::WindWalled => "sheltered by a wind wall",
             Condition::StaggeringSmiting => "primed to stagger",
             Condition::BanishingSmiting => "primed to banish",
+            Condition::ThunderousSmiting => "primed with thunder",
         }
     }
 
@@ -735,6 +745,7 @@ impl Condition {
                 | Condition::WindWalled
                 | Condition::StaggeringSmiting
                 | Condition::BanishingSmiting
+                | Condition::ThunderousSmiting
         )
     }
 

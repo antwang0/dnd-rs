@@ -5922,3 +5922,169 @@ pub static GLABREZU_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundA
     display_name: "glabrezu multiattack",
     parts: vec![(&GLABREZU_PINCER, 2), (&GLABREZU_FIST, 2)],
 });
+
+/// Marilith Longsword — STR-based 2d8 + STR slashing melee. Marilith
+/// wields six of these (one per arm) and they all swing per Action via
+/// the multiattack lane. Standard reach-1 melee — no rider; the volume
+/// of swings IS the threat.
+pub static MARILITH_LONGSWORD: SimpleWeapon = SimpleWeapon {
+    display_name: "marilith longsword",
+    aliases: &["mls", "marilith-ls"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 8),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Marilith Tail — STR-based 2d10 + STR bludgeoning melee, reach 2 (the
+/// snake-body tail extends 10ft per RAW). Final swing of the multiattack
+/// envelope. We collapse the RAW "constrict / grapple on hit" rider —
+/// the engine's grapple gate doesn't yet model the "creature one size
+/// larger or smaller" clause, and the long reach + the multi's volume
+/// already make the marilith threatening enough.
+pub static MARILITH_TAIL: SimpleWeapon = SimpleWeapon {
+    display_name: "marilith tail",
+    aliases: &["mtail", "marilith-t"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 10),
+    damage_type: DamageType::Bludgeoning,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Marilith Multiattack — 6 longswords + 1 tail per Action via the
+/// `CompoundAttack` wrapper. The marilith's signature seven-swing volley
+/// is the highest single-action attack count in our monster pool; the
+/// AI's focus-fire picker concentrates all seven on a single target,
+/// which is brutal but consistent with the CR-16 damage envelope.
+pub static MARILITH_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "marilith multiattack",
+    parts: vec![(&MARILITH_LONGSWORD, 6), (&MARILITH_TAIL, 1)],
+});
+
+/// Vrock Talons — STR-based 2d6 + STR slashing melee, reach 1. The
+/// vrock's stock melee swing; pairs with the beak in the 3-attack
+/// multi (2 talons + 1 beak).
+pub static VROCK_TALONS: SimpleWeapon = SimpleWeapon {
+    display_name: "vrock talons",
+    aliases: &["vtalons"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Vrock Beak — STR-based 2d6 + STR piercing melee, reach 1. The vrock's
+/// finisher — same damage profile as the talons but piercing rather than
+/// slashing, so resistance / vulnerability typing can vary the swing's
+/// output across the multi.
+pub static VROCK_BEAK: SimpleWeapon = SimpleWeapon {
+    display_name: "vrock beak",
+    aliases: &["vbeak"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Vrock Multiattack — 2 talons + 1 beak per Action via `CompoundAttack`.
+/// The vrock's standard volley: three swings at reach 1 against one
+/// target. Mid-CR damage envelope (CR 6).
+pub static VROCK_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "vrock multiattack",
+    parts: vec![(&VROCK_TALONS, 2), (&VROCK_BEAK, 1)],
+});
+
+/// Vrock Stunning Screech — action that emits a piercing scream. Every
+/// non-demon creature within 20 ft (8 tiles) takes 3d6 thunder and must
+/// succeed on a CON save vs the vrock's CHA-based DC or be Stunned until
+/// the end of the vrock's next turn. We approximate "non-demon" by
+/// exempting creatures with Poison immunity (every demon in our pool has
+/// Poison immunity; ordinary creatures don't). Once per encounter is the
+/// RAW recharge, but we leave the rate-limit to the engine's standard
+/// action economy — the vrock will spam it but the AI's heuristic gates
+/// on a 2+ cluster so the spam stays meaningful.
+pub struct VrockScreech {}
+
+impl Action for VrockScreech {
+    fn name(&self) -> &str {
+        "vrock screech"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["screech", "vscreech"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Thunder]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::ApplyCondition;
+
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
+        let center = caster.location();
+        const RADIUS: isize = 8;
+        let raw = encounter.roll(&Dice::new(3, 6));
+        encounter.log(format!(
+            "  vrock screech: 3d6({}) shared thunder area",
+            raw
+        ));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        // Non-demon filter: any creature *without* poison immunity. Every
+        // demon in our pool is poison-immune by template; the cohort
+        // gates the screech to non-demon targets.
+        for tid in encounter.enemy_burst_targets(caster_id, center, RADIUS) {
+            let Some(target) = encounter.actors.get(&tid) else {
+                continue;
+            };
+            if target.is_immune_to(DamageType::Poison) {
+                continue;
+            }
+            let save = encounter.roll_save(tid, AbilityScoreType::Constitution, dc);
+            if raw > 0 {
+                effects.push(Box::new(DealDamage {
+                    actor_id: tid,
+                    amount: raw,
+                    damage_type: DamageType::Thunder,
+                }));
+            }
+            if !save.passed() {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: tid,
+                    condition: Condition::Stunned,
+                    timer: ConditionTimer::Rounds(1),
+                }));
+            }
+        }
+        effects
+    }
+}
+
+pub static VROCK_SCREECH: LazyLock<VrockScreech> = LazyLock::new(|| VrockScreech {});

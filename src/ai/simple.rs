@@ -103,9 +103,11 @@ impl Controller for SimpleAi {
         }
 
         // 3e. Paladin Smite spells — bonus-action concentration primes
-        //     (Searing / Wrathful / Branding / Blinding). Same trigger
+        //     (Searing / Wrathful / Thunderous / Branding / Blinding /
+        //     Staggering / Banishing, slot-cheapest first). Same trigger
         //     as Divine Smite but concentration-gated; skipped when the
-        //     paladin already holds Bless / Compelled Duel etc.
+        //     paladin already holds Bless / Compelled Duel etc. Spell
+        //     order is defined by `ALL_SMITE_SPELLS` in spells.rs.
         if let Some(aei) = try_smite_spell(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
@@ -851,15 +853,13 @@ fn try_smite_spell(
         return None;
     }
     // Slot-cheapest first — preserves higher slots for emergencies.
-    for name in [
-        "searing smite",
-        "wrathful smite",
-        "branding smite",
-        "blinding smite",
-        "staggering smite",
-        "banishing smite",
-    ] {
-        if let Some(aei) = try_self_action(encounter, actor_id, name) {
+    // The order is defined by the central `ALL_SMITE_SPELLS` registry,
+    // so adding a new smite is one entry in spells.rs and the AI picks
+    // it up automatically.
+    use crate::actions::action_template::Action;
+    use crate::actions::spells::ALL_SMITE_SPELLS;
+    for spell in ALL_SMITE_SPELLS {
+        if let Some(aei) = try_self_action(encounter, actor_id, spell.name()) {
             return Some(aei);
         }
     }
@@ -1939,6 +1939,19 @@ mod tests {
             // resistance + Charmed/Frightened/Poisoned condition immunity).
             use crate::actors::creatures::glabrezus::GLABREZU_TEMPLATE;
             let _ = e.instantiate_creature(&GLABREZU_TEMPLATE, Coordinate::new(17, 18), 1, 39);
+            // Newest additions: Marilith (CR 16 demon with 7-swing multi —
+            // 6 longswords + 1 tail) and Vrock (CR 6 demon with 3-swing
+            // multi + Stunning Screech non-demon-only thunder burst).
+            // Exercises the highest-volume single-action multi in the
+            // pool and the new screech filter that exempts other demons
+            // via the Poison-immunity cohort. The Marilith / Vrock pair
+            // also stresses the Thunderous Smite path: a paladin with
+            // smite primed and a 7-swing demon adjacent ought to roll
+            // its smite prime through the new on-hit rider entry.
+            use crate::actors::creatures::mariliths::MARILITH_TEMPLATE;
+            use crate::actors::creatures::vrocks::VROCK_TEMPLATE;
+            let _ = e.instantiate_creature(&MARILITH_TEMPLATE, Coordinate::new(20, 18), 1, 40);
+            let _ = e.instantiate_creature(&VROCK_TEMPLATE, Coordinate::new(23, 18), 1, 41);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

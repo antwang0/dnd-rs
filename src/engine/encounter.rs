@@ -21080,11 +21080,173 @@ mod tests {
         assert!(Condition::WindWalled.is_dispellable_buff());
         assert!(Condition::StaggeringSmiting.is_dispellable_buff());
         assert!(Condition::BanishingSmiting.is_dispellable_buff());
+        assert!(Condition::ThunderousSmiting.is_dispellable_buff());
         // Sphered is a debuff but still dispel-removable (the sphere is
         // the magical effect; dispel cracks it). We don't put it in
         // `is_dispellable_buff` since that cohort is read for buff
         // stripping; Sphered drops via concentration cleanup instead.
         assert!(!Condition::Sphered.is_dispellable_buff());
+    }
+
+    /// Thunderous Smite (lv1 paladin evocation): bonus-action prime that
+    /// adds +2d6 thunder + STR-save Prone on the next melee hit. Verifies
+    /// the prime install + concentration mark.
+    #[test]
+    fn thunderous_smite_primes_thunder_rider() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::THUNDEROUS_SMITE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        for ef in THUNDEROUS_SMITE.side_effects(&mut e, pal, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&pal].has_condition(Condition::ThunderousSmiting));
+        assert!(e.actors[&pal].is_concentrating());
+        assert_eq!(
+            e.actors[&pal]
+                .concentration()
+                .map(|c| c.spell_name.as_str()),
+            Some("Thunderous Smite")
+        );
+    }
+
+    /// Thunderous Smite landing-prone follow-up: the smite rider's STR
+    /// save (vs the paladin's CHA-based DC) gates Prone on fail. Sweep
+    /// seeds until both the swing and the save outcome resolve to a
+    /// proned goblin — confirms the prime → swing → prone path works
+    /// end-to-end.
+    #[test]
+    fn thunderous_smite_prones_failed_save() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::GREATSWORD;
+        use crate::actions::spells::THUNDEROUS_SMITE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+
+        let mut goblin_proned = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let pal = e
+                .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            for ef in THUNDEROUS_SMITE.side_effects(&mut e, pal, None, None, None) {
+                ef.apply(&mut e);
+            }
+            for ef in GREATSWORD.side_effects(&mut e, pal, Some(&vec![goblin]), None, None) {
+                ef.apply(&mut e);
+            }
+            if e.actors
+                .get(&goblin)
+                .is_some_and(|a| a.has_condition(Condition::Prone))
+            {
+                goblin_proned = true;
+                break;
+            }
+        }
+        assert!(
+            goblin_proned,
+            "Thunderous Smite should knock a goblin prone on a failed STR save"
+        );
+    }
+
+    /// Lightning Lure (sorcerer/warlock/wizard cantrip): STR-save pull
+    /// toward caster + 1d8 lightning if the pull lands the target within
+    /// 5 ft. Verifies the pull-and-damage chain end-to-end against a
+    /// goblin standing 5 tiles east of a wizard (just inside the 6-tile
+    /// reach but outside the post-pull 5ft window — the 4-tile pull
+    /// should drop them onto an adjacent tile).
+    #[test]
+    fn lightning_lure_pulls_and_zaps_failed_save() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::LIGHTNING_LURE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut zapped = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 7), 0, 0)
+                .unwrap();
+            let start_x = 10;
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(start_x, 7), 1, 0)
+                .unwrap();
+            let goblin_hp_before = e.actors[&goblin].hitpoints();
+            for ef in LIGHTNING_LURE.side_effects(&mut e, wiz, Some(&vec![goblin]), None, None) {
+                ef.apply(&mut e);
+            }
+            // If the save fails, the goblin gets pulled (x decreases)
+            // and zapped (HP drops).
+            if e.actors
+                .get(&goblin)
+                .is_some_and(|a| a.location().x < start_x && a.hitpoints() < goblin_hp_before)
+            {
+                zapped = true;
+                break;
+            }
+        }
+        assert!(
+            zapped,
+            "Lightning Lure should pull and zap a goblin on a failed STR save"
+        );
+    }
+
+    /// Thunderwave's new push: failed-save targets are shoved 10 ft (4
+    /// tiles) away from the caster. Pinning the goblin against the
+    /// caster's location and standing it next to a wall is impractical
+    /// in a small map, so instead we put the goblin 1 tile east of the
+    /// wizard on an open map and assert that after Thunderwave a few
+    /// times across seeds, at least one push lands (goblin's x > 6).
+    #[test]
+    fn thunderwave_pushes_failed_save_targets() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::THUNDERWAVE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut moved = false;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain(20, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 7), 0, 0)
+                .unwrap();
+            let start_x = 6;
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(start_x, 7), 1, 0)
+                .unwrap();
+            for ef in THUNDERWAVE.side_effects(&mut e, wiz, None, None, None) {
+                ef.apply(&mut e);
+            }
+            // After push, the goblin sits east of its start (push moves
+            // it away from the caster at x=5).
+            if e.actors
+                .get(&goblin)
+                .is_some_and(|a| a.location().x > start_x)
+            {
+                moved = true;
+                break;
+            }
+        }
+        assert!(
+            moved,
+            "Thunderwave should push a goblin who fails its CON save"
+        );
     }
 
     /// Balor template: CR-19 apex demon. Verifies the full demon

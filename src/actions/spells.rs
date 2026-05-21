@@ -1644,8 +1644,11 @@ pub static RAY_OF_FROST: LazyLock<RayOfFrost> = LazyLock::new(|| RayOfFrost {});
 /// Thunderwave — level-1 evocation. 15-ft cube around the caster (we
 /// approximate with a 2-tile burst centered on the caster's tile). Each
 /// creature in the burst makes a CON save vs the caster's INT-DC; on
-/// fail, takes 2d8 thunder and is pushed 10 ft (we don't model the
-/// push). On success, half damage and no push.
+/// fail, takes 2d8 thunder and is pushed 10 ft (4 tiles) away from the
+/// caster. On success, half damage and no push. The push routes through
+/// the standard `PushActor` side-effect so wall / occupancy blocking is
+/// honored — a creature pinned to a wall takes the damage but doesn't
+/// budge.
 pub struct Thunderwave {}
 
 impl Action for Thunderwave {
@@ -1679,27 +1682,60 @@ impl Action for Thunderwave {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::PushActor;
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
         let center = caster.location();
         const RADIUS: isize = 2;
+        // 10 ft = 4 tiles on this 2.5ft grid. RAW Thunderwave push.
+        const PUSH_TILES: u32 = 4;
         let raw = encounter.roll(&Dice::new(2, 8));
         encounter.log(format!(
             "  thunderwave: 2d8({}) = {} thunder area",
             raw, raw
         ));
-        crate::actions::action_template::resolve_burst_save_damage(
-            encounter,
-            caster_id,
-            center,
-            RADIUS,
-            AbilityScoreType::Constitution,
-            dc,
-            raw,
-            DamageType::Thunder,
-        )
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for target_id in encounter.sorted_actor_ids() {
+            let Some(target) = encounter.actors.get(&target_id) else {
+                continue;
+            };
+            if target_id == caster_id || !target.is_combat_active() {
+                continue;
+            }
+            let dist = footprint_chebyshev(
+                target.location(),
+                get_tiles_from_size(target.size()),
+                center,
+                1,
+            );
+            if dist > RADIUS {
+                continue;
+            }
+            let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
+            let dmg = if save.passed() { raw / 2 } else { raw };
+            if dmg > 0 {
+                effects.push(Box::new(DealDamage {
+                    actor_id: target_id,
+                    amount: dmg,
+                    damage_type: DamageType::Thunder,
+                }));
+            }
+            // 5e RAW: push only fires on a failed save. The PushActor
+            // helper handles wall / occupancy blocking — a target pinned
+            // to a wall just doesn't move.
+            if !save.passed() {
+                effects.push(Box::new(PushActor {
+                    actor_id: target_id,
+                    from: center,
+                    max_tiles: PUSH_TILES,
+                }));
+            }
+        }
+        effects
     }
 }
 
@@ -9764,13 +9800,14 @@ impl Action for CompelledDuel {
 
 pub static COMPELLED_DUEL: LazyLock<CompelledDuel> = LazyLock::new(|| CompelledDuel {});
 
-/// Config-driven Smite spell. Every Smite (Searing / Wrathful / Branding
-/// / Blinding) shares the same shape: bonus-action cast, level-N slot,
-/// concentration, applies a one-shot "primed" condition to the caster
-/// that the on-hit rider table in `engine::attack` consumes on the next
-/// melee weapon hit. The four spells differ only in slot level, log
-/// name, and which prime they apply — collapsed into one impl so adding
-/// a fifth smite is a one-entry table addition.
+/// Config-driven Smite spell. Every Smite (Searing / Wrathful /
+/// Thunderous / Branding / Blinding / Staggering / Banishing) shares
+/// the same shape: bonus-action cast, level-N slot, concentration,
+/// applies a one-shot "primed" condition to the caster that the on-hit
+/// rider table in `engine::attack` consumes on the next melee weapon
+/// hit. The spells differ only in slot level, log name, and which prime
+/// they apply — collapsed into one impl so adding another smite is a
+/// one-entry table addition (plus the matching rider in attack.rs).
 pub struct SmiteSpell {
     pub display_name: &'static str,
     pub aliases: &'static [&'static str],
@@ -9932,6 +9969,38 @@ pub static BANISHING_SMITE: SmiteSpell = SmiteSpell {
     prime: Condition::BanishingSmiting,
     concentration_name: "Banishing Smite",
 };
+
+/// Thunderous Smite — 1st-level paladin evocation, bonus action,
+/// concentration. Primes the next melee hit with +2d6 thunder; target
+/// makes a STR save vs the paladin's CHA-based DC or is knocked Prone
+/// (RAW also pushes 10 ft — we collapse the push to just the prone
+/// follow-up since the load-bearing crowd-control effect is the prone
+/// tag; future use of `PushActor` here would slot in via a custom
+/// rider, but the smite follow-up table currently only carries one
+/// condition apply).
+pub static THUNDEROUS_SMITE: SmiteSpell = SmiteSpell {
+    display_name: "thunderous smite",
+    aliases: &["thunderous", "smite-thunder"],
+    spell_slot_lvl: 1,
+    prime: Condition::ThunderousSmiting,
+    concentration_name: "Thunderous Smite",
+};
+
+/// Central registry of every Smite spell, ordered cheapest-slot first.
+/// Single source of truth: the paladin loadout, the AI's slot-cheapest-
+/// first smite picker, and (over time) the on-hit rider table can all
+/// pull from this slice instead of restating the list inline. Keeping
+/// the order slot-cheap → slot-expensive matches the AI's "preserve
+/// higher slots for emergencies" heuristic.
+pub static ALL_SMITE_SPELLS: &[&'static SmiteSpell] = &[
+    &SEARING_SMITE,
+    &WRATHFUL_SMITE,
+    &THUNDEROUS_SMITE,
+    &BRANDING_SMITE,
+    &BLINDING_SMITE,
+    &STAGGERING_SMITE,
+    &BANISHING_SMITE,
+];
 
 /// Flame Strike — 5th-level evocation. A column of divine fire descends
 /// on a tile within 60ft (24 tiles); every creature whose footprint is
@@ -14495,3 +14564,103 @@ impl Action for OtilukesResilientSphere {
 
 pub static OTILUKES_RESILIENT_SPHERE: LazyLock<OtilukesResilientSphere> =
     LazyLock::new(|| OtilukesResilientSphere {});
+
+/// Lightning Lure — sorcerer / warlock / wizard cantrip. Range 15 ft (6
+/// tiles); the target makes a STR save vs the caster's spell DC. On
+/// fail, the target is pulled up to 10 ft (4 tiles) in a straight line
+/// toward the caster; if they end the pull within 5 ft (footprint-
+/// adjacent), they take 1d8 lightning. On success, no pull, no damage.
+/// Cantrip damage scales with character level (1d8 / 2d8 / 3d8 / 4d8 at
+/// 1 / 5 / 11 / 17) — we collapse to a flat 1d8 since the engine doesn't
+/// model character level cleanly for cantrip scaling.
+pub struct LightningLure {}
+
+impl Action for LightningLure {
+    fn name(&self) -> &str {
+        "lightning lure"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ll", "lure"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 15 ft = 6 tiles.
+        Some(6)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Lightning]
+    }
+    // Cantrip — uses the default `cost()` (single Action, no slot).
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::PullActor;
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let caster_loc = caster.location();
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+        ]);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, dc);
+        if save.passed() {
+            encounter.log("  lightning lure: target saves".to_string());
+            return Vec::new();
+        }
+        // 5e RAW: pull up to 10 ft (4 tiles) toward the caster, then —
+        // only if the target ends within 5 ft of the caster — deal the
+        // damage. We resolve the pull eagerly here (mutating encounter
+        // state) so the adjacency check uses the post-pull position;
+        // the returned effect list carries only the damage step. The
+        // PullActor helper honors wall / occupancy blocking — a target
+        // pinned to an obstacle just doesn't move and the adjacency
+        // gate skips the damage.
+        PullActor {
+            actor_id: target_id,
+            toward: caster_loc,
+            max_tiles: 4,
+        }
+        .apply(encounter);
+        let adjacent = encounter
+            .actors
+            .get(&target_id)
+            .map(|t| {
+                footprint_chebyshev(
+                    t.location(),
+                    get_tiles_from_size(t.size()),
+                    caster_loc,
+                    1,
+                ) <= 1
+            })
+            .unwrap_or(false);
+        if !adjacent {
+            encounter.log("  lightning lure: target pulled but stays out of reach".to_string());
+            return Vec::new();
+        }
+        let raw = encounter.roll(&Dice::new(1, 8));
+        encounter.log(format!("  lightning lure: 1d8({}) lightning", raw));
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: raw,
+            damage_type: DamageType::Lightning,
+        })]
+    }
+}
+
+pub static LIGHTNING_LURE: LazyLock<LightningLure> = LazyLock::new(|| LightningLure {});

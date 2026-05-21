@@ -4,9 +4,9 @@ use crate::actions::spells::{
     ACID_SPLASH, ANIMATE_DEAD, ARMOR_OF_AGATHYS, BANISHMENT, BESTOW_CURSE, BLINDNESS,
     BURNING_HANDS, CHARM_PERSON, CHILL_TOUCH, COUNTERSPELL, DIMENSION_DOOR, ELDRITCH_BLAST,
     EYEBITE, FEAR, FIRE_BOLT, FLY, HELLISH_REBUKE, HEX, HOLD_MONSTER, HOLD_PERSON,
-    HYPNOTIC_PATTERN, INVISIBILITY, MAGE_ARMOR, MISTY_STEP, POISON_SPRAY, POWER_WORD_KILL,
-    POWER_WORD_STUN, SHIELD, SICKENING_RADIANCE, SLEEP, SUGGESTION, VAMPIRIC_TOUCH,
-    WITCH_BOLT,
+    HYPNOTIC_PATTERN, INVISIBILITY, LIGHTNING_LURE, MAGE_ARMOR, MISTY_STEP, POISON_SPRAY,
+    POWER_WORD_KILL, POWER_WORD_STUN, SHIELD, SICKENING_RADIANCE, SLEEP, SUGGESTION,
+    VAMPIRIC_TOUCH, WITCH_BOLT,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size};
@@ -45,6 +45,7 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*CHILL_TOUCH);
     actions.push(&*ACID_SPLASH);
     actions.push(&*POISON_SPRAY);
+    actions.push(&*LIGHTNING_LURE);
     // Level 1 — Hex defines the warlock's rider loop; Hellish Rebuke
     // for reactive burst; Witch Bolt for sustained zap; Mage Armor /
     // Shield for survivability; Charm / Sleep for soft control.

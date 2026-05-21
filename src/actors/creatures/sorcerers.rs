@@ -3,9 +3,9 @@ use crate::actions::monster_attacks::SCIMITAR;
 use crate::actions::spells::{
     ACID_SPLASH, BURNING_HANDS, CHAIN_LIGHTNING, CHARM_PERSON, CHILL_TOUCH, CONE_OF_COLD,
     COUNTERSPELL, DISINTEGRATE, FEAR, FIREBALL, FIRE_BOLT, FLY, HASTE, HOLD_PERSON,
-    LIGHTNING_BOLT, MAGE_ARMOR, MAGIC_MISSILE, METEOR_SWARM, MIRROR_IMAGE, MISTY_STEP,
-    POLYMORPH, POWER_WORD_KILL, RAY_OF_FROST, SCORCHING_RAY, SHATTER, SHIELD, SHOCKING_GRASP,
-    SLEEP, SUNBURST, TIME_STOP,
+    LIGHTNING_BOLT, LIGHTNING_LURE, MAGE_ARMOR, MAGIC_MISSILE, METEOR_SWARM, MIRROR_IMAGE,
+    MISTY_STEP, POLYMORPH, POWER_WORD_KILL, RAY_OF_FROST, SCORCHING_RAY, SHATTER, SHIELD,
+    SHOCKING_GRASP, SLEEP, SUNBURST, TIME_STOP,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size};
@@ -39,6 +39,7 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*ACID_SPLASH);
     actions.push(&*SHOCKING_GRASP);
     actions.push(&*crate::actions::spells::FROSTBITE);
+    actions.push(&*LIGHTNING_LURE);
     // Level 1
     actions.push(&*BURNING_HANDS);
     actions.push(&*MAGIC_MISSILE);

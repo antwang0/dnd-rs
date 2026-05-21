@@ -422,7 +422,7 @@ pub struct SmiteFollowUp {
 /// than declared `const` because `Dice::new` isn't a const fn — but the
 /// runtime cost is one stack-allocated array of plain data, so the
 /// indirection is free.
-fn on_hit_riders() -> [OnHitRider; 14] {
+fn on_hit_riders() -> [OnHitRider; 15] {
     [
         OnHitRider {
             condition: Condition::CrusadersMantled,
@@ -661,6 +661,30 @@ fn on_hit_riders() -> [OnHitRider; 14] {
                 // to 50 hp or fewer." We honor the gate by predicting
                 // post-damage HP at the smite follow-up site.
                 hp_threshold: Some(50),
+            }),
+        },
+        // 5e Thunderous Smite — 1st-level paladin evocation, bonus
+        // action prime. +2d6 thunder on the primed hit; target makes a
+        // STR save vs the caster's CHA-based DC or is knocked Prone.
+        // RAW also pushes 10 ft on the failed save; we collapse the
+        // push since the smite follow-up table only carries one
+        // condition apply — the prone tag is the load-bearing
+        // crowd-control bit and the push helper is reserved for spells
+        // whose entire effect is repositioning (Thunderwave).
+        OnHitRider {
+            condition: Condition::ThunderousSmiting,
+            dice: Dice::new(2, 6),
+            label: "thunderous smite",
+            damage_type: DamageType::Thunder,
+            melee_only: true,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: Some(AbilityScoreType::Strength),
+                dc_ability: AbilityScoreType::Charisma,
+                apply: Condition::Prone,
+                timer: ConditionTimer::Permanent,
+                label: "thunderous smite prone",
+                hp_threshold: None,
             }),
         },
     ]
