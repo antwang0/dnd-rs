@@ -258,6 +258,19 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::EARTH_TREMOR);
     actions.push(&*crate::actions::spells::FOG_CLOUD);
     actions.push(&*crate::actions::spells::GUST_OF_WIND);
+    // Additional combat spells:
+    //   - lv2 **Dragon's Breath**: 2-tile self cone, 3d6 elemental (best-
+    //     type picker), DEX save for half. Wizard alt to Burning Hands
+    //     once a level-2 slot is spendable.
+    //   - lv5 **Steel Wind Strike**: hits up to 5 enemies for 6d10 force,
+    //     teleport-to-target rider. Mid-late wizard finisher when the
+    //     party's swarmed.
+    //   - lv6 **Wall of Ice**: 10d6 cold DEX-save for half + Prone on
+    //     fail, concentration. Big slot AoE that pairs the Cone of Cold
+    //     dice with a crowd-control rider.
+    actions.push(&*crate::actions::spells::DRAGONS_BREATH);
+    actions.push(&*crate::actions::spells::STEEL_WIND_STRIKE);
+    actions.push(&*crate::actions::spells::WALL_OF_ICE);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

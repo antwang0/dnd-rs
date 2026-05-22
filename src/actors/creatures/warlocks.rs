@@ -114,6 +114,11 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::SWORD_BURST);
     actions.push(&*crate::actions::spells::BLADE_WARD);
     actions.push(&*crate::actions::spells::FOG_CLOUD);
+    // Signature warlock pickup:
+    //   - lv1 **Arms of Hadar** (warlock-only): self-centered necrotic
+    //     burst with STR save for half + no-reactions rider on fail.
+    //     Punishes melee swarms that close on the warlock.
+    actions.push(&*crate::actions::spells::ARMS_OF_HADAR);
     CreatureTemplate {
         name: "Warlock",
         // 'L' (uppercase) — distinct from 'l' (Lich), 'W' (Wolf glyph),

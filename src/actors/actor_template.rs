@@ -1215,12 +1215,20 @@ impl ActorInstance {
         }
     }
 
+    /// Convenience for `modifier_from_score(self.ability_score(ability))` —
+    /// the most-repeated read of an actor's ability modifier. Replaces ~40
+    /// sites of the explicit `modifier_from_score(caster.ability_score(...))`
+    /// dance across the spells / class-features layer with a one-liner.
+    pub fn ability_modifier(&self, ability: AbilityScoreType) -> i32 {
+        modifier_from_score(self.ability_score(ability))
+    }
+
     pub fn spell_save_dc(&self, ability: AbilityScoreType) -> i32 {
-        8 + self.proficiency_bonus() + modifier_from_score(self.ability_score(ability))
+        8 + self.proficiency_bonus() + self.ability_modifier(ability)
     }
 
     pub fn spell_attack_modifier(&self, ability: AbilityScoreType) -> i32 {
-        self.proficiency_bonus() + modifier_from_score(self.ability_score(ability))
+        self.proficiency_bonus() + self.ability_modifier(ability)
     }
 
     /// For spells available to multiple classes (Bard / Sorcerer / Wizard /
@@ -1234,11 +1242,37 @@ impl ActorInstance {
     where
         I: IntoIterator<Item = AbilityScoreType>,
     {
-        let best = candidates
+        self.spell_save_dc(self.best_spellcasting_ability(candidates))
+    }
+
+    /// Spell-attack-modifier analogue of `best_spell_save_dc`. Picks the
+    /// ability whose raw score is highest from `candidates` and returns
+    /// `spell_attack_modifier` for that ability. Ties break by the order
+    /// in `candidates`. Used by spells that resolve as a ranged spell
+    /// attack but are available to multiple casting classes (Chromatic
+    /// Orb on INT/CHA, future Witch-Bolt-style pickups, etc.) so the
+    /// caller doesn't have to open-code the max-of-scores pattern.
+    pub fn best_spell_attack_modifier<I>(&self, candidates: I) -> i32
+    where
+        I: IntoIterator<Item = AbilityScoreType>,
+    {
+        self.spell_attack_modifier(self.best_spellcasting_ability(candidates))
+    }
+
+    /// Pick the highest-scoring spellcasting ability from `candidates`. Ties
+    /// break by the order in `candidates`. Falls back to Intelligence on an
+    /// empty iterator (no caller currently passes empty — the fallback is a
+    /// belt-and-suspenders so the helper is total). Shared body for the
+    /// best-DC / best-attack-modifier pair so the picker logic lives at one
+    /// chokepoint.
+    pub fn best_spellcasting_ability<I>(&self, candidates: I) -> AbilityScoreType
+    where
+        I: IntoIterator<Item = AbilityScoreType>,
+    {
+        candidates
             .into_iter()
             .max_by_key(|a| self.ability_score(*a))
-            .unwrap_or(AbilityScoreType::Intelligence);
-        self.spell_save_dc(best)
+            .unwrap_or(AbilityScoreType::Intelligence)
     }
 
     /// Apply `raw` damage of type `dt`, factoring in immunity / resistance

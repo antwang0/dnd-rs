@@ -148,6 +148,14 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::EARTH_TREMOR);
     actions.push(&*crate::actions::spells::FOG_CLOUD);
     actions.push(&*crate::actions::spells::GUST_OF_WIND);
+    // Signature sorcerer additions:
+    //   - lv1 **Chaos Bolt** (sorcerer-only): single-target attack with
+    //     random elemental typing rolled per cast; doubled type-d8 chains
+    //     to the nearest other enemy at 30 ft.
+    //   - lv2 **Dragon's Breath**: 2-tile self cone with caster's choice
+    //     of damage type (best-vs-target picker), DEX save for half.
+    actions.push(&*crate::actions::spells::CHAOS_BOLT);
+    actions.push(&*crate::actions::spells::DRAGONS_BREATH);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

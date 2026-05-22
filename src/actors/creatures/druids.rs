@@ -125,6 +125,12 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::EARTH_TREMOR);
     actions.push(&*crate::actions::spells::FOG_CLOUD);
     actions.push(&*crate::actions::spells::GUST_OF_WIND);
+    // lv3 **Conjure Barrage**: 2-tile cone burst for 3d8 piercing,
+    // DEX save for half. Ranger-flavored in RAW but conjuration school
+    // and ammo-arrow flavor fit the druid's nature kit cleanly — and
+    // the druid has the lv3 slots the half-caster ranger template
+    // currently lacks.
+    actions.push(&*crate::actions::spells::CONJURE_BARRAGE);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

@@ -22224,6 +22224,358 @@ mod tests {
         assert!(pushed, "Gust of Wind should eventually push the goblin away on a failed STR save");
     }
 
+    /// Chaos Bolt: lv1 sorcerer attack. Verifies the lv1 slot cost and
+    /// that the bolt eventually deals damage to the target across seeds
+    /// (the random damage type doesn't change the hit outcome). Drives
+    /// the chain rider opportunity by sitting a second enemy within 30 ft
+    /// of the primary — across enough seeds, a matching double-d8 should
+    /// fire and damage the secondary target at least once.
+    #[test]
+    fn chaos_bolt_damages_primary_and_eventually_chains() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::CHAOS_BOLT;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut damaged_primary = false;
+        let mut damaged_chain = false;
+        for seed in 0..80u64 {
+            let mut e = ei_with_terrain(30, 30, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let sor = e
+                .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+                .unwrap();
+            let primary = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+                .unwrap();
+            // Chain candidate within 12 tiles (30ft) of the primary.
+            let chain = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(13, 5), 1, 0)
+                .unwrap();
+            let costs =
+                CHAOS_BOLT.cost(&e, sor, Some(&vec![primary]), None, None);
+            assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(1))));
+            let hp_primary_before = e.actors[&primary].hitpoints();
+            let hp_chain_before = e.actors[&chain].hitpoints();
+            for ef in
+                CHAOS_BOLT.side_effects(&mut e, sor, Some(&vec![primary]), None, None)
+            {
+                ef.apply(&mut e);
+            }
+            if e.actors[&primary].hitpoints() < hp_primary_before {
+                damaged_primary = true;
+            }
+            if e.actors[&chain].hitpoints() < hp_chain_before {
+                damaged_chain = true;
+            }
+            if damaged_primary && damaged_chain {
+                break;
+            }
+        }
+        assert!(
+            damaged_primary,
+            "Chaos Bolt should land damage on the primary target across seeds"
+        );
+        assert!(
+            damaged_chain,
+            "Chaos Bolt should eventually chain to a nearby enemy across seeds"
+        );
+    }
+
+    /// Arms of Hadar: lv1 warlock self-burst. Verifies the lv1 slot cost,
+    /// damage to an adjacent enemy on a failed STR save, and the
+    /// NoReaction rider lands on at least one failed-save victim across
+    /// seeds.
+    #[test]
+    fn arms_of_hadar_damages_and_blocks_reactions() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::ARMS_OF_HADAR;
+        use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut damaged = false;
+        let mut no_reaction_landed = false;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wl = e
+                .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            // Adjacent zombie — low STR biases toward failed save.
+            let z = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            let costs = ARMS_OF_HADAR.cost(&e, wl, None, None, None);
+            assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(1))));
+            let hp_before = e.actors[&z].hitpoints();
+            for ef in ARMS_OF_HADAR.side_effects(&mut e, wl, None, None, None) {
+                ef.apply(&mut e);
+            }
+            if e.actors[&z].hitpoints() < hp_before {
+                damaged = true;
+            }
+            if e.actors
+                .get(&z)
+                .is_some_and(|a| a.has_condition(Condition::NoReaction))
+            {
+                no_reaction_landed = true;
+            }
+            if damaged && no_reaction_landed {
+                break;
+            }
+        }
+        assert!(damaged, "Arms of Hadar should damage in-burst enemies");
+        assert!(
+            no_reaction_landed,
+            "Arms of Hadar's NoReaction rider should land on failed STR saves"
+        );
+    }
+
+    /// Dragon's Breath: lv2 sorcerer/wizard self-cone. Verifies the lv2
+    /// slot cost and damage to an enemy in the cone on a failed DEX save.
+    #[test]
+    fn dragons_breath_damages_cone_targets() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::DRAGONS_BREATH;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut damaged = false;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let sor = e
+                .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            // Goblin within the 2-tile self burst.
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            let costs = DRAGONS_BREATH.cost(&e, sor, None, None, None);
+            assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(2))));
+            let hp_before = e.actors[&g].hitpoints();
+            for ef in DRAGONS_BREATH.side_effects(&mut e, sor, None, None, None) {
+                ef.apply(&mut e);
+            }
+            if e.actors[&g].hitpoints() < hp_before {
+                damaged = true;
+                break;
+            }
+        }
+        assert!(damaged, "Dragon's Breath should damage in-cone enemies across seeds");
+    }
+
+    /// Conjure Barrage: lv3 cone barrage. Verifies the lv3 slot cost and
+    /// damage to an in-burst enemy across seeds.
+    #[test]
+    fn conjure_barrage_damages_in_burst() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::CONJURE_BARRAGE;
+        use crate::actors::creatures::druids::DRUID_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut damaged = false;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain(30, 30, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let dru = e
+                .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+                .unwrap();
+            let center = Coordinate::new(10, 5);
+            let costs = CONJURE_BARRAGE.cost(&e, dru, None, Some(&vec![center]), None);
+            assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(3))));
+            let hp_before = e.actors[&g].hitpoints();
+            for ef in
+                CONJURE_BARRAGE.side_effects(&mut e, dru, None, Some(&vec![center]), None)
+            {
+                ef.apply(&mut e);
+            }
+            if e.actors[&g].hitpoints() < hp_before {
+                damaged = true;
+                break;
+            }
+        }
+        assert!(damaged, "Conjure Barrage should damage in-burst enemies across seeds");
+    }
+
+    /// Steel Wind Strike: lv5 multi-target finisher. Verifies the lv5
+    /// slot cost, damage to the primary target, that an extra enemy
+    /// within range also takes damage, and the caster teleports adjacent
+    /// to the primary.
+    #[test]
+    fn steel_wind_strike_damages_primary_and_extra_targets() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::STEEL_WIND_STRIKE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+            .unwrap();
+        let primary = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+            .unwrap();
+        // Extra enemy within 12 tiles of the wizard (8 tiles east).
+        let extra = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+            .unwrap();
+        // Out-of-range enemy (way outside 12 tiles).
+        let far = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(28, 28), 1, 0)
+            .unwrap();
+        let costs = STEEL_WIND_STRIKE.cost(&e, wiz, Some(&vec![primary]), None, None);
+        assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(5))));
+        let primary_hp_before = e.actors[&primary].hitpoints();
+        let extra_hp_before = e.actors[&extra].hitpoints();
+        let far_hp_before = e.actors[&far].hitpoints();
+        for ef in
+            STEEL_WIND_STRIKE.side_effects(&mut e, wiz, Some(&vec![primary]), None, None)
+        {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&primary].hitpoints() < primary_hp_before,
+            "Steel Wind Strike should damage the primary target"
+        );
+        // Auto-picked extras are based on distance — the closer goblin
+        // should land in the auto-pick list. The far goblin should not.
+        assert!(
+            e.actors[&extra].hitpoints() < extra_hp_before,
+            "Steel Wind Strike should also damage in-range extra enemies"
+        );
+        assert_eq!(
+            e.actors[&far].hitpoints(),
+            far_hp_before,
+            "Steel Wind Strike should not damage enemies outside its 30-ft range"
+        );
+        // Caster should have teleported into footprint-adjacent range
+        // of the primary (gap ≤ 1). Both wizard and goblin are 2×2
+        // footprints, so adjacent anchors differ by up to 2 tiles on
+        // each axis — we check footprint-Chebyshev gap directly rather
+        // than raw anchor distance.
+        let wiz_loc = e.actors[&wiz].location();
+        let prim_loc = e.actors[&primary].location();
+        let gap = crate::engine::util::footprint_chebyshev(
+            wiz_loc,
+            crate::engine::util::get_tiles_from_size(e.actors[&wiz].size()),
+            prim_loc,
+            crate::engine::util::get_tiles_from_size(e.actors[&primary].size()),
+        );
+        assert!(
+            gap <= 1,
+            "Steel Wind Strike should teleport the caster adjacent to the primary target (gap={})",
+            gap
+        );
+    }
+
+    /// Wall of Ice: lv6 concentration burst. Verifies the lv6 slot cost,
+    /// damage to an in-burst enemy, the prone rider eventually lands
+    /// across seeds, and the caster picks up concentration.
+    #[test]
+    fn wall_of_ice_damages_and_prones_in_burst() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::WALL_OF_ICE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut damaged = false;
+        let mut prone_landed = false;
+        let mut concentrated = false;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain(30, 30, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(15, 5), 1, 0)
+                .unwrap();
+            let center = Coordinate::new(15, 5);
+            let costs = WALL_OF_ICE.cost(&e, wiz, None, Some(&vec![center]), None);
+            assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(6))));
+            let hp_before = e.actors[&g].hitpoints();
+            for ef in WALL_OF_ICE.side_effects(&mut e, wiz, None, Some(&vec![center]), None) {
+                ef.apply(&mut e);
+            }
+            if e.actors[&wiz].is_concentrating() {
+                concentrated = true;
+            }
+            if e.actors[&g].hitpoints() < hp_before {
+                damaged = true;
+            }
+            if e.actors
+                .get(&g)
+                .is_some_and(|a| a.has_condition(Condition::Prone))
+            {
+                prone_landed = true;
+            }
+            if damaged && prone_landed && concentrated {
+                break;
+            }
+        }
+        assert!(concentrated, "Wall of Ice should anchor caster concentration");
+        assert!(damaged, "Wall of Ice should damage in-burst enemies");
+        assert!(
+            prone_landed,
+            "Wall of Ice's prone rider should eventually land across seeds"
+        );
+    }
+
+    /// `best_spell_attack_modifier` should mirror `best_spell_save_dc` —
+    /// pick the highest-scoring ability from a candidate set and return
+    /// the resulting attack bonus. Verifies the wizard's INT lane wins
+    /// the INT/CHA pick (INT 16 vs CHA 10) and produces the expected
+    /// modifier.
+    #[test]
+    fn best_spell_attack_modifier_picks_highest_ability() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+        use crate::engine::util::modifier_from_score;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let w = &e.actors[&wiz];
+        let int_mod = modifier_from_score(w.ability_score(AbilityScoreType::Intelligence));
+        let cha_mod = modifier_from_score(w.ability_score(AbilityScoreType::Charisma));
+        let expected = w.proficiency_bonus() + int_mod.max(cha_mod);
+        let got = w.best_spell_attack_modifier([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+        ]);
+        assert_eq!(got, expected);
+        // INT 16 > CHA 10 on the wizard template — the picker should
+        // resolve to INT specifically (which the modifier comparison
+        // already implies, but check the ability-pick path explicitly).
+        assert_eq!(
+            w.best_spellcasting_ability([
+                AbilityScoreType::Intelligence,
+                AbilityScoreType::Charisma,
+            ]),
+            AbilityScoreType::Intelligence
+        );
+    }
+
     /// Balor template: CR-19 apex demon. Verifies the full demon
     /// envelope: fire + poison immunity, cold + lightning + B/P/S
     /// resistance, charmed/frightened/poisoned condition immunity,

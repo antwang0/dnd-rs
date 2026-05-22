@@ -15132,15 +15132,10 @@ impl Action for ChromaticOrb {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let cast_ability =
-            if caster.ability_score(AbilityScoreType::Intelligence)
-                >= caster.ability_score(AbilityScoreType::Charisma)
-            {
-                AbilityScoreType::Intelligence
-            } else {
-                AbilityScoreType::Charisma
-            };
-        let attack_bonus = caster.spell_attack_modifier(cast_ability);
+        let attack_bonus = caster.best_spell_attack_modifier([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+        ]);
         // Pick the damage type that maximizes effective damage on the
         // target. Acid first (most creatures resist nothing; some oozes
         // are immune which the picker handles).
@@ -16543,3 +16538,742 @@ impl Action for GustOfWind {
 }
 
 pub static GUST_OF_WIND: LazyLock<GustOfWind> = LazyLock::new(|| GustOfWind {});
+
+/// Chaos Bolt — level-1 evocation (sorcerer). Ranged spell attack vs a
+/// single target within 120 ft (48 tiles) for 2d8 + 1d6 damage of a
+/// random elemental type rolled per cast. The RAW "matching d8s chain
+/// to a new target" clause is the spell's signature — we model it by
+/// detecting a doubled d8 result and, on a chain, replaying the bolt
+/// against the nearest other enemy within 30 ft (12 tiles) of the
+/// primary target with the same damage roll. One chain max per cast
+/// (we cap at one hop instead of the RAW "until you roll non-matching
+/// d8s" recursion to keep the dispatch deterministic).
+///
+/// The eight damage types mirror RAW's table (Acid / Cold / Fire / Force
+/// / Lightning / Poison / Psychic / Thunder). The type is picked by
+/// rolling 1d8, with the index 1..=8 mapped to the entry in declared
+/// order — same shape as the RAW chart.
+pub struct ChaosBolt {}
+
+impl Action for ChaosBolt {
+    fn name(&self) -> &str {
+        "chaos bolt"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["chaos", "cb-bolt"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![
+            DamageType::Acid,
+            DamageType::Cold,
+            DamageType::Fire,
+            DamageType::Force,
+            DamageType::Lightning,
+            DamageType::Poison,
+            DamageType::Psychic,
+            DamageType::Thunder,
+        ]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(1)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        let Some(primary_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_bonus = caster.best_spell_attack_modifier([
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Intelligence,
+        ]);
+
+        // Roll a single d8 to pick the damage type AND drive the chain
+        // check (the second d8's value is irrelevant to type / chain
+        // detection — we just need to know if it matches the first).
+        // The actual damage dice (2d8 + 1d6) re-roll inside `spell_attack`
+        // — a small RAW divergence (RAW: the type-picking d8s ARE the
+        // damage dice) that keeps the on-hit rider stack (Hex,
+        // Hunter's Mark, smites, reflects) firing through the standard
+        // `spell_attack` pipeline. The chain check still gates on the
+        // d8 match, so the spell's signature behavior (matching d8s →
+        // bounce to nearest enemy) is preserved.
+        let type_d8 = encounter.roll(&Dice::new(1, 8));
+        let chain_d8 = encounter.roll(&Dice::new(1, 8));
+        let chained = type_d8 == chain_d8;
+        let dt = chaos_damage_type(type_d8 as u8);
+        encounter.log(format!(
+            "  chaos bolt: type d8({}) → {:?}{}",
+            type_d8,
+            dt,
+            if chained { " (CHAIN!)" } else { "" }
+        ));
+
+        // Ranged spell attack vs the primary for 2d8 + 1d6 of the
+        // picked type, routing through `spell_attack` so the full
+        // engine rider stack (Hex, Hunter's Mark, smite primes, etc.)
+        // applies normally.
+        let mut effects = spell_attack(
+            encounter,
+            caster_id,
+            primary_id,
+            "chaos bolt",
+            attack_bonus,
+            Dice::new(2, 8),
+            dt,
+            false,
+        );
+        // Add the +1d6 chaos damage as a separate same-typed payload
+        // (RAW lumps it into the same damage type — separate side-effect
+        // lets the target's typed resistance / immunity / vulnerability
+        // apply to the +d6 too).
+        let d6 = encounter.roll(&Dice::new(1, 6));
+        if d6 > 0 && !effects.is_empty() {
+            effects.push(Box::new(DealDamage {
+                actor_id: primary_id,
+                amount: d6,
+                damage_type: dt,
+            }));
+        }
+
+        // Chain to the nearest other enemy within 30 ft (12 tiles) of
+        // the primary on a doubled d8. RAW's recursive chain caps at
+        // one extra hop in our model — keeps the dispatch deterministic
+        // and avoids the engine pondering through a chain of self-
+        // referential rolls.
+        if chained
+            && let Some(primary) = encounter.actors.get(&primary_id)
+        {
+            let primary_loc = primary.location();
+            let primary_size = get_tiles_from_size(primary.size());
+            let caster_team = encounter.actors.get(&caster_id).map(|a| a.team());
+            let mut forks: Vec<(isize, usize)> = encounter
+                .actors
+                .iter()
+                .filter_map(|(id, a)| {
+                    if *id == caster_id || *id == primary_id || !a.is_combat_active() {
+                        return None;
+                    }
+                    if caster_team.is_some_and(|t| t == a.team()) {
+                        return None;
+                    }
+                    let dist = footprint_chebyshev(
+                        a.location(),
+                        get_tiles_from_size(a.size()),
+                        primary_loc,
+                        primary_size,
+                    );
+                    if dist > 12 { None } else { Some((dist, *id)) }
+                })
+                .collect();
+            forks.sort_unstable();
+            if let Some((_, fork_id)) = forks.first().copied() {
+                let chain_effects = spell_attack(
+                    encounter,
+                    caster_id,
+                    fork_id,
+                    "chaos bolt (chain)",
+                    attack_bonus,
+                    Dice::new(2, 8),
+                    dt,
+                    false,
+                );
+                let chain_d6 = encounter.roll(&Dice::new(1, 6));
+                let chain_hit = !chain_effects.is_empty();
+                effects.extend(chain_effects);
+                if chain_hit && chain_d6 > 0 {
+                    effects.push(Box::new(DealDamage {
+                        actor_id: fork_id,
+                        amount: chain_d6,
+                        damage_type: dt,
+                    }));
+                }
+            }
+        }
+        effects
+    }
+}
+
+/// Map the RAW Chaos Bolt damage-type d8 (1..=8) to a `DamageType`. Any
+/// value outside the 1..=8 band falls back to Force (defensive default —
+/// the helper is only called with d8 results so the fall-through is dead
+/// code in practice).
+fn chaos_damage_type(roll: u8) -> DamageType {
+    match roll {
+        1 => DamageType::Acid,
+        2 => DamageType::Cold,
+        3 => DamageType::Fire,
+        4 => DamageType::Force,
+        5 => DamageType::Lightning,
+        6 => DamageType::Poison,
+        7 => DamageType::Psychic,
+        8 => DamageType::Thunder,
+        _ => DamageType::Force,
+    }
+}
+
+pub static CHAOS_BOLT: LazyLock<ChaosBolt> = LazyLock::new(|| ChaosBolt {});
+
+/// Arms of Hadar — level-1 conjuration (warlock). The caster slaps the
+/// ground; black tentacles erupt around them in a 10-foot radius (1-tile
+/// gap on this 2.5ft grid). Every enemy in the burst makes a STR save vs
+/// the caster's CHA-based spell DC: pass = half damage (2d6 → 1d6),
+/// fail = full damage (2d6 necrotic) plus they cannot take reactions
+/// until the start of their next turn (the existing `NoReaction`
+/// condition with the `UntilStartOfNextTurn` timer).
+///
+/// Self-centered burst — the picker is `NoArgs` and the origin is the
+/// caster's location. Distinct from Thunderclap (cantrip, smaller burst,
+/// no reaction lockout) — Arms of Hadar's level-1 slot buys the bigger
+/// dice and the no-reactions rider on fail.
+pub struct ArmsOfHadar {}
+
+impl Action for ArmsOfHadar {
+    fn name(&self) -> &str {
+        "arms of hadar"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hadar", "aoh"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Necrotic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(1)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let center = caster.location();
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Intelligence,
+        ]);
+        let (mut effects, saves) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            center,
+            1,
+            AbilityScoreType::Strength,
+            dc,
+            Dice::new(2, 6),
+            DamageType::Necrotic,
+            "arms of hadar",
+        );
+        // RAW: failed-save targets also "can't take reactions until the
+        // start of their next turn." We tack a NoReaction install on
+        // every failed save here; passed saves take just the half damage
+        // (queued by the helper).
+        for (tid, passed) in saves {
+            if passed {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::NoReaction,
+                timer: ConditionTimer::UntilStartOfNextTurn,
+            }));
+        }
+        effects
+    }
+}
+
+pub static ARMS_OF_HADAR: LazyLock<ArmsOfHadar> = LazyLock::new(|| ArmsOfHadar {});
+
+/// Dragon's Breath — level-2 transmutation (sorcerer / wizard). The caster
+/// imbues a willing creature with breath-weapon magic; on cast the target
+/// can immediately exhale a 15-ft cone of acid / cold / fire / lightning /
+/// poison damage. We collapse the "buff an ally to breathe later" RAW into
+/// the immediate self-burst at cast time — the caster exhales directly,
+/// since the spell's load-bearing portion is the burst itself.
+///
+/// Self-centered 15-ft cone modeled as a 2-tile burst from the caster.
+/// Every enemy in the area makes a DEX save vs the caster's INT/CHA-based
+/// spell DC: pass = half, fail = full. Damage type is picked by the
+/// caster's best-vs-target pick (acid by default if the target table is
+/// empty); we route through the existing `pick_damage_type_against_target`
+/// helper using the closest enemy as the reference target.
+pub struct DragonsBreath {}
+
+impl Action for DragonsBreath {
+    fn name(&self) -> &str {
+        "dragon's breath"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dragon-breath", "db", "breath"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![
+            DamageType::Acid,
+            DamageType::Cold,
+            DamageType::Fire,
+            DamageType::Lightning,
+            DamageType::Poison,
+        ]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let center = caster.location();
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+        ]);
+        // Pick the damage type that maximizes effective damage on the
+        // nearest enemy in the burst — falls back to Fire when the
+        // burst is empty (no reference target to optimize against, so
+        // a deterministic default keeps the log line stable).
+        let menu = [
+            DamageType::Acid,
+            DamageType::Cold,
+            DamageType::Fire,
+            DamageType::Lightning,
+            DamageType::Poison,
+        ];
+        let dt = encounter
+            .enemy_burst_targets(caster_id, center, 2)
+            .first()
+            .copied()
+            .map(|ref_tid| pick_damage_type_against_target(encounter, ref_tid, &menu))
+            .unwrap_or(DamageType::Fire);
+        let label = format!("dragon's breath ({:?})", dt);
+        let (effects, _saves) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            center,
+            2,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(3, 6),
+            dt,
+            &label,
+        );
+        effects
+    }
+}
+
+pub static DRAGONS_BREATH: LazyLock<DragonsBreath> = LazyLock::new(|| DragonsBreath {});
+
+/// Conjure Barrage — level-3 conjuration (ranger). The caster hurls a
+/// barrage of nonmagical ammunition or thrown weapons in a 60-ft cone.
+/// We model the cone as a 2-tile burst centered at a target tile within
+/// 12 tiles (line-of-sight required); every enemy in the burst makes a
+/// DEX save vs the caster's WIS-based spell DC: pass = half, fail = full
+/// damage. 3d8 damage; the type matches the ammunition swung — we pick
+/// Piercing as the RAW default (the spell's flavor leans toward arrows).
+pub struct ConjureBarrage {}
+
+impl Action for ConjureBarrage {
+    fn name(&self) -> &str {
+        "conjure barrage"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["barrage", "cb-vol"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 2 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60ft cone — we collapse to a 2-tile burst placed up to 12 tiles
+        // (30ft) out; the picker can still place the burst at the cone's
+        // far edge.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let (effects, _saves) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            2,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(3, 8),
+            DamageType::Piercing,
+            "conjure barrage",
+        );
+        effects
+    }
+}
+
+pub static CONJURE_BARRAGE: LazyLock<ConjureBarrage> = LazyLock::new(|| ConjureBarrage {});
+
+/// Steel Wind Strike — level-5 conjuration (ranger / wizard, XGE). The
+/// caster brandishes a melee weapon and teleports into a flurry of strikes
+/// against up to five visible creatures within 30 ft. Each picks a target
+/// from the spell's range; we model the spell as a `SingleActor` primary
+/// target plus up to four auto-picked extras (the nearest other enemies
+/// within 30 ft of the caster's post-teleport landing). Each victim takes
+/// 6d10 force damage — RAW: no attack roll, no save (the strikes auto-
+/// connect on the cast). After resolving the strikes, the caster teleports
+/// to a tile adjacent to one of the struck creatures (we pick the primary
+/// target's adjacent tile if walkable, falling back to the caster's
+/// original position).
+pub struct SteelWindStrike {}
+
+impl Action for SteelWindStrike {
+    fn name(&self) -> &str {
+        "steel wind strike"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sws", "steel-wind"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30ft = 12 tiles. Targeting picker lets the caster reach any
+        // visible enemy within that range.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Force]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::TeleportActor;
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        let Some(primary_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let caster_team = caster.team();
+        let caster_loc = caster.location();
+        let caster_size = get_tiles_from_size(caster.size());
+
+        // Auto-pick up to four additional nearest enemies within 12 tiles
+        // of the caster (excluding the primary). Sorted by (distance, id)
+        // for deterministic test seeds.
+        let mut extras: Vec<(isize, usize)> = encounter
+            .actors
+            .iter()
+            .filter_map(|(id, a)| {
+                if *id == caster_id || *id == primary_id || !a.is_combat_active() {
+                    return None;
+                }
+                if a.team() == caster_team {
+                    return None;
+                }
+                let dist = footprint_chebyshev(
+                    a.location(),
+                    get_tiles_from_size(a.size()),
+                    caster_loc,
+                    caster_size,
+                );
+                if dist > 12 { None } else { Some((dist, *id)) }
+            })
+            .collect();
+        extras.sort_unstable();
+        let extras_ids: Vec<usize> = extras.into_iter().take(4).map(|(_, id)| id).collect();
+
+        // Shared 6d10 force damage roll — no attack roll, no save. RAW
+        // is per-target rolls, but a single shared roll keeps the log
+        // line concise and the dice pool predictable (matches the AoE
+        // shared-roll semantics used by Fireball / Cone of Cold).
+        let raw = encounter.roll(&Dice::new(6, 10));
+        encounter.log(format!(
+            "  steel wind strike: 6d10({}) force (auto-hit, up to 5 targets)",
+            raw
+        ));
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut all_targets = vec![primary_id];
+        all_targets.extend(extras_ids);
+        for tid in &all_targets {
+            effects.push(Box::new(DealDamage {
+                actor_id: *tid,
+                amount: raw,
+                damage_type: DamageType::Force,
+            }));
+        }
+
+        // Teleport the caster to a tile adjacent to the primary's
+        // footprint (footprint-chebyshev gap ≤ 1) where the caster's own
+        // footprint fits cleanly. We sweep candidate anchor offsets out
+        // to twice the caster's footprint width so Medium/Large/Huge
+        // casters all find a non-overlapping landing slot when one
+        // exists. Deterministic offset order (row-major, top-left
+        // first) keeps the landing pick stable across seeded tests.
+        if let Some(primary) = encounter.actors.get(&primary_id) {
+            let primary_loc = primary.location();
+            let primary_size = get_tiles_from_size(primary.size()) as isize;
+            let landing = adjacent_landing_for(
+                encounter,
+                caster_id,
+                primary_loc,
+                primary_size,
+            );
+            if let Some(loc) = landing
+                && loc != caster_loc
+            {
+                effects.push(Box::new(TeleportActor {
+                    actor_id: caster_id,
+                    dest: loc,
+                }));
+            }
+        }
+        effects
+    }
+}
+
+/// Find an anchor tile for `mover_id`'s footprint that sits adjacent to
+/// the `target_loc` / `target_size` footprint (footprint-chebyshev gap
+/// ≤ 1). Returns `None` if no walkable, non-overlapping landing exists
+/// within a 2× footprint-width sweep. Used by Steel Wind Strike to
+/// teleport the caster next to a struck target; shaped generically so
+/// future "land next to enemy" effects (Misty Step retargeting,
+/// teleport-strike riders) can reuse it.
+fn adjacent_landing_for(
+    encounter: &EncounterInstance,
+    mover_id: usize,
+    target_loc: Coordinate,
+    target_size: isize,
+) -> Option<Coordinate> {
+    use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+    let mover = encounter.actors.get(&mover_id)?;
+    let mover_size = get_tiles_from_size(mover.size()) as isize;
+    // Sweep range: enough to step around the target's full footprint
+    // for the mover's own footprint (mover_size + target_size). Capped
+    // at a small constant so the search stays O(1) per cast.
+    let sweep = (mover_size + target_size).max(2);
+    for dy in -sweep..=sweep {
+        for dx in -sweep..=sweep {
+            let cand = Coordinate::new(target_loc.x + dx, target_loc.y + dy);
+            if !encounter.can_move_to(mover_id, cand) {
+                continue;
+            }
+            let gap = footprint_chebyshev(cand, mover_size as usize, target_loc, target_size as usize);
+            if gap <= 1 {
+                return Some(cand);
+            }
+        }
+    }
+    None
+}
+
+pub static STEEL_WIND_STRIKE: LazyLock<SteelWindStrike> = LazyLock::new(|| SteelWindStrike {});
+
+/// Wall of Ice — level-6 evocation (wizard), concentration. The caster
+/// summons a wall of ice up to 60 ft long, 10 ft high, and 1 ft thick.
+/// Mechanically we collapse the panel to the load-bearing combat hook:
+/// every enemy whose footprint touches the burst at cast time takes
+/// 10d6 cold damage on a failed DEX save (half on success) and is
+/// knocked Prone (the wall fractures around them). Concentration anchors
+/// on the caster — dropping concentration ends the wall. Distinct from
+/// Wall of Force (no damage, just blocking) and Sleet Storm (no damage,
+/// movement debuff). Wall of Ice's defining feature is the damage burst
+/// at install plus the prone slip.
+pub struct WallOfIce {}
+
+impl Action for WallOfIce {
+    fn name(&self) -> &str {
+        "wall of ice"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["woice", "ice-wall"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 1 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft RAW = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Cold]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.is_concentrating())
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+        ]);
+        let (mut effects, saves) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            1,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(10, 6),
+            DamageType::Cold,
+            "wall of ice",
+        );
+        // RAW: failed-save targets are forced out of the wall's space —
+        // the engine has no "shove out" primitive, so we approximate
+        // by knocking them Prone (the wall fractures around them and
+        // they slip on the ice). Passed-save targets dodge clear.
+        for (tid, passed) in saves {
+            if passed {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Prone,
+                timer: ConditionTimer::Permanent,
+            }));
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::new("Wall of Ice"),
+        }));
+        effects
+    }
+}
+
+pub static WALL_OF_ICE: LazyLock<WallOfIce> = LazyLock::new(|| WallOfIce {});
