@@ -135,6 +135,19 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     output between the bigger-leverage Haste / Polymorph picks.
     actions.push(&*crate::actions::spells::ICE_KNIFE);
     actions.push(&*crate::actions::spells::ENLARGE_REDUCE);
+    // Latest cantrip / lv1-2 additions shared with the wizard / druid:
+    //   - cantrip **Sword Burst**: 1-tile force burst around caster.
+    //   - cantrip **Blade Ward**: self damage-resistance till next turn.
+    //   - lv1 **Catapult**: punchy single-target DEX-save bludgeoning.
+    //   - lv1 **Earth Tremor**: self-centered DEX-save + prone burst.
+    //   - lv1 **Fog Cloud**: concentration Blinded burst.
+    //   - lv2 **Gust of Wind**: line push, concentration.
+    actions.push(&*crate::actions::spells::SWORD_BURST);
+    actions.push(&*crate::actions::spells::BLADE_WARD);
+    actions.push(&*crate::actions::spells::CATAPULT);
+    actions.push(&*crate::actions::spells::EARTH_TREMOR);
+    actions.push(&*crate::actions::spells::FOG_CLOUD);
+    actions.push(&*crate::actions::spells::GUST_OF_WIND);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

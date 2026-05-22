@@ -320,6 +320,53 @@ fn neutral_burst_save_for_half(
     (effects, saves)
 }
 
+/// Cantrip-flavored neutral burst: every combat-active actor in the
+/// burst (caster excluded) makes a save against `dc` using `save_ability`.
+/// Failed save = full damage from a *shared* roll, success = no damage.
+/// Returns `(damage_effects, per_target_save_results)` mirroring the
+/// `_for_half` helpers so callers can attach failure-only riders
+/// (Earth Tremor's Prone, future cantrip riders).
+///
+/// Distinct from `neutral_burst_save_for_half` because cantrips
+/// canonically don't half-on-save — a passed save is a clean miss.
+/// Used by Thunderclap, Acid Splash, Sword Burst, Earth Tremor, etc.
+/// Centralizes the enumerate / roll / log / per-target save loop
+/// that each cantrip used to hand-roll.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn neutral_burst_save_only(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    point: Coordinate,
+    radius: isize,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    dice: Dice,
+    damage_type: DamageType,
+    action_name: &str,
+) -> (Vec<Box<dyn ApplicableSideEffect>>, Vec<(usize, bool)>) {
+    let raw = encounter.roll(&dice);
+    encounter.log(format!(
+        "  {}: {}({}) shared {:?}",
+        action_name, dice, raw, damage_type
+    ));
+    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+    let mut saves: Vec<(usize, bool)> = Vec::new();
+    for tid in encounter.neutral_burst_targets(caster_id, point, radius) {
+        let save = encounter.roll_save(tid, save_ability, dc);
+        let passed = save.passed();
+        saves.push((tid, passed));
+        if passed || raw == 0 {
+            continue;
+        }
+        effects.push(Box::new(DealDamage {
+            actor_id: tid,
+            amount: raw,
+            damage_type,
+        }));
+    }
+    (effects, saves)
+}
+
 /// Roll a damage burst against a target's saving throw, halving on
 /// success. Returns `(damage, save_passed)` so callers can branch on
 /// the save (e.g. attach a rider only on fail). The roll + save log
@@ -1732,7 +1779,6 @@ impl Action for Thunderwave {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::engine::side_effects::PushActor;
-        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
@@ -1742,43 +1788,28 @@ impl Action for Thunderwave {
         const RADIUS: isize = 2;
         // 10 ft = 4 tiles on this 2.5ft grid. RAW Thunderwave push.
         const PUSH_TILES: u32 = 4;
-        let raw = encounter.roll(&Dice::new(2, 8));
-        encounter.log(format!(
-            "  thunderwave: 2d8({}) = {} thunder area",
-            raw, raw
-        ));
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for target_id in encounter.sorted_actor_ids() {
-            let Some(target) = encounter.actors.get(&target_id) else {
-                continue;
-            };
-            if target_id == caster_id || !target.is_combat_active() {
-                continue;
-            }
-            let dist = footprint_chebyshev(
-                target.location(),
-                get_tiles_from_size(target.size()),
-                center,
-                1,
-            );
-            if dist > RADIUS {
-                continue;
-            }
-            let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
-            let dmg = if save.passed() { raw / 2 } else { raw };
-            if dmg > 0 {
-                effects.push(Box::new(DealDamage {
-                    actor_id: target_id,
-                    amount: dmg,
-                    damage_type: DamageType::Thunder,
-                }));
-            }
-            // 5e RAW: push only fires on a failed save. The PushActor
-            // helper handles wall / occupancy blocking — a target pinned
-            // to a wall just doesn't move.
-            if !save.passed() {
+        // Friend-or-foe burst — Thunderwave's cube doesn't discriminate.
+        // The save-for-half helper handles the per-target CON save +
+        // shared roll log; we layer the push rider on top of the
+        // returned save outcomes.
+        let (mut effects, saves) = neutral_burst_save_for_half(
+            encounter,
+            caster_id,
+            center,
+            RADIUS,
+            AbilityScoreType::Constitution,
+            dc,
+            Dice::new(2, 8),
+            DamageType::Thunder,
+            "thunderwave",
+        );
+        // 5e RAW: push only fires on a failed save. The PushActor
+        // helper handles wall / occupancy blocking — a target pinned
+        // to a wall just doesn't move.
+        for (tid, passed) in saves {
+            if !passed {
                 effects.push(Box::new(PushActor {
-                    actor_id: target_id,
+                    actor_id: tid,
                     from: center,
                     max_tiles: PUSH_TILES,
                 }));
@@ -2121,23 +2152,21 @@ impl Action for AcidSplash {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-        let raw = encounter.roll(&Dice::new(1, 6));
-        encounter.log(format!("  acid splash: 1d6({}) = {} acid", raw, raw));
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        // Route through the shared neutral-burst helper so the caster
-        // exclusion is centralized rather than restated with an inline
-        // `tid == caster_id` skip per spell.
-        for tid in encounter.neutral_burst_targets(caster_id, point, 1) {
-            let save = encounter.roll_save(tid, AbilityScoreType::Dexterity, dc);
-            if save.passed() {
-                continue;
-            }
-            effects.push(Box::new(DealDamage {
-                actor_id: tid,
-                amount: raw,
-                damage_type: DamageType::Acid,
-            }));
-        }
+        // 1-tile burst around `point` — DEX save, no half on success
+        // (cantrip). Routes through the shared cantrip-burst helper
+        // so the caster-exclusion + save-loop boilerplate lives in
+        // one place.
+        let (effects, _saves) = neutral_burst_save_only(
+            encounter,
+            caster_id,
+            point,
+            1,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(1, 6),
+            DamageType::Acid,
+            "acid splash",
+        );
         effects
     }
 }
@@ -15438,25 +15467,19 @@ impl Action for Thunderclap {
             AbilityScoreType::Charisma,
             AbilityScoreType::Wisdom,
         ]);
-        let raw = encounter.roll(&Dice::new(1, 6));
-        encounter.log(format!("  thunderclap: 1d6({}) = {} thunder", raw, raw));
-        // Iterate the 1-tile burst around the caster: every combat-active
-        // actor other than the caster gets a CON save. On fail, full
-        // damage; on success, nothing (cantrip). Routes through the
-        // shared neutral-burst helper rather than re-implementing the
-        // caster-exclusion filter inline.
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for tid in encounter.neutral_burst_targets(caster_id, center, 1) {
-            let save = encounter.roll_save(tid, AbilityScoreType::Constitution, dc);
-            if save.passed() {
-                continue;
-            }
-            effects.push(Box::new(DealDamage {
-                actor_id: tid,
-                amount: raw,
-                damage_type: DamageType::Thunder,
-            }));
-        }
+        // 1-tile self-centered CON save burst — routes through the
+        // shared cantrip-burst helper (save-only, no half on success).
+        let (effects, _saves) = neutral_burst_save_only(
+            encounter,
+            caster_id,
+            center,
+            1,
+            AbilityScoreType::Constitution,
+            dc,
+            Dice::new(1, 6),
+            DamageType::Thunder,
+            "thunderclap",
+        );
         effects
     }
 }
@@ -15951,3 +15974,572 @@ impl Action for DestructiveWave {
 
 pub static DESTRUCTIVE_WAVE: LazyLock<DestructiveWave> =
     LazyLock::new(|| DestructiveWave {});
+
+/// Sword Burst — sorcerer / warlock / wizard cantrip (conjuration). The
+/// caster brandishes a half-circle of spectral blades around themselves:
+/// every creature within 5 ft (1-tile self-centered burst, caster
+/// excluded) makes a DEX save vs the caster's spell DC. On fail: 1d6
+/// force. On success: nothing (cantrip — no half-on-save).
+///
+/// Mechanically symmetric to Thunderclap, swapping CON → DEX and
+/// thunder → force. Friend-or-foe burst (your duplicates and the bandit
+/// next to you are both fair game), routed through the shared
+/// `neutral_burst_save_only` helper.
+pub struct SwordBurst {}
+
+impl Action for SwordBurst {
+    fn name(&self) -> &str {
+        "sword burst"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sword-burst", "sweep", "spirit-blades"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Force]
+    }
+    // Cantrip — uses the default `cost()` (single Action, no spell slot).
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let center = caster.location();
+        // Pick the best of INT / CHA / WIS so wizard / sorcerer / warlock
+        // / bard (any future pickup) all get their DC anchored on the
+        // class's primary stat without per-loadout special-casing.
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+        ]);
+        let (effects, _saves) = neutral_burst_save_only(
+            encounter,
+            caster_id,
+            center,
+            1,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(1, 6),
+            DamageType::Force,
+            "sword burst",
+        );
+        effects
+    }
+}
+
+pub static SWORD_BURST: LazyLock<SwordBurst> = LazyLock::new(|| SwordBurst {});
+
+/// Blade Ward — bard / sorcerer / warlock / wizard cantrip (abjuration).
+/// The caster traces a sigil of warding; until the start of their next
+/// turn they have resistance to bludgeoning, piercing, and slashing
+/// damage from weapon attacks. We model the BPS resistance via the
+/// generic `DamageResistant` condition (halves all incoming typed
+/// damage, not just BPS — close enough for the engine's resistance
+/// granularity) with the `UntilStartOfNextTurn` timer that the engine
+/// already ticks down at turn-start.
+///
+/// Self-only, no concentration, no slot. Strictly defensive — `is_harmful`
+/// false keeps the AI's focus-fire pipeline from picking it as an
+/// attack option.
+pub struct BladeWard {}
+
+impl Action for BladeWard {
+    fn name(&self) -> &str {
+        "blade ward"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ward", "bw"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Don't burn the action re-warding an already-warded caster —
+        // the buff doesn't stack and an unspent Action is more valuable
+        // than refreshing the timer (which is already short).
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.has_condition(Condition::DamageResistant))
+    }
+    // Cantrip — uses the default `cost()` (single Action, no spell slot).
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::DamageResistant,
+            timer: ConditionTimer::UntilStartOfNextTurn,
+        })]
+    }
+}
+
+pub static BLADE_WARD: LazyLock<BladeWard> = LazyLock::new(|| BladeWard {});
+
+/// Catapult — level-1 transmutation (sorcerer / wizard). The caster
+/// hurls an unattended object weighing 1-5 lb in a 90-ft line at a
+/// single creature within range (we model as `SingleActor` at 36 tiles
+/// reach). The target makes a DEX save vs the caster's spell DC: on
+/// fail the object strikes for 3d8 bludgeoning, on save the object
+/// misses (no damage). Distinct from cantrip save-or-nothing spells in
+/// being a leveled slot — the higher dice (3d8) at lv1 makes it a
+/// punchier alternative to Magic Missile when you need a single big
+/// hit and don't want to roll attack-vs-AC.
+pub struct Catapult {}
+
+impl Action for Catapult {
+    fn name(&self) -> &str {
+        "catapult"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cat", "hurl"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 90 ft RAW; we cap at the engine's 60-ft equivalent (24 tiles)
+        // since the spell's targeting falls off practical ranges past
+        // line-of-sight on the typical encounter map.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(1)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Pick best of INT / CHA so sorcerer (CHA) and wizard (INT)
+        // both anchor on their primary spellcasting ability.
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+        ]);
+        let raw = encounter.roll(&Dice::new(3, 8));
+        let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, dc);
+        encounter.log(format!(
+            "  catapult: 3d8({}) bludgeoning ({})",
+            raw,
+            if save.passed() {
+                "save (no damage)"
+            } else {
+                "fail (full)"
+            }
+        ));
+        if save.passed() || raw == 0 {
+            return Vec::new();
+        }
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: raw,
+            damage_type: DamageType::Bludgeoning,
+        })]
+    }
+}
+
+pub static CATAPULT: LazyLock<Catapult> = LazyLock::new(|| Catapult {});
+
+/// Earth Tremor — level-1 evocation (bard / druid / sorcerer / wizard).
+/// The caster causes a tremor in the ground in a 10-ft radius around
+/// themselves (2-tile self-centered burst). Every creature in the area
+/// makes a DEX save vs the caster's spell DC: on fail they take 1d6
+/// bludgeoning and are knocked Prone, on save nothing. RAW also turns
+/// the ground into difficult terrain — we skip that since the engine
+/// doesn't yet model per-tile terrain-modification spells.
+///
+/// Self-centered burst, no concentration. Friend-or-foe (allies inside
+/// the area take the save and damage same as enemies). Routes through
+/// the shared `neutral_burst_save_only` cantrip helper plus a
+/// prone-on-fail rider; mirrors Tidal Wave's pattern at the lv1
+/// slot tier.
+pub struct EarthTremor {}
+
+impl Action for EarthTremor {
+    fn name(&self) -> &str {
+        "earth tremor"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["tremor", "quake-1"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(1)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let center = caster.location();
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+        ]);
+        let (mut effects, saves) = neutral_burst_save_only(
+            encounter,
+            caster_id,
+            center,
+            2,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(1, 6),
+            DamageType::Bludgeoning,
+            "earth tremor",
+        );
+        // Prone-on-fail rider — the earth-shake topples failed-save
+        // targets regardless of damage type. Permanent prone (the target
+        // pays a movement to stand up); mirrors Tidal Wave / Destructive
+        // Wave's prone follow-up.
+        for (tid, passed) in saves {
+            if !passed {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: tid,
+                    condition: Condition::Prone,
+                    timer: ConditionTimer::Permanent,
+                }));
+            }
+        }
+        effects
+    }
+}
+
+pub static EARTH_TREMOR: LazyLock<EarthTremor> = LazyLock::new(|| EarthTremor {});
+
+/// Fog Cloud — level-1 conjuration, concentration (druid / ranger /
+/// sorcerer / wizard). The caster creates a 20-ft-radius sphere of fog
+/// centered on a point within 120 ft. The area is heavily obscured —
+/// per 5e RAW, every creature inside is effectively Blinded (auto-fail
+/// vision checks, attacks against have advantage, attacks from have
+/// disadvantage).
+///
+/// We model the heavy obscurement by installing the existing `Blinded`
+/// condition on every combat-active actor inside the burst at cast
+/// time. This is a friend-or-foe install: allies caught in the cloud
+/// suffer the same penalty as enemies (matches RAW, and rewards
+/// thoughtful AoE placement). Concentration-bound on the caster, so
+/// dropping concentration (taking damage, casting another concentration
+/// spell, the spell timer running out) clears the Blinded mark on every
+/// affected actor automatically via the engine's concentration cleanup
+/// pipeline.
+///
+/// Simplification vs RAW: we install at cast time only. A creature that
+/// walks into the cloud later doesn't pick up the Blinded mark, and a
+/// creature that leaves the cloud keeps it until concentration drops.
+/// In practice this is close enough: the cloud's tactical value is the
+/// burst install + sustained denial of the area, and the engine has no
+/// "is this tile fog-covered" terrain layer to query for moves yet.
+pub struct FogCloud {}
+
+impl Action for FogCloud {
+    fn name(&self) -> &str {
+        "fog cloud"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fog", "cloud-spell"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 20-ft sphere = 4-tile radius on the 2.5ft grid (8 tiles
+        // diameter ≈ 20 ft).
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        // Friend-or-foe debuff — the AI's heal-target pipeline shouldn't
+        // pick this as a support cast (`is_heal` is false too), but the
+        // hostile gate matters more for whether the spell hits charm-
+        // immune targets. Mark hostile since the AoE primarily disables
+        // enemies relative to the caster's intent.
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(1)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Don't replace our own concentration on a less-valuable spell;
+        // the AI's concentration pipeline tests every concentration-
+        // bound spell against `validate_input` first.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.is_concentrating())
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        const RADIUS: isize = 4;
+        encounter.log(format!("  fog cloud: heavy obscurement at {}", point));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut conditions: Vec<(usize, Condition)> = Vec::new();
+        for tid in encounter.neutral_burst_targets(caster_id, point, RADIUS) {
+            // Skip targets that are immune to Blinded (treat the
+            // condition table as the source of truth for "can this
+            // actor be obscured?").
+            let immune = encounter
+                .actors
+                .get(&tid)
+                .is_some_and(|a| a.is_immune_to_condition(Condition::Blinded));
+            if immune {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Blinded,
+                // RAW: 1 hour. Concentration caps the practical duration
+                // long before the round timer; 10 rounds keeps the timer
+                // honest even if the caster dies and the cleanup hook
+                // misses a target somehow.
+                timer: ConditionTimer::Rounds(10),
+            }));
+            conditions.push((tid, Condition::Blinded));
+        }
+        // Always start concentration even if no targets caught the burst
+        // — the slot is spent and the fog is on the map; a future patch
+        // that walks creatures into the cloud should pick up the spell
+        // via this concentration mark.
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Fog Cloud", conditions),
+        }));
+        effects
+    }
+}
+
+pub static FOG_CLOUD: LazyLock<FogCloud> = LazyLock::new(|| FogCloud {});
+
+/// Gust of Wind — level-2 evocation (druid / sorcerer / wizard). The
+/// caster summons a 60-ft-long, 10-ft-wide line of strong wind. Every
+/// creature in the line makes a STR save vs the caster's spell DC: on
+/// fail they are pushed 15 ft (6 tiles) away from the caster in the
+/// wind's direction. Save success = no movement, no damage either way
+/// (the spell is pure crowd control / repositioning).
+///
+/// We collapse the line targeting to a `SinglePoint` schema: the picker
+/// picks a tile that defines the wind's direction. Every combat-active
+/// actor whose footprint is within a 3-tile gap of the line between the
+/// caster and the target point (approximate as a 3-tile-radius burst
+/// centered on the *midpoint* between caster and target) makes the save.
+/// The push anchor is the caster's location — failed saves are pushed
+/// away from the caster along the line, which matches RAW intent (the
+/// wind blows outward from the caster).
+///
+/// Concentration-bound on the caster (RAW: 1 minute, re-blown each turn
+/// as a bonus action). We collapse the per-turn re-blow to the cast-time
+/// install: the push fires once, and the concentration anchor holds the
+/// slot until the caster drops it (matches our Sickening Radiance /
+/// Dawn simplification).
+pub struct GustOfWind {}
+
+impl Action for GustOfWind {
+    fn name(&self) -> &str {
+        "gust of wind"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["gust", "gow"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60-ft line = 24 tiles. The target tile defines the far end
+        // of the wind path.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.is_concentrating())
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::PushActor;
+
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+        ]);
+        let caster_loc = caster.location();
+        // Approximate the 60-ft line as a 3-tile burst centered on the
+        // midpoint between caster and target. Picks up everyone roughly
+        // in the wind's path without needing a true line-targeting
+        // schema. The push anchor stays at the caster so failed-save
+        // targets are blown outward along the wind direction.
+        let midpoint = Coordinate::new(
+            (caster_loc.x + point.x) / 2,
+            (caster_loc.y + point.y) / 2,
+        );
+        const RADIUS: isize = 3;
+        // 15 ft = 6 tiles on the 2.5ft grid.
+        const PUSH_TILES: u32 = 6;
+        encounter.log(format!(
+            "  gust of wind: line toward {} (DC {})",
+            point, dc
+        ));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        // Gust of Wind installs no per-target conditions — the push is
+        // the entire effect — so the concentration data's conditions
+        // vec stays empty. We keep the explicit binding so the
+        // StartConcentration call reads symmetric with Fog Cloud and
+        // future single-cast concentration spells.
+        let conditions: Vec<(usize, Condition)> = Vec::new();
+        for tid in encounter.neutral_burst_targets(caster_id, midpoint, RADIUS) {
+            let save = encounter.roll_save(tid, AbilityScoreType::Strength, dc);
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(PushActor {
+                actor_id: tid,
+                from: caster_loc,
+                max_tiles: PUSH_TILES,
+            }));
+        }
+        // Anchor the concentration even if no actor was caught — the
+        // slot was spent and the wind keeps blowing. No per-target
+        // condition install to clean up; the data carries an empty
+        // condition vec.
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Gust of Wind", conditions),
+        }));
+        effects
+    }
+}
+
+pub static GUST_OF_WIND: LazyLock<GustOfWind> = LazyLock::new(|| GustOfWind {});

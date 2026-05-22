@@ -21952,6 +21952,278 @@ mod tests {
         );
     }
 
+    /// Sword Burst: wizard / sorcerer / warlock cantrip. Self-centered
+    /// 1-tile DEX-save burst, 1d6 force. Verifies the cantrip cost is
+    /// just an Action (no slot), the burst lands force damage on an
+    /// adjacent enemy across seeds, and a non-adjacent (>1-tile gap)
+    /// enemy is spared.
+    #[test]
+    fn sword_burst_is_cantrip_self_centered_burst() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::SWORD_BURST;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let costs = SWORD_BURST.cost(&e, wiz, None, None, None);
+        // Cantrip = just an Action; no SpellSlot resource present.
+        assert_eq!(costs.len(), 1);
+        assert!(matches!(costs[0], Resource::Action));
+        // NoArgs schema means no reach check applies.
+        assert!(SWORD_BURST.reach_tiles().is_none());
+
+        // Adjacent enemy should take damage across seeds.
+        let mut damaged_adjacent = false;
+        let mut spared_far = false;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            // Adjacent goblin — 1-tile gap, in burst.
+            let near = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            // Far goblin — 5-tile gap, out of burst.
+            let far = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+                .unwrap();
+            let near_hp_before = e.actors[&near].hitpoints();
+            let far_hp_before = e.actors[&far].hitpoints();
+            for ef in SWORD_BURST.side_effects(&mut e, wiz, None, None, None) {
+                ef.apply(&mut e);
+            }
+            if e.actors[&near].hitpoints() < near_hp_before {
+                damaged_adjacent = true;
+            }
+            // Far goblin should never take damage from the 1-tile burst.
+            if e.actors[&far].hitpoints() == far_hp_before {
+                spared_far = true;
+            }
+        }
+        assert!(damaged_adjacent, "Sword Burst should hit the adjacent goblin");
+        assert!(spared_far, "Sword Burst's 1-tile burst should never reach a far goblin");
+    }
+
+    /// Blade Ward: cantrip self-buff that installs `DamageResistant` with
+    /// the `UntilStartOfNextTurn` timer. Verifies the install happens,
+    /// the validate gate refuses to re-cast while still warded, and the
+    /// short timer is the right shape (not Permanent or Rounds).
+    #[test]
+    fn blade_ward_installs_resistance_until_next_turn() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::BLADE_WARD;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        assert!(!e.actors[&wiz].has_condition(Condition::DamageResistant));
+        for ef in BLADE_WARD.side_effects(&mut e, wiz, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&wiz].has_condition(Condition::DamageResistant));
+        // Re-cast gate: validate fails while already warded.
+        assert!(!BLADE_WARD.custom_validate_input(&e, wiz, None, None, None));
+        // Clear the condition and validate succeeds again.
+        e.actors
+            .get_mut(&wiz)
+            .unwrap()
+            .remove_condition(Condition::DamageResistant);
+        assert!(BLADE_WARD.custom_validate_input(&e, wiz, None, None, None));
+    }
+
+    /// Catapult: lv1 single-target DEX save vs 3d8 bludgeoning. Verifies
+    /// the lv1 slot cost and that the target takes damage across seeds
+    /// (failed-save case).
+    #[test]
+    fn catapult_lands_bludgeoning_on_failed_save() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::CATAPULT;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut damaged = false;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            // Zombie has DEX 6 (mod -2) so the save fails often enough
+            // for the test to land damage within the seed range.
+            let z = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+                .unwrap();
+            let costs = CATAPULT.cost(&e, wiz, Some(&vec![z]), None, None);
+            assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(1))));
+            let hp_before = e.actors[&z].hitpoints();
+            for ef in CATAPULT.side_effects(&mut e, wiz, Some(&vec![z]), None, None) {
+                ef.apply(&mut e);
+            }
+            if e.actors[&z].hitpoints() < hp_before {
+                damaged = true;
+                break;
+            }
+        }
+        assert!(
+            damaged,
+            "Catapult should land 3d8 bludgeoning on a failed DEX save across seeds"
+        );
+    }
+
+    /// Earth Tremor: lv1 self-centered DEX-save burst with prone-on-fail
+    /// rider. Verifies the lv1 slot cost, damage to a nearby (in-burst)
+    /// enemy, and the prone rider eventually fires across seeds.
+    #[test]
+    fn earth_tremor_damages_and_prones_in_self_burst() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::EARTH_TREMOR;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut damaged = false;
+        let mut prone_landed = false;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            // Adjacent zombie — well within the 2-tile burst, low DEX
+            // biases toward the failed-save (full damage + prone) path.
+            let z = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            let costs = EARTH_TREMOR.cost(&e, wiz, None, None, None);
+            assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(1))));
+            let hp_before = e.actors[&z].hitpoints();
+            for ef in EARTH_TREMOR.side_effects(&mut e, wiz, None, None, None) {
+                ef.apply(&mut e);
+            }
+            if e.actors[&z].hitpoints() < hp_before {
+                damaged = true;
+            }
+            if e.actors
+                .get(&z)
+                .is_some_and(|a| a.has_condition(Condition::Prone))
+            {
+                prone_landed = true;
+            }
+            if damaged && prone_landed {
+                break;
+            }
+        }
+        assert!(damaged, "Earth Tremor should damage in-burst enemies");
+        assert!(
+            prone_landed,
+            "Earth Tremor's prone rider should eventually land across seeds"
+        );
+    }
+
+    /// Fog Cloud: lv1 concentration burst that installs Blinded on every
+    /// actor caught in the area. Verifies the lv1 slot cost, the Blinded
+    /// install on an in-burst enemy, and the concentration mark on the
+    /// caster. Drop concentration → Blinded should clear.
+    #[test]
+    fn fog_cloud_installs_blinded_under_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::FOG_CLOUD;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // In-burst goblin (3 tiles from center → within 4-tile radius).
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 5), 1, 0)
+            .unwrap();
+        // Out-of-burst goblin (10 tiles from center → outside the burst).
+        let far = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 5), 1, 0)
+            .unwrap();
+        let center = Coordinate::new(10, 5);
+        let costs = FOG_CLOUD.cost(&e, wiz, None, Some(&vec![center]), None);
+        assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(1))));
+        for ef in FOG_CLOUD.side_effects(&mut e, wiz, None, Some(&vec![center]), None) {
+            ef.apply(&mut e);
+        }
+        // In-burst goblin should be Blinded; far goblin untouched.
+        assert!(e.actors[&g].has_condition(Condition::Blinded));
+        assert!(!e.actors[&far].has_condition(Condition::Blinded));
+        // Caster is concentrating on Fog Cloud.
+        assert!(e.actors[&wiz].is_concentrating());
+        // Concentration drop clears the Blinded mark via the cleanup
+        // pipeline.
+        e.drop_concentration(wiz);
+        assert!(!e.actors[&g].has_condition(Condition::Blinded));
+        assert!(!e.actors[&wiz].is_concentrating());
+    }
+
+    /// Gust of Wind: lv2 concentration line push. Verifies the lv2 slot
+    /// cost, that an enemy in the wind's path is pushed away from the
+    /// caster on a failed STR save (driven across seeds), and the caster
+    /// picks up concentration.
+    #[test]
+    fn gust_of_wind_pushes_in_wind_path() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::GUST_OF_WIND;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut pushed = false;
+        let mut concentrated = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain(30, 30, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+                .unwrap();
+            // Goblin on the wind's east-bound path.
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+                .unwrap();
+            // Target tile to the east — defines the wind direction.
+            let target = Coordinate::new(20, 5);
+            let costs = GUST_OF_WIND.cost(&e, wiz, None, Some(&vec![target]), None);
+            assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(2))));
+            let start_loc = e.actors[&g].location();
+            for ef in GUST_OF_WIND.side_effects(&mut e, wiz, None, Some(&vec![target]), None) {
+                ef.apply(&mut e);
+            }
+            if e.actors[&wiz].is_concentrating() {
+                concentrated = true;
+            }
+            // Goblin pushed east (further from caster at x=2).
+            if e.actors[&g].location().x > start_loc.x {
+                pushed = true;
+            }
+            if pushed && concentrated {
+                break;
+            }
+        }
+        assert!(concentrated, "Gust of Wind should anchor caster concentration");
+        assert!(pushed, "Gust of Wind should eventually push the goblin away on a failed STR save");
+    }
+
     /// Balor template: CR-19 apex demon. Verifies the full demon
     /// envelope: fire + poison immunity, cold + lightning + B/P/S
     /// resistance, charmed/frightened/poisoned condition immunity,

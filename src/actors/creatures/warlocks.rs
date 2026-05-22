@@ -105,6 +105,15 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::THUNDERCLAP);
     actions.push(&*crate::actions::spells::MIND_SPIKE);
     actions.push(&*crate::actions::spells::PSYCHIC_LANCE);
+    // Latest warlock additions (lv0-1):
+    //   - cantrip **Sword Burst**: 1-tile force burst around caster —
+    //     a melee-flavored at-will for warlocks who close into reach.
+    //   - cantrip **Blade Ward**: self damage-resistance till next turn
+    //     (rare defensive cantrip option for the squishy chassis).
+    //   - lv1 **Fog Cloud**: concentration heavy-obscurement burst.
+    actions.push(&*crate::actions::spells::SWORD_BURST);
+    actions.push(&*crate::actions::spells::BLADE_WARD);
+    actions.push(&*crate::actions::spells::FOG_CLOUD);
     CreatureTemplate {
         name: "Warlock",
         // 'L' (uppercase) — distinct from 'l' (Lich), 'W' (Wolf glyph),

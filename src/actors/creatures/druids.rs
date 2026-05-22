@@ -113,6 +113,18 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // concentration lv1 blaster pick that pairs nicely with the
     // existing single-target heals.
     actions.push(&*crate::actions::spells::ICE_KNIFE);
+    // Latest nature-themed lv1-2 additions:
+    //   - lv1 **Earth Tremor**: 10-ft self-centered DEX-save burst.
+    //     1d6 bludgeoning + prone on a fail — the druid's at-cost
+    //     analog to Thunderwave with a permanent prone rider.
+    //   - lv1 **Fog Cloud**: 4-tile concentration burst that blinds
+    //     every actor caught in it.
+    //   - lv2 **Gust of Wind**: line push (6 tiles) on STR-save fail,
+    //     concentration. Complements Plant Growth's entangle by
+    //     repositioning targets *off* the spike-growth tile.
+    actions.push(&*crate::actions::spells::EARTH_TREMOR);
+    actions.push(&*crate::actions::spells::FOG_CLOUD);
+    actions.push(&*crate::actions::spells::GUST_OF_WIND);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

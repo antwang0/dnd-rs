@@ -28,6 +28,15 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*LESSER_RESTORATION);
     actions.push(&*FAERIE_FIRE);
     actions.push(&*SPIKE_GROWTH);
+    // Fog Cloud — lv1 conjuration on the ranger's RAW spell list. The
+    // ranger uses it as a kite-cover: drop a 20-ft sphere of heavy
+    // obscurement on advancing melee threats, then fall back behind it
+    // (the longbow keeps firing — RAW ranged attacks into the cloud
+    // have disadvantage but kite range tends to keep the shooter outside
+    // the burst). Concentration-bound; the ranger's only existing
+    // concentration spell is Hunter's Mark, so the AI picks whichever
+    // is higher leverage when only one slot is free.
+    actions.push(&*crate::actions::spells::FOG_CLOUD);
     CreatureTemplate {
         name: "Ranger",
         glyph: 'R',

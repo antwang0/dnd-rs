@@ -42,6 +42,15 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Gives the bard a lv1 damage-with-control option to round out the
     // existing save-or-suck lineup (Charm Person / Faerie Fire / Sleep).
     actions.push(&*DISSONANT_WHISPERS);
+    // Latest bard additions:
+    //   - cantrip **Blade Ward**: self damage-resistance till next turn.
+    //     A defensive cantrip alternative when the bard is out of slots
+    //     and Vicious Mockery is the only offense.
+    //   - lv1 **Earth Tremor**: self-centered DEX-save bludgeoning +
+    //     prone. The bard gets a clean lv1 AoE option to pair with the
+    //     Dissonant Whispers single-target lane.
+    actions.push(&*crate::actions::spells::BLADE_WARD);
+    actions.push(&*crate::actions::spells::EARTH_TREMOR);
     CreatureTemplate {
         name: "Bard",
         glyph: 'B',

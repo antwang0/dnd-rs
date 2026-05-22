@@ -236,6 +236,28 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     wizard's traditional Slow / Haste concentration picks.
     actions.push(&*crate::actions::spells::ICE_KNIFE);
     actions.push(&*crate::actions::spells::ENLARGE_REDUCE);
+    // Latest cantrip / lv1-2 utility additions:
+    //   - cantrip **Sword Burst**: 1-tile DEX-save force burst around
+    //     caster (force-typed at-will, slots between Thunderclap and
+    //     Acid Splash in the self-centered cantrip lane).
+    //   - cantrip **Blade Ward**: self damage-resistance until next
+    //     turn (defensive cantrip for the squishy wizard chassis).
+    //   - lv1 **Catapult**: single-target 3d8 DEX-save bludgeoning,
+    //     no half on save (punchier than Magic Missile when you need
+    //     a single big hit and the target's DEX is low).
+    //   - lv1 **Earth Tremor**: self-centered 1d6 DEX-save bludgeoning
+    //     + prone, friend-or-foe. Mirrors Tidal Wave at the lv1 tier.
+    //   - lv1 **Fog Cloud**: 4-tile concentration burst that installs
+    //     Blinded (heavy obscurement) on every actor caught in it.
+    //   - lv2 **Gust of Wind**: line push (6 tiles) on a STR save fail,
+    //     concentration. Repositioning tool that pairs with Thunderwave
+    //     for crowd-control routes.
+    actions.push(&*crate::actions::spells::SWORD_BURST);
+    actions.push(&*crate::actions::spells::BLADE_WARD);
+    actions.push(&*crate::actions::spells::CATAPULT);
+    actions.push(&*crate::actions::spells::EARTH_TREMOR);
+    actions.push(&*crate::actions::spells::FOG_CLOUD);
+    actions.push(&*crate::actions::spells::GUST_OF_WIND);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.
