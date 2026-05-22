@@ -227,6 +227,15 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::SNILLOCS_SNOWBALL_SWARM);
     actions.push(&*crate::actions::spells::MIND_SPIKE);
     actions.push(&*crate::actions::spells::PSYCHIC_LANCE);
+    // Newer wizard additions:
+    //   - lv1 **Ice Knife**: ranged attack + neutral-burst cold
+    //     shatter rider, fires hit-or-miss. Round out the lv1 lane
+    //     next to Chromatic Orb / Magic Missile.
+    //   - lv2 **Enlarge / Reduce**: single-target +1d4 weapon damage
+    //     buff (concentration). Plays the support role next to the
+    //     wizard's traditional Slow / Haste concentration picks.
+    actions.push(&*crate::actions::spells::ICE_KNIFE);
+    actions.push(&*crate::actions::spells::ENLARGE_REDUCE);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

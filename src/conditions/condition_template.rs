@@ -607,6 +607,16 @@ pub enum Condition {
     /// 10d4 acid immediately and queues this mark for the second-round
     /// drip. Self-clears via `Rounds(1)` timer.
     VitriolicAcidCoated,
+    /// Enlarged by the Enlarge / Reduce spell (5e level-2 transmutation,
+    /// concentration; the Reduce twin is the symmetric debuff and isn't
+    /// modeled separately here). The target's size category bumps up by
+    /// one and they roll +1d4 extra damage on weapon attacks (read by the
+    /// on-hit rider table). RAW also grants advantage on STR checks and
+    /// STR saves — we surface only the load-bearing damage rider since the
+    /// engine's check / save lanes don't have a per-stat advantage hook
+    /// that other buffs use. Concentration-bound on the caster; dropping
+    /// concentration drops the buff.
+    Enlarged,
 }
 
 impl Condition {
@@ -705,6 +715,7 @@ impl Condition {
             Condition::Shillelaghed => "wielding a shillelagh",
             Condition::EarthenGrasped => "crushed by an earthen grasp",
             Condition::VitriolicAcidCoated => "coated in vitriolic acid",
+            Condition::Enlarged => "enlarged",
         }
     }
 
@@ -776,6 +787,7 @@ impl Condition {
                 | Condition::BanishingSmiting
                 | Condition::ThunderousSmiting
                 | Condition::Shillelaghed
+                | Condition::Enlarged
         )
     }
 

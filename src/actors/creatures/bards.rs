@@ -2,8 +2,8 @@ use crate::actions::class_features::{BARDIC_INSPIRATION, BARDIC_INSPIRATION_TAG}
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::SCIMITAR;
 use crate::actions::spells::{
-    BLESS, CHARM_PERSON, CURE_WOUNDS, FAERIE_FIRE, HEALING_WORD, HEROISM, HOLD_PERSON,
-    MASS_HEALING_WORD, PROTECTION_FROM_EVIL_AND_GOOD, SUGGESTION, VICIOUS_MOCKERY,
+    BLESS, CHARM_PERSON, CURE_WOUNDS, DISSONANT_WHISPERS, FAERIE_FIRE, HEALING_WORD, HEROISM,
+    HOLD_PERSON, MASS_HEALING_WORD, PROTECTION_FROM_EVIL_AND_GOOD, SUGGESTION, VICIOUS_MOCKERY,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size};
@@ -36,6 +36,12 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*SUGGESTION);
     actions.push(&*MASS_HEALING_WORD);
     actions.push(&*PROTECTION_FROM_EVIL_AND_GOOD);
+    // Dissonant Whispers — lv1 enchantment (bard-only RAW). 3d6 psychic
+    // WIS save-for-half + on-fail forced-move flee away from the caster
+    // at the target's full walking speed (routed through `PushActor`).
+    // Gives the bard a lv1 damage-with-control option to round out the
+    // existing save-or-suck lineup (Charm Person / Faerie Fire / Sleep).
+    actions.push(&*DISSONANT_WHISPERS);
     CreatureTemplate {
         name: "Bard",
         glyph: 'B',

@@ -126,6 +126,15 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::SNILLOCS_SNOWBALL_SWARM);
     actions.push(&*crate::actions::spells::MIND_SPIKE);
     actions.push(&*crate::actions::spells::PSYCHIC_LANCE);
+    // Newer sorcerer additions:
+    //   - lv1 **Ice Knife**: ranged attack + neutral-burst cold
+    //     shatter rider, fires hit-or-miss.
+    //   - lv2 **Enlarge / Reduce**: single-target +1d4 weapon damage
+    //     buff (concentration). Routes through the on-hit rider
+    //     table — lets the sorcerer prop up an ally's martial
+    //     output between the bigger-leverage Haste / Polymorph picks.
+    actions.push(&*crate::actions::spells::ICE_KNIFE);
+    actions.push(&*crate::actions::spells::ENLARGE_REDUCE);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

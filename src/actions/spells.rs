@@ -271,6 +271,55 @@ fn enemy_burst_save_for_half(
     (effects, saves)
 }
 
+/// Friend-or-foe variant of `enemy_burst_save_for_half`. Routes through
+/// `neutral_burst_targets` (every combat-active actor in the burst
+/// except the caster) instead of `enemy_burst_targets`, so allies
+/// inside the radius take the save and the damage just like enemies.
+/// Used by spells whose damage is non-discriminating shrapnel — Ice
+/// Knife's shatter, future Acid Splash variants, anything where the
+/// caster's own party is fair game inside the burst footprint.
+///
+/// Returns `(damage_effects, per_target_save_results)` identical in
+/// shape to the enemy-only sibling — same `(tid, passed)` tuple
+/// vector for rider attachment on fail. Centralizes the loop body
+/// instead of having Ice Knife (or any future neutral-burst spell)
+/// hand-roll the same enumerate / roll / log / filter sequence.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn neutral_burst_save_for_half(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    point: Coordinate,
+    radius: isize,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    dice: Dice,
+    damage_type: DamageType,
+    action_name: &str,
+) -> (Vec<Box<dyn ApplicableSideEffect>>, Vec<(usize, bool)>) {
+    let raw = encounter.roll(&dice);
+    encounter.log(format!(
+        "  {}: {}({}) shared {:?}",
+        action_name, dice, raw, damage_type
+    ));
+    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+    let mut saves: Vec<(usize, bool)> = Vec::new();
+    for tid in encounter.neutral_burst_targets(caster_id, point, radius) {
+        let save = encounter.roll_save(tid, save_ability, dc);
+        let passed = save.passed();
+        let dmg = if passed { raw / 2 } else { raw };
+        saves.push((tid, passed));
+        if dmg == 0 {
+            continue;
+        }
+        effects.push(Box::new(DealDamage {
+            actor_id: tid,
+            amount: dmg,
+            damage_type,
+        }));
+    }
+    (effects, saves)
+}
+
 /// Roll a damage burst against a target's saving throw, halving on
 /// success. Returns `(damage, save_passed)` so callers can branch on
 /// the save (e.g. attach a rider only on fail). The roll + save log
@@ -2075,11 +2124,10 @@ impl Action for AcidSplash {
         let raw = encounter.roll(&Dice::new(1, 6));
         encounter.log(format!("  acid splash: 1d6({}) = {} acid", raw, raw));
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for tid in encounter.actors_in_burst(point, 1) {
-            // Caster exempt — they wouldn't splash themselves.
-            if tid == caster_id {
-                continue;
-            }
+        // Route through the shared neutral-burst helper so the caster
+        // exclusion is centralized rather than restated with an inline
+        // `tid == caster_id` skip per spell.
+        for tid in encounter.neutral_burst_targets(caster_id, point, 1) {
             let save = encounter.roll_save(tid, AbilityScoreType::Dexterity, dc);
             if save.passed() {
                 continue;
@@ -15394,12 +15442,11 @@ impl Action for Thunderclap {
         encounter.log(format!("  thunderclap: 1d6({}) = {} thunder", raw, raw));
         // Iterate the 1-tile burst around the caster: every combat-active
         // actor other than the caster gets a CON save. On fail, full
-        // damage; on success, nothing (cantrip).
+        // damage; on success, nothing (cantrip). Routes through the
+        // shared neutral-burst helper rather than re-implementing the
+        // caster-exclusion filter inline.
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for tid in encounter.actors_in_burst(center, 1) {
-            if tid == caster_id {
-                continue;
-            }
+        for tid in encounter.neutral_burst_targets(caster_id, center, 1) {
             let save = encounter.roll_save(tid, AbilityScoreType::Constitution, dc);
             if save.passed() {
                 continue;
@@ -15485,3 +15532,422 @@ impl Action for Guidance {
 }
 
 pub static GUIDANCE: LazyLock<Guidance> = LazyLock::new(|| Guidance {});
+
+/// Dissonant Whispers — level-1 enchantment (bard). The caster whispers
+/// a discordant melody at a single creature within 60 ft (24 tiles): the
+/// target makes a WIS save vs the caster's CHA-based DC. Pass = half;
+/// fail = full 3d6 psychic + the target uses its reaction (if available)
+/// to flee away from the caster at full walking speed without provoking
+/// opportunity attacks. We collapse the reaction-driven flee to the
+/// shared `PushActor` helper — `speed / 5` tiles is the target's full
+/// walking-speed budget, and the forced-move semantics skip opportunity
+/// attacks per RAW.
+///
+/// Note: the spell's "uses its reaction" clause is approximated as
+/// always-on; we don't track per-turn reaction availability for the
+/// target side. The disadvantage on the save for deaf creatures is also
+/// skipped (the engine doesn't gate spells on sound).
+pub struct DissonantWhispers {}
+
+impl Action for DissonantWhispers {
+    fn name(&self) -> &str {
+        "dissonant whispers"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dw", "whispers"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Psychic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(1)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::PushActor;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Bards anchor on CHA; sorcerers / wizards aren't on the spell
+        // list per RAW, but we offer the INT / CHA pick for forward-
+        // compatibility with future multiclass picks.
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Intelligence,
+        ]);
+        let caster_loc = caster.location();
+        let (dmg, passed) = save_for_half_damage(
+            encounter,
+            target_id,
+            AbilityScoreType::Wisdom,
+            dc,
+            Dice::new(3, 6),
+            DamageType::Psychic,
+            "dissonant whispers",
+        );
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        if dmg > 0 {
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: dmg,
+                damage_type: DamageType::Psychic,
+            }));
+        }
+        // RAW: on a failed save, the target uses its reaction to flee
+        // its full walking speed away from the caster, without provoking
+        // opportunity attacks. We approximate "full walking speed" as
+        // `speed_ft / 5` tiles (each tile is 5 ft on this grid).
+        if !passed {
+            let max_tiles =
+                encounter
+                    .actors
+                    .get(&target_id)
+                    .map(|a| (a.speed() / 5.0) as u32)
+                    .unwrap_or(0);
+            if max_tiles > 0 {
+                effects.push(Box::new(PushActor {
+                    actor_id: target_id,
+                    from: caster_loc,
+                    max_tiles,
+                }));
+            }
+        }
+        effects
+    }
+}
+
+pub static DISSONANT_WHISPERS: LazyLock<DissonantWhispers> =
+    LazyLock::new(|| DissonantWhispers {});
+
+/// Ice Knife — level-1 conjuration (druid / sorcerer / wizard). The
+/// caster hurls a shard of magical ice at a creature within 60 ft (24
+/// tiles): a ranged spell attack lands 1d10 piercing on hit. Hit OR
+/// miss, the shard shatters — every creature within 5 ft (1-tile
+/// burst) of the target makes a DEX save vs the caster's spell DC for
+/// 2d6 cold or half. The split — single-target attack roll plus an
+/// always-applied burst at the target's point — is the spell's
+/// signature: even a missed throw still threatens the impact area.
+pub struct IceKnife {}
+
+impl Action for IceKnife {
+    fn name(&self) -> &str {
+        "ice knife"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ik", "iceknife"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Cold]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(1)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Caster ability: best of INT / CHA / WIS so the spell works
+        // for wizard (INT), sorcerer (CHA), and druid (WIS) without
+        // each loadout having to special-case the modifier pick.
+        let cast_ability = [
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+        ]
+        .into_iter()
+        .max_by_key(|a| caster.ability_score(*a))
+        .unwrap_or(AbilityScoreType::Intelligence);
+        let attack_bonus = caster.spell_attack_modifier(cast_ability);
+        let dc = caster.spell_save_dc(cast_ability);
+        // Pull the target's tile up front — the burst centers there
+        // regardless of whether the attack roll hits.
+        let target_loc = encounter
+            .actors
+            .get(&target_id)
+            .map(|a| a.location())
+            .unwrap_or(Coordinate::new(0, 0));
+        // Part 1: ranged spell attack for 1d10 piercing.
+        let mut effects = spell_attack(
+            encounter,
+            caster_id,
+            target_id,
+            "ice knife (shard)",
+            attack_bonus,
+            Dice::new(1, 10),
+            DamageType::Piercing,
+            false,
+        );
+        // Part 2: shatter burst at the target's tile — fires hit OR
+        // miss per RAW. Friend-or-foe save-for-half (no enemy filter —
+        // the shrapnel doesn't discriminate); shared roll across
+        // affected actors.
+        let (burst_effects, _saves) = neutral_burst_save_for_half(
+            encounter,
+            caster_id,
+            target_loc,
+            1,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(2, 6),
+            DamageType::Cold,
+            "ice knife (shatter)",
+        );
+        effects.extend(burst_effects);
+        effects
+    }
+}
+
+pub static ICE_KNIFE: LazyLock<IceKnife> = LazyLock::new(|| IceKnife {});
+
+/// Enlarge / Reduce (Enlarge half) — level-2 transmutation, concentration
+/// (sorcerer / wizard). The caster touches a willing creature; the
+/// target's size category bumps up by one and they roll +1d4 extra
+/// damage on every weapon attack. RAW also gives advantage on STR checks
+/// and saves; we surface only the damage rider since the engine doesn't
+/// have a per-stat-advantage hook on checks / saves. The damage rider
+/// is consumed via the central `on_hit_riders` table — adding a new
+/// rider entry there is one line; the spell here just installs the
+/// `Enlarged` flag and the concentration anchor.
+///
+/// The Reduce half (the symmetric debuff) isn't modeled separately — we
+/// treat the spell as the buff variant since the rider table only
+/// carries one direction of the size-change effect.
+pub struct EnlargeReduce {}
+
+impl Action for EnlargeReduce {
+    fn name(&self) -> &str {
+        "enlarge"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["enlarge-reduce", "er"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Don't burn a slot re-casting on an already-enlarged ally, and
+        // don't re-prime if the caster is already holding concentration
+        // (the buff anchors on the caster's concentration slot — if
+        // a higher-value buff already holds it, skip).
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        if caster.is_concentrating() {
+            return false;
+        }
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| a.is_combat_active() && !a.has_condition(Condition::Enlarged))
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Enlarged,
+                // 10 rounds = 1 minute RAW (concentration cap).
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Enlarge / Reduce",
+                    vec![(target_id, Condition::Enlarged)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static ENLARGE_REDUCE: LazyLock<EnlargeReduce> = LazyLock::new(|| EnlargeReduce {});
+
+/// Destructive Wave — level-5 evocation (paladin). The caster slams the
+/// ground; every enemy within 30 ft (6-tile burst centered on the
+/// caster) makes a CON save vs the caster's CHA-based DC. Pass = half;
+/// fail = full 5d6 thunder + 5d6 radiant + knocked Prone. The mixed
+/// thunder + radiant damage slips past single-type resistance the same
+/// way Flame Strike's fire + radiant does — and the prone-on-fail
+/// crowd-control rider gives the paladin a true mass disable at the
+/// lv5 slot tier. Self-centered burst, no concentration, allies spared
+/// via `enemy_burst_targets`.
+pub struct DestructiveWave {}
+
+impl Action for DestructiveWave {
+    fn name(&self) -> &str {
+        "destructive wave"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dwave", "dw5"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Thunder, DamageType::Radiant]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let center = caster.location();
+        let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
+        // Two halves rolled separately so per-actor resistance lookups
+        // apply independently (Flame Strike-style). The save vector is
+        // produced by the thunder pass; the radiant pass shares the same
+        // save outcome on each target (5e treats both halves as a single
+        // save), so we re-walk the same target list against the second
+        // damage roll without re-rolling saves.
+        let (mut effects, saves) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            center,
+            6,
+            AbilityScoreType::Constitution,
+            dc,
+            Dice::new(5, 6),
+            DamageType::Thunder,
+            "destructive wave (thunder)",
+        );
+        // Radiant half: re-walk the same save list rather than re-rolling.
+        let rad_raw = encounter.roll(&Dice::new(5, 6));
+        encounter.log(format!(
+            "  destructive wave (radiant): 5d6({}) shared Radiant",
+            rad_raw
+        ));
+        for &(tid, passed) in &saves {
+            let dmg = if passed { rad_raw / 2 } else { rad_raw };
+            if dmg > 0 {
+                effects.push(Box::new(DealDamage {
+                    actor_id: tid,
+                    amount: dmg,
+                    damage_type: DamageType::Radiant,
+                }));
+            }
+        }
+        // Prone-on-fail rider — fires only on a failed save. Allies
+        // were already filtered out by the enemy_burst pass, so this
+        // is enemy-only by construction.
+        for &(tid, passed) in &saves {
+            if !passed {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: tid,
+                    condition: Condition::Prone,
+                    timer: ConditionTimer::Permanent,
+                }));
+            }
+        }
+        effects
+    }
+}
+
+pub static DESTRUCTIVE_WAVE: LazyLock<DestructiveWave> =
+    LazyLock::new(|| DestructiveWave {});

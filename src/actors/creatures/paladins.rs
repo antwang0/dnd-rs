@@ -5,8 +5,8 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GREATSWORD;
 use crate::actions::spells::{
     AURA_OF_LIFE, BANISHING_SMITE, BLESS, BLINDING_SMITE, BRANDING_SMITE, COMPELLED_DUEL,
-    CURE_WOUNDS, HEALING_WORD, LESSER_RESTORATION, SEARING_SMITE, SHIELD_OF_FAITH,
-    STAGGERING_SMITE, THUNDEROUS_SMITE, WRATHFUL_SMITE,
+    CURE_WOUNDS, DESTRUCTIVE_WAVE, HEALING_WORD, LESSER_RESTORATION, SEARING_SMITE,
+    SHIELD_OF_FAITH, STAGGERING_SMITE, THUNDEROUS_SMITE, WRATHFUL_SMITE,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size};
@@ -61,6 +61,13 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // the half-caster ramp below it gives the late-game paladin a true
     // mass-save-the-party button alongside the smite primes.
     actions.push(&*AURA_OF_LIFE);
+    // Destructive Wave — lv5 evocation. Self-burst (6-tile radius)
+    // enemy-only CON-save burst dealing 5d6 thunder + 5d6 radiant +
+    // prone-on-fail. Non-concentration — pairs cleanly with whichever
+    // smite the paladin's currently holding. The split damage type
+    // slips past single-element resistance the same way Flame Strike
+    // (fire + radiant) does.
+    actions.push(&*DESTRUCTIVE_WAVE);
     CreatureTemplate {
         name: "Paladin",
         glyph: 'P',

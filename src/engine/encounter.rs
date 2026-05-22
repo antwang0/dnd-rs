@@ -21711,6 +21711,247 @@ mod tests {
         assert!(e.actors[&ally].has_condition(Condition::Inspired));
     }
 
+    /// Dissonant Whispers: bard lv1 single-target WIS save-for-half
+    /// psychic + on-fail forced flee. Verifies the lv1 slot cost and the
+    /// damage path lands. Driven across seeds since the WIS save is a
+    /// d20 — we want the failure case (full damage) to surface at least
+    /// once so the push rider can be observed.
+    #[test]
+    fn dissonant_whispers_damages_and_pushes_on_fail() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::DISSONANT_WHISPERS;
+        use crate::actors::creatures::bards::BARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut pushed = false;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain(30, 30, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let bard = e
+                .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+                .unwrap();
+            let costs = DISSONANT_WHISPERS.cost(&e, bard, Some(&vec![g]), None, None);
+            assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(1))));
+            let start_loc = e.actors[&g].location();
+            for ef in DISSONANT_WHISPERS.side_effects(
+                &mut e,
+                bard,
+                Some(&vec![g]),
+                None,
+                None,
+            ) {
+                ef.apply(&mut e);
+            }
+            // Looking for: goblin's x moved further from the bard (i.e.
+            // got pushed east, away from x=2). y stays roughly the same.
+            if e.actors[&g].location().x > start_loc.x {
+                pushed = true;
+                break;
+            }
+        }
+        assert!(
+            pushed,
+            "Dissonant Whispers should eventually push the goblin away on a failed WIS save"
+        );
+    }
+
+    /// Ice Knife: sorcerer / wizard / druid lv1 ranged spell attack +
+    /// neutral-burst shatter rider. Verifies the lv1 slot cost and that
+    /// the goblin takes *some* damage across seeds — even on a missed
+    /// attack roll the burst should land cold damage on a failed DEX
+    /// save.
+    #[test]
+    fn ice_knife_damages_target_or_burst() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::ICE_KNIFE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut damaged = false;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+                .unwrap();
+            let costs = ICE_KNIFE.cost(&e, wiz, Some(&vec![g]), None, None);
+            assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(1))));
+            let hp_before = e.actors[&g].hitpoints();
+            for ef in ICE_KNIFE.side_effects(&mut e, wiz, Some(&vec![g]), None, None) {
+                ef.apply(&mut e);
+            }
+            if e.actors[&g].hitpoints() < hp_before {
+                damaged = true;
+                break;
+            }
+        }
+        assert!(
+            damaged,
+            "Ice Knife should land damage across seeds via the shard hit or the shatter burst"
+        );
+    }
+
+    /// Ice Knife shatter burst: verifies that a missed-attack still drops
+    /// the cold burst on a failed-DEX goblin. Bracket the test around an
+    /// always-low DEX target (zombie has DEX 6, save mod -2) so the
+    /// fixed-DC arithmetic biases the burst toward landing. We just need
+    /// the burst behavior — the attack roll itself can hit or miss.
+    #[test]
+    fn ice_knife_burst_hits_adjacent_targets() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::ICE_KNIFE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        // Place a second enemy adjacent to the first — the shatter burst
+        // (1-tile radius) should sweep both. Even if the attack misses
+        // the primary, the burst still fires per RAW.
+        let mut burst_landed = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let primary = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+                .unwrap();
+            let neighbor = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(9, 2), 1, 0)
+                .unwrap();
+            let neighbor_hp = e.actors[&neighbor].hitpoints();
+            for ef in
+                ICE_KNIFE.side_effects(&mut e, wiz, Some(&vec![primary]), None, None)
+            {
+                ef.apply(&mut e);
+            }
+            // Neighbor took damage only from the burst (the attack roll
+            // is against `primary`, not the neighbor).
+            if e.actors[&neighbor].hitpoints() < neighbor_hp {
+                burst_landed = true;
+                break;
+            }
+        }
+        assert!(
+            burst_landed,
+            "Ice Knife shatter burst should eventually hit the adjacent zombie"
+        );
+    }
+
+    /// Enlarge/Reduce (Enlarge): single-target +1d4 weapon damage rider
+    /// via the on_hit_riders table, concentration. Verifies the lv2 slot
+    /// cost, the Enlarged condition installs on the ally, and the caster
+    /// picks up concentration. Skip re-cast gate: a second cast should
+    /// fail validation while the target is already Enlarged.
+    #[test]
+    fn enlarge_installs_buff_and_concentration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::ENLARGE_REDUCE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        let costs = ENLARGE_REDUCE.cost(&e, wiz, Some(&vec![ally]), None, None);
+        assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(2))));
+        // Pre-state: target not yet enlarged, caster not concentrating.
+        assert!(!e.actors[&ally].has_condition(Condition::Enlarged));
+        assert!(!e.actors[&wiz].is_concentrating());
+        for ef in ENLARGE_REDUCE.side_effects(&mut e, wiz, Some(&vec![ally]), None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&ally].has_condition(Condition::Enlarged));
+        assert!(e.actors[&wiz].is_concentrating());
+        // Re-cast gate: validate fails on already-enlarged target.
+        assert!(!ENLARGE_REDUCE.custom_validate_input(
+            &e,
+            wiz,
+            Some(&vec![ally]),
+            None,
+            None
+        ));
+    }
+
+    /// Destructive Wave: paladin lv5 enemy-only self-burst with dual
+    /// thunder+radiant damage + prone-on-fail. Verifies the lv5 slot
+    /// cost, the burst hits an enemy goblin, and an ally inside the
+    /// radius is spared (the `enemy_burst_targets` filter).
+    #[test]
+    fn destructive_wave_hits_enemies_only_with_prone_rider() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::DESTRUCTIVE_WAVE;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut prone_landed = false;
+        let mut enemy_damaged = false;
+        let mut ally_spared = false;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let pala = e
+                .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            // Goblin enemy 2 tiles east — well within the 6-tile burst.
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+                .unwrap();
+            // Cleric ally 1 tile west — also within the burst, should
+            // be spared by the enemy-only filter.
+            let cleric_ally = e
+                .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(4, 5), 0, 1)
+                .unwrap();
+            let costs = DESTRUCTIVE_WAVE.cost(&e, pala, None, None, None);
+            assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(5))));
+            let g_hp_before = e.actors[&g].hitpoints();
+            let ally_hp_before = e.actors[&cleric_ally].hitpoints();
+            for ef in DESTRUCTIVE_WAVE.side_effects(&mut e, pala, None, None, None) {
+                ef.apply(&mut e);
+            }
+            if e.actors[&g].hitpoints() < g_hp_before {
+                enemy_damaged = true;
+            }
+            if e.actors[&cleric_ally].hitpoints() == ally_hp_before {
+                ally_spared = true;
+            }
+            if e.actors.get(&g).is_some_and(|a| a.has_condition(Condition::Prone)) {
+                prone_landed = true;
+            }
+            if enemy_damaged && ally_spared && prone_landed {
+                break;
+            }
+        }
+        assert!(enemy_damaged, "Destructive Wave should damage the enemy goblin");
+        assert!(ally_spared, "Destructive Wave's enemy-only filter should spare the ally");
+        assert!(
+            prone_landed,
+            "Destructive Wave's prone-on-fail rider should eventually land across seeds"
+        );
+    }
+
     /// Balor template: CR-19 apex demon. Verifies the full demon
     /// envelope: fire + poison immunity, cold + lightning + B/P/S
     /// resistance, charmed/frightened/poisoned condition immunity,

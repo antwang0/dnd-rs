@@ -422,7 +422,7 @@ pub struct SmiteFollowUp {
 /// than declared `const` because `Dice::new` isn't a const fn — but the
 /// runtime cost is one stack-allocated array of plain data, so the
 /// indirection is free.
-fn on_hit_riders() -> [OnHitRider; 16] {
+fn on_hit_riders() -> [OnHitRider; 17] {
     [
         OnHitRider {
             condition: Condition::CrusadersMantled,
@@ -702,6 +702,24 @@ fn on_hit_riders() -> [OnHitRider; 16] {
                 label: "thunderous smite prone",
                 hp_threshold: None,
             }),
+        },
+        // 5e Enlarge / Reduce (Enlarge half) — 2nd-level transmutation,
+        // concentration. The holder rolls +1d4 bonus damage on every
+        // weapon attack hit (RAW: melee or ranged). Persistent — the
+        // rider doesn't consume_on_trigger; it stays up until the
+        // caster drops concentration. Damage type matches the weapon
+        // (no fixed magical type) — we model with Bludgeoning as a
+        // baseline since the engine doesn't carry per-attack weapon
+        // typing into the rider table. Slots between Crusader's Mantle
+        // (1d4 radiant) and Spirit Shroud (1d8 cold) in the rider table.
+        OnHitRider {
+            condition: Condition::Enlarged,
+            dice: Dice::new(1, 4),
+            label: "enlarge",
+            damage_type: DamageType::Bludgeoning,
+            melee_only: false,
+            consume_on_trigger: false,
+            follow_up: None,
         },
     ]
 }

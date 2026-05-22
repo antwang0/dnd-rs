@@ -107,6 +107,12 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // inspired ally. Slots cleanly into the druid's bonus-cantrip lane
     // next to Shillelagh.
     actions.push(&*crate::actions::spells::GUIDANCE);
+    // Ice Knife — lv1 conjuration (druid / sorcerer / wizard). Ranged
+    // spell attack 1d10 piercing + DEX-save 2d6 cold burst at the
+    // target's tile (fires hit OR miss). Gives the druid a non-
+    // concentration lv1 blaster pick that pairs nicely with the
+    // existing single-target heals.
+    actions.push(&*crate::actions::spells::ICE_KNIFE);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',
