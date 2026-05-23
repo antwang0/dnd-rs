@@ -694,7 +694,6 @@ impl EncounterInstance {
         dc: i32,
     ) -> crate::engine::saves::SaveOutcome {
         use crate::engine::saves::SaveOutcome;
-        use crate::engine::util::modifier_from_score;
 
         // Paralyzed / Stunned auto-fail STR & DEX saves (5e). Log it so
         // the player can see why the save tanked.
@@ -737,7 +736,7 @@ impl EncounterInstance {
         } else {
             0
         };
-        let modifier = modifier_from_score(actor.ability_score(ability))
+        let modifier = actor.ability_modifier(ability)
             + item_bonus
             + buff
             + cond_save_bonus
@@ -22549,15 +22548,14 @@ mod tests {
     fn best_spell_attack_modifier_picks_highest_ability() {
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::engine::types::AbilityScoreType;
-        use crate::engine::util::modifier_from_score;
 
         let mut e = ei_with_terrain(20, 20, &[]);
         let wiz = e
             .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
             .unwrap();
         let w = &e.actors[&wiz];
-        let int_mod = modifier_from_score(w.ability_score(AbilityScoreType::Intelligence));
-        let cha_mod = modifier_from_score(w.ability_score(AbilityScoreType::Charisma));
+        let int_mod = w.ability_modifier(AbilityScoreType::Intelligence);
+        let cha_mod = w.ability_modifier(AbilityScoreType::Charisma);
         let expected = w.proficiency_bonus() + int_mod.max(cha_mod);
         let got = w.best_spell_attack_modifier([
             AbilityScoreType::Intelligence,

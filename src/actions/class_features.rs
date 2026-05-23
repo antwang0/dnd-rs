@@ -559,12 +559,11 @@ impl Action for LayOnHands {
             return Vec::new();
         };
         use crate::engine::types::AbilityScoreType;
-        use crate::engine::util::modifier_from_score;
         let Some(actor) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
         let level = actor.level();
-        let cha_mod = modifier_from_score(actor.ability_score(AbilityScoreType::Charisma));
+        let cha_mod = actor.ability_modifier(AbilityScoreType::Charisma);
         // 5 HP per paladin level + CHA modifier. At level 3 with CHA 16
         // (+3), that's 18 HP — beats Cure Wounds at 1d8+3 (avg 7) and
         // makes the once-per-rest gate worth the slot.

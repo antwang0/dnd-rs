@@ -13,7 +13,6 @@ use crate::{
         encounter::EncounterInstance,
         side_effects::{ApplicableSideEffect, DealDamage, Resource},
         types::{AbilityScoreType, Coordinate, DamageType},
-        util::modifier_from_score,
     },
 };
 
@@ -41,10 +40,9 @@ pub fn simple_weapon_attack(
     let Some(caster) = encounter.actors.get(&caster_id) else {
         return Vec::new();
     };
-    let attack_mod =
-        modifier_from_score(caster.ability_score(attack_ability)) + caster.proficiency_bonus();
+    let attack_mod = caster.ability_modifier(attack_ability) + caster.proficiency_bonus();
     let damage_mod = damage_ability
-        .map(|a| modifier_from_score(caster.ability_score(a)))
+        .map(|a| caster.ability_modifier(a))
         .unwrap_or(0);
     resolve_attack(
         encounter,
@@ -1192,7 +1190,7 @@ impl Action for LifeDrain {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let attack_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength))
+        let attack_mod = caster.ability_modifier(AbilityScoreType::Strength)
             + caster.proficiency_bonus();
         // resolve_attack_outcome returns the queued DealDamage plus the
         // resolved damage value — we mirror that value into the max-HP
@@ -1268,7 +1266,7 @@ impl Action for VampiricBite {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let str_mod = caster.ability_modifier(AbilityScoreType::Strength);
         let attack_mod = str_mod + caster.proficiency_bonus();
         // Piercing portion goes through the shared resolver; we layer the
         // necrotic rider and self-heal off of the hit/damage result.
@@ -2047,7 +2045,6 @@ impl Action for WorgBite {
         use crate::conditions::{Condition, ConditionTimer};
         use crate::engine::attack::{AttackParams, resolve_attack_outcome};
         use crate::engine::side_effects::ApplyCondition;
-        use crate::engine::util::modifier_from_score;
 
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
@@ -2055,7 +2052,7 @@ impl Action for WorgBite {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let str_mod = caster.ability_modifier(AbilityScoreType::Strength);
         let prof = caster.proficiency_bonus();
         let attack_bonus = str_mod + prof;
         let (mut effects, dealt) = resolve_attack_outcome(
@@ -2216,9 +2213,9 @@ impl Action for WightLifeDrain {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let attack_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength))
+        let attack_mod = caster.ability_modifier(AbilityScoreType::Strength)
             + caster.proficiency_bonus();
-        let damage_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let damage_mod = caster.ability_modifier(AbilityScoreType::Strength);
         let (mut effects, damage) = crate::engine::attack::resolve_attack_outcome(
             encounter,
             AttackParams {
@@ -2499,9 +2496,9 @@ impl Action for MummyRottingFist {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let attack_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength))
+        let attack_mod = caster.ability_modifier(AbilityScoreType::Strength)
             + caster.proficiency_bonus();
-        let damage_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let damage_mod = caster.ability_modifier(AbilityScoreType::Strength);
         let (mut effects, damage) = crate::engine::attack::resolve_attack_outcome(
             encounter,
             AttackParams {
@@ -2754,9 +2751,9 @@ impl Action for YetiClaws {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let attack_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength))
+        let attack_mod = caster.ability_modifier(AbilityScoreType::Strength)
             + caster.proficiency_bonus();
-        let damage_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let damage_mod = caster.ability_modifier(AbilityScoreType::Strength);
         let (mut effects, damage) = crate::engine::attack::resolve_attack_outcome(
             encounter,
             AttackParams {
@@ -3329,9 +3326,9 @@ impl Action for DragonBite {
             return Vec::new();
         };
         let attack_mod =
-            modifier_from_score(caster.ability_score(AbilityScoreType::Strength))
+            caster.ability_modifier(AbilityScoreType::Strength)
                 + caster.proficiency_bonus();
-        let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let str_mod = caster.ability_modifier(AbilityScoreType::Strength);
         let (mut effects, damage) = crate::engine::attack::resolve_attack_outcome(
             encounter,
             AttackParams {
@@ -3418,7 +3415,7 @@ impl Action for LichParalyzingTouch {
         };
         // Lich uses INT for attack mod (caster bonus action stat).
         let attack_mod =
-            modifier_from_score(caster.ability_score(AbilityScoreType::Intelligence))
+            caster.ability_modifier(AbilityScoreType::Intelligence)
                 + caster.proficiency_bonus();
         let (mut effects, damage) = crate::engine::attack::resolve_attack_outcome(
             encounter,
@@ -3746,7 +3743,7 @@ impl Action for CouatlBite {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let str_mod = caster.ability_modifier(AbilityScoreType::Strength);
         let attack_mod = str_mod + caster.proficiency_bonus();
         // Primary bite: standard weapon attack roll.
         let mut effects = resolve_attack(
@@ -4048,9 +4045,9 @@ impl Action for TarrasqueTail {
             return Vec::new();
         };
         let attack_mod =
-            modifier_from_score(caster.ability_score(AbilityScoreType::Strength))
+            caster.ability_modifier(AbilityScoreType::Strength)
                 + caster.proficiency_bonus();
-        let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let str_mod = caster.ability_modifier(AbilityScoreType::Strength);
         let (mut effects, dmg) = crate::engine::attack::resolve_attack_outcome(
             encounter,
             AttackParams {
@@ -4158,9 +4155,9 @@ impl Action for SolarLongsword {
             return Vec::new();
         };
         let attack_mod =
-            modifier_from_score(caster.ability_score(AbilityScoreType::Strength))
+            caster.ability_modifier(AbilityScoreType::Strength)
                 + caster.proficiency_bonus();
-        let damage_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let damage_mod = caster.ability_modifier(AbilityScoreType::Strength);
         // Roll the swing through the standard pipeline so cover / mirror
         // image / sanctuary all apply, then layer the radiant rider as
         // a separate DealDamage so the target's per-type modifiers
@@ -4325,7 +4322,7 @@ impl Action for MindFlayerTentacles {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let str_mod = caster.ability_modifier(AbilityScoreType::Strength);
         let attack_mod = str_mod + caster.proficiency_bonus();
         let mut effects = resolve_attack(
             encounter,
@@ -4399,7 +4396,7 @@ impl Action for ErinyesLongsword {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let str_mod = caster.ability_modifier(AbilityScoreType::Strength);
         let attack_mod = str_mod + caster.proficiency_bonus();
         let mut effects = resolve_attack(
             encounter,
@@ -5112,7 +5109,7 @@ impl Action for DeathKnightLongsword {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let str_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let str_mod = caster.ability_modifier(AbilityScoreType::Strength);
         let prof = caster.proficiency_bonus();
         // First, resolve the slashing core hit. We re-use resolve_attack
         // for the d20 + log line and pull out the resulting damage to

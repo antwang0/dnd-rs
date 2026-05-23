@@ -1582,7 +1582,7 @@ impl ActorInstance {
     /// STR-locked for melee weapons; this lets callers pick the right
     /// stat for spell attacks (INT for wizard, WIS for cleric, etc.).
     pub fn ability_attack_bonus(&self, ability: AbilityScoreType) -> i32 {
-        modifier_from_score(self.ability_score(ability)) + self.proficiency_bonus()
+        self.ability_modifier(ability) + self.proficiency_bonus()
     }
 
     /// Record that `helper_id` Helped this actor against `target_id`.

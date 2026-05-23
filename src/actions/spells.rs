@@ -16,7 +16,6 @@ use crate::{
             StartConcentration,
         },
         types::{AbilityScoreType, Coordinate, DamageType},
-        util::modifier_from_score,
     },
 };
 
@@ -561,7 +560,7 @@ impl Action for HealSpell {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let ability_mod = modifier_from_score(caster.ability_score(self.ability));
+        let ability_mod = caster.ability_modifier(self.ability);
         let raw = encounter.roll(&self.heal_dice) as i32;
         let amount = (raw + ability_mod).max(1) as u32;
         encounter.log(format!(
@@ -808,7 +807,7 @@ impl Action for CureWounds {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let wis_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
+        let wis_mod = caster.ability_modifier(AbilityScoreType::Wisdom);
         let raw = encounter.roll(&Dice::new(1, 8)) as i32;
         let amount = (raw + wis_mod).max(1) as u32;
         encounter.log(format!(
@@ -2310,7 +2309,7 @@ impl Action for SpiritualWeapon {
             return Vec::new();
         };
         let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Wisdom);
-        let wis_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
+        let wis_mod = caster.ability_modifier(AbilityScoreType::Wisdom);
         spell_attack_with_bonus(
             encounter,
             caster_id,
@@ -3024,7 +3023,7 @@ impl Action for Heroism {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let amt = modifier_from_score(caster.ability_score(AbilityScoreType::Charisma)).max(1) as u32;
+        let amt = caster.ability_modifier(AbilityScoreType::Charisma).max(1) as u32;
         vec![
             Box::new(GainTempHp {
                 actor_id: target_id,
@@ -3099,7 +3098,7 @@ impl Action for MassHealingWord {
         let caster_team = caster.team();
         let caster_loc = caster.location();
         let caster_size = get_tiles_from_size(caster.size());
-        let wis_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
+        let wis_mod = caster.ability_modifier(AbilityScoreType::Wisdom);
         let raw = encounter.roll(&Dice::new(1, 4)) as i32;
         let amount = (raw + wis_mod).max(1) as u32;
         encounter.log(format!(
@@ -5119,7 +5118,7 @@ impl Action for MassCureWounds {
             return Vec::new();
         };
         let caster_team = caster.team();
-        let wis_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
+        let wis_mod = caster.ability_modifier(AbilityScoreType::Wisdom);
         let raw = encounter.roll(&Dice::new(3, 8)) as i32;
         let amount = (raw + wis_mod).max(1) as u32;
         encounter.log(format!(
@@ -7495,7 +7494,7 @@ impl Action for PrayerOfHealing {
             return Vec::new();
         };
         let caster_loc = caster.location();
-        let wis_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
+        let wis_mod = caster.ability_modifier(AbilityScoreType::Wisdom);
         // 30-ft range centered on the caster — reuse the burst helper
         // with the caster's own footprint as the anchor so distance math
         // matches every other ally-burst spell.
@@ -9742,7 +9741,7 @@ impl Action for GreaterRestoration {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let mod_bonus = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
+        let mod_bonus = caster.ability_modifier(AbilityScoreType::Wisdom);
         let raw = encounter.roll(&Dice::new(4, 8));
         let amount = (raw as i32 + mod_bonus).max(0) as u32;
         encounter.log(format!(
@@ -11764,7 +11763,7 @@ impl Action for MagicStone {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let wis_mod = modifier_from_score(caster.ability_score(AbilityScoreType::Wisdom));
+        let wis_mod = caster.ability_modifier(AbilityScoreType::Wisdom);
         let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Wisdom);
         // 1d6 + WIS modifier on hit (RAW). Damage type is bludgeoning —
         // a stone, not a magical force projectile — so per-target

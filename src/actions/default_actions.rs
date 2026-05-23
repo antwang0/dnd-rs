@@ -472,7 +472,7 @@ impl Action for Shove {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = 10 + crate::engine::util::modifier_from_score(caster.ability_score(AbilityScoreType::Strength));
+        let dc = 10 + caster.ability_modifier(AbilityScoreType::Strength);
         let save = encounter.roll_save(target_id, AbilityScoreType::Strength, dc);
         if save.passed() {
             encounter.log("  shove: target stays upright");

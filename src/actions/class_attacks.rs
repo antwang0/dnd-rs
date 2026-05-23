@@ -13,7 +13,7 @@ use crate::{
         encounter::EncounterInstance,
         side_effects::{ApplicableSideEffect, DealDamage},
         types::{Coordinate, DamageType},
-        util::{footprint_chebyshev, get_tiles_from_size, modifier_from_score},
+        util::{footprint_chebyshev, get_tiles_from_size},
     },
 };
 
@@ -59,8 +59,7 @@ impl Action for RogueShortsword {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dex_mod =
-            modifier_from_score(caster.ability_score(AbilityScoreType::Dexterity));
+        let dex_mod = caster.ability_modifier(AbilityScoreType::Dexterity);
         let attack_bonus = dex_mod;
         let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
         else {
