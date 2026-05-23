@@ -17629,3 +17629,78 @@ impl Action for PrimalSavagery {
 }
 
 pub static PRIMAL_SAVAGERY: LazyLock<PrimalSavagery> = LazyLock::new(|| PrimalSavagery {});
+
+/// Sapping Sting — cantrip (necromancy; sorcerer / wizard, TCoE).
+/// Range 30 ft. Target makes a CON save vs the caster's INT/CHA-based
+/// spell save DC: on fail, 1d4 necrotic AND knocked Prone. On success,
+/// nothing (cantrips don't half-on-save).
+///
+/// Slots between Toll the Dead (necrotic save-or-suck) and Word of
+/// Radiance (radiant cleric AoE) as a low-cost CC cantrip: the prone
+/// rider gives front-line allies advantage on their next melee swing
+/// at the target — a chunkier payoff than the headline 1d4 die.
+pub struct SappingSting {}
+
+impl Action for SappingSting {
+    fn name(&self) -> &str {
+        "sapping sting"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ss", "sap"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Necrotic]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+        ]);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        let raw = encounter.roll(&Dice::new(1, 4));
+        encounter.log(format!(
+            "  sapping sting: 1d4({}) = {} necrotic + prone",
+            raw, raw
+        ));
+        vec![
+            Box::new(DealDamage {
+                actor_id: target_id,
+                amount: raw,
+                damage_type: DamageType::Necrotic,
+            }),
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Prone,
+                timer: ConditionTimer::Permanent,
+            }),
+        ]
+    }
+}
+
+pub static SAPPING_STING: LazyLock<SappingSting> = LazyLock::new(|| SappingSting {});

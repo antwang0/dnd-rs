@@ -23000,6 +23000,73 @@ mod tests {
         );
     }
 
+    /// Sapping Sting: Tasha's necromancy cantrip. On a failed CON save,
+    /// the target takes 1d4 necrotic and is knocked Prone. Verifies the
+    /// cantrip costs no slot, declares necrotic damage typing, and on
+    /// at least one seed (across a sweep) the goblin is both damaged
+    /// and prone after the cast.
+    #[test]
+    fn sapping_sting_damages_and_prones_on_failed_save() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::SAPPING_STING;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+        use crate::engine::types::DamageType;
+
+        // Cost / typing shape.
+        {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+                .unwrap();
+            let costs = SAPPING_STING.cost(&e, wiz, Some(&vec![g]), None, None);
+            assert!(costs.iter().any(|c| matches!(c, Resource::Action)));
+            assert!(
+                !costs.iter().any(|c| matches!(c, Resource::SpellSlot(_))),
+                "sapping sting is a cantrip — no slot consumed"
+            );
+            assert!(SAPPING_STING.damage_types().contains(&DamageType::Necrotic));
+        }
+
+        let mut proned_on_hit = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+                .unwrap();
+            let hp_before = e.actors[&g].hitpoints();
+            for ef in SAPPING_STING.side_effects(&mut e, wiz, Some(&vec![g]), None, None) {
+                ef.apply(&mut e);
+            }
+            let took_damage = e.actors[&g].hitpoints() < hp_before;
+            let is_prone = e.actors[&g].has_condition(Condition::Prone);
+            // Both should always travel together — on a save fail the
+            // spell applies damage AND prone in a single batch.
+            assert_eq!(
+                took_damage, is_prone,
+                "sapping sting damage and prone should land together (or not at all)"
+            );
+            if took_damage && is_prone {
+                proned_on_hit = true;
+                break;
+            }
+        }
+        assert!(
+            proned_on_hit,
+            "sapping sting should knock the goblin prone on at least one failed save across seeds"
+        );
+    }
+
     /// Verifies `self_concentration_buff_effects` produces the expected
     /// 2-effect chain (ApplyCondition + StartConcentration with the
     /// condition tagged for cleanup) by casting `Blur` (the first spell

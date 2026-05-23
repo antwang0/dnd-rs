@@ -282,6 +282,11 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // pairs with the existing Booming Blade lane for a melee-cantrip
     // option that exploits the AI's focus-fire heuristic.
     actions.push(&*crate::actions::spells::GREEN_FLAME_BLADE);
+    // Sapping Sting — Tasha's necromancy cantrip: 1d4 necrotic + prone
+    // on a CON-save fail (30 ft range). The prone rider sets up melee
+    // allies' next swing at advantage — punchier than Toll the Dead
+    // when there's a fighter / paladin nearby to capitalize.
+    actions.push(&*crate::actions::spells::SAPPING_STING);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

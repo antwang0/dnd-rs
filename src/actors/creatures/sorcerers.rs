@@ -167,6 +167,11 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // primary stat — Booming Blade is INT-only, so this slots into the
     // CHA-caster melee lane that was previously dead.
     actions.push(&*crate::actions::spells::GREEN_FLAME_BLADE);
+    // Sapping Sting — Tasha's necromancy cantrip: 1d4 necrotic + prone
+    // on a CON-save fail (30 ft range). Sorcerer pickup since the spell
+    // is sorcerer / wizard in RAW; the prone rider sets up the
+    // sorcerer's next-turn ranged spells at advantage.
+    actions.push(&*crate::actions::spells::SAPPING_STING);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.
