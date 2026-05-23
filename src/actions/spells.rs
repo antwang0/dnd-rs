@@ -17462,3 +17462,177 @@ impl Action for Telekinetic {
 }
 
 pub static TELEKINETIC: LazyLock<Telekinetic> = LazyLock::new(|| Telekinetic {});
+
+/// Green-Flame Blade — cantrip (evocation; sorcerer / warlock / wizard).
+/// Companion to Booming Blade: make a melee spell attack against a target
+/// within 5 ft; on hit deal 1d8 fire to the primary target AND a leap of
+/// green flame burns one creature within 5 ft of the primary target for
+/// `INT/CHA-mod` fire damage (caster's spellcasting modifier, minimum 0).
+/// We pick the "leap" target as the lowest-HP enemy adjacent to the
+/// primary — matches the AI's focus-fire heuristic so the cantrip isn't
+/// wasted poking a fresh tank when there's a wounded neighbor.
+///
+/// Misses do nothing (no leap, no primary damage). The leap requires LOS
+/// from the caster to the secondary per RAW; we approximate by simply
+/// requiring footprint-adjacency to the primary, which is the only
+/// geometric prerequisite the spell actually depends on.
+pub struct GreenFlameBlade {}
+
+impl Action for GreenFlameBlade {
+    fn name(&self) -> &str {
+        "green-flame blade"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["gfb", "greenflame"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Spell list spans INT (wizard) / CHA (sorcerer, warlock) — pick
+        // the best so any of the three classes scales cleanly without
+        // per-loadout special-casing.
+        let ability = caster.best_spellcasting_ability([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+        ]);
+        let attack_bonus = caster.spell_attack_modifier(ability);
+        let leap_bonus = caster.ability_modifier(ability).max(0);
+        // 1d8 fire on the touch itself — cantrip "weapon" damage at base
+        // scaling, matching Booming Blade's headline die.
+        let primary_loc = encounter.actors.get(&target_id).map(|a| a.location());
+        let mut effects = spell_attack(
+            encounter,
+            caster_id,
+            target_id,
+            "green-flame blade",
+            attack_bonus,
+            Dice::new(1, 8),
+            DamageType::Fire,
+            true,
+        );
+        // Leap only on a hit (empty effect list = miss).
+        if effects.is_empty() || leap_bonus == 0 {
+            return effects;
+        }
+        // Find a secondary target: enemy of the caster, adjacent to the
+        // primary's footprint, not the primary itself, not the caster.
+        // Picks the lowest-HP candidate so the leap finishes wounded
+        // foes rather than poking healthy ones.
+        let Some(primary_loc) = primary_loc else {
+            return effects;
+        };
+        let caster_team = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.team())
+            .unwrap_or(0);
+        let mut best: Option<(u32, usize)> = None;
+        // 1-tile leap radius = the 8 tiles around the primary; we route
+        // through the burst helper so footprint-aware adjacency math is
+        // shared with the rest of the engine.
+        for tid in encounter.actors_in_burst(primary_loc, 1) {
+            if tid == caster_id || tid == target_id {
+                continue;
+            }
+            let Some(a) = encounter.actors.get(&tid) else {
+                continue;
+            };
+            if a.team() == caster_team {
+                continue;
+            }
+            let hp = a.hitpoints();
+            if best.map(|(bhp, _)| hp < bhp).unwrap_or(true) {
+                best = Some((hp, tid));
+            }
+        }
+        let Some((_, leap_id)) = best else {
+            return effects;
+        };
+        encounter.log(format!(
+            "  green-flame blade: flame leaps for {} Fire",
+            leap_bonus
+        ));
+        effects.push(Box::new(DealDamage {
+            actor_id: leap_id,
+            amount: leap_bonus as u32,
+            damage_type: DamageType::Fire,
+        }));
+        effects
+    }
+}
+
+pub static GREEN_FLAME_BLADE: LazyLock<GreenFlameBlade> = LazyLock::new(|| GreenFlameBlade {});
+
+/// Primal Savagery — cantrip (transmutation; druid). Melee spell attack
+/// for 1d10 acid damage. The druid bites/claws the target with a brief
+/// surge of bestial form. Uses WIS for the attack modifier — the druid
+/// is the only class with this on its list per RAW. No save, no slot,
+/// no concentration. Crit-doubles the dice via the shared spell-attack
+/// pipeline.
+pub struct PrimalSavagery {}
+
+impl Action for PrimalSavagery {
+    fn name(&self) -> &str {
+        "primal savagery"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ps", "savagery"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Acid]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Wisdom);
+        spell_attack(
+            encounter,
+            caster_id,
+            target_id,
+            "primal savagery",
+            attack_bonus,
+            Dice::new(1, 10),
+            DamageType::Acid,
+            true,
+        )
+    }
+}
+
+pub static PRIMAL_SAVAGERY: LazyLock<PrimalSavagery> = LazyLock::new(|| PrimalSavagery {});

@@ -131,6 +131,13 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // the druid has the lv3 slots the half-caster ranger template
     // currently lacks.
     actions.push(&*crate::actions::spells::CONJURE_BARRAGE);
+    // Primal Savagery — cantrip melee spell attack: 1d10 acid via WIS-
+    // scaled spell attack. Gives the druid a wild-shape-flavor melee
+    // touch cantrip that scales off their primary stat — distinct from
+    // the existing Thorn Whip (ranged pull) / Magic Stone (bonus-action
+    // prime) lanes since it lands as a clean weapon-attack alternative
+    // when the druid is already in melee.
+    actions.push(&*crate::actions::spells::PRIMAL_SAVAGERY);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

@@ -276,6 +276,12 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // (mostly empty between Misty Step / Shield reaction casts) with a
     // free repositioning tool — no slot cost, no concentration.
     actions.push(&*crate::actions::spells::TELEKINETIC);
+    // Green-Flame Blade — cantrip melee spell attack: 1d8 fire on the
+    // primary target, plus an INT-modifier fire leap to the lowest-HP
+    // adjacent enemy on a hit. Wizard's first dedicated melee cantrip,
+    // pairs with the existing Booming Blade lane for a melee-cantrip
+    // option that exploits the AI's focus-fire heuristic.
+    actions.push(&*crate::actions::spells::GREEN_FLAME_BLADE);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

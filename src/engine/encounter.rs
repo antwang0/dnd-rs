@@ -22826,6 +22826,183 @@ mod tests {
         );
     }
 
+    /// Green-Flame Blade: cantrip melee spell attack with a fire-leap
+    /// rider to the lowest-HP adjacent enemy. Verifies the cantrip costs
+    /// no slot, that the primary attack lands damage across seeds, and
+    /// that an adjacent secondary enemy also takes damage on a hit. The
+    /// leap only triggers on a hit, so we accept "primary AND secondary
+    /// both took damage at least once across the seed sweep" as the
+    /// success condition.
+    #[test]
+    fn green_flame_blade_leaps_to_adjacent_enemy_on_hit() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::GREEN_FLAME_BLADE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        // Cost / flag shape — cantrip, no slot, deals damage.
+        {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            let costs = GREEN_FLAME_BLADE.cost(&e, wiz, Some(&vec![g]), None, None);
+            assert!(costs.iter().any(|c| matches!(c, Resource::Action)));
+            assert!(
+                !costs.iter().any(|c| matches!(c, Resource::SpellSlot(_))),
+                "green-flame blade is a cantrip — no slot consumed"
+            );
+            assert!(GREEN_FLAME_BLADE.deals_damage());
+        }
+
+        let mut leaped = false;
+        for seed in 0..60u64 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            // Primary in melee reach.
+            let g1 = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            // Secondary adjacent to primary (one tile away), eligible
+            // for the fire leap.
+            let g2 = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+                .unwrap();
+            let g1_hp_before = e.actors[&g1].hitpoints();
+            let g2_hp_before = e.actors[&g2].hitpoints();
+            for ef in
+                GREEN_FLAME_BLADE.side_effects(&mut e, wiz, Some(&vec![g1]), None, None)
+            {
+                ef.apply(&mut e);
+            }
+            let primary_hit = e.actors[&g1].hitpoints() < g1_hp_before;
+            let secondary_hit = e.actors[&g2].hitpoints() < g2_hp_before;
+            // Secondary damage only ever lands if the primary attack hit
+            // (the leap is gated by a non-empty effect list).
+            if secondary_hit {
+                assert!(
+                    primary_hit,
+                    "green-flame blade leap should only trigger when the primary attack lands"
+                );
+                leaped = true;
+                break;
+            }
+        }
+        assert!(
+            leaped,
+            "green-flame blade should leap to the adjacent enemy on at least one hit across seeds"
+        );
+    }
+
+    /// Green-Flame Blade: with no adjacent secondary enemy in range, the
+    /// cantrip resolves as a plain melee touch — no errant logs, no
+    /// damage anywhere except the primary on a hit. Verifies the
+    /// "leap_id has no candidate" branch is taken cleanly.
+    #[test]
+    fn green_flame_blade_no_leap_when_isolated() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::GREEN_FLAME_BLADE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        for seed in 0..20u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let g1 = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            // Isolated second goblin — far away, outside the leap radius.
+            let g2 = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(15, 15), 1, 0)
+                .unwrap();
+            let g2_hp_before = e.actors[&g2].hitpoints();
+            for ef in
+                GREEN_FLAME_BLADE.side_effects(&mut e, wiz, Some(&vec![g1]), None, None)
+            {
+                ef.apply(&mut e);
+            }
+            assert_eq!(
+                e.actors[&g2].hitpoints(),
+                g2_hp_before,
+                "isolated non-adjacent enemy must never take the leap damage"
+            );
+        }
+    }
+
+    /// Primal Savagery: druid melee cantrip, 1d10 acid via WIS-scaled
+    /// spell attack. Verifies the cantrip costs no slot, declares acid
+    /// damage typing, and lands damage on at least one seed in a melee
+    /// reach setup against a goblin.
+    #[test]
+    fn primal_savagery_damages_adjacent_target() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::PRIMAL_SAVAGERY;
+        use crate::actors::creatures::druids::DRUID_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+        use crate::engine::types::DamageType;
+
+        // Cost / flag shape — cantrip, no slot, acid-typed.
+        {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let dru = e
+                .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            let costs = PRIMAL_SAVAGERY.cost(&e, dru, Some(&vec![g]), None, None);
+            assert!(costs.iter().any(|c| matches!(c, Resource::Action)));
+            assert!(
+                !costs.iter().any(|c| matches!(c, Resource::SpellSlot(_))),
+                "primal savagery is a cantrip — no slot consumed"
+            );
+            assert!(PRIMAL_SAVAGERY.damage_types().contains(&DamageType::Acid));
+        }
+
+        let mut damaged = false;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let dru = e
+                .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            let hp_before = e.actors[&g].hitpoints();
+            for ef in
+                PRIMAL_SAVAGERY.side_effects(&mut e, dru, Some(&vec![g]), None, None)
+            {
+                ef.apply(&mut e);
+            }
+            if e.actors[&g].hitpoints() < hp_before {
+                damaged = true;
+                break;
+            }
+        }
+        assert!(
+            damaged,
+            "primal savagery should land 1d10 acid on at least one seed"
+        );
+    }
+
     /// Verifies `self_concentration_buff_effects` produces the expected
     /// 2-effect chain (ApplyCondition + StartConcentration with the
     /// condition tagged for cleanup) by casting `Blur` (the first spell

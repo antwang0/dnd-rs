@@ -123,6 +123,11 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // STR save, no slot. Cheap repositioning for the warlock's
     // bonus-action lane (otherwise empty between Hex / Hex re-target).
     actions.push(&*crate::actions::spells::TELEKINETIC);
+    // Green-Flame Blade — cantrip CHA-scaled melee touch (1d8 fire +
+    // ability-modifier fire leap to the lowest-HP adjacent enemy on a
+    // hit). Pact-of-the-Blade-style melee cantrip for the warlock —
+    // pairs with Eldritch Blast for a melee-vs-ranged at-will lane.
+    actions.push(&*crate::actions::spells::GREEN_FLAME_BLADE);
     CreatureTemplate {
         name: "Warlock",
         // 'L' (uppercase) — distinct from 'l' (Lich), 'W' (Wolf glyph),

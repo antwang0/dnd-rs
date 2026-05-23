@@ -161,6 +161,12 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // is otherwise mostly empty (Misty Step / Quickened Spell aren't
     // modeled per-spell here).
     actions.push(&*crate::actions::spells::TELEKINETIC);
+    // Green-Flame Blade — cantrip CHA-scaled melee touch (1d8 fire +
+    // ability-modifier fire leap to the lowest-HP adjacent enemy).
+    // Gives the sorcerer a melee touch option that scales off their
+    // primary stat — Booming Blade is INT-only, so this slots into the
+    // CHA-caster melee lane that was previously dead.
+    actions.push(&*crate::actions::spells::GREEN_FLAME_BLADE);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.
