@@ -14434,8 +14434,7 @@ mod tests {
         // The new actor should be on the caster's team.
         let team = e.actors.get(&caster).unwrap().team();
         let new_id = (0..e.next_actor_id())
-            .filter(|id| e.actors.contains_key(id) && *id != caster)
-            .next()
+            .find(|id| e.actors.contains_key(id) && *id != caster)
             .expect("a non-caster actor exists");
         assert_eq!(e.actors[&new_id].team(), team);
     }
@@ -19524,15 +19523,15 @@ mod tests {
         let actions = &e.actors[&g].actions;
         let names: Vec<&str> = actions.iter().map(|a| a.name()).collect();
         assert!(
-            names.iter().any(|n| *n == "stone greatclub"),
+            names.contains(&"stone greatclub"),
             "stone giant should have greatclub action"
         );
         assert!(
-            names.iter().any(|n| *n == "stone boulder"),
+            names.contains(&"stone boulder"),
             "stone giant should have boulder action"
         );
         assert!(
-            names.iter().any(|n| *n == "stone giant multiattack"),
+            names.contains(&"stone giant multiattack"),
             "stone giant should have multiattack"
         );
     }

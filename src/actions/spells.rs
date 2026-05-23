@@ -17540,25 +17540,19 @@ impl Action for GreenFlameBlade {
         let Some(primary_loc) = primary_loc else {
             return effects;
         };
-        let caster_team = encounter
-            .actors
-            .get(&caster_id)
-            .map(|a| a.team())
-            .unwrap_or(0);
-        let mut best: Option<(u32, usize)> = None;
         // 1-tile leap radius = the 8 tiles around the primary; we route
-        // through the burst helper so footprint-aware adjacency math is
-        // shared with the rest of the engine.
-        for tid in encounter.actors_in_burst(primary_loc, 1) {
-            if tid == caster_id || tid == target_id {
+        // through the team-filtered burst helper so caster-exclusion and
+        // friend-or-foe filtering are shared with the rest of the engine
+        // (no per-spell team-id lookup). We still drop the primary by id
+        // since it sits inside the burst footprint.
+        let mut best: Option<(u32, usize)> = None;
+        for tid in encounter.enemy_burst_targets(caster_id, primary_loc, 1) {
+            if tid == target_id {
                 continue;
             }
             let Some(a) = encounter.actors.get(&tid) else {
                 continue;
             };
-            if a.team() == caster_team {
-                continue;
-            }
             let hp = a.hitpoints();
             if best.map(|(bhp, _)| hp < bhp).unwrap_or(true) {
                 best = Some((hp, tid));
