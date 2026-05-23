@@ -130,6 +130,13 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // previously empty for clerics. Custom-validate gates against
     // re-priming an already-inspired ally.
     actions.push(&*crate::actions::spells::GUIDANCE);
+    // Warding Bond — lv2 abjuration. Touch-range damage-share bond:
+    // bonded ally gains +1 AC, +1 saves, resistance to all damage; the
+    // caster takes the same (post-resistance) damage every time the
+    // ally is hit. Pairs the cleric's defensive lane with a damage-
+    // sink role — a frontline fighter behind the bond effectively gets
+    // 50% damage reduction while the cleric pays the other 50%.
+    actions.push(&*crate::actions::spells::WARDING_BOND);
     CreatureTemplate {
         name: "Cleric",
         glyph: 'C',

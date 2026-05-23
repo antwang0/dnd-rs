@@ -247,6 +247,17 @@ impl ApplicableSideEffect for DealDamage {
         let Some(actor) = ei.get_actor(self.actor_id) else {
             return;
         };
+        // Snapshot the Warding Bond partner *before* HP changes —
+        // if this damage drops the actor unconscious, `remove_condition`
+        // (via downstream cleanup) would clear the link before we read
+        // it. Mirror damage to the partner uses the post-resistance
+        // amount (`scaled`), matching RAW: "you take the same amount of
+        // damage" applies to whatever the bonded ally actually absorbs.
+        let warding_partner = if actor.has_condition(crate::conditions::Condition::WardingBonded) {
+            actor.warding_partner()
+        } else {
+            None
+        };
         let (outcome, landed) = actor.take_typed_damage(self.amount, self.damage_type);
         // Regenerator suppression: flag the actor if this damage type is
         // on their suppressor list (troll vs acid/fire). The flag is
@@ -311,6 +322,44 @@ impl ApplicableSideEffect for DealDamage {
                 }
             }
             DamageOutcome::Reduced | DamageOutcome::DyingFailure => {}
+        }
+        // 5e Warding Bond reflect: mirror the post-resistance damage onto
+        // the bonding partner. Skip when the partner is the actor itself
+        // (a self-bond is a no-op), the partner is missing, the partner
+        // is also bonded back to us (rare cross-bond — bail to avoid
+        // infinite recursion), or `scaled` is zero (immunity / nothing
+        // landed). The partner takes the damage through `DealDamage`
+        // again so their own resistance / concentration save / death
+        // pipeline applies uniformly. The partner's hit shouldn't
+        // re-mirror back through our actor — guarded by the cross-bond
+        // check above.
+        if let Some(partner_id) = warding_partner
+            && partner_id != self.actor_id
+            && scaled > 0
+        {
+            let partner_loops = ei.actors.get(&partner_id).is_some_and(|p| {
+                p.has_condition(crate::conditions::Condition::WardingBonded)
+                    && p.warding_partner() == Some(self.actor_id)
+            });
+            if !partner_loops {
+                let partner_name = ei
+                    .actors
+                    .get(&partner_id)
+                    .map(|p| p.name().to_string())
+                    .unwrap_or_default();
+                if !partner_name.is_empty() {
+                    ei.log(format!(
+                        "  warding bond mirrors {} {:?} damage onto {}",
+                        scaled, self.damage_type, partner_name
+                    ));
+                }
+                DealDamage {
+                    actor_id: partner_id,
+                    amount: scaled,
+                    damage_type: self.damage_type,
+                }
+                .apply(ei);
+            }
         }
     }
 }
@@ -746,6 +795,26 @@ impl ApplicableSideEffect for SetDueledBy {
     fn apply(&self, ei: &mut EncounterInstance) {
         if let Some(actor) = ei.get_actor(self.target_id) {
             actor.set_dueled_by(self.duelist);
+        }
+    }
+}
+
+/// Record the partner of a Warding Bond (5e level-2 abjuration). Paired
+/// with ApplyCondition (WardingBonded) on the same target: the condition
+/// flag carries the AC / save / resistance buff, while the `warding_partner`
+/// link tells the damage-reflect site which actor to mirror the hit onto.
+/// Pass `partner = None` to clear; the engine also clears it automatically
+/// when the WardingBonded condition is removed via `remove_condition`.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct SetWardingPartner {
+    pub target_id: usize,
+    pub partner: Option<usize>,
+}
+
+impl ApplicableSideEffect for SetWardingPartner {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        if let Some(actor) = ei.get_actor(self.target_id) {
+            actor.set_warding_partner(self.partner);
         }
     }
 }

@@ -617,6 +617,20 @@ pub enum Condition {
     /// that other buffs use. Concentration-bound on the caster; dropping
     /// concentration drops the buff.
     Enlarged,
+    /// Bonded by Warding Bond (5e level-2 abjuration). The bonded actor
+    /// gains +1 AC, +1 saving throws, and resistance to all damage. Any
+    /// damage that lands on the bonded actor is mirrored onto their
+    /// bonding partner (the caster) at the post-resistance amount; the
+    /// `warding_partner` link on `ActorInstance` carries the partner id so
+    /// the reflect site can find the caster. Distinct from `DamageResistant`
+    /// so dispel / drop-on-distance can target just this mark. RAW: 1-hour
+    /// duration, no concentration; we install with a long Rounds(60) timer
+    /// (~10 minutes of combat — long enough for any encounter, short enough
+    /// that the link isn't permanent across rests). The bond ends RAW when
+    /// either creature drops to 0 HP — we keep the simple "timer or dispel"
+    /// drop path for now (the partner's chain damage takes care of the
+    /// caster naturally on a fatal mirror hit).
+    WardingBonded,
 }
 
 impl Condition {
@@ -716,6 +730,7 @@ impl Condition {
             Condition::EarthenGrasped => "crushed by an earthen grasp",
             Condition::VitriolicAcidCoated => "coated in vitriolic acid",
             Condition::Enlarged => "enlarged",
+            Condition::WardingBonded => "bonded by warding bond",
         }
     }
 
@@ -788,6 +803,7 @@ impl Condition {
                 | Condition::ThunderousSmiting
                 | Condition::Shillelaghed
                 | Condition::Enlarged
+                | Condition::WardingBonded
         )
     }
 

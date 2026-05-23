@@ -328,6 +328,13 @@ pub struct ActorInstance {
     /// long rest. See `EncounterInstance::roll_save` for the trigger site.
     legendary_resistance_remaining: u32,
     legendary_resistance_max: u32,
+    /// Identity of the caster who has bonded with this actor via Warding
+    /// Bond (5e level-2 abjuration). Paired with the `WardingBonded`
+    /// condition: when this actor takes damage, the same amount is
+    /// mirrored onto the partner via the damage-reflect site in
+    /// `DealDamage::apply`. Cleared when the WardingBonded condition is
+    /// removed (timer expiry / dispel / either party drops).
+    warding_partner: Option<usize>,
 }
 
 impl ActorInstance {
@@ -404,6 +411,7 @@ impl ActorInstance {
             dueled_by: None,
             legendary_resistance_remaining: ct.legendary_resistances,
             legendary_resistance_max: ct.legendary_resistances,
+            warding_partner: None,
         })
     }
 
@@ -454,6 +462,19 @@ impl ActorInstance {
 
     pub fn set_dueled_by(&mut self, id: Option<usize>) {
         self.dueled_by = id;
+    }
+
+    /// Caster id this actor is currently Warding-Bonded to (5e
+    /// `WardingBonded` condition). `None` when the bond is inactive.
+    /// Read by `DealDamage::apply` to mirror damage onto the partner.
+    pub fn warding_partner(&self) -> Option<usize> {
+        self.warding_partner
+    }
+
+    /// Set / clear the Warding Bond partner. Cleared automatically when
+    /// the `WardingBonded` condition is removed via `remove_condition`.
+    pub fn set_warding_partner(&mut self, id: Option<usize>) {
+        self.warding_partner = id;
     }
 
     /// HP regenerated each round-end while combat-active. 0 disables the
@@ -596,6 +617,13 @@ impl ActorInstance {
         // resistance drops cleanly when concentration ends without
         // touching the template's static modifier table.
         if dt == DamageType::Fire && self.has_condition(Condition::InvestedInFlame) {
+            amt /= 2;
+        }
+        // 5e Warding Bond: bonded target gains resistance to all damage.
+        // Mirrors the DamageResistant clause but distinct so dispel can
+        // target the bond mark specifically without touching Stoneskin
+        // or Rage resistance.
+        if self.has_condition(Condition::WardingBonded) {
             amt /= 2;
         }
         amt
@@ -758,6 +786,7 @@ impl ActorInstance {
                 Condition::Charmed => self.charmed_by = None,
                 Condition::MirroredImages => self.mirror_images = 0,
                 Condition::Dueled => self.dueled_by = None,
+                Condition::WardingBonded => self.warding_partner = None,
                 _ => {}
             }
         }
@@ -933,6 +962,10 @@ impl ActorInstance {
         if self.has_condition(Condition::Slowed) {
             bonus -= 2;
         }
+        // 5e Warding Bond: +1 AC while bonded.
+        if self.has_condition(Condition::WardingBonded) {
+            bonus += 1;
+        }
         bonus
     }
 
@@ -1039,6 +1072,10 @@ impl ActorInstance {
         let mut bonus = 0;
         if self.has_condition(Condition::Inspired) {
             bonus += 3;
+        }
+        // 5e Warding Bond: +1 saving throws while bonded.
+        if self.has_condition(Condition::WardingBonded) {
+            bonus += 1;
         }
         bonus
     }

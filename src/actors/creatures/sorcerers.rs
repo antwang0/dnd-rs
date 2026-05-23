@@ -156,6 +156,11 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     of damage type (best-vs-target picker), DEX save for half.
     actions.push(&*crate::actions::spells::CHAOS_BOLT);
     actions.push(&*crate::actions::spells::DRAGONS_BREATH);
+    // Telekinetic — cantrip bonus-action shove (5ft pull on STR-save
+    // fail). Cheap repositioning tool; the sorcerer's bonus-action lane
+    // is otherwise mostly empty (Misty Step / Quickened Spell aren't
+    // modeled per-spell here).
+    actions.push(&*crate::actions::spells::TELEKINETIC);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

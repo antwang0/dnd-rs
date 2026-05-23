@@ -119,6 +119,10 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     burst with STR save for half + no-reactions rider on fail.
     //     Punishes melee swarms that close on the warlock.
     actions.push(&*crate::actions::spells::ARMS_OF_HADAR);
+    // Telekinetic — cantrip bonus-action shove. 5ft pull on a failed
+    // STR save, no slot. Cheap repositioning for the warlock's
+    // bonus-action lane (otherwise empty between Hex / Hex re-target).
+    actions.push(&*crate::actions::spells::TELEKINETIC);
     CreatureTemplate {
         name: "Warlock",
         // 'L' (uppercase) — distinct from 'l' (Lich), 'W' (Wolf glyph),

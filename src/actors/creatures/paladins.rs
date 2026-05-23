@@ -68,6 +68,13 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // slips past single-element resistance the same way Flame Strike
     // (fire + radiant) does.
     actions.push(&*DESTRUCTIVE_WAVE);
+    // Warding Bond — lv2 abjuration. Touch-range damage-share bond.
+    // The paladin already takes the hits up front (high HP, AC 18) —
+    // bonding a frailer ally (e.g. cleric / wizard) halves their
+    // incoming damage at the cost of mirroring the rest onto the
+    // paladin's much larger HP pool. Non-concentration, so it stacks
+    // with whichever smite is currently holding the slot.
+    actions.push(&*crate::actions::spells::WARDING_BOND);
     CreatureTemplate {
         name: "Paladin",
         glyph: 'P',

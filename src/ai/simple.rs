@@ -201,6 +201,17 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3n'. Warding Bond — cleric / paladin lv2 abjuration. Touch-
+        //      range damage-share bond: bonded ally gets +1 AC, +1 saves,
+        //      and damage resistance; the caster takes the mirrored
+        //      (post-resistance) damage. Fire on a footprint-adjacent
+        //      ally that isn't already bonded, when the caster has spare
+        //      HP to sink the mirror cost. The action's `custom_validate`
+        //      handles the team / already-bonded / self-target gates.
+        if let Some(aei) = try_warding_bond(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3o. Divine Strike — cleric bonus-action prime (once per long
         //     rest). Fire when an enemy is in melee so the +1d8 radiant
         //     rider lands on the cleric's next swing.
@@ -221,6 +232,17 @@ impl Controller for SimpleAi {
         //     this turn. Slot-free (cantrip) so it stays on the bonus-
         //     action lane without competing with leveled smites.
         if let Some(aei) = try_shillelagh(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3r. Telekinetic — wizard / sorcerer / warlock bonus-action
+        //     cantrip shove. Pulls an enemy 5 ft closer on a failed STR
+        //     save; no slot. Fire when an enemy is just out of reach for
+        //     a melee follow-up next turn — typically gap 2-6 tiles
+        //     (5-15 ft) so the pull yanks them into melee range without
+        //     wasting on an enemy already adjacent. Slot-free, so it
+        //     stays on the bonus-action lane alongside Shillelagh.
+        if let Some(aei) = try_telekinetic(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
@@ -371,14 +393,11 @@ fn try_hold_person(
     }
     let my_team = actor.team();
 
-    let mut ids: Vec<usize> = encounter.actors.keys().copied().collect();
-    ids.sort_unstable();
-
     // Search per (action, target) so we evaluate every soft-lock against
     // every legal enemy. We pick toughest target and break ties by
     // SOFT_LOCKS index (Hold Person beats Cause Fear when both validate).
     let mut best: Option<(u32, usize, ActionExecutionInfo)> = None;
-    for target_id in ids {
+    for target_id in encounter.sorted_actor_ids() {
         let Some(target) = encounter.actors.get(&target_id) else {
             continue;
         };
@@ -684,6 +703,120 @@ fn try_shillelagh(
         return None;
     }
     try_self_action(encounter, actor_id, "shillelagh")
+}
+
+/// Telekinetic — bonus-action cantrip shove. Pulls a single enemy 5 ft
+/// toward the caster on a failed STR save. We pick the closest enemy
+/// that's *out* of melee reach but inside the cantrip's 60ft range, so
+/// the pull yanks them into melee range (or at least closer) for the
+/// caster or an ally. An enemy already adjacent is skipped — the pull
+/// would be wasted, and the AI's other bonus-action lanes (Hex re-target,
+/// Shillelagh) get to run instead.
+fn try_telekinetic(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor.find_action("telekinetic")?;
+    let my_team = actor.team();
+    let my_loc = actor.location();
+    let my_size = get_tiles_from_size(actor.size());
+    // Closest enemy in the 2-24 tile sweet spot. Skip already-adjacent
+    // (gap 0-1) because the pull does nothing; cap at 24 (60ft) per
+    // RAW range.
+    let mut best: Option<(isize, ActionExecutionInfo)> = None;
+    for tid in encounter.sorted_actor_ids() {
+        let Some(t) = encounter.actors.get(&tid) else {
+            continue;
+        };
+        if tid == actor_id || t.team() == my_team || !t.is_combat_active() {
+            continue;
+        }
+        let dist = footprint_chebyshev(
+            my_loc,
+            my_size,
+            t.location(),
+            get_tiles_from_size(t.size()),
+        );
+        if !(2..=24).contains(&dist) {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![tid]), None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(best_d, _)| dist < *best_d) {
+            best = Some((dist, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
+}
+
+/// Warding Bond — cleric / paladin lv2 abjuration. Touch-range damage-
+/// share bond: pick the most fragile combat-active ally that's footprint-
+/// adjacent and bond with them. "Most fragile" = lowest current HP /
+/// max HP ratio (the ally who most benefits from the resistance bump).
+/// Gated on:
+/// - At least one enemy within 12 tiles (~30ft) — don't waste the slot
+///   pre-fight, since the bond only matters when an ally is taking hits.
+/// - The caster's own current HP fraction is above 50% — the caster
+///   pays mirrored damage, so a low-HP caster should skip the bond
+///   rather than join the ally on the death-save table.
+fn try_warding_bond(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor.find_action("warding bond")?;
+    // Don't bond if we're already too hurt to carry the mirrored hits.
+    if is_low_hp(encounter, actor_id, 0.5) {
+        return None;
+    }
+    // Don't bond outside an active fight.
+    if !any_enemy_within(encounter, actor_id, 12) {
+        return None;
+    }
+    let my_team = actor.team();
+    let my_loc = actor.location();
+    let my_size = get_tiles_from_size(actor.size());
+    // Most fragile ally in touch range (gap 1) that isn't already
+    // bonded. Tie-break by lower HP ratio (more wounded wins).
+    let mut best: Option<(u32, ActionExecutionInfo)> = None;
+    for tid in encounter.sorted_actor_ids() {
+        let Some(t) = encounter.actors.get(&tid) else {
+            continue;
+        };
+        if tid == actor_id || t.team() != my_team || !t.is_combat_active() {
+            continue;
+        }
+        if t.has_condition(Condition::WardingBonded) {
+            continue;
+        }
+        let gap = footprint_chebyshev(
+            my_loc,
+            my_size,
+            t.location(),
+            get_tiles_from_size(t.size()),
+        );
+        if gap > 1 {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![tid]), None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        // Score = max_hp - hp (lower HP wins); equal HP breaks toward
+        // higher max-HP (the tougher frame benefits more from the
+        // resistance / AC bump). Stored as a single u32 so the
+        // comparison stays terse.
+        let max = t.max_hitpoints().max(1);
+        let cur = t.hitpoints();
+        let score = max.saturating_sub(cur);
+        if best.as_ref().is_none_or(|(best_score, _)| score > *best_score) {
+            best = Some((score, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
 }
 
 /// Foresight — level-9 single-target ally buff. Pick the highest-HP
@@ -1670,7 +1803,9 @@ mod tests {
     use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
     use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
     use crate::engine::actor_gen::ActorGenParams;
+    use crate::engine::side_effects::Resource;
     use crate::engine::terrain_gen::TerrainGenParams;
+    use crate::engine::types::DamageType;
 
     fn run_to_completion(seed: u64) -> EncounterInstance {
         let tp = TerrainGenParams {
@@ -2546,6 +2681,14 @@ mod tests {
                     .consume_spell_slot(lvl);
             }
         }
+        // Burn the wizard's bonus action so this test isolates the
+        // Action lane fallback. Otherwise bonus-action cantrips
+        // (Telekinetic) win the first decision call and the test
+        // would assert against the wrong economy slot.
+        e.actors
+            .get_mut(&wizard)
+            .unwrap()
+            .consume_resource(Resource::BonusAction);
 
         let ai = SimpleAi;
         let decision = ai.decide(&e, wizard);
@@ -2596,5 +2739,105 @@ mod tests {
         // or recurse, which the full ai_vs_ai_terminates_with_new_content
         // integration test also exercises.
         let _ = aei;
+    }
+
+    /// `try_warding_bond` should fire when a wounded ally is adjacent
+    /// and a fight is engaged (an enemy is within ~30ft). The cleric
+    /// AI picks the most-wounded ally as the bond target.
+    #[test]
+    fn ai_casts_warding_bond_on_wounded_adjacent_ally() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = empty_arena();
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Adjacent fighter ally — start them at low HP so they win the
+        // bond pick over a hypothetical second ally (none here).
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        // Wound the fighter so the AI's "max-HP - cur-HP" score is
+        // positive (otherwise both have 0 wound score and the pick
+        // is a coin flip across ids).
+        let f_max = e.actors[&fighter].max_hitpoints();
+        let half = f_max / 2;
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .take_typed_damage(half, DamageType::Bludgeoning);
+        // Engaged enemy within ~30ft (12 tile-gap) so the "active
+        // fight" gate fires.
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 5), 1, 0)
+            .unwrap();
+
+        let aei = try_warding_bond(&e, cleric).expect(
+            "wounded fighter adjacent + zombie engaged → AI should bond the fighter",
+        );
+        assert_eq!(aei.action().name(), "warding bond");
+        let targets = aei.target_ids().expect("bond targets the fighter");
+        assert_eq!(targets[0], fighter);
+    }
+
+    /// `try_warding_bond` should bail when the caster is already at
+    /// low HP (< 50%) — taking on a partner's mirrored damage at low
+    /// HP would put the caster on death saves with the next swing.
+    #[test]
+    fn ai_skips_warding_bond_when_low_hp() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = empty_arena();
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let _fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 5), 1, 0)
+            .unwrap();
+        // Drop the cleric to ~30% HP — below the 50% gate.
+        let c_max = e.actors[&cleric].max_hitpoints();
+        let drain = c_max - (c_max / 3);
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .take_typed_damage(drain, DamageType::Bludgeoning);
+        assert!(
+            try_warding_bond(&e, cleric).is_none(),
+            "low-HP cleric should not bond — would die from mirrored hits"
+        );
+    }
+
+    /// `try_telekinetic` should pick the closest in-range enemy that's
+    /// not already footprint-adjacent. Verifies the picker skips
+    /// adjacent enemies (no value in a 1-tile pull when already in
+    /// melee) and finds the next enemy in the 2-24 tile sweet spot.
+    #[test]
+    fn ai_telekinetic_picks_closest_non_adjacent_enemy() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = empty_arena();
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Adjacent zombie — should be skipped (pull does nothing).
+        let _adj = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        // Mid-range zombie — should be the pick.
+        let mid = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 5), 1, 1)
+            .unwrap();
+        // Far zombie — out of the closest-wins picker.
+        let _far = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(20, 5), 1, 2)
+            .unwrap();
+        let aei = try_telekinetic(&e, wiz).expect("non-adjacent target available");
+        assert_eq!(aei.action().name(), "telekinetic");
+        let targets = aei.target_ids().expect("telekinetic targets a single actor");
+        assert_eq!(targets[0], mid, "should pick the mid-range zombie");
     }
 }

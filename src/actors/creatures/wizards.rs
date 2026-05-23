@@ -271,6 +271,11 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::DRAGONS_BREATH);
     actions.push(&*crate::actions::spells::STEEL_WIND_STRIKE);
     actions.push(&*crate::actions::spells::WALL_OF_ICE);
+    // Telekinetic — cantrip bonus-action shove. Pulls a target 5 ft
+    // closer on a failed STR save. Fills the wizard's bonus-action lane
+    // (mostly empty between Misty Step / Shield reaction casts) with a
+    // free repositioning tool — no slot cost, no concentration.
+    actions.push(&*crate::actions::spells::TELEKINETIC);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

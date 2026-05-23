@@ -399,6 +399,38 @@ fn save_for_half_damage(
     (dmg, save.passed())
 }
 
+/// Build the two-step "apply a self-only condition + start concentration
+/// tracking that condition" effect chain shared by every single-condition
+/// self-buff concentration spell (Blur, Globe of Invulnerability, Crusader's
+/// Mantle, Spirit Shroud, Bigby's Hand, Investiture of Flame, Wind Wall,
+/// Warding Bond's caster-side leg, etc.). Each call site previously hand-
+/// rolled the same two `Box::new(...)` entries with the condition repeated
+/// across both — keeps the spell impls one logical line per cast.
+///
+/// Returns a `Vec<Box<dyn ApplicableSideEffect>>` ready to push into the
+/// caller's effect list, or to use directly as the side_effects return.
+fn self_concentration_buff_effects(
+    caster_id: usize,
+    spell_name: &'static str,
+    condition: Condition,
+    timer: ConditionTimer,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    vec![
+        Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition,
+            timer,
+        }),
+        Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions(
+                spell_name,
+                vec![(caster_id, condition)],
+            ),
+        }),
+    ]
+}
+
 /// Sacred Flame — cleric cantrip. Range 60ft (24 tiles), DEX save vs the
 /// caster's WIS-based spell save DC. On fail: 1d8 radiant. On success:
 /// nothing (cantrips don't half-on-save). No spell slot consumed.
@@ -4756,20 +4788,12 @@ impl Action for Blur {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: caster_id,
-                condition: Condition::Blurred,
-                timer: ConditionTimer::Rounds(10),
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Blur",
-                    vec![(caster_id, Condition::Blurred)],
-                ),
-            }),
-        ]
+        self_concentration_buff_effects(
+            caster_id,
+            "Blur",
+            Condition::Blurred,
+            ConditionTimer::Rounds(10),
+        )
     }
 }
 
@@ -8921,20 +8945,12 @@ impl Action for GlobeOfInvulnerability {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: caster_id,
-                condition: Condition::Globed,
-                timer: ConditionTimer::Permanent,
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Globe of Invulnerability",
-                    vec![(caster_id, Condition::Globed)],
-                ),
-            }),
-        ]
+        self_concentration_buff_effects(
+            caster_id,
+            "Globe of Invulnerability",
+            Condition::Globed,
+            ConditionTimer::Permanent,
+        )
     }
 }
 
@@ -9231,20 +9247,12 @@ impl Action for CrusadersMantle {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: caster_id,
-                condition: Condition::CrusadersMantled,
-                timer: ConditionTimer::Permanent,
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Crusader's Mantle",
-                    vec![(caster_id, Condition::CrusadersMantled)],
-                ),
-            }),
-        ]
+        self_concentration_buff_effects(
+            caster_id,
+            "Crusader's Mantle",
+            Condition::CrusadersMantled,
+            ConditionTimer::Permanent,
+        )
     }
 }
 
@@ -11021,20 +11029,12 @@ impl Action for SpiritShroud {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         encounter.log("  spirit shroud: ghostly mist coils around you.".to_string());
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: caster_id,
-                condition: Condition::SpiritShrouded,
-                timer: ConditionTimer::Rounds(10),
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Spirit Shroud",
-                    vec![(caster_id, Condition::SpiritShrouded)],
-                ),
-            }),
-        ]
+        self_concentration_buff_effects(
+            caster_id,
+            "Spirit Shroud",
+            Condition::SpiritShrouded,
+            ConditionTimer::Rounds(10),
+        )
     }
 }
 
@@ -13365,20 +13365,12 @@ impl Action for BigbysHand {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: caster_id,
-                condition: Condition::BigbysHanded,
-                timer: ConditionTimer::Permanent,
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Bigby's Hand",
-                    vec![(caster_id, Condition::BigbysHanded)],
-                ),
-            }),
-        ]
+        self_concentration_buff_effects(
+            caster_id,
+            "Bigby's Hand",
+            Condition::BigbysHanded,
+            ConditionTimer::Permanent,
+        )
     }
 }
 
@@ -13429,24 +13421,17 @@ impl Action for TensersTransformation {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        vec![
-            Box::new(GainTempHp {
-                actor_id: caster_id,
-                amount: 50,
-            }),
-            Box::new(ApplyCondition {
-                actor_id: caster_id,
-                condition: Condition::Transformed,
-                timer: ConditionTimer::Permanent,
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Tenser's Transformation",
-                    vec![(caster_id, Condition::Transformed)],
-                ),
-            }),
-        ]
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(GainTempHp {
+            actor_id: caster_id,
+            amount: 50,
+        })];
+        effects.extend(self_concentration_buff_effects(
+            caster_id,
+            "Tenser's Transformation",
+            Condition::Transformed,
+            ConditionTimer::Permanent,
+        ));
+        effects
     }
 }
 
@@ -14033,20 +14018,12 @@ impl Action for InvestitureOfFlame {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         encounter.log("  investiture of flame: your body erupts in flame.".to_string());
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: caster_id,
-                condition: Condition::InvestedInFlame,
-                timer: ConditionTimer::Rounds(10),
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Investiture of Flame",
-                    vec![(caster_id, Condition::InvestedInFlame)],
-                ),
-            }),
-        ]
+        self_concentration_buff_effects(
+            caster_id,
+            "Investiture of Flame",
+            Condition::InvestedInFlame,
+            ConditionTimer::Rounds(10),
+        )
     }
 }
 
@@ -14440,21 +14417,13 @@ impl Action for WindWall {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: caster_id,
-                condition: Condition::WindWalled,
-                // 10 rounds = 1 minute RAW.
-                timer: ConditionTimer::Rounds(10),
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Wind Wall",
-                    vec![(caster_id, Condition::WindWalled)],
-                ),
-            }),
-        ]
+        // 10 rounds = 1 minute RAW.
+        self_concentration_buff_effects(
+            caster_id,
+            "Wind Wall",
+            Condition::WindWalled,
+            ConditionTimer::Rounds(10),
+        )
     }
 }
 
@@ -17277,3 +17246,219 @@ impl Action for WallOfIce {
 }
 
 pub static WALL_OF_ICE: LazyLock<WallOfIce> = LazyLock::new(|| WallOfIce {});
+
+/// Warding Bond — level-2 abjuration (cleric / paladin). The caster
+/// touches a willing ally and links the two for the spell's duration.
+/// The bonded ally:
+/// - Gains +1 AC and +1 saving throws (via `condition_ac_bonus` /
+///   `condition_save_bonus`).
+/// - Has resistance to all damage (via `effective_damage`'s WardingBonded
+///   clause).
+/// - Every point of damage they take is mirrored onto the caster.
+///
+/// RAW: 1-hour duration, no concentration. We install with a Rounds(60)
+/// timer (~10 minutes of combat) — long enough to outlast any encounter
+/// but short enough not to bleed across long rests. The bond breaks
+/// when the timer expires or Dispel Magic strips the WardingBonded
+/// condition; the `warding_partner` link on the bonded actor is cleared
+/// automatically alongside the condition via `remove_condition`.
+///
+/// Targeting is touch-range (1 tile) ally-only — `is_harmful = false`
+/// keeps the AI's offensive pipeline from picking it. The caller picks
+/// a `SingleActor` target; `custom_validate_input` gates against
+/// re-binding an already-bonded ally and against self-targeting (the
+/// caster can't share damage with themselves — the partner pointer
+/// requires a distinct actor).
+pub struct WardingBond {}
+
+impl Action for WardingBond {
+    fn name(&self) -> &str {
+        "warding bond"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wb", "ward"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch range — must be footprint-adjacent.
+        Some(1)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        // The bond grants resistance + AC + save bonuses — slot it
+        // alongside the AI's support pipeline so a wounded ally is
+        // a valid pick for the bond just like for a heal target.
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        // Self-bond is a no-op (caster mirroring damage to themselves)
+        // — gate it out so the AI / picker doesn't burn the slot.
+        if target_id == caster_id {
+            return false;
+        }
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return false;
+        };
+        // Ally-only.
+        if target.team() != caster.team() {
+            return false;
+        }
+        if !target.is_combat_active() {
+            return false;
+        }
+        // Don't re-bond an already-bonded ally — the second cast would
+        // overwrite the partner link, leaving the first caster dangling.
+        if target.has_condition(Condition::WardingBonded) {
+            return false;
+        }
+        true
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::SetWardingPartner;
+
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        encounter.log(
+            "  warding bond: caster and ally are linked — damage will be shared.".to_string(),
+        );
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::WardingBonded,
+                timer: ConditionTimer::Rounds(60),
+            }),
+            Box::new(SetWardingPartner {
+                target_id,
+                partner: Some(caster_id),
+            }),
+        ]
+    }
+}
+
+pub static WARDING_BOND: LazyLock<WardingBond> = LazyLock::new(|| WardingBond {});
+
+/// Telekinetic — cantrip (transmutation; sorcerer / warlock / wizard).
+/// Bonus action; pick a creature within 60ft and shove it 5 ft toward
+/// the caster on a failed STR save. The 5e cantrip lets the caster pick
+/// push or pull each cast — we collapse to "pull" since the AI's
+/// repositioning lane already has push tools (Thunderwave) and Lightning
+/// Lure's pull-then-zap pattern proves the framework. No damage; no slot;
+/// no concentration.
+///
+/// Save DC = caster's spell save DC against the highest of their INT /
+/// CHA / WIS — so wizard / sorcerer / warlock all get clean scaling
+/// without per-loadout special-casing.
+pub struct Telekinetic {}
+
+impl Action for Telekinetic {
+    fn name(&self) -> &str {
+        "telekinetic"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["tk", "shove"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // Bonus action cantrip — no spell slot.
+        vec![Resource::BonusAction]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::PullActor;
+
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let caster_loc = caster.location();
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+        ]);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, dc);
+        if save.passed() {
+            encounter.log("  telekinetic: target resists the pull".to_string());
+            return Vec::new();
+        }
+        // Pull 1 tile (5 ft) toward the caster. The PullActor helper
+        // honors wall / occupancy blocking — a pinned target just
+        // doesn't move and we log the no-op via the standard forced-move
+        // log line (or absence thereof).
+        vec![Box::new(PullActor {
+            actor_id: target_id,
+            toward: caster_loc,
+            max_tiles: 1,
+        })]
+    }
+}
+
+pub static TELEKINETIC: LazyLock<Telekinetic> = LazyLock::new(|| Telekinetic {});

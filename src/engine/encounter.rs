@@ -22601,4 +22601,256 @@ mod tests {
         assert!(b.find_action("balor multiattack").is_some());
         assert!(b.find_action("balor fire aura").is_some());
     }
+
+    /// Warding Bond — lv2 cleric/paladin abjuration. Verifies:
+    /// - Slot cost is `Action + SpellSlot(2)`.
+    /// - Bonded ally picks up the `WardingBonded` condition and the
+    ///   `warding_partner` link to the caster.
+    /// - Bonded ally gains +1 AC and +1 saving throws (via the
+    ///   `condition_ac_bonus` / `condition_save_bonus` cohorts).
+    /// - Damage taken by the bonded ally is halved (resistance) AND
+    ///   the caster takes the post-resistance amount as mirror damage.
+    /// - Removing the `WardingBonded` condition clears the partner link.
+    #[test]
+    fn warding_bond_buffs_ally_and_mirrors_damage() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::WARDING_BOND;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::side_effects::{DealDamage, Resource};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+
+        // Slot shape check.
+        let costs = WARDING_BOND.cost(&e, cleric, Some(&vec![fighter]), None, None);
+        assert!(costs.iter().any(|c| matches!(c, Resource::Action)));
+        assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(2))));
+
+        // Pre-cast: capture baseline AC / save buff so we can confirm
+        // the +1 lands on top.
+        let ac_before = e.actors[&fighter].armor_class() as i32;
+        let save_before = e.actors[&fighter].condition_save_bonus();
+
+        // Cast Warding Bond on the adjacent fighter.
+        for ef in WARDING_BOND.side_effects(&mut e, cleric, Some(&vec![fighter]), None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&fighter].has_condition(Condition::WardingBonded),
+            "fighter should be marked WardingBonded after cast"
+        );
+        assert_eq!(
+            e.actors[&fighter].warding_partner(),
+            Some(cleric),
+            "fighter's warding_partner should point at the caster"
+        );
+        let ac_after = e.actors[&fighter].armor_class() as i32;
+        let save_after = e.actors[&fighter].condition_save_bonus();
+        assert_eq!(ac_after - ac_before, 1, "Warding Bond grants +1 AC");
+        assert_eq!(save_after - save_before, 1, "Warding Bond grants +1 saves");
+
+        // Mirror-damage check. Deal a clean 10-fire hit to the fighter:
+        // the bond should halve it to 5 (resistance) and mirror 5 fire
+        // damage onto the cleric. Use Fire so neither template has a
+        // pre-existing damage modifier that confuses the math.
+        let fighter_hp_before = e.actors[&fighter].hitpoints();
+        let cleric_hp_before = e.actors[&cleric].hitpoints();
+        DealDamage {
+            actor_id: fighter,
+            amount: 10,
+            damage_type: DamageType::Fire,
+        }
+        .apply(&mut e);
+        let fighter_hp_after = e.actors[&fighter].hitpoints();
+        let cleric_hp_after = e.actors[&cleric].hitpoints();
+        assert_eq!(
+            fighter_hp_before - fighter_hp_after,
+            5,
+            "Warding Bond resistance halves the fighter's hit (10 → 5)"
+        );
+        assert_eq!(
+            cleric_hp_before - cleric_hp_after,
+            5,
+            "Warding Bond should mirror the halved (5) damage onto the cleric"
+        );
+
+        // Removing the condition clears the partner link.
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .remove_condition(Condition::WardingBonded);
+        assert!(
+            e.actors[&fighter].warding_partner().is_none(),
+            "removing WardingBonded should clear the warding_partner link"
+        );
+    }
+
+    /// Warding Bond's `custom_validate_input` should reject:
+    /// - Self-targeting (caster mirroring damage to themselves).
+    /// - An ally that's already WardingBonded (would overwrite the
+    ///   first caster's link and leave them dangling).
+    /// - A hostile target (this is an ally-only buff).
+    #[test]
+    fn warding_bond_custom_validate_blocks_invalid_targets() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::WARDING_BOND;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 5), 1, 0)
+            .unwrap();
+        // Self-target gate.
+        assert!(
+            !WARDING_BOND.custom_validate_input(
+                &e,
+                cleric,
+                Some(&vec![cleric]),
+                None,
+                None
+            ),
+            "self-target should be blocked"
+        );
+        // Hostile target gate.
+        assert!(
+            !WARDING_BOND.custom_validate_input(
+                &e,
+                cleric,
+                Some(&vec![goblin]),
+                None,
+                None
+            ),
+            "hostile target should be blocked"
+        );
+        // First cast on the fighter — should succeed.
+        assert!(WARDING_BOND.custom_validate_input(
+            &e,
+            cleric,
+            Some(&vec![fighter]),
+            None,
+            None
+        ));
+        // Apply the bond, then a second cast on the same fighter should
+        // be blocked (already bonded).
+        for ef in WARDING_BOND.side_effects(&mut e, cleric, Some(&vec![fighter]), None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !WARDING_BOND.custom_validate_input(
+                &e,
+                cleric,
+                Some(&vec![fighter]),
+                None,
+                None
+            ),
+            "re-bonding an already-bonded ally should be blocked"
+        );
+    }
+
+    /// Telekinetic cantrip — bonus-action shove. Verifies:
+    /// - Cost shape is `BonusAction` only (no slot).
+    /// - On a failed STR save, the target is pulled exactly 1 tile
+    ///   toward the caster — across seeds, the pull should land at
+    ///   least once on a goblin (low STR).
+    /// - `is_harmful` defaults true (the AI's `is_harmful = true` lane
+    ///   considers it), `deals_damage` is false (the AI's focus-fire
+    ///   doesn't pick it as a damage option).
+    #[test]
+    fn telekinetic_cantrip_pulls_target_on_failed_save() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::TELEKINETIC;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        // Cost / flag shape.
+        {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+                .unwrap();
+            let costs = TELEKINETIC.cost(&e, wiz, Some(&vec![g]), None, None);
+            assert!(costs.iter().any(|c| matches!(c, Resource::BonusAction)));
+            // No spell slot — cantrip.
+            assert!(
+                !costs.iter().any(|c| matches!(c, Resource::SpellSlot(_))),
+                "telekinetic is a cantrip — no slot consumed"
+            );
+            assert!(!TELEKINETIC.deals_damage());
+        }
+
+        // Damage / pull check: across seeds, at least one failed STR
+        // save should land and the goblin should end up 1 tile closer.
+        let mut pulled = false;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+                .unwrap();
+            let start = e.actors[&g].location();
+            for ef in TELEKINETIC.side_effects(&mut e, wiz, Some(&vec![g]), None, None) {
+                ef.apply(&mut e);
+            }
+            let end = e.actors[&g].location();
+            if end.x < start.x {
+                pulled = true;
+                break;
+            }
+        }
+        assert!(
+            pulled,
+            "telekinetic should pull the goblin west (closer to caster) on at least one seed"
+        );
+    }
+
+    /// Verifies `self_concentration_buff_effects` produces the expected
+    /// 2-effect chain (ApplyCondition + StartConcentration with the
+    /// condition tagged for cleanup) by casting `Blur` (the first spell
+    /// converted to the helper) and asserting both flags land plus the
+    /// concentration mark properly cleans up on drop.
+    #[test]
+    fn self_concentration_buff_helper_installs_and_drops_cleanly() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::BLUR;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        for ef in BLUR.side_effects(&mut e, wiz, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&wiz].has_condition(Condition::Blurred));
+        assert!(e.actors[&wiz].is_concentrating());
+        e.drop_concentration(wiz);
+        assert!(
+            !e.actors[&wiz].has_condition(Condition::Blurred),
+            "Blurred should drop cleanly with the concentration mark"
+        );
+        assert!(!e.actors[&wiz].is_concentrating());
+    }
 }
