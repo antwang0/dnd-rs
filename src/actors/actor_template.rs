@@ -951,12 +951,14 @@ impl ActorInstance {
     }
 
     pub fn armor_class(&self) -> u32 {
-        // Mage Armor sets a base-AC floor of 13 + DEX (it doesn't stack
-        // with worn armor RAW, but we treat it as a floor so the caster
-        // sees the better of the two values). The condition AC bonus
-        // (Shield, Shield of Faith) still applies on top.
+        // AC-floor conditions (Mage Armor → 13 + DEX, Barkskin → 16) act
+        // as a minimum AC: the caster gets the better of their raw base
+        // and the floor. They don't stack with worn armor RAW, but a
+        // floor lets the caster benefit when their base AC is lower.
+        // The condition AC bonus (Shield, Shield of Faith, Hasted, etc.)
+        // stacks on top of whichever number wins.
         let raw_base = self.base_ac as i32 + self.total_item_bonuses().ac;
-        let floor = self.mage_armor_floor();
+        let floor = self.ac_floor();
         (raw_base.max(floor) + self.condition_ac_bonus()).max(0) as u32
     }
 
@@ -985,16 +987,21 @@ impl ActorInstance {
         bonus
     }
 
-    /// Mage Armor target AC: 13 + DEX modifier. Used to compute the
-    /// effective AC when the caster has the MageArmored condition.
-    /// Returns 0 if the actor is not Mage Armored — `armor_class` then
-    /// uses base AC unmodified.
-    pub fn mage_armor_floor(&self) -> i32 {
+    /// Effective AC floor from active AC-setting conditions. Mage Armor
+    /// floors at `13 + DEX`; Barkskin floors at 16. The maximum across
+    /// every active floor wins so the holder takes the highest qualifying
+    /// minimum — RAW: "Barkskin / Mage Armor don't stack with each other
+    /// or with worn armor; pick the best." Returns 0 when no floor is
+    /// active so `armor_class` falls back to base AC unmodified.
+    pub fn ac_floor(&self) -> i32 {
+        let mut floor = 0;
         if self.has_condition(Condition::MageArmored) {
-            13 + modifier_from_score(self.dexterity)
-        } else {
-            0
+            floor = floor.max(13 + modifier_from_score(self.dexterity));
         }
+        if self.has_condition(Condition::Barkskinned) {
+            floor = floor.max(16);
+        }
+        floor
     }
 
     pub fn hitpoints(&self) -> u32 {

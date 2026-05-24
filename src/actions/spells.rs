@@ -18851,3 +18851,267 @@ impl Action for WallOfThorns {
 }
 
 pub static WALL_OF_THORNS: LazyLock<WallOfThorns> = LazyLock::new(|| WallOfThorns {});
+
+/// Barkskin — 5e level-2 transmutation, concentration. Touch range; the
+/// target's skin hardens to bark, setting their AC to 16 unless their
+/// natural / worn-armor AC is already higher. We model the floor via
+/// the existing `ac_floor()` accessor on `ActorInstance` (which now
+/// reads both `MageArmored` and `Barkskinned`), mirroring how Mage
+/// Armor plugs into `armor_class()`. Concentration-bound on the caster.
+///
+/// custom_validate gates against re-priming an already-barkskinned ally
+/// so the AI's heal/buff pipeline doesn't burn the slot on a no-op.
+pub struct Barkskin {}
+
+impl Action for Barkskin {
+    fn name(&self) -> &str {
+        "barkskin"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bark", "bs-skin"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Skip if the caster already concentrates on something else, or
+        // the target already wears the buff.
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        if caster.is_concentrating() {
+            return false;
+        }
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| !a.has_condition(Condition::Barkskinned))
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Barkskinned,
+                // RAW: 1 hour. Capped to 10 rounds in line with other
+                // concentration buffs — concentration drop is the load-
+                // bearing termination path anyway.
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Barkskin",
+                    vec![(target_id, Condition::Barkskinned)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static BARKSKIN: LazyLock<Barkskin> = LazyLock::new(|| Barkskin {});
+
+/// Pass Without Trace — 5e level-2 abjuration, concentration. The caster
+/// and every ally inside a 30-ft sphere of the caster receives the
+/// `Untracked` condition — attackers have disadvantage on attack rolls
+/// against them for the duration. RAW grants +10 to Stealth checks; the
+/// engine's stealth lane is collapsed into the existing attack-mode
+/// disadvantage cohort so the buff lands as "harder to target."
+///
+/// custom_validate gates against re-casting while concentrating or with
+/// no allies in the aura — the latter blocks burning the slot on a
+/// solo-caster picker.
+pub struct PassWithoutTrace {}
+
+impl Action for PassWithoutTrace {
+    fn name(&self) -> &str {
+        "pass without trace"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pwt", "trace", "pass"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        if caster.is_concentrating() {
+            return false;
+        }
+        // Skip a no-op re-prime on the caster.
+        !caster.has_condition(Condition::Untracked)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let center = caster.location();
+        // 30 ft sphere = 12 tiles. ally_burst_targets gives every
+        // combat-active teammate within radius (caster's team only);
+        // the caster's at gap 0 from `center` so they're already
+        // included in the returned list — no manual append needed.
+        let targets: Vec<usize> = encounter.ally_burst_targets(caster_id, center, 12);
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut tagged: Vec<(usize, Condition)> = Vec::new();
+        for target_id in &targets {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: *target_id,
+                condition: Condition::Untracked,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            tagged.push((*target_id, Condition::Untracked));
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Pass Without Trace", tagged),
+        }));
+        encounter.log(format!(
+            "  pass without trace: {} allies cloaked",
+            targets.len()
+        ));
+        effects
+    }
+}
+
+pub static PASS_WITHOUT_TRACE: LazyLock<PassWithoutTrace> =
+    LazyLock::new(|| PassWithoutTrace {});
+
+/// Holy Weapon — 5e level-5 paladin evocation, concentration. The caster
+/// channels divine light into their weapon: every weapon attack hit deals
+/// an extra 2d8 radiant damage via the on_hit_riders table. Persistent
+/// (not consumed on trigger) and self-only — mirrors Crusader's Mantle /
+/// Spirit Shroud in the rider table but with bigger dice. Concentration-
+/// bound; the slot drops the buff cleanly on concentration end.
+///
+/// custom_validate folds the standard "not already buffed + not already
+/// concentrating" gates so the AI doesn't waste the lv5 slot on a no-op.
+pub struct HolyWeapon {}
+
+impl Action for HolyWeapon {
+    fn name(&self) -> &str {
+        "holy weapon"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hw", "holy", "blessed-weapon"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        // Indirect: the rider lands on the next hit, not on cast.
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        !caster.is_concentrating() && !caster.has_condition(Condition::HolyWeaponed)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        self_concentration_buff_effects(
+            caster_id,
+            "Holy Weapon",
+            Condition::HolyWeaponed,
+            ConditionTimer::Rounds(10),
+        )
+    }
+}
+
+pub static HOLY_WEAPON: LazyLock<HolyWeapon> = LazyLock::new(|| HolyWeapon {});

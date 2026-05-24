@@ -50,6 +50,16 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     evocations on the half-caster spell ladder.
     actions.push(&LIGHTNING_ARROW);
     actions.push(&*CONJURE_VOLLEY);
+    // lv2 **Barkskin**: ranger half-caster pickup. Touch concentration
+    // buff that floors the target's AC at 16 — pairs cleanly with the
+    // ranger's longbow kite (cast on self before the fight, then plink
+    // from cover) or supports a frailer ally (wizard / cleric).
+    actions.push(&*crate::actions::spells::BARKSKIN);
+    // lv2 **Pass Without Trace**: ranger half-caster pickup. 30ft
+    // concentration aura that imposes attack-disadvantage on attackers
+    // — the ranger's signature stealth utility, slotted in the lv2 lane
+    // alongside Spike Growth / Hunter's Mark.
+    actions.push(&*crate::actions::spells::PASS_WITHOUT_TRACE);
     CreatureTemplate {
         name: "Ranger",
         glyph: 'R',

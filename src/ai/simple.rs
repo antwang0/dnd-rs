@@ -212,6 +212,25 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3n''. Holy Weapon — level-5 paladin self concentration buff
+        //       (persistent +2d8 radiant per-hit rider). Fire when an
+        //       enemy is in attack reach so the rider lands this turn.
+        //       Slot-cost is steeper than Spirit Shroud / Bigby's Hand
+        //       so we gate on the same engagement radius.
+        if let Some(aei) = try_holy_weapon(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3n'''. Pass Without Trace — level-2 druid / ranger aura that
+        //        imposes disadvantage on attackers targeting any ally in
+        //        the 30ft sphere. Fire when at least one ally is in the
+        //        aura radius and a fight has started — concentration-
+        //        gated so the caster picks the highest-leverage buff
+        //        across all the lv2-and-up self-buff branches above.
+        if let Some(aei) = try_pass_without_trace(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3n'. Warding Bond — cleric / paladin lv2 abjuration. Touch-
         //      range damage-share bond: bonded ally gets +1 AC, +1 saves,
         //      and damage resistance; the caster takes the mirrored
@@ -668,6 +687,52 @@ fn try_aura_of_life(
         return None;
     }
     try_self_action(encounter, actor_id, "aura of life")
+}
+
+/// Holy Weapon — level-5 paladin concentration self-buff. Every weapon
+/// hit lands +2d8 radiant via the on_hit_riders table for the duration.
+/// Same engagement gate as Spirit Shroud / Bigby's Hand — fire when an
+/// enemy is within attack reach so the rider matters this round. The
+/// action's `custom_validate_input` covers the not-already-concentrating
+/// and not-already-buffed clauses.
+fn try_holy_weapon(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    // 8 tiles ≈ 20ft — same envelope as Bigby's Hand. A paladin who
+    // hasn't engaged yet should save the lv5 slot for the actual fight.
+    try_self_buff_concentration(
+        encounter,
+        actor_id,
+        "holy weapon",
+        Condition::HolyWeaponed,
+        8,
+    )
+}
+
+/// Pass Without Trace — level-2 druid / ranger aura. Cloaks every ally
+/// inside the 30ft sphere (12 tiles), imposing disadvantage on attackers
+/// targeting them for the duration. Fires when the caster isn't already
+/// concentrating, isn't already cloaked, and at least one ally sits in
+/// the radius (the caster covers themselves for free, so a solo caster
+/// can fire too — the aura still buffs the caster). The engagement gate
+/// keeps the slot from burning in an empty room.
+fn try_pass_without_trace(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() {
+        return None;
+    }
+    if actor.has_condition(Condition::Untracked) {
+        return None;
+    }
+    // Engagement check — don't burn a lv2 slot in an empty room.
+    if !any_enemy_within(encounter, actor_id, 60) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "pass without trace")
 }
 
 /// Cleric Divine Strike — once-per-rest bonus-action prime. Fire when

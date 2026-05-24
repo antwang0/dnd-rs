@@ -431,7 +431,7 @@ pub struct SmiteFollowUp {
 /// than declared `const` because `Dice::new` isn't a const fn — but the
 /// runtime cost is one stack-allocated array of plain data, so the
 /// indirection is free.
-fn on_hit_riders() -> [OnHitRider; 18] {
+fn on_hit_riders() -> [OnHitRider; 19] {
     [
         OnHitRider {
             condition: Condition::CrusadersMantled,
@@ -764,6 +764,22 @@ fn on_hit_riders() -> [OnHitRider; 18] {
             melee_only: false,
             ranged_only: true,
             consume_on_trigger: true,
+            follow_up: None,
+        },
+        // 5e Holy Weapon — 5th-level paladin evocation, concentration.
+        // The caster's weapon glows with radiant light: every weapon
+        // attack hit deals an extra 2d8 radiant damage. Persistent (not
+        // consumed on trigger) and lane-agnostic — melee or ranged hits
+        // both fire the rider. Mirrors the Crusader's Mantle / Spirit
+        // Shroud persistent rider shape but tier-5 dice and radiant.
+        OnHitRider {
+            condition: Condition::HolyWeaponed,
+            dice: Dice::new(2, 8),
+            label: "holy weapon",
+            damage_type: DamageType::Radiant,
+            melee_only: false,
+            ranged_only: false,
+            consume_on_trigger: false,
             follow_up: None,
         },
     ]

@@ -149,6 +149,18 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     Tidal Wave with a prone rider that sets up melee allies.
     actions.push(&*crate::actions::spells::WALL_OF_THORNS);
     actions.push(&*crate::actions::spells::TSUNAMI);
+    // lv2 **Barkskin**: touch concentration buff that sets the target's
+    // AC to 16 unless their natural / worn AC is already higher. Slots
+    // into the druid's protective lane next to Healing Word / Cure
+    // Wounds — a front-line ally with leather armor or hide gets a
+    // meaningful AC bump for one concentration slot.
+    actions.push(&*crate::actions::spells::BARKSKIN);
+    // lv2 **Pass Without Trace**: concentration aura that imposes
+    // disadvantage on attacks targeting any ally inside the 30ft sphere.
+    // Fills the druid's "ambush / cover" lane — the AI auto-picks every
+    // ally in the aura at cast time so a clustered party benefits as a
+    // group.
+    actions.push(&*crate::actions::spells::PASS_WITHOUT_TRACE);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

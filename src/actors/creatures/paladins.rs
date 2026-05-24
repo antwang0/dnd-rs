@@ -75,6 +75,12 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // paladin's much larger HP pool. Non-concentration, so it stacks
     // with whichever smite is currently holding the slot.
     actions.push(&*crate::actions::spells::WARDING_BOND);
+    // Holy Weapon — lv5 evocation, concentration. Self-only buff: every
+    // weapon hit gains +2d8 radiant via the on_hit_riders table. Persistent
+    // for the duration (not consumed on trigger) — distinct from the
+    // one-shot smite primes that hold the same concentration slot, so the
+    // AI's smite picker steers around it when it's already up.
+    actions.push(&*crate::actions::spells::HOLY_WEAPON);
     CreatureTemplate {
         name: "Paladin",
         glyph: 'P',

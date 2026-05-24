@@ -647,6 +647,29 @@ pub enum Condition {
     /// OnHitRider gates the rider to bow swings so a melee fallback
     /// can't burn the prime.
     LightningArrowPrimed,
+    /// Barkskin (5e level-2 transmutation, concentration). The target's
+    /// skin hardens to bark: their AC becomes 16 unless their natural /
+    /// worn-armor AC is already higher. We model the "AC floor" via the
+    /// `barkskin_floor()` accessor on `ActorInstance`, mirroring how
+    /// `MageArmored` plugs into `armor_class()`. Concentration-bound on
+    /// the caster; the buff drops cleanly when concentration ends.
+    Barkskinned,
+    /// Pass Without Trace (5e level-2 abjuration, concentration). The
+    /// holder steps lightly through the world — attackers have
+    /// disadvantage on attack rolls against them (RAW gives +10 to
+    /// Stealth checks; we collapse the resulting harder-to-target effect
+    /// into the disadvantage-on-attackers cohort). Concentration-bound
+    /// on the caster; applied to every ally inside the 30ft aura at
+    /// cast time. Joins `is_dispellable_buff` so Dispel Magic can rip
+    /// the cover.
+    Untracked,
+    /// Holy Weapon (5e level-5 paladin evocation, concentration). The
+    /// holder's weapon is sheathed in radiant light: every weapon hit
+    /// deals an extra 2d8 radiant damage. We model the per-hit rider
+    /// via the on_hit_riders table next to Crusader's Mantle / Spirit
+    /// Shroud — persistent (not consumed on trigger) and self-only.
+    /// Concentration-bound on the caster.
+    HolyWeaponed,
 }
 
 impl Condition {
@@ -749,6 +772,9 @@ impl Condition {
             Condition::WardingBonded => "bonded by warding bond",
             Condition::MindBlanked => "mind-blanked",
             Condition::LightningArrowPrimed => "primed with lightning arrow",
+            Condition::Barkskinned => "barkskinned",
+            Condition::Untracked => "passing without trace",
+            Condition::HolyWeaponed => "wielding a holy weapon",
         }
     }
 
@@ -824,6 +850,9 @@ impl Condition {
                 | Condition::WardingBonded
                 | Condition::MindBlanked
                 | Condition::LightningArrowPrimed
+                | Condition::Barkskinned
+                | Condition::Untracked
+                | Condition::HolyWeaponed
         )
     }
 
@@ -935,6 +964,7 @@ impl Condition {
                 | Condition::Blurred
                 | Condition::HolyAuraed
                 | Condition::Foreseen
+                | Condition::Untracked
         )
     }
 
