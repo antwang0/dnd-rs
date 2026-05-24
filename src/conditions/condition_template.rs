@@ -640,22 +640,13 @@ pub enum Condition {
     /// stripped by Dispel Magic's beneficial-buff fallback.
     MindBlanked,
     /// Lightning Arrow primed (5e level-3 ranger evocation, concentration).
-    /// The ranger's next ranged weapon attack hit deals +4d8 lightning,
-    /// and on hit every creature within 10 ft (2-tile burst around the
-    /// target) takes 2d8 lightning on a failed DEX save. One-shot prime
-    /// — the rider table strips this flag the moment a ranged hit
-    /// consumes it. Mirrors the Smite-spell prime pattern but is
-    /// melee_only=false so a longbow swing tags it.
+    /// The ranger's next ranged weapon attack hit deals +4d8 lightning
+    /// via the on-hit rider table. One-shot prime — the rider table
+    /// strips this flag the moment a ranged hit consumes it. Mirrors the
+    /// Smite-spell prime pattern; the new `ranged_only` flag on
+    /// OnHitRider gates the rider to bow swings so a melee fallback
+    /// can't burn the prime.
     LightningArrowPrimed,
-    /// Quivered (5e Swift Quiver, level-5 ranger transmutation,
-    /// concentration). The holder may make two extra ranged weapon
-    /// attacks as a single bonus action each turn; we model the
-    /// load-bearing extra-attack envelope by tagging the holder and
-    /// letting the engine's per-turn bonus-action lane carry the
-    /// "swift quiver" attacks via a dedicated `SwiftQuiverShot` action
-    /// that's only enabled while this condition is up. Concentration-
-    /// bound on the caster.
-    Quivered,
 }
 
 impl Condition {
@@ -758,7 +749,6 @@ impl Condition {
             Condition::WardingBonded => "bonded by warding bond",
             Condition::MindBlanked => "mind-blanked",
             Condition::LightningArrowPrimed => "primed with lightning arrow",
-            Condition::Quivered => "quivered with arrows",
         }
     }
 
@@ -834,7 +824,6 @@ impl Condition {
                 | Condition::WardingBonded
                 | Condition::MindBlanked
                 | Condition::LightningArrowPrimed
-                | Condition::Quivered
         )
     }
 
