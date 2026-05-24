@@ -23341,6 +23341,79 @@ mod tests {
         assert!(!REGENERATE.is_harmful());
     }
 
+    /// Lightning Arrow primed + a longbow shot consumes the prime and
+    /// adds the +4d8 lightning rider. Symmetric: a melee scimitar swing
+    /// should NOT consume the prime (the rider table's ranged_only flag
+    /// gates it). Both halves exercise the new ranged_only field on
+    /// OnHitRider.
+    #[test]
+    fn lightning_arrow_rider_consumed_on_ranged_hit_only() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::{LONGBOW, SCIMITAR};
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rangers::RANGER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        // First half: a melee swing must NOT consume the prime.
+        {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let rng = e
+                .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            // Prime by hand so we don't rely on the smite spell path.
+            e.actors.get_mut(&rng).unwrap().add_condition(
+                Condition::LightningArrowPrimed,
+                ConditionTimer::Rounds(10),
+            );
+            assert!(e.actors[&rng].has_condition(Condition::LightningArrowPrimed));
+            // Melee scimitar swing — multiple seeds so a hit lands.
+            for _ in 0..20 {
+                let tv = vec![g];
+                let _ = SCIMITAR.side_effects(&mut e, rng, Some(&tv), None, None);
+                assert!(
+                    e.actors[&rng].has_condition(Condition::LightningArrowPrimed),
+                    "ranged_only=true: a melee swing must not consume the prime"
+                );
+                if !e.actors.contains_key(&g) {
+                    // Goblin died; the test invariant is already validated.
+                    break;
+                }
+            }
+        }
+
+        // Second half: a longbow shot CONSUMES the prime on a hit.
+        let mut consumed = false;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(20, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let rng = e
+                .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+                .unwrap();
+            e.actors.get_mut(&rng).unwrap().add_condition(
+                Condition::LightningArrowPrimed,
+                ConditionTimer::Rounds(10),
+            );
+            let tv = vec![g];
+            let _ = LONGBOW.side_effects(&mut e, rng, Some(&tv), None, None);
+            if !e.actors[&rng].has_condition(Condition::LightningArrowPrimed) {
+                consumed = true;
+                break;
+            }
+        }
+        assert!(
+            consumed,
+            "ranged_only=true: a longbow hit must consume the prime in at least one seed"
+        );
+    }
+
     /// Charm Monster: lv4 enchantment, WIS save vs charm install. Verifies
     /// the lv4 slot cost shape and that the spell uses the standard
     /// charm pipeline (Charmed condition + charmed_by link). We don't
