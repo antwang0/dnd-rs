@@ -215,25 +215,119 @@ fn spell_attack_outcome(
     (effects, total_dmg)
 }
 
-/// Resolve an enemy-only AoE burst where each victim makes a save for
-/// half damage off a *shared* damage roll. The roll fires once and is
-/// halved on per-target saves — matches 5e's standard AoE semantics
-/// (Fireball / Cone of Cold / Aganazzar's Scorcher / Dawn / Fire Storm
-/// / Tidal Wave / Mental Prison's burst-variant). Allies inside the
-/// radius are spared via `enemy_burst_targets`.
+/// Who's caught in a save-burst: enemies only (allies on the safe side
+/// of a directed effect — Fireball, Burning Hands, the wall spells) or
+/// everyone in radius (non-discriminating shrapnel — Ice Knife's
+/// shatter, Sword Burst). Selects the target-set helper on the encounter
+/// inside the shared resolver.
+#[derive(Clone, Copy)]
+enum BurstTargets {
+    Enemy,
+    Neutral,
+}
+
+impl BurstTargets {
+    /// Pull the target id list from the encounter using the right
+    /// helper. Both helpers share the caster-exclusion / combat-active
+    /// / footprint-in-radius filter so the resolver doesn't have to
+    /// re-inline either loop body.
+    fn ids(
+        self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        point: Coordinate,
+        radius: isize,
+    ) -> Vec<usize> {
+        match self {
+            BurstTargets::Enemy => encounter.enemy_burst_targets(caster_id, point, radius),
+            BurstTargets::Neutral => encounter.neutral_burst_targets(caster_id, point, radius),
+        }
+    }
+}
+
+/// What a passing save does to the damage value: halve it (leveled
+/// save-for-half spells — Fireball / Cone of Cold / Tsunami) or zero
+/// it (cantrip-style save-or-nothing — Thunderclap / Sword Burst). The
+/// distinction is the 5e RAW split: cantrips don't half-on-save.
+#[derive(Clone, Copy)]
+enum SaveOutcome {
+    HalfOnSave,
+    NoneOnSave,
+}
+
+impl SaveOutcome {
+    fn damage_after(self, raw: u32, passed: bool) -> u32 {
+        match (self, passed) {
+            (_, false) => raw,
+            (SaveOutcome::HalfOnSave, true) => raw / 2,
+            (SaveOutcome::NoneOnSave, true) => 0,
+        }
+    }
+}
+
+/// Core shared-save burst resolver. Rolls a *shared* damage value once,
+/// logs the breakdown, then walks the target set picking the right
+/// save behavior. Returns `(damage_effects, per_target_save_results)`
+/// — the saves vector is `(target_id, passed)` for every actor that
+/// took the save so callers can attach per-target failure riders
+/// (Tidal Wave's Prone, Mental Prison's Restrained, Earth Tremor's
+/// Prone, etc.) without re-walking the burst.
 ///
-/// Returns `(damage_effects, per_target_save_results)`. The save vector
-/// is `(target_id, passed)` for every actor that took the save —
-/// callers that want to attach a per-target rider on fail (Tidal Wave's
-/// Prone, Mental Prison's Restrained, etc.) can iterate the list and
-/// queue the follow-up condition without re-walking the burst.
-///
-/// Logging shape:
-/// - One "  {name}: {dice}({roll}) shared {damage_type}" line at the
-///   top, identical to the legacy hand-rolled bursts.
+/// Logging shape (identical to the legacy hand-rolled bursts):
+/// - One "  {name}: {dice}({roll}) shared {damage_type}" line.
 /// - Each target's save line is emitted by `roll_save` directly.
 ///
-/// Centralizes the loop body that ~10 enemy-burst spells reimplement.
+/// Centralizes the loop body that ~15 burst spells used to reimplement.
+/// The thin `enemy_burst_save_for_half` / `neutral_burst_save_for_half`
+/// / `neutral_burst_save_only` wrappers above pre-pick the two enum
+/// dimensions so call sites stay one-liner-readable.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn burst_save_damage(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    point: Coordinate,
+    radius: isize,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    dice: Dice,
+    damage_type: DamageType,
+    action_name: &str,
+    targets: BurstTargets,
+    outcome: SaveOutcome,
+) -> (Vec<Box<dyn ApplicableSideEffect>>, Vec<(usize, bool)>) {
+    let raw = encounter.roll(&dice);
+    encounter.log(format!(
+        "  {}: {}({}) shared {:?}",
+        action_name, dice, raw, damage_type
+    ));
+    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+    let mut saves: Vec<(usize, bool)> = Vec::new();
+    for tid in targets.ids(encounter, caster_id, point, radius) {
+        let save = encounter.roll_save(tid, save_ability, dc);
+        let passed = save.passed();
+        let dmg = outcome.damage_after(raw, passed);
+        saves.push((tid, passed));
+        if dmg == 0 {
+            continue;
+        }
+        effects.push(Box::new(DealDamage {
+            actor_id: tid,
+            amount: dmg,
+            damage_type,
+        }));
+    }
+    (effects, saves)
+}
+
+/// Resolve an enemy-only AoE burst where each victim makes a save for
+/// half damage off a *shared* damage roll. Matches 5e's standard AoE
+/// semantics (Fireball / Cone of Cold / Aganazzar's Scorcher / Dawn /
+/// Fire Storm / Tidal Wave / Mental Prison's burst-variant). Allies
+/// inside the radius are spared via `enemy_burst_targets`.
+///
+/// Thin wrapper that picks `BurstTargets::Enemy` + `SaveOutcome::HalfOnSave`
+/// over the shared `burst_save_damage` resolver. See that function for
+/// the load-bearing loop body and logging shape.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn enemy_burst_save_for_half(
     encounter: &mut EncounterInstance,
@@ -246,28 +340,19 @@ fn enemy_burst_save_for_half(
     damage_type: DamageType,
     action_name: &str,
 ) -> (Vec<Box<dyn ApplicableSideEffect>>, Vec<(usize, bool)>) {
-    let raw = encounter.roll(&dice);
-    encounter.log(format!(
-        "  {}: {}({}) shared {:?}",
-        action_name, dice, raw, damage_type
-    ));
-    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-    let mut saves: Vec<(usize, bool)> = Vec::new();
-    for tid in encounter.enemy_burst_targets(caster_id, point, radius) {
-        let save = encounter.roll_save(tid, save_ability, dc);
-        let passed = save.passed();
-        let dmg = if passed { raw / 2 } else { raw };
-        saves.push((tid, passed));
-        if dmg == 0 {
-            continue;
-        }
-        effects.push(Box::new(DealDamage {
-            actor_id: tid,
-            amount: dmg,
-            damage_type,
-        }));
-    }
-    (effects, saves)
+    burst_save_damage(
+        encounter,
+        caster_id,
+        point,
+        radius,
+        save_ability,
+        dc,
+        dice,
+        damage_type,
+        action_name,
+        BurstTargets::Enemy,
+        SaveOutcome::HalfOnSave,
+    )
 }
 
 /// Friend-or-foe variant of `enemy_burst_save_for_half`. Routes through
@@ -275,14 +360,10 @@ fn enemy_burst_save_for_half(
 /// except the caster) instead of `enemy_burst_targets`, so allies
 /// inside the radius take the save and the damage just like enemies.
 /// Used by spells whose damage is non-discriminating shrapnel — Ice
-/// Knife's shatter, future Acid Splash variants, anything where the
-/// caster's own party is fair game inside the burst footprint.
+/// Knife's shatter, Circle of Death, Incendiary Cloud, Tsunami.
 ///
-/// Returns `(damage_effects, per_target_save_results)` identical in
-/// shape to the enemy-only sibling — same `(tid, passed)` tuple
-/// vector for rider attachment on fail. Centralizes the loop body
-/// instead of having Ice Knife (or any future neutral-burst spell)
-/// hand-roll the same enumerate / roll / log / filter sequence.
+/// Thin wrapper that picks `BurstTargets::Neutral` + `SaveOutcome::HalfOnSave`
+/// over the shared `burst_save_damage` resolver.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn neutral_burst_save_for_half(
     encounter: &mut EncounterInstance,
@@ -295,42 +376,30 @@ fn neutral_burst_save_for_half(
     damage_type: DamageType,
     action_name: &str,
 ) -> (Vec<Box<dyn ApplicableSideEffect>>, Vec<(usize, bool)>) {
-    let raw = encounter.roll(&dice);
-    encounter.log(format!(
-        "  {}: {}({}) shared {:?}",
-        action_name, dice, raw, damage_type
-    ));
-    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-    let mut saves: Vec<(usize, bool)> = Vec::new();
-    for tid in encounter.neutral_burst_targets(caster_id, point, radius) {
-        let save = encounter.roll_save(tid, save_ability, dc);
-        let passed = save.passed();
-        let dmg = if passed { raw / 2 } else { raw };
-        saves.push((tid, passed));
-        if dmg == 0 {
-            continue;
-        }
-        effects.push(Box::new(DealDamage {
-            actor_id: tid,
-            amount: dmg,
-            damage_type,
-        }));
-    }
-    (effects, saves)
+    burst_save_damage(
+        encounter,
+        caster_id,
+        point,
+        radius,
+        save_ability,
+        dc,
+        dice,
+        damage_type,
+        action_name,
+        BurstTargets::Neutral,
+        SaveOutcome::HalfOnSave,
+    )
 }
 
 /// Cantrip-flavored neutral burst: every combat-active actor in the
 /// burst (caster excluded) makes a save against `dc` using `save_ability`.
 /// Failed save = full damage from a *shared* roll, success = no damage.
-/// Returns `(damage_effects, per_target_save_results)` mirroring the
-/// `_for_half` helpers so callers can attach failure-only riders
-/// (Earth Tremor's Prone, future cantrip riders).
-///
-/// Distinct from `neutral_burst_save_for_half` because cantrips
-/// canonically don't half-on-save — a passed save is a clean miss.
 /// Used by Thunderclap, Acid Splash, Sword Burst, Earth Tremor, etc.
-/// Centralizes the enumerate / roll / log / per-target save loop
-/// that each cantrip used to hand-roll.
+///
+/// Thin wrapper that picks `BurstTargets::Neutral` + `SaveOutcome::NoneOnSave`
+/// over the shared `burst_save_damage` resolver — distinct from
+/// `neutral_burst_save_for_half` because cantrips canonically don't
+/// half-on-save (a passed save is a clean miss).
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn neutral_burst_save_only(
     encounter: &mut EncounterInstance,
@@ -343,27 +412,19 @@ fn neutral_burst_save_only(
     damage_type: DamageType,
     action_name: &str,
 ) -> (Vec<Box<dyn ApplicableSideEffect>>, Vec<(usize, bool)>) {
-    let raw = encounter.roll(&dice);
-    encounter.log(format!(
-        "  {}: {}({}) shared {:?}",
-        action_name, dice, raw, damage_type
-    ));
-    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-    let mut saves: Vec<(usize, bool)> = Vec::new();
-    for tid in encounter.neutral_burst_targets(caster_id, point, radius) {
-        let save = encounter.roll_save(tid, save_ability, dc);
-        let passed = save.passed();
-        saves.push((tid, passed));
-        if passed || raw == 0 {
-            continue;
-        }
-        effects.push(Box::new(DealDamage {
-            actor_id: tid,
-            amount: raw,
-            damage_type,
-        }));
-    }
-    (effects, saves)
+    burst_save_damage(
+        encounter,
+        caster_id,
+        point,
+        radius,
+        save_ability,
+        dc,
+        dice,
+        damage_type,
+        action_name,
+        BurstTargets::Neutral,
+        SaveOutcome::NoneOnSave,
+    )
 }
 
 /// Roll a damage burst against a target's saving throw, halving on
@@ -10086,6 +10147,15 @@ pub static ALL_SMITE_SPELLS: &[&SmiteSpell] = &[
     &BANISHING_SMITE,
 ];
 
+/// Ranged-only smite spells (Lightning Arrow today; future ranged Smite
+/// primes — Hail of Thorns variants, etc. — would slot in here). Kept
+/// distinct from `ALL_SMITE_SPELLS` because the AI's melee-smite
+/// pipeline gates on adjacent-enemy-present, which is wrong for a
+/// ranged prime; the ranged registry pairs with the AI's ranger-flavored
+/// `try_ranged_smite_spell` heuristic which gates on enemy-in-bow-range.
+/// Same SmiteSpell chassis — the gate is the only difference.
+pub static ALL_RANGED_SMITE_SPELLS: &[&SmiteSpell] = &[&LIGHTNING_ARROW];
+
 /// Flame Strike — 5th-level evocation. A column of divine fire descends
 /// on a tile within 60ft (24 tiles); every creature whose footprint is
 /// within a 2-tile (10ft) radius of the point makes a DEX save vs the
@@ -18337,3 +18407,447 @@ impl Action for Regenerate {
 }
 
 pub static REGENERATE: LazyLock<Regenerate> = LazyLock::new(|| Regenerate {});
+
+/// Charm Monster — level-4 enchantment (bard / druid / sorcerer / warlock /
+/// wizard). Single-target WIS save vs the caster's CHA-based DC; on fail,
+/// the target is Charmed for 10 rounds (1 hour RAW) and gains a
+/// `charmed_by` link to the caster so they can't take hostile actions
+/// against them (gated in `validate_input`). Mechanically identical to
+/// Charm Person but works against any creature type — RAW differs by
+/// pulling the "humanoid only" restriction. Slots cleanly at lv4 between
+/// Charm Person (lv1) and the lv5 Dominate Person on the enchantment
+/// ladder. No concentration in RAW — install with a flat 10-round timer.
+pub struct CharmMonster {}
+
+impl Action for CharmMonster {
+    fn name(&self) -> &str {
+        "charm monster"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cm", "charm-monster"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft RAW = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::SetCharmedBy;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Intelligence,
+        ]);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Charmed,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(SetCharmedBy {
+                target_id,
+                charmer: Some(caster_id),
+            }),
+        ]
+    }
+}
+
+pub static CHARM_MONSTER: LazyLock<CharmMonster> = LazyLock::new(|| CharmMonster {});
+
+/// Mind Blank — level-8 abjuration (bard / wizard). Self-cast or touch
+/// (we model the single-target touch flavor); for the duration the
+/// target is immune to psychic damage and to the Charmed condition (any
+/// charm-style enchantment fizzles). RAW also grants immunity to mind-
+/// reading and divination — neither is modeled in this engine, so the
+/// load-bearing buff is the psychic / charm immunity envelope. No
+/// concentration in RAW (lasts 24 hours); we install with a long
+/// Rounds(100) timer so it covers any plausible encounter without being
+/// permanently durable. Joins the dispellable-buff cohort so Dispel
+/// Magic / Counterspell can rip it. Implementation is a single
+/// `ApplyCondition` of `MindBlanked` — the actor-side hooks
+/// (`effective_damage` for psychic-zero, `add_condition` for charm
+/// block) live in `actor_template.rs`.
+pub struct MindBlank {}
+
+impl Action for MindBlank {
+    fn name(&self) -> &str {
+        "mind blank"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mb", "blank"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch range — 1-tile reach. RAW: "A willing creature you touch."
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(8)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Don't re-cast on an already-blanked ally — wastes the lv8 slot.
+        let Some(tid) = first_target_id(target_ids) else {
+            return false;
+        };
+        encounter
+            .actors
+            .get(&tid)
+            .is_some_and(|a| !a.has_condition(Condition::MindBlanked))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        encounter.log("  mind blank: psychic + charm immunity installed");
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::MindBlanked,
+            timer: ConditionTimer::Rounds(100),
+        })]
+    }
+}
+
+pub static MIND_BLANK: LazyLock<MindBlank> = LazyLock::new(|| MindBlank {});
+
+/// Lightning Arrow — level-3 ranger evocation, bonus action,
+/// concentration. The next ranged weapon attack the ranger makes deals
+/// an extra 4d8 lightning damage to the target — modeled via the
+/// `LightningArrowPrimed` rider in the on-hit table (ranged_only=true,
+/// consume_on_trigger=true). The 10-ft splash clause is omitted from
+/// the engine here (the rider table doesn't carry a burst follow-up);
+/// the load-bearing buff is the +4d8 prime on the consuming hit, which
+/// is what the AI's focus-fire pipeline leverages. Reuses the
+/// `SmiteSpell` chassis since the per-cast shape — bonus action +
+/// level-3 slot, concentration, prime-the-caster — matches every other
+/// Smite spell in the engine.
+pub static LIGHTNING_ARROW: SmiteSpell = SmiteSpell {
+    display_name: "lightning arrow",
+    aliases: &["la", "lightning-arrow"],
+    spell_slot_lvl: 3,
+    prime: Condition::LightningArrowPrimed,
+    concentration_name: "Lightning Arrow",
+};
+
+/// Conjure Volley — level-5 ranger conjuration. The ranger fires a
+/// volley of arrows into the air; they rain down on a 40-ft (16-tile)
+/// radius cylinder at a tile within 150 ft (60 tiles). Every creature
+/// in the burst makes a DEX save vs the caster's WIS-based DC: fail =
+/// 8d8 piercing, success = half. Friend-or-foe agnostic by RAW —
+/// route through the neutral-burst helper so allies caught in the
+/// volley take the hit too (encourages careful targeting). No
+/// concentration in RAW.
+pub struct ConjureVolley {}
+
+impl Action for ConjureVolley {
+    fn name(&self) -> &str {
+        "conjure volley"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["volley", "cv", "arrow-rain"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 40 ft cylinder ≈ 16-tile burst (RAW radius is the cylinder
+        // footprint; we approximate as a Chebyshev burst).
+        TargetingSchema::Burst { radius: 16 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 150 ft RAW = 60 tiles.
+        Some(60)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Intelligence,
+        ]);
+        let (effects, _) = neutral_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            16,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(8, 8),
+            DamageType::Piercing,
+            "conjure volley",
+        );
+        effects
+    }
+}
+
+pub static CONJURE_VOLLEY: LazyLock<ConjureVolley> = LazyLock::new(|| ConjureVolley {});
+
+/// Tsunami — level-8 druid conjuration, concentration. A massive wall of
+/// water crashes through the area: every creature in a 30-ft (6-tile)
+/// burst centered on a tile within 120 ft (48 tiles) makes a STR save
+/// vs the caster's WIS-based DC. On fail: 6d10 bludgeoning AND Prone.
+/// On success: half damage, no prone. RAW the wall persists and re-
+/// damages for several rounds as it sweeps the battlefield; we collapse
+/// the iterated sweep into the on-cast burst (consistent with Fire Storm
+/// / Incendiary Cloud) since the engine doesn't model moving damage
+/// zones. Friend-or-foe agnostic via the neutral-burst route — the wave
+/// doesn't discriminate. Concentration-bound on the caster so re-casts
+/// drop the prior install cleanly.
+pub struct Tsunami {}
+
+impl Action for Tsunami {
+    fn name(&self) -> &str {
+        "tsunami"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ts", "wave", "tidal"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 6 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft RAW = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(8)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let (mut effects, saves) = neutral_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            6,
+            AbilityScoreType::Strength,
+            dc,
+            Dice::new(6, 10),
+            DamageType::Bludgeoning,
+            "tsunami",
+        );
+        // Prone rider on every actor that failed their STR save —
+        // mirrors Tidal Wave's prone-on-fail clause but with the bigger
+        // burst footprint. Iterate the save vector so the rider lands
+        // exactly on the actors who got the full hit.
+        for (tid, passed) in saves {
+            if passed {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Prone,
+                timer: ConditionTimer::Permanent,
+            }));
+        }
+        // Concentration mark so a re-cast drops the prior install
+        // cleanly. The burst already landed at cast time; the
+        // concentration is just the engine's bookkeeping anchor.
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::new("Tsunami"),
+        }));
+        effects
+    }
+}
+
+pub static TSUNAMI: LazyLock<Tsunami> = LazyLock::new(|| Tsunami {});
+
+/// Wall of Thorns — level-6 druid conjuration, concentration. The druid
+/// conjures a wall of bristling thorns at a tile within 120 ft (48
+/// tiles). Every enemy whose footprint touches the 3-tile (15-ft)
+/// burst takes 7d8 piercing on a failed DEX save (half on success). RAW
+/// the wall persists and damages any creature that ends a turn within
+/// 10 ft of it; we collapse the sustained damage zone into the on-cast
+/// burst (consistent with the rest of the engine's wall / sphere
+/// spells) since the engine doesn't model persistent damage terrain
+/// outside `Spiked`. Concentration-bound on the caster — re-casts drop
+/// the prior install cleanly. Enemy-only burst since RAW lets the
+/// druid choose the wall's orientation so allies stand on the safe
+/// side.
+pub struct WallOfThorns {}
+
+impl Action for WallOfThorns {
+    fn name(&self) -> &str {
+        "wall of thorns"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wot", "thorns", "wall-thorns"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 60ft long, 10ft thick wall ≈ 3-tile Chebyshev burst (treat the
+        // wall as a damage zone since the engine doesn't model linear
+        // walls as terrain modifications).
+        TargetingSchema::Burst { radius: 3 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft RAW = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let (mut effects, _) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            3,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(7, 8),
+            DamageType::Piercing,
+            "wall of thorns",
+        );
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::new("Wall of Thorns"),
+        }));
+        effects
+    }
+}
+
+pub static WALL_OF_THORNS: LazyLock<WallOfThorns> = LazyLock::new(|| WallOfThorns {});

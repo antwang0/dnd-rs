@@ -1,7 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGBOW, SCIMITAR};
 use crate::actions::spells::{
-    CURE_WOUNDS, FAERIE_FIRE, HAIL_OF_THORNS, HUNTERS_MARK, LESSER_RESTORATION, SPIKE_GROWTH,
+    CONJURE_VOLLEY, CURE_WOUNDS, FAERIE_FIRE, HAIL_OF_THORNS, HUNTERS_MARK, LESSER_RESTORATION,
+    LIGHTNING_ARROW, SPIKE_GROWTH,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, Language, Size};
@@ -37,6 +38,18 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // concentration spell is Hunter's Mark, so the AI picks whichever
     // is higher leverage when only one slot is free.
     actions.push(&*crate::actions::spells::FOG_CLOUD);
+    // Newest ranger additions:
+    //   - lv3 **Lightning Arrow** (`SmiteSpell` chassis): bonus-action
+    //     concentration prime that loads the next ranged weapon attack
+    //     with +4d8 lightning. The rider table gates on
+    //     `ranged_only=true` so a melee scimitar swing won't burn the
+    //     prime. Pairs naturally with the longbow workhorse.
+    //   - lv5 **Conjure Volley**: 8d8 piercing in a 40-ft burst,
+    //     friend-or-foe agnostic. Ranger's apex AoE — slots between
+    //     Lightning Arrow (lv3 single-shot) and the spellcaster-tier
+    //     evocations on the half-caster spell ladder.
+    actions.push(&LIGHTNING_ARROW);
+    actions.push(&*CONJURE_VOLLEY);
     CreatureTemplate {
         name: "Ranger",
         glyph: 'R',
@@ -56,8 +69,10 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         cr: 1.0,
         size: Size::Medium,
         actions,
-        // Half-caster slots: level-5 ranger has 4 level-1 and 2 level-2.
-        spell_slots_by_level: vec![4, 2],
+        // Half-caster slots: bumped to a level-9 ranger loadout so the
+        // new lv3 (Lightning Arrow) and lv5 (Conjure Volley) spells
+        // have slots to fire on. 4/3/3/1/1 matches a level-9 ranger.
+        spell_slots_by_level: vec![4, 3, 3, 1, 1],
         rolls_death_saves: true,
         damage_modifiers: HashMap::new(),
         // Rangers are proficient in STR and DEX saves (5e PHB).

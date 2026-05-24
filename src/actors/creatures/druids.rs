@@ -138,6 +138,17 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // prime) lanes since it lands as a clean weapon-attack alternative
     // when the druid is already in melee.
     actions.push(&*crate::actions::spells::PRIMAL_SAVAGERY);
+    // Newest druid additions:
+    //   - lv6 **Wall of Thorns**: 7d8 piercing 15ft burst on the enemy
+    //     side of a conjured wall, DEX save for half. Concentration-
+    //     bound — slots cleanly between Heroes' Feast (lv6 buff) and
+    //     the apex lv7 / lv8 evocations on the druid ladder.
+    //   - lv8 **Tsunami**: 6d10 bludgeoning + prone in a 30-ft burst,
+    //     friend-or-foe agnostic, concentration. Druid's signature
+    //     elemental nuke at the apex tier — bigger footprint than
+    //     Tidal Wave with a prone rider that sets up melee allies.
+    actions.push(&*crate::actions::spells::WALL_OF_THORNS);
+    actions.push(&*crate::actions::spells::TSUNAMI);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

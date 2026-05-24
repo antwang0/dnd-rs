@@ -307,6 +307,17 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::DELAYED_BLAST_FIREBALL);
     actions.push(&*crate::actions::spells::INCENDIARY_CLOUD);
     actions.push(&*crate::actions::spells::WEIRD);
+    // Newest enchantment / abjuration additions:
+    //   - lv4 **Charm Monster**: charm spell that works on any creature
+    //     type (Charm Person is humanoid-only RAW). Slots cleanly
+    //     between Charm Person (lv1) and Dominate Person (lv5) on the
+    //     enchantment ladder.
+    //   - lv8 **Mind Blank**: 24-hour psychic + charm immunity buff
+    //     for a single ally. Self-target priority for the AI's
+    //     defensive pipeline — the wizard pre-blanks themselves before
+    //     a charmer / psion encounter.
+    actions.push(&*crate::actions::spells::CHARM_MONSTER);
+    actions.push(&*crate::actions::spells::MIND_BLANK);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

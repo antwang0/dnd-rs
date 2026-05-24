@@ -112,6 +112,17 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3e'. Ranged smite spells (Lightning Arrow) — same chassis as
+        //      the paladin smites but the prime fires on a ranged
+        //      weapon hit. Gated on enemy-in-bow-range (24 tiles)
+        //      rather than melee adjacency, since the prime is
+        //      consumed by the next bow swing. Slots after the melee
+        //      smite picker so a paladin standing next to an enemy
+        //      doesn't accidentally pick up a ranged smite.
+        if let Some(aei) = try_ranged_smite_spell(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3f. Monk Stunning Strike — once-per-rest bonus-action prime
         //     that lays a stun save on the next melee hit. Fire when
         //     an adjacent enemy is queued for a swing this turn.
@@ -1018,6 +1029,40 @@ fn try_smite_spell(
     use crate::actions::action_template::Action;
     use crate::actions::spells::ALL_SMITE_SPELLS;
     for spell in ALL_SMITE_SPELLS {
+        if let Some(aei) = try_self_action(encounter, actor_id, spell.name()) {
+            return Some(aei);
+        }
+    }
+    None
+}
+
+/// Ranged-flavor smite picker (Lightning Arrow and any future ranged
+/// primes). Mirrors `try_smite_spell` but gates on enemy-within-bow-
+/// range (24 tiles) rather than adjacency — the prime loads the next
+/// *ranged* weapon attack, so a far-away threat is the right trigger.
+/// Skips when the actor is already concentrating (Hunter's Mark and
+/// Lightning Arrow share the concentration slot; AI picks whichever
+/// fires first based on pipeline order) or has the prime up already.
+fn try_ranged_smite_spell(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() {
+        return None;
+    }
+    // Bow range RAW = 150 ft = 60 tiles; we use 24 tiles (60 ft) as the
+    // engagement gate so the ranger only burns the slot when a threat
+    // is in a reasonably-aimed bowshot, not across the entire map.
+    if !any_enemy_within(encounter, actor_id, 24) {
+        return None;
+    }
+    use crate::actions::action_template::Action;
+    use crate::actions::spells::ALL_RANGED_SMITE_SPELLS;
+    for spell in ALL_RANGED_SMITE_SPELLS {
+        if actor.has_condition(spell.prime) {
+            continue;
+        }
         if let Some(aei) = try_self_action(encounter, actor_id, spell.name()) {
             return Some(aei);
         }

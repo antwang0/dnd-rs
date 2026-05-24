@@ -205,6 +205,9 @@ pub fn resolve_attack_outcome(
         if rider.melee_only && !p.is_melee {
             continue;
         }
+        if rider.ranged_only && p.is_melee {
+            continue;
+        }
         if !encounter
             .actors
             .get(&p.caster_id)
@@ -379,6 +382,12 @@ pub struct OnHitRider {
     /// Smite, Divine Smite). Ranged carriers like Crown of Stars or
     /// Crusader's Mantle leave this false so they tag arrow hits too.
     pub melee_only: bool,
+    /// True iff the rider only fires on ranged swings (5e Lightning
+    /// Arrow RAW: "the next attack you make with a ranged weapon").
+    /// Symmetric to `melee_only` — both default to false so the rider
+    /// fires on either lane. Defaulting to false keeps every existing
+    /// rider entry unchanged.
+    pub ranged_only: bool,
     /// True iff the condition is stripped from the caster the moment
     /// the rider lands (one-shot primes). Persistent buffs leave this
     /// false so they stay up until the spell ends.
@@ -422,7 +431,7 @@ pub struct SmiteFollowUp {
 /// than declared `const` because `Dice::new` isn't a const fn — but the
 /// runtime cost is one stack-allocated array of plain data, so the
 /// indirection is free.
-fn on_hit_riders() -> [OnHitRider; 17] {
+fn on_hit_riders() -> [OnHitRider; 18] {
     [
         OnHitRider {
             condition: Condition::CrusadersMantled,
@@ -430,6 +439,7 @@ fn on_hit_riders() -> [OnHitRider; 17] {
             label: "crusader's mantle",
             damage_type: DamageType::Radiant,
             melee_only: false,
+            ranged_only: false,
             consume_on_trigger: false,
             follow_up: None,
         },
@@ -439,6 +449,7 @@ fn on_hit_riders() -> [OnHitRider; 17] {
             label: "crown of stars",
             damage_type: DamageType::Radiant,
             melee_only: false,
+            ranged_only: false,
             consume_on_trigger: false,
             follow_up: None,
         },
@@ -452,6 +463,7 @@ fn on_hit_riders() -> [OnHitRider; 17] {
             label: "bigby's hand",
             damage_type: DamageType::Force,
             melee_only: false,
+            ranged_only: false,
             consume_on_trigger: false,
             follow_up: None,
         },
@@ -464,6 +476,7 @@ fn on_hit_riders() -> [OnHitRider; 17] {
             label: "spirit shroud",
             damage_type: DamageType::Cold,
             melee_only: true,
+            ranged_only: false,
             consume_on_trigger: false,
             follow_up: None,
         },
@@ -473,6 +486,7 @@ fn on_hit_riders() -> [OnHitRider; 17] {
             label: "divine smite",
             damage_type: DamageType::Radiant,
             melee_only: true,
+            ranged_only: false,
             consume_on_trigger: true,
             follow_up: None,
         },
@@ -488,6 +502,7 @@ fn on_hit_riders() -> [OnHitRider; 17] {
             label: "searing smite",
             damage_type: DamageType::Fire,
             melee_only: true,
+            ranged_only: false,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 // Auto-apply — RAW Searing Smite ignites the target on
@@ -510,6 +525,7 @@ fn on_hit_riders() -> [OnHitRider; 17] {
             label: "wrathful smite",
             damage_type: DamageType::Psychic,
             melee_only: true,
+            ranged_only: false,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 save_ability: Some(AbilityScoreType::Wisdom),
@@ -529,6 +545,7 @@ fn on_hit_riders() -> [OnHitRider; 17] {
             label: "branding smite",
             damage_type: DamageType::Radiant,
             melee_only: true,
+            ranged_only: false,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 // RAW Branding Smite is auto-apply on hit (no save).
@@ -549,6 +566,7 @@ fn on_hit_riders() -> [OnHitRider; 17] {
             label: "blinding smite",
             damage_type: DamageType::Radiant,
             melee_only: true,
+            ranged_only: false,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 save_ability: Some(AbilityScoreType::Constitution),
@@ -570,6 +588,7 @@ fn on_hit_riders() -> [OnHitRider; 17] {
             label: "stunning strike",
             damage_type: DamageType::Bludgeoning,
             melee_only: true,
+            ranged_only: false,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 save_ability: Some(AbilityScoreType::Constitution),
@@ -591,6 +610,7 @@ fn on_hit_riders() -> [OnHitRider; 17] {
             label: "divine strike",
             damage_type: DamageType::Radiant,
             melee_only: true,
+            ranged_only: false,
             consume_on_trigger: true,
             follow_up: None,
         },
@@ -605,6 +625,7 @@ fn on_hit_riders() -> [OnHitRider; 17] {
             label: "trip attack",
             damage_type: DamageType::Bludgeoning,
             melee_only: true,
+            ranged_only: false,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 save_ability: Some(AbilityScoreType::Strength),
@@ -625,6 +646,7 @@ fn on_hit_riders() -> [OnHitRider; 17] {
             label: "staggering smite",
             damage_type: DamageType::Psychic,
             melee_only: true,
+            ranged_only: false,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 save_ability: Some(AbilityScoreType::Wisdom),
@@ -649,6 +671,7 @@ fn on_hit_riders() -> [OnHitRider; 17] {
             label: "banishing smite",
             damage_type: DamageType::Force,
             melee_only: true,
+            ranged_only: false,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 // No save — RAW: the banish is auto-apply if HP ≤ 50.
@@ -676,6 +699,7 @@ fn on_hit_riders() -> [OnHitRider; 17] {
             label: "shillelagh",
             damage_type: DamageType::Force,
             melee_only: true,
+            ranged_only: false,
             consume_on_trigger: true,
             follow_up: None,
         },
@@ -693,6 +717,7 @@ fn on_hit_riders() -> [OnHitRider; 17] {
             label: "thunderous smite",
             damage_type: DamageType::Thunder,
             melee_only: true,
+            ranged_only: false,
             consume_on_trigger: true,
             follow_up: Some(SmiteFollowUp {
                 save_ability: Some(AbilityScoreType::Strength),
@@ -718,7 +743,27 @@ fn on_hit_riders() -> [OnHitRider; 17] {
             label: "enlarge",
             damage_type: DamageType::Bludgeoning,
             melee_only: false,
+            ranged_only: false,
             consume_on_trigger: false,
+            follow_up: None,
+        },
+        // 5e Lightning Arrow — 3rd-level ranger evocation, bonus action,
+        // concentration. Primes the ranger's next ranged weapon attack
+        // with +4d8 lightning. The 10-ft splash (2d8 lightning on
+        // adjacent creatures, DEX save for half) is layered on by the
+        // spell's `side_effects` at cast time via a follow-up burst — the
+        // rider table just carries the per-hit prime damage, mirroring
+        // every other Smite-style one-shot. melee_only=false so a
+        // longbow swing tags it; consume_on_trigger=true so the first
+        // hit consumes the prime.
+        OnHitRider {
+            condition: Condition::LightningArrowPrimed,
+            dice: Dice::new(4, 8),
+            label: "lightning arrow",
+            damage_type: DamageType::Lightning,
+            melee_only: false,
+            ranged_only: true,
+            consume_on_trigger: true,
             follow_up: None,
         },
     ]

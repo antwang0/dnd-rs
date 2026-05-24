@@ -626,6 +626,14 @@ impl ActorInstance {
         if self.has_condition(Condition::WardingBonded) {
             amt /= 2;
         }
+        // 5e Mind Blank: psychic-damage immunity for the duration. Lives
+        // here rather than on `damage_modifiers` so the immunity drops
+        // cleanly when the buff expires or is dispelled, without
+        // touching the template's static modifier table. Hard zero,
+        // matching the Immunity damage modifier's behavior.
+        if dt == DamageType::Psychic && self.has_condition(Condition::MindBlanked) {
+            amt = 0;
+        }
         amt
     }
 
@@ -749,6 +757,14 @@ impl ActorInstance {
         // the spell is up. We honor that as a dynamic immunity here so
         // any source (monster fear aura, Cause Fear spell) gets blocked.
         if c == Condition::Frightened && self.has_condition(Condition::Heroic) {
+            return false;
+        }
+        // 5e Mind Blank: target is immune to charm while the spell is up
+        // (RAW also blocks divination and psychic damage; psychic damage
+        // is handled in `effective_damage`). Dynamic immunity so any
+        // source — Charm Person, Charm Monster, Dominate Person, Suggestion
+        // — gets blocked, not just the spells we know about today.
+        if c == Condition::Charmed && self.has_condition(Condition::MindBlanked) {
             return false;
         }
         let is_new = !self.conditions.contains_key(&c);
@@ -1671,5 +1687,39 @@ mod tests {
         assert_eq!(s.gain_temp_hp(3), 5);
         // Larger grant replaces.
         assert_eq!(s.gain_temp_hp(8), 8);
+    }
+
+    #[test]
+    fn mind_blank_zeroes_psychic_damage() {
+        let mut s = make(&SKELETON_TEMPLATE);
+        // Sanity check: no buff = baseline psychic damage lands.
+        assert_eq!(s.effective_damage(15, DamageType::Psychic), 15);
+        s.add_condition(Condition::MindBlanked, ConditionTimer::Rounds(100));
+        // With the buff up, psychic drops to zero — mirrors the Immunity
+        // damage modifier semantics.
+        assert_eq!(s.effective_damage(15, DamageType::Psychic), 0);
+        // Other damage types still flow through normally.
+        assert_eq!(s.effective_damage(7, DamageType::Bludgeoning), 14);
+    }
+
+    #[test]
+    fn mind_blank_blocks_charm() {
+        let mut s = make(&SKELETON_TEMPLATE);
+        s.add_condition(Condition::MindBlanked, ConditionTimer::Rounds(100));
+        // Charm application is blocked by the dynamic immunity hook even
+        // though Charmed isn't on the template's `condition_immunities`.
+        let added = s.add_condition(Condition::Charmed, ConditionTimer::Rounds(10));
+        assert!(!added, "charm should fizzle against mind blank");
+        assert!(!s.has_condition(Condition::Charmed));
+    }
+
+    #[test]
+    fn mind_blank_drop_restores_psychic_lane() {
+        let mut s = make(&SKELETON_TEMPLATE);
+        s.add_condition(Condition::MindBlanked, ConditionTimer::Rounds(100));
+        assert_eq!(s.effective_damage(20, DamageType::Psychic), 0);
+        s.remove_condition(Condition::MindBlanked);
+        // After dispel / expire, psychic damage flows through normally.
+        assert_eq!(s.effective_damage(20, DamageType::Psychic), 20);
     }
 }
