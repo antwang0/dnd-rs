@@ -28,25 +28,12 @@ pub fn resolve_burst_save_damage(
     damage: u32,
     damage_type: DamageType,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
-    use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
-
     let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-    for target_id in encounter.sorted_actor_ids() {
-        let Some(target) = encounter.actors.get(&target_id) else {
-            continue;
-        };
-        if target_id == caster_id || !target.is_combat_active() {
-            continue;
-        }
-        let dist = footprint_chebyshev(
-            target.location(),
-            get_tiles_from_size(target.size()),
-            center,
-            1,
-        );
-        if dist > radius {
-            continue;
-        }
+    // `neutral_burst_targets` shares the "caster-excluded, combat-active,
+    // footprint in radius" filter with the rest of the engine — folding
+    // it here keeps the caster-exclusion / footprint-Chebyshev / sorted-
+    // ids invariant in one place instead of re-inlining the loop.
+    for target_id in encounter.neutral_burst_targets(caster_id, center, radius) {
         let save = encounter.roll_save(target_id, save_ability, dc);
         let dmg = if save.passed() { damage / 2 } else { damage };
         if dmg == 0 {

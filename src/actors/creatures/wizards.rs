@@ -287,6 +287,26 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // allies' next swing at advantage — punchier than Toll the Dead
     // when there's a fighter / paladin nearby to capitalize.
     actions.push(&*crate::actions::spells::SAPPING_STING);
+    // Newest spell additions:
+    //   - lv3 **Erupting Earth**: 3d12 bludgeoning DEX-save burst (no
+    //     fire resistance dependency, complements Fireball at the lv3
+    //     AoE tier).
+    //   - lv4 **Blight**: 8d8 necrotic single-target CON-save for half
+    //     (high-damage save-for-half against a single chunky target).
+    //   - lv6 **Circle of Death**: 8d6 necrotic friend-or-foe-agnostic
+    //     60ft-radius CON-save burst (mass damage at lv6).
+    //   - lv7 **Delayed Blast Fireball**: 12d6 fire DEX-save burst
+    //     (signature lv7 evocation, on top of Fire Storm's lv7 enemy-
+    //     only fire).
+    //   - lv8 **Incendiary Cloud**: 10d8 fire DEX-save burst.
+    //   - lv9 **Weird**: 10d10 psychic + Frightened on WIS-save fail
+    //     (boss-tier illusion lock).
+    actions.push(&*crate::actions::spells::ERUPTING_EARTH);
+    actions.push(&*crate::actions::spells::BLIGHT);
+    actions.push(&*crate::actions::spells::CIRCLE_OF_DEATH);
+    actions.push(&*crate::actions::spells::DELAYED_BLAST_FIREBALL);
+    actions.push(&*crate::actions::spells::INCENDIARY_CLOUD);
+    actions.push(&*crate::actions::spells::WEIRD);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

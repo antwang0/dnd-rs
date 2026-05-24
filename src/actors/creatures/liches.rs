@@ -52,6 +52,23 @@ pub static LICH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*POWER_WORD_STUN);
     // Level 9 — the lich's signature panic button.
     actions.push(&*POWER_WORD_KILL);
+    // Necromancy-themed additions matching the lich's archetype:
+    //   - lv4 **Blight**: 8d8 necrotic single-target nuke (necromancy
+    //     against fleshy threats — a defining lich spell RAW).
+    //   - lv6 **Circle of Death**: 8d6 necrotic 30ft-radius AoE
+    //     (the lich's signature mass-necrotic option).
+    //   - lv7 **Delayed Blast Fireball**: 12d6 fire DEX-save burst
+    //     (rounds out the lich's lv7 AoE lane alongside Finger of Death).
+    //   - lv8 **Incendiary Cloud**: 10d8 fire neutral-burst (mass AoE
+    //     at lv8 next to Synaptic Static / Power Word Stun).
+    //   - lv9 **Weird**: 10d10 psychic + Frightened — usually shrugged
+    //     off by Lich's own Frightened immunity, but lethal against
+    //     a party that's not equipped to resist illusion-fear.
+    actions.push(&*crate::actions::spells::BLIGHT);
+    actions.push(&*crate::actions::spells::CIRCLE_OF_DEATH);
+    actions.push(&*crate::actions::spells::DELAYED_BLAST_FIREBALL);
+    actions.push(&*crate::actions::spells::INCENDIARY_CLOUD);
+    actions.push(&*crate::actions::spells::WEIRD);
     CreatureTemplate {
         name: "Lich",
         // 'L' is taken in some content; use 'l' (lowercase L) for lich.

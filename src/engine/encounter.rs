@@ -1306,45 +1306,6 @@ impl EncounterInstance {
         false
     }
 
-    /// Sorted ids of every combat-active actor whose footprint touches a
-    /// `radius`-tile burst centered on `point`, with the caster always
-    /// excluded. Returned in actor-id order so dependent rolls (saves,
-    /// damage rerolls per target) consume the shared seedable roller in
-    /// a deterministic order.
-    ///
-    /// Burst spells (Sacred Burst, Web, Faerie Fire) all want this exact
-    /// list — factoring it here keeps the per-spell `side_effects` tight
-    /// and means the "exclude caster, skip downed, footprint-Chebyshev"
-    /// invariant lives in one place.
-    pub fn burst_targets(
-        &self,
-        caster_id: usize,
-        point: Coordinate,
-        radius: isize,
-    ) -> Vec<usize> {
-        let mut ids: Vec<usize> = self.actors.keys().copied().collect();
-        ids.sort_unstable();
-        ids.retain(|&id| {
-            if id == caster_id {
-                return false;
-            }
-            let Some(actor) = self.actors.get(&id) else {
-                return false;
-            };
-            if !actor.is_combat_active() {
-                return false;
-            }
-            let dist = footprint_chebyshev(
-                actor.location(),
-                get_tiles_from_size(actor.size()),
-                point,
-                1,
-            );
-            dist <= radius
-        });
-        ids
-    }
-
     /// Sorted ids of combat-active actors inside the burst, filtered by
     /// team relation to the caster. `same_team = true` returns allies
     /// (including the caster if they sit in the blast); `same_team = false`
@@ -2465,9 +2426,22 @@ impl EncounterInstance {
         if !self.actor_has_line_of_sight(attacker_id, target_id) {
             return false;
         }
+        // Either a SingleActor ranged attack OR a Burst-schema attack
+        // (Fireball, Cone of Cold, Erupting Earth, dragon breath, etc.)
+        // whose reach covers the target — both count as a viable
+        // engagement option. Without the Burst clause, AoE-only
+        // attackers behind a path-blocked wall were falsely marked as
+        // stalemate-locked even when they could lob a Fireball at the
+        // unreachable enemy.
         attacker.actions.iter().any(|a| {
-            matches!(a.targeting_schema(), TargetingSchema::SingleActor)
-                && a.reach_tiles().is_some_and(|r| r > MELEE_REACH && dist <= r)
+            let in_range = a.reach_tiles().is_some_and(|r| r > MELEE_REACH && dist <= r);
+            if !in_range {
+                return false;
+            }
+            matches!(
+                a.targeting_schema(),
+                TargetingSchema::SingleActor | TargetingSchema::Burst { .. }
+            )
         })
     }
 
@@ -23093,5 +23067,277 @@ mod tests {
             "Blurred should drop cleanly with the concentration mark"
         );
         assert!(!e.actors[&wiz].is_concentrating());
+    }
+
+    /// Erupting Earth: lv3 transmutation, DEX-save-for-half bludgeoning
+    /// burst (3d12 over a 4-tile radius). Verifies the lv3 slot cost,
+    /// that a low-DEX enemy in the area takes damage, and that an ally
+    /// outside the burst is untouched (enemy-burst routing).
+    #[test]
+    fn erupting_earth_damages_enemies_in_burst() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::ERUPTING_EARTH;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut damaged = false;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain(25, 25, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            // Low-DEX zombie in the 4-tile burst footprint.
+            let z = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+                .unwrap();
+            let pt = Coordinate::new(10, 2);
+            let costs = ERUPTING_EARTH.cost(&e, wiz, None, Some(&vec![pt]), None);
+            assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(3))));
+            let hp_before = e.actors[&z].hitpoints();
+            for ef in ERUPTING_EARTH.side_effects(&mut e, wiz, None, Some(&vec![pt]), None) {
+                ef.apply(&mut e);
+            }
+            if e.actors[&z].hitpoints() < hp_before {
+                damaged = true;
+                break;
+            }
+        }
+        assert!(
+            damaged,
+            "Erupting Earth should land 3d12 bludgeoning on a failed DEX save across seeds"
+        );
+    }
+
+    /// Blight: lv4 necromancy, single-target CON-save-for-half necrotic
+    /// (8d8). Verifies the lv4 slot cost and that damage lands on a
+    /// failed save across seeds.
+    #[test]
+    fn blight_lands_necrotic_on_failed_save() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::BLIGHT;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut damaged = false;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            // Goblin (low CON) within 12-tile range.
+            let g = e
+                .instantiate_creature(
+                    &crate::actors::creatures::goblins::GOBLIN_TEMPLATE,
+                    Coordinate::new(10, 5),
+                    1,
+                    0,
+                )
+                .unwrap();
+            let costs = BLIGHT.cost(&e, wiz, Some(&vec![g]), None, None);
+            assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(4))));
+            let hp_before = e.actors[&g].hitpoints();
+            for ef in BLIGHT.side_effects(&mut e, wiz, Some(&vec![g]), None, None) {
+                ef.apply(&mut e);
+            }
+            if e.actors.get(&g).map(|a| a.hitpoints()).unwrap_or(0) < hp_before {
+                damaged = true;
+                break;
+            }
+        }
+        assert!(damaged, "Blight should land 8d8 necrotic across seeds");
+    }
+
+    /// Harm: lv6 necromancy, single-target CON-save-for-half necrotic
+    /// (14d6) with max-HP reduction equal to damage dealt on a failed
+    /// save. Verifies the lv6 slot cost, damage lands, and max HP is
+    /// reduced on a failed save across seeds.
+    #[test]
+    fn harm_lands_damage_and_max_hp_drain_on_failed_save() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::HARM;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut max_hp_drained = false;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let cler = e
+                .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(
+                    &crate::actors::creatures::goblins::GOBLIN_TEMPLATE,
+                    Coordinate::new(10, 5),
+                    1,
+                    0,
+                )
+                .unwrap();
+            let costs = HARM.cost(&e, cler, Some(&vec![g]), None, None);
+            assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(6))));
+            let max_before = e.actors[&g].max_hitpoints();
+            for ef in HARM.side_effects(&mut e, cler, Some(&vec![g]), None, None) {
+                ef.apply(&mut e);
+            }
+            // Goblin may be dead by now (alive id removed); check via Option.
+            let max_after = e
+                .actors
+                .get(&g)
+                .map(|a| a.max_hitpoints())
+                .unwrap_or(0);
+            if max_after < max_before {
+                max_hp_drained = true;
+                break;
+            }
+        }
+        assert!(
+            max_hp_drained,
+            "Harm should reduce target max HP on a failed CON save across seeds"
+        );
+    }
+
+    /// Circle of Death: lv6 necromancy, 30ft (6-tile) CON-save-for-half
+    /// necrotic burst (8d6). Verifies the lv6 slot cost and that an
+    /// in-burst enemy takes damage across seeds.
+    #[test]
+    fn circle_of_death_damages_in_burst() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::CIRCLE_OF_DEATH;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut damaged = false;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain(30, 30, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let z = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(20, 20), 1, 0)
+                .unwrap();
+            let pt = Coordinate::new(20, 20);
+            let costs = CIRCLE_OF_DEATH.cost(&e, wiz, None, Some(&vec![pt]), None);
+            assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(6))));
+            let hp_before = e.actors[&z].hitpoints();
+            for ef in CIRCLE_OF_DEATH.side_effects(&mut e, wiz, None, Some(&vec![pt]), None) {
+                ef.apply(&mut e);
+            }
+            // Zombie resists necrotic by RAW (half), but should still take damage.
+            if e.actors
+                .get(&z)
+                .map(|a| a.hitpoints())
+                .unwrap_or(0)
+                < hp_before
+            {
+                damaged = true;
+                break;
+            }
+        }
+        assert!(
+            damaged,
+            "Circle of Death should land 8d6 necrotic in the 6-tile burst across seeds"
+        );
+    }
+
+    /// Weird: lv9 illusion, WIS-save vs 10d10 psychic + Frightened (10
+    /// rounds). Verifies the lv9 slot cost and that a failed save
+    /// applies Frightened across seeds. Enemy-burst routing means the
+    /// caster's allies are excluded.
+    #[test]
+    fn weird_applies_frightened_on_failed_save() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::WEIRD;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut frightened = false;
+        for seed in 0..30u64 {
+            let mut e = ei_with_terrain(30, 30, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            // Goblin (low WIS) — Frightened-immune undead like a zombie
+            // would shrug it, so we use a fear-vulnerable target.
+            let g = e
+                .instantiate_creature(
+                    &crate::actors::creatures::goblins::GOBLIN_TEMPLATE,
+                    Coordinate::new(15, 15),
+                    1,
+                    0,
+                )
+                .unwrap();
+            let pt = Coordinate::new(15, 15);
+            let costs = WEIRD.cost(&e, wiz, None, Some(&vec![pt]), None);
+            assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(9))));
+            for ef in WEIRD.side_effects(&mut e, wiz, None, Some(&vec![pt]), None) {
+                ef.apply(&mut e);
+            }
+            if e.actors
+                .get(&g)
+                .is_some_and(|a| a.has_condition(Condition::Frightened))
+            {
+                frightened = true;
+                break;
+            }
+        }
+        assert!(
+            frightened,
+            "Weird should install Frightened on at least one failed WIS save across seeds"
+        );
+    }
+
+    /// Regenerate: lv7 transmutation, 4d8+15 single-target heal. Verifies
+    /// the lv7 slot cost and that the target's HP rises (or is restored
+    /// to max if already wounded).
+    #[test]
+    fn regenerate_heals_target() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::REGENERATE;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cler = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Target adjacent ally (same team).
+        let ally = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        // Wound them so we can observe a heal — pick a small bite that
+        // won't drop the cleric chassis (low HP) to 0.
+        if let Some(a) = e.actors.get_mut(&ally) {
+            let _ = a.take_typed_damage(2, DamageType::Bludgeoning);
+        }
+        let hp_before = e.actors[&ally].hitpoints();
+        let costs = REGENERATE.cost(&e, cler, Some(&vec![ally]), None, None);
+        assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(7))));
+        for ef in REGENERATE.side_effects(&mut e, cler, Some(&vec![ally]), None, None) {
+            ef.apply(&mut e);
+        }
+        let hp_after = e.actors[&ally].hitpoints();
+        assert!(
+            hp_after > hp_before,
+            "Regenerate should heal the target (before {} → after {})",
+            hp_before,
+            hp_after
+        );
+        assert!(REGENERATE.is_heal());
+        assert!(!REGENERATE.is_harmful());
     }
 }

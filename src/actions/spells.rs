@@ -1684,7 +1684,7 @@ impl Action for FaerieFire {
         };
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         let mut conditions = Vec::new();
-        for tid in encounter.burst_targets(caster_id, point, radius) {
+        for tid in encounter.neutral_burst_targets(caster_id, point, radius) {
             let save = encounter.roll_save(tid, AbilityScoreType::Dexterity, dc);
             if !save.passed() {
                 effects.push(Box::new(ApplyCondition {
@@ -4220,7 +4220,7 @@ impl Action for HypnoticPattern {
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
         let mut conditions_tracked: Vec<(usize, Condition)> = Vec::new();
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for target_id in encounter.burst_targets(caster_id, point, 4) {
+        for target_id in encounter.neutral_burst_targets(caster_id, point, 4) {
             // Charm-immune creatures shrug off the pattern. We don't
             // log per-target immunity for AoE — would be noisy.
             if encounter
@@ -10764,7 +10764,7 @@ impl Action for ReverseGravity {
         // RAW makes no ally/enemy distinction — every creature in the
         // column rolls a save. Caster is excluded (they cast it; they
         // brace themselves).
-        for tid in encounter.burst_targets(caster_id, point, RADIUS) {
+        for tid in encounter.neutral_burst_targets(caster_id, point, RADIUS) {
             let save = encounter.roll_save(tid, AbilityScoreType::Strength, dc);
             if save.passed() {
                 continue;
@@ -17704,3 +17704,636 @@ impl Action for SappingSting {
 }
 
 pub static SAPPING_STING: LazyLock<SappingSting> = LazyLock::new(|| SappingSting {});
+
+/// Erupting Earth — level-3 transmutation (sorcerer / wizard / druid). A
+/// 20-ft (4-tile) cube of earth erupts at a point within 120 ft (48 tiles).
+/// Every creature in the area makes a DEX save vs the caster's spell save
+/// DC: fail = 3d12 bludgeoning, success = half. Slots cleanly between
+/// Fireball (lv3 AoE evocation) and Lightning Bolt (lv3 line) as a 3rd-
+/// level AoE that bypasses fire resistance via the bludgeoning typing —
+/// good against fire-immune fiends and dragons.
+pub struct EruptingEarth {}
+
+impl Action for EruptingEarth {
+    fn name(&self) -> &str {
+        "erupting earth"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["erupt", "ee"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 2 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft RAW = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+        ]);
+        let (effects, _) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            2,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(3, 12),
+            DamageType::Bludgeoning,
+            "erupting earth",
+        );
+        effects
+    }
+}
+
+pub static ERUPTING_EARTH: LazyLock<EruptingEarth> = LazyLock::new(|| EruptingEarth {});
+
+/// Blight — level-4 necromancy (warlock / sorcerer / wizard). A single
+/// target within 30 ft (12 tiles) makes a CON save vs the caster's spell
+/// save DC: fail = 8d8 necrotic, success = half. Undead and constructs
+/// shrug it off via the engine's necrotic immunity / resistance tables.
+/// Plants take maximum damage by RAW (we don't model creature type at
+/// that granularity — the standard damage roll applies). Slots between
+/// Vitriolic Sphere (lv4 acid AoE) and Sickening Radiance (lv4 burst) as
+/// the wizard's single-target lv4 necromancy nuke.
+pub struct Blight {}
+
+impl Action for Blight {
+    fn name(&self) -> &str {
+        "blight"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bl", "wither"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft RAW = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Necrotic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+        ]);
+        let (dmg, _) = save_for_half_damage(
+            encounter,
+            target_id,
+            AbilityScoreType::Constitution,
+            dc,
+            Dice::new(8, 8),
+            DamageType::Necrotic,
+            "blight",
+        );
+        if dmg == 0 {
+            return Vec::new();
+        }
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: dmg,
+            damage_type: DamageType::Necrotic,
+        })]
+    }
+}
+
+pub static BLIGHT: LazyLock<Blight> = LazyLock::new(|| Blight {});
+
+/// Circle of Death — level-6 necromancy. Wave of negative energy bursts
+/// from a point within 150 ft (60 tiles). Every creature in the 30-ft
+/// (6-tile) radius makes a CON save vs the caster's spell save DC: fail
+/// = 8d6 necrotic, success = half. Friend-or-foe agnostic by RAW; we
+/// route through the neutral-burst helper so allies caught in the wave
+/// take the hit too — encourages careful placement. The signature 6th-
+/// level necromancy AoE; slots between Chain Lightning (lv6 force) and
+/// Sunbeam (lv6 radiant).
+pub struct CircleOfDeath {}
+
+impl Action for CircleOfDeath {
+    fn name(&self) -> &str {
+        "circle of death"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cod", "circle"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 6 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 150 ft RAW = 60 tiles.
+        Some(60)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Necrotic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+        ]);
+        let (effects, _) = neutral_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            6,
+            AbilityScoreType::Constitution,
+            dc,
+            Dice::new(8, 6),
+            DamageType::Necrotic,
+            "circle of death",
+        );
+        effects
+    }
+}
+
+pub static CIRCLE_OF_DEATH: LazyLock<CircleOfDeath> = LazyLock::new(|| CircleOfDeath {});
+
+/// Harm — level-6 necromancy (cleric). Single-target CON save vs the
+/// caster's spell save DC. On fail: 14d6 necrotic AND the target's max
+/// HP drops by the damage dealt for the next 10 rounds (1 hour RAW — we
+/// don't tick max-HP back up, so the drop is effectively permanent in
+/// combat). On success: half damage and no max-HP drain. The cleric's
+/// signature single-target nuke, mirroring Heal but on the offensive
+/// side. Mechanically pairs the load-bearing necrotic burst with a
+/// `AdjustMaxHp` rider so a survivor still feels the hit on their HP
+/// ceiling.
+pub struct Harm {}
+
+impl Action for Harm {
+    fn name(&self) -> &str {
+        "harm"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hrm"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft RAW = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Necrotic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::AdjustMaxHp;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let (dmg, passed) = save_for_half_damage(
+            encounter,
+            target_id,
+            AbilityScoreType::Constitution,
+            dc,
+            Dice::new(14, 6),
+            DamageType::Necrotic,
+            "harm",
+        );
+        if dmg == 0 {
+            return Vec::new();
+        }
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: dmg,
+            damage_type: DamageType::Necrotic,
+        })];
+        // Max-HP drain only fires on a failed save (RAW: "If the target
+        // fails the saving throw, its hit point maximum is reduced...").
+        // Drain equals the damage dealt — we use the post-roll value so
+        // the cap drops by the same number the target actually took.
+        if !passed {
+            effects.push(Box::new(AdjustMaxHp {
+                actor_id: target_id,
+                delta: -(dmg as i32),
+            }));
+        }
+        effects
+    }
+}
+
+pub static HARM: LazyLock<Harm> = LazyLock::new(|| Harm {});
+
+/// Delayed Blast Fireball — level-7 evocation. A bead of fire is hurled
+/// to a tile within 150 ft (60 tiles), where it detonates immediately —
+/// our engine doesn't model the multi-round "delay" RAW, so we collapse
+/// the delay window to a single-action burst at full base damage. Every
+/// creature in the 20-ft (4-tile) radius makes a DEX save vs the
+/// caster's spell save DC: fail = 12d6 fire, success = half. Friend-or-
+/// foe agnostic — neutral_burst routes catch caster's allies too. Sits
+/// between Fire Storm (lv7 enemy-only fire) and Meteor Swarm (lv9
+/// multi-burst) as the wizard's high-tier fire AoE.
+pub struct DelayedBlastFireball {}
+
+impl Action for DelayedBlastFireball {
+    fn name(&self) -> &str {
+        "delayed blast fireball"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dbf", "delayed", "dblast"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 150 ft RAW = 60 tiles.
+        Some(60)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(7)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+        ]);
+        let (effects, _) = neutral_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            4,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(12, 6),
+            DamageType::Fire,
+            "delayed blast fireball",
+        );
+        effects
+    }
+}
+
+pub static DELAYED_BLAST_FIREBALL: LazyLock<DelayedBlastFireball> =
+    LazyLock::new(|| DelayedBlastFireball {});
+
+/// Incendiary Cloud — level-8 conjuration. A churning cloud of smoke
+/// and embers fills a 20-ft (4-tile) radius sphere at a point within
+/// 150 ft (60 tiles). Every creature in the area makes a DEX save vs
+/// the caster's spell save DC: fail = 10d8 fire, success = half. RAW
+/// lasts 1 minute with the cloud drifting 10 ft per round; we collapse
+/// to a one-shot burst on cast (consistent with Fire Storm / DBF) since
+/// the engine doesn't model moving cloud zones. Friend-or-foe agnostic
+/// via the neutral-burst route — the cloud doesn't discriminate.
+pub struct IncendiaryCloud {}
+
+impl Action for IncendiaryCloud {
+    fn name(&self) -> &str {
+        "incendiary cloud"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ic", "icloud", "embers"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 150 ft RAW = 60 tiles.
+        Some(60)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(8)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+        ]);
+        let (effects, _) = neutral_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            4,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(10, 8),
+            DamageType::Fire,
+            "incendiary cloud",
+        );
+        effects
+    }
+}
+
+pub static INCENDIARY_CLOUD: LazyLock<IncendiaryCloud> = LazyLock::new(|| IncendiaryCloud {});
+
+/// Weird — level-9 illusion (wizard). Each enemy in a 30-ft (6-tile)
+/// burst centered on a point within 120 ft (48 tiles) sees their worst
+/// fear and makes a WIS save vs the caster's spell save DC. On fail:
+/// 10d10 psychic damage AND Frightened for 10 rounds. On success: no
+/// damage, no fear. RAW makes the target take 1d10 psychic on each of
+/// its turns while Frightened by Weird; we collapse the iterated DoT
+/// into the on-cast nuke for engine simplicity (the Frightened tag is
+/// the load-bearing combat penalty — disadvantage on attacks). The
+/// frightened lock is independent of concentration in RAW; we mirror
+/// that with a flat Rounds(10) timer.
+pub struct Weird {}
+
+impl Action for Weird {
+    fn name(&self) -> &str {
+        "weird"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wd", "fear9"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 6 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft RAW = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Psychic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(9)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        // Shared 10d10 psychic roll. Fail = full damage + Frightened;
+        // success = nothing. No half-on-save by RAW for Weird.
+        let raw = encounter.roll(&Dice::new(10, 10));
+        encounter.log(format!(
+            "  weird: 10d10({}) shared {:?}",
+            raw,
+            DamageType::Psychic
+        ));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in encounter.enemy_burst_targets(caster_id, point, 6) {
+            let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, dc);
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(DealDamage {
+                actor_id: tid,
+                amount: raw,
+                damage_type: DamageType::Psychic,
+            }));
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Frightened,
+                timer: ConditionTimer::Rounds(10),
+            }));
+        }
+        effects
+    }
+}
+
+pub static WEIRD: LazyLock<Weird> = LazyLock::new(|| Weird {});
+
+/// Regenerate — level-7 transmutation (cleric / druid / bard). Touch
+/// (1 tile reach). The target regains 4d8+15 HP immediately. Distinct
+/// from the high-tier Heal (lv6 flat 70 HP, single-creature, several
+/// condition cleanses) — Regenerate's headline is the 4d8+15 burst plus
+/// the regrowth flavor (RAW also regrows severed limbs over the next
+/// hour and grants 1 HP/round for 1 hour; we don't model limbs or
+/// hour-scale ticks, so the on-cast HP burst is the load-bearing
+/// effect). Slots the lv7 single-target heal lane alongside Power
+/// Word Heal (lv9 cap heal).
+pub struct Regenerate {}
+
+impl Action for Regenerate {
+    fn name(&self) -> &str {
+        "regenerate"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["regen", "rg"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(7)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let raw = encounter.roll(&Dice::new(4, 8));
+        let total = raw + 15;
+        encounter.log(format!("  regenerate: 4d8+15({}) = {} HP", raw, total));
+        vec![Box::new(Heal {
+            actor_id: target_id,
+            amount: total,
+        })]
+    }
+}
+
+pub static REGENERATE: LazyLock<Regenerate> = LazyLock::new(|| Regenerate {});

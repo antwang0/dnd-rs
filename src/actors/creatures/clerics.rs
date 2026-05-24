@@ -137,6 +137,18 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // sink role — a frontline fighter behind the bond effectively gets
     // 50% damage reduction while the cleric pays the other 50%.
     actions.push(&*crate::actions::spells::WARDING_BOND);
+    // Latest divine additions:
+    //   - lv6 **Harm**: 14d6 necrotic single-target CON-save for half
+    //     plus max-HP drain on fail (cleric's signature offensive nuke,
+    //     opposite of Heal in the lv6 slot lane).
+    //   - lv6 **Circle of Death**: 8d6 necrotic 30ft-radius CON-save
+    //     burst (mass damage that pairs cleanly against undead
+    //     necrotic-resistant enemies via the necrotic-immunity routing).
+    //   - lv7 **Regenerate**: 4d8+15 touch heal (high-burst single-
+    //     target heal, fills the lv7 slot lane next to Resurrection).
+    actions.push(&*crate::actions::spells::HARM);
+    actions.push(&*crate::actions::spells::CIRCLE_OF_DEATH);
+    actions.push(&*crate::actions::spells::REGENERATE);
     CreatureTemplate {
         name: "Cleric",
         glyph: 'C',

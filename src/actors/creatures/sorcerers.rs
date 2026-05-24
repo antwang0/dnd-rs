@@ -172,6 +172,24 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // is sorcerer / wizard in RAW; the prone rider sets up the
     // sorcerer's next-turn ranged spells at advantage.
     actions.push(&*crate::actions::spells::SAPPING_STING);
+    // Newest sorcerer additions:
+    //   - lv3 **Erupting Earth**: 3d12 bludgeoning DEX-save AoE
+    //     (bypasses fire/cold resistance with bludgeoning typing).
+    //   - lv4 **Blight**: 8d8 necrotic single-target nuke (necromancy
+    //     against fleshy chunky enemies).
+    //   - lv6 **Circle of Death**: 8d6 necrotic 30ft-radius AoE.
+    //   - lv7 **Delayed Blast Fireball**: 12d6 fire AoE (signature lv7
+    //     evocation; pairs with the sorcerer's blaster archetype).
+    //   - lv8 **Incendiary Cloud**: 10d8 fire AoE (lv8 fire nuke,
+    //     friend-or-foe agnostic).
+    //   - lv9 **Weird**: 10d10 psychic + Frightened on fail (mass
+    //     terror-lock at the apex).
+    actions.push(&*crate::actions::spells::ERUPTING_EARTH);
+    actions.push(&*crate::actions::spells::BLIGHT);
+    actions.push(&*crate::actions::spells::CIRCLE_OF_DEATH);
+    actions.push(&*crate::actions::spells::DELAYED_BLAST_FIREBALL);
+    actions.push(&*crate::actions::spells::INCENDIARY_CLOUD);
+    actions.push(&*crate::actions::spells::WEIRD);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.
