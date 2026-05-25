@@ -47,6 +47,18 @@ pub fn proficiency_bonus_for_level(level: u32) -> i32 {
     }
 }
 
+/// 5e cantrip damage scaling: cantrips gain extra damage dice at caster
+/// levels 5, 11, and 17. Returns the number of base damage dice the
+/// cantrip should roll at a given caster level.
+pub fn cantrip_dice_count(caster_level: u32) -> u32 {
+    match caster_level {
+        0..=4 => 1,
+        5..=10 => 2,
+        11..=16 => 3,
+        _ => 4,
+    }
+}
+
 /// Min Chebyshev gap (in tiles) between two square footprints. 0 means
 /// touching/overlapping; 1 means one tile of clear space between them, etc.
 /// Used everywhere "is X next to Y" matters — origin-to-origin distance gives

@@ -73,5 +73,7 @@ pub static VAMPIRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         regen_per_round: 20,
         regen_suppressors: HashSet::from([DamageType::Radiant]),
         legendary_resistances: 0,
+        has_evasion: false,
+        has_uncanny_dodge: false,
     }
 });

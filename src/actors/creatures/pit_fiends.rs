@@ -78,5 +78,7 @@ pub static PIT_FIEND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 5e Legendary Resistance (3/Day) — RAW per MM. Routine for
         // a CR-20 archdevil boss.
         legendary_resistances: 3,
+        has_evasion: false,
+        has_uncanny_dodge: false,
     }
 });

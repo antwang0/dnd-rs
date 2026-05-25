@@ -263,6 +263,17 @@ impl SaveOutcome {
             (SaveOutcome::NoneOnSave, true) => 0,
         }
     }
+
+    /// Evasion-aware variant: on DEX saves for half, Evasion turns
+    /// pass → 0 and fail → half.
+    fn damage_after_evasion(self, raw: u32, passed: bool) -> u32 {
+        match (self, passed) {
+            (SaveOutcome::HalfOnSave, true) => 0,
+            (SaveOutcome::HalfOnSave, false) => raw / 2,
+            (SaveOutcome::NoneOnSave, true) => 0,
+            (SaveOutcome::NoneOnSave, false) => raw,
+        }
+    }
 }
 
 /// Core shared-save burst resolver. Rolls a *shared* damage value once,
@@ -305,7 +316,16 @@ fn burst_save_damage(
     for tid in targets.ids(encounter, caster_id, point, radius) {
         let save = encounter.roll_save(tid, save_ability, dc);
         let passed = save.passed();
-        let dmg = outcome.damage_after(raw, passed);
+        let has_evasion = save_ability == AbilityScoreType::Dexterity
+            && encounter
+                .actors
+                .get(&tid)
+                .is_some_and(|a| a.has_evasion());
+        let dmg = if has_evasion {
+            outcome.damage_after_evasion(raw, passed)
+        } else {
+            outcome.damage_after(raw, passed)
+        };
         saves.push((tid, passed));
         if dmg == 0 {
             continue;
@@ -538,14 +558,16 @@ impl Action for SacredFlame {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let n = crate::engine::util::cantrip_dice_count(caster.level());
 
         let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, dc);
         if save.passed() {
             return Vec::new();
         }
 
-        let raw = encounter.roll(&Dice::new(1, 8));
-        encounter.log(format!("  sacred flame: 1d8({}) = {} radiant", raw, raw));
+        let die = Dice::new(n, 8);
+        let raw = encounter.roll(&die);
+        encounter.log(format!("  sacred flame: {}({}) = {} radiant", die, raw, raw));
         vec![Box::new(DealDamage {
             actor_id: target_id,
             amount: raw,
@@ -930,6 +952,7 @@ impl Action for FireBolt {
             return Vec::new();
         };
         let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
+        let dice_count = crate::engine::util::cantrip_dice_count(caster.level());
         resolve_attack(
             encounter,
             AttackParams {
@@ -937,7 +960,7 @@ impl Action for FireBolt {
                 target_id,
                 action_name: self.name(),
                 attack_bonus,
-                damage_dice: Dice::new(1, 10),
+                damage_dice: Dice::new(dice_count, 10),
                 damage_bonus: 0,
                 damage_type: DamageType::Fire,
                 is_melee: false,
@@ -1811,6 +1834,7 @@ impl Action for RayOfFrost {
             return Vec::new();
         };
         let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
+        let n = crate::engine::util::cantrip_dice_count(caster.level());
         resolve_attack(
             encounter,
             AttackParams {
@@ -1818,7 +1842,7 @@ impl Action for RayOfFrost {
                 target_id,
                 action_name: self.name(),
                 attack_bonus,
-                damage_dice: Dice::new(1, 8),
+                damage_dice: Dice::new(n, 8),
                 damage_bonus: 0,
                 damage_type: DamageType::Cold,
                 is_melee: false,
@@ -2244,10 +2268,7 @@ impl Action for AcidSplash {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-        // 1-tile burst around `point` — DEX save, no half on success
-        // (cantrip). Routes through the shared cantrip-burst helper
-        // so the caster-exclusion + save-loop boilerplate lives in
-        // one place.
+        let n = crate::engine::util::cantrip_dice_count(caster.level());
         let (effects, _saves) = neutral_burst_save_only(
             encounter,
             caster_id,
@@ -2255,7 +2276,7 @@ impl Action for AcidSplash {
             1,
             AbilityScoreType::Dexterity,
             dc,
-            Dice::new(1, 6),
+            Dice::new(n, 6),
             DamageType::Acid,
             "acid splash",
         );
@@ -2306,13 +2327,14 @@ impl Action for ChillTouch {
             return Vec::new();
         };
         let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
+        let n = crate::engine::util::cantrip_dice_count(caster.level());
         spell_attack(
             encounter,
             caster_id,
             target_id,
             "chill touch",
             attack_bonus,
-            Dice::new(1, 8),
+            Dice::new(n, 8),
             DamageType::Necrotic,
             false,
         )
@@ -2494,12 +2516,14 @@ impl Action for PoisonSpray {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let n = crate::engine::util::cantrip_dice_count(caster.level());
         let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
         if save.passed() {
             return Vec::new();
         }
-        let raw = encounter.roll(&Dice::new(1, 12));
-        encounter.log(format!("  poison spray: 1d12({}) = {} poison", raw, raw));
+        let die = Dice::new(n, 12);
+        let raw = encounter.roll(&die);
+        encounter.log(format!("  poison spray: {}({}) = {} poison", die, raw, raw));
         vec![Box::new(DealDamage {
             actor_id: target_id,
             amount: raw,
@@ -2898,9 +2922,7 @@ pub static SPARE_THE_DYING: LazyLock<SpareTheDying> = LazyLock::new(|| SpareTheD
 
 /// Toll the Dead — cleric / warlock cantrip. Range 60ft (24 tiles).
 /// Target makes a WIS save vs caster's spell save DC; on fail, takes
-/// 1d8 necrotic, or 1d12 if the target is already wounded (HP below max).
-/// On success, no damage. Cantrip damage doesn't scale here — at higher
-/// levels the dice would step, but we keep base.
+/// Nd8 necrotic (or Nd12 if wounded) where N scales with caster level.
 pub struct TollTheDead {}
 
 impl Action for TollTheDead {
@@ -2937,17 +2959,16 @@ impl Action for TollTheDead {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let n = crate::engine::util::cantrip_dice_count(caster.level());
         let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
         if save.passed() {
             return Vec::new();
         }
-        // d12 if target is below max HP, otherwise d8. Checked after the
-        // save so the breakdown lands in the log between save and damage.
         let wounded = encounter
             .actors
             .get(&target_id)
             .is_some_and(|a| a.hitpoints() < a.max_hitpoints());
-        let die = if wounded { Dice::new(1, 12) } else { Dice::new(1, 8) };
+        let die = if wounded { Dice::new(n, 12) } else { Dice::new(n, 8) };
         let raw = encounter.roll(&die);
         encounter.log(format!(
             "  toll the dead: {}({}) = {} necrotic{}",
@@ -3247,17 +3268,17 @@ impl Action for ShockingGrasp {
             return Vec::new();
         };
         let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
+        let n = crate::engine::util::cantrip_dice_count(caster.level());
         let mut effects = spell_attack(
             encounter,
             caster_id,
             target_id,
             "shocking grasp",
             attack_bonus,
-            Dice::new(1, 8),
+            Dice::new(n, 8),
             DamageType::Lightning,
             true,
         );
-        // Rider applies only on a hit (empty effect list = miss).
         if !effects.is_empty() {
             effects.push(Box::new(ApplyCondition {
                 actor_id: target_id,
@@ -3558,9 +3579,9 @@ impl Action for MirrorImage {
 pub static MIRROR_IMAGE: LazyLock<MirrorImage> = LazyLock::new(|| MirrorImage {});
 
 /// Eldritch Blast — warlock cantrip. Ranged spell attack: d20 + CHA vs
-/// AC. On hit: 1d10 force. We don't model the per-level beam scaling
-/// (it adds one beam every few levels in 5e); we keep the single-beam
-/// base, which is the right shape for a CR 1-3 warlock.
+/// AC. On hit: Nd10 force where N = cantrip tier (1/2/3/4 beams). 5e
+/// fires separate beams, but we collapse into one roll for single-target
+/// simplicity — same expected DPR against one target.
 pub struct EldritchBlast {}
 
 impl Action for EldritchBlast {
@@ -3574,7 +3595,6 @@ impl Action for EldritchBlast {
         TargetingSchema::SingleActor
     }
     fn reach_tiles(&self) -> Option<isize> {
-        // 120ft = 48 tiles.
         Some(48)
     }
     fn requires_los(&self) -> bool {
@@ -3598,13 +3618,14 @@ impl Action for EldritchBlast {
             return Vec::new();
         };
         let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Charisma);
+        let dice_count = crate::engine::util::cantrip_dice_count(caster.level());
         spell_attack(
             encounter,
             caster_id,
             target_id,
             "eldritch blast",
             attack_bonus,
-            Dice::new(1, 10),
+            Dice::new(dice_count, 10),
             DamageType::Force,
             false,
         )
@@ -9149,16 +9170,14 @@ impl Action for BoomingBlade {
             return Vec::new();
         };
         let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Intelligence);
-        // 1d8 thunder on the touch itself (cantrip "weapon" damage at
-        // base scaling). The rider hits on movement via the
-        // BoomingBladeMarked condition.
+        let n = crate::engine::util::cantrip_dice_count(caster.level());
         let mut effects = spell_attack(
             encounter,
             caster_id,
             target_id,
             "booming blade",
             attack_bonus,
-            Dice::new(1, 8),
+            Dice::new(n, 8),
             DamageType::Thunder,
             true,
         );
@@ -13108,13 +13127,17 @@ impl Action for Frostbite {
             AbilityScoreType::Wisdom,
             AbilityScoreType::Charisma,
         ]);
+        let n = crate::engine::util::cantrip_dice_count(
+            encounter.actors.get(&caster_id).map(|a| a.level()).unwrap_or(1),
+        );
         let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
         if save.passed() {
             encounter.log("  frostbite: target shrugs off the chill");
             return Vec::new();
         }
-        let raw = encounter.roll(&Dice::new(1, 6));
-        encounter.log(format!("  frostbite: 1d6({}) = {} cold", raw, raw));
+        let die = Dice::new(n, 6);
+        let raw = encounter.roll(&die);
+        encounter.log(format!("  frostbite: {}({}) = {} cold", die, raw, raw));
         vec![
             Box::new(DealDamage {
                 actor_id: target_id,
@@ -14684,10 +14707,7 @@ pub static OTILUKES_RESILIENT_SPHERE: LazyLock<OtilukesResilientSphere> =
 /// tiles); the target makes a STR save vs the caster's spell DC. On
 /// fail, the target is pulled up to 10 ft (4 tiles) in a straight line
 /// toward the caster; if they end the pull within 5 ft (footprint-
-/// adjacent), they take 1d8 lightning. On success, no pull, no damage.
-/// Cantrip damage scales with character level (1d8 / 2d8 / 3d8 / 4d8 at
-/// 1 / 5 / 11 / 17) — we collapse to a flat 1d8 since the engine doesn't
-/// model character level cleanly for cantrip scaling.
+/// adjacent), they take Nd8 lightning (scaling with caster level).
 pub struct LightningLure {}
 
 impl Action for LightningLure {
@@ -14768,8 +14788,12 @@ impl Action for LightningLure {
             encounter.log("  lightning lure: target pulled but stays out of reach".to_string());
             return Vec::new();
         }
-        let raw = encounter.roll(&Dice::new(1, 8));
-        encounter.log(format!("  lightning lure: 1d8({}) lightning", raw));
+        let n = crate::engine::util::cantrip_dice_count(
+            encounter.actors.get(&caster_id).map(|a| a.level()).unwrap_or(1),
+        );
+        let die = Dice::new(n, 8);
+        let raw = encounter.roll(&die);
+        encounter.log(format!("  lightning lure: {}({}) lightning", die, raw));
         vec![Box::new(DealDamage {
             actor_id: target_id,
             amount: raw,
@@ -15500,8 +15524,7 @@ impl Action for Thunderclap {
             AbilityScoreType::Charisma,
             AbilityScoreType::Wisdom,
         ]);
-        // 1-tile self-centered CON save burst — routes through the
-        // shared cantrip-burst helper (save-only, no half on success).
+        let n = crate::engine::util::cantrip_dice_count(caster.level());
         let (effects, _saves) = neutral_burst_save_only(
             encounter,
             caster_id,
@@ -15509,7 +15532,7 @@ impl Action for Thunderclap {
             1,
             AbilityScoreType::Constitution,
             dc,
-            Dice::new(1, 6),
+            Dice::new(n, 6),
             DamageType::Thunder,
             "thunderclap",
         );
@@ -16054,6 +16077,7 @@ impl Action for SwordBurst {
             AbilityScoreType::Charisma,
             AbilityScoreType::Wisdom,
         ]);
+        let n = crate::engine::util::cantrip_dice_count(caster.level());
         let (effects, _saves) = neutral_burst_save_only(
             encounter,
             caster_id,
@@ -16061,7 +16085,7 @@ impl Action for SwordBurst {
             1,
             AbilityScoreType::Dexterity,
             dc,
-            Dice::new(1, 6),
+            Dice::new(n, 6),
             DamageType::Force,
             "sword burst",
         );
@@ -17685,13 +17709,14 @@ impl Action for PrimalSavagery {
             return Vec::new();
         };
         let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Wisdom);
+        let n = crate::engine::util::cantrip_dice_count(caster.level());
         spell_attack(
             encounter,
             caster_id,
             target_id,
             "primal savagery",
             attack_bonus,
-            Dice::new(1, 10),
+            Dice::new(n, 10),
             DamageType::Acid,
             true,
         )
@@ -17749,14 +17774,16 @@ impl Action for SappingSting {
             AbilityScoreType::Intelligence,
             AbilityScoreType::Charisma,
         ]);
+        let n = crate::engine::util::cantrip_dice_count(caster.level());
         let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
         if save.passed() {
             return Vec::new();
         }
-        let raw = encounter.roll(&Dice::new(1, 4));
+        let die = Dice::new(n, 4);
+        let raw = encounter.roll(&die);
         encounter.log(format!(
-            "  sapping sting: 1d4({}) = {} necrotic + prone",
-            raw, raw
+            "  sapping sting: {}({}) = {} necrotic + prone",
+            die, raw, raw
         ));
         vec![
             Box::new(DealDamage {
@@ -19115,3 +19142,274 @@ impl Action for HolyWeapon {
 }
 
 pub static HOLY_WEAPON: LazyLock<HolyWeapon> = LazyLock::new(|| HolyWeapon {});
+
+/// Thunder Step — level-3 conjuration, action. Teleport up to 90ft (36
+/// tiles) and deal 3d10 thunder damage (CON save for half) to all
+/// creatures within 10ft (4 tiles) of the origin. Combines mobility with
+/// area denial — the warlock/sorcerer/wizard escape tool.
+pub struct ThunderStep {}
+
+impl Action for ThunderStep {
+    fn name(&self) -> &str {
+        "thunder step"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["tstep", "thunder-step"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(36)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Thunder]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return false;
+        };
+        encounter.can_move_to(caster_id, point)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(dest) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let origin = caster.location();
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+        ]);
+        let (mut effects, _saves) = neutral_burst_save_for_half(
+            encounter,
+            caster_id,
+            origin,
+            4,
+            AbilityScoreType::Constitution,
+            dc,
+            Dice::new(3, 10),
+            DamageType::Thunder,
+            "thunder step",
+        );
+        effects.push(Box::new(crate::engine::side_effects::TeleportActor {
+            actor_id: caster_id,
+            dest,
+        }));
+        effects
+    }
+}
+
+pub static THUNDER_STEP: LazyLock<ThunderStep> = LazyLock::new(|| ThunderStep {});
+
+/// Absorb Elements — level-1 abjuration, reaction. When you take acid,
+/// cold, fire, lightning, or thunder damage, grant yourself resistance
+/// (via DamageResistant) until start of next turn and store the energy
+/// for a +1d6 melee damage rider on your next hit. We model the
+/// resistance as the general DamageResistant condition and skip the
+/// per-type modeling for simplicity.
+pub struct AbsorbElements {}
+
+impl Action for AbsorbElements {
+    fn name(&self) -> &str {
+        "absorb elements"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["absorb", "ae"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Reaction, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::DamageResistant,
+            timer: ConditionTimer::UntilStartOfNextTurn,
+        })]
+    }
+}
+
+pub static ABSORB_ELEMENTS: LazyLock<AbsorbElements> = LazyLock::new(|| AbsorbElements {});
+
+/// Warding Wind — level-2 evocation, concentration. Creates a 10ft
+/// radius of strong wind around the caster: ranged attacks into and
+/// out of the area have disadvantage. Modeled as self-buff with the
+/// existing Untracked condition (disadvantage to attackers) to
+/// approximate the defensive layer.
+pub struct WardingWind {}
+
+impl Action for WardingWind {
+    fn name(&self) -> &str {
+        "warding wind"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wwind"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        !caster.is_concentrating()
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        self_concentration_buff_effects(
+            caster_id,
+            "Warding Wind",
+            Condition::Untracked,
+            ConditionTimer::Rounds(10),
+        )
+    }
+}
+
+pub static WARDING_WIND: LazyLock<WardingWind> = LazyLock::new(|| WardingWind {});
+
+/// Shadow Blade — level-2 illusion, concentration (bonus action). Creates
+/// a magical blade of solidified shadow: the caster gains advantage on
+/// attacks (Invisible analogue via the Transformed condition) and their
+/// melee attacks deal extra psychic damage (+2d8 via the SpiritShrouded
+/// condition's on-hit rider lane, typed as psychic). Concentration-bound.
+pub struct ShadowBlade {}
+
+impl Action for ShadowBlade {
+    fn name(&self) -> &str {
+        "shadow blade"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sblade", "shadow"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_and_slot(2)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        !caster.is_concentrating() && !caster.has_condition(Condition::SpiritShrouded)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        self_concentration_buff_effects(
+            caster_id,
+            "Shadow Blade",
+            Condition::SpiritShrouded,
+            ConditionTimer::Rounds(10),
+        )
+    }
+}
+
+pub static SHADOW_BLADE: LazyLock<ShadowBlade> = LazyLock::new(|| ShadowBlade {});

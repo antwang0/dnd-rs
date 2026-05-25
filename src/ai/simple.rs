@@ -205,6 +205,20 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3m'''. Shadow Blade — level-2 warlock/wizard concentration
+        //        self-buff (advantage on attacks + psychic rider). Fire
+        //        when an enemy is in melee range so the conjured blade
+        //        sees use immediately.
+        if let Some(aei) = try_self_buff_concentration(
+            encounter,
+            actor_id,
+            "shadow blade",
+            Condition::SpiritShrouded,
+            1,
+        ) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3n. Aura of Life — level-4 paladin concentration aura. Fire
         //     when at least one ally is clustered in the aura radius
         //     and a fight has started.

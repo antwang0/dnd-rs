@@ -128,6 +128,8 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // hit). Pact-of-the-Blade-style melee cantrip for the warlock —
     // pairs with Eldritch Blast for a melee-vs-ranged at-will lane.
     actions.push(&*crate::actions::spells::GREEN_FLAME_BLADE);
+    actions.push(&*crate::actions::spells::THUNDER_STEP);
+    actions.push(&*crate::actions::spells::SHADOW_BLADE);
     CreatureTemplate {
         name: "Warlock",
         // 'L' (uppercase) — distinct from 'l' (Lich), 'W' (Wolf glyph),
@@ -169,6 +171,8 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),
         legendary_resistances: 0,
+        has_evasion: false,
+        has_uncanny_dodge: false,
     }
 });
 

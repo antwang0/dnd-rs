@@ -80,6 +80,8 @@ pub static MARILITH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         regen_suppressors: HashSet::new(),
         // No LR — marilith RAW lacks Legendary Resistance.
         legendary_resistances: 0,
+        has_evasion: false,
+        has_uncanny_dodge: false,
     }
 });
 

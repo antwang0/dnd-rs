@@ -318,6 +318,9 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     a charmer / psion encounter.
     actions.push(&*crate::actions::spells::CHARM_MONSTER);
     actions.push(&*crate::actions::spells::MIND_BLANK);
+    actions.push(&*crate::actions::spells::THUNDER_STEP);
+    actions.push(&*crate::actions::spells::ABSORB_ELEMENTS);
+    actions.push(&*crate::actions::spells::SHADOW_BLADE);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.
@@ -357,5 +360,7 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),
         legendary_resistances: 0,
+        has_evasion: false,
+        has_uncanny_dodge: false,
     }
 });

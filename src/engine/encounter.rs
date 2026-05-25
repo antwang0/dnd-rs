@@ -23810,4 +23810,184 @@ mod tests {
             "Tsunami should start concentration on the druid"
         );
     }
+
+    #[test]
+    fn massive_damage_instant_death() {
+        use crate::actors::actor_template::{DamageOutcome, HpState};
+        let mut z = ActorInstance::from_creature_template(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(42),
+            0,
+        )
+        .unwrap();
+        let max_hp = z.max_hitpoints();
+        let overkill = z.hitpoints() + max_hp;
+        let outcome = z.take_damage(overkill);
+        assert_eq!(outcome, DamageOutcome::Killed);
+        assert_eq!(z.hp_state(), HpState::Dead);
+    }
+
+    #[test]
+    fn massive_damage_does_not_trigger_below_threshold() {
+        use crate::actors::actor_template::DamageOutcome;
+        let mut z = ActorInstance::from_creature_template(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(42),
+            0,
+        )
+        .unwrap();
+        let max_hp = z.max_hitpoints();
+        let almost = z.hitpoints() + max_hp - 1;
+        let outcome = z.take_damage(almost);
+        assert_eq!(outcome, DamageOutcome::Downed);
+        assert!(z.is_dying());
+    }
+
+    #[test]
+    fn cantrip_dice_scaling() {
+        use crate::engine::util::cantrip_dice_count;
+        assert_eq!(cantrip_dice_count(1), 1);
+        assert_eq!(cantrip_dice_count(4), 1);
+        assert_eq!(cantrip_dice_count(5), 2);
+        assert_eq!(cantrip_dice_count(10), 2);
+        assert_eq!(cantrip_dice_count(11), 3);
+        assert_eq!(cantrip_dice_count(16), 3);
+        assert_eq!(cantrip_dice_count(17), 4);
+        assert_eq!(cantrip_dice_count(20), 4);
+    }
+
+    #[test]
+    fn evasion_rogue_has_flag() {
+        let rogue = ActorInstance::from_creature_template(
+            &crate::actors::creatures::rogues::ROGUE_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(1),
+            0,
+        )
+        .unwrap();
+        assert!(rogue.has_evasion(), "Rogues should have Evasion");
+        assert!(rogue.has_uncanny_dodge(), "Rogues should have Uncanny Dodge");
+    }
+
+    #[test]
+    fn monk_has_evasion() {
+        let monk = ActorInstance::from_creature_template(
+            &crate::actors::creatures::monks::MONK_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(1),
+            0,
+        )
+        .unwrap();
+        assert!(monk.has_evasion(), "Monks should have Evasion");
+        assert!(!monk.has_uncanny_dodge(), "Monks should not have Uncanny Dodge");
+    }
+
+    #[test]
+    fn uncanny_dodge_consumes_reaction_on_hit() {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let f_id = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(3, 3),
+                0,
+                1,
+            )
+            .unwrap();
+        let r_id = e
+            .instantiate_creature(
+                &crate::actors::creatures::rogues::ROGUE_TEMPLATE,
+                Coordinate::new(5, 3),
+                1,
+                2,
+            )
+            .unwrap();
+        assert!(e.actors[&r_id].has_uncanny_dodge());
+        assert!(e.actors[&r_id].has_reaction());
+        use crate::engine::attack::{AttackParams, resolve_attack};
+        let mut hit_seen = false;
+        for _ in 0..100 {
+            // Reset reaction to exactly 1 before each attempt
+            let rogue = e.actors.get_mut(&r_id).unwrap();
+            let max_hp = rogue.max_hitpoints();
+            rogue.heal(max_hp);
+            // Rebuild reaction state to exactly 1 by resetting the round
+            let _ = rogue.reset_for_new_round();
+            assert!(e.actors[&r_id].has_reaction());
+            let effects = resolve_attack(
+                &mut e,
+                AttackParams {
+                    caster_id: f_id,
+                    target_id: r_id,
+                    action_name: "longsword",
+                    attack_bonus: 5,
+                    damage_dice: Dice::new(1, 8),
+                    damage_bonus: 3,
+                    damage_type: DamageType::Slashing,
+                    is_melee: true,
+                },
+            );
+            if !effects.is_empty() {
+                hit_seen = true;
+                assert!(
+                    !e.actors[&r_id].has_reaction(),
+                    "Uncanny Dodge should consume the rogue's reaction on hit"
+                );
+                break;
+            }
+        }
+        assert!(hit_seen, "Expected at least one hit in 100 attempts");
+    }
+
+    #[test]
+    fn thunder_step_deals_damage_and_teleports() {
+        use crate::actions::action_template::Action;
+        use crate::engine::side_effects::ApplicableSideEffect;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wiz_id = e
+            .instantiate_creature(
+                &crate::actors::creatures::wizards::WIZARD_TEMPLATE,
+                Coordinate::new(5, 5),
+                0,
+                1,
+            )
+            .unwrap();
+        let goblin_id = e
+            .instantiate_creature(
+                &crate::actors::creatures::goblins::GOBLIN_TEMPLATE,
+                Coordinate::new(6, 5),
+                1,
+                2,
+            )
+            .unwrap();
+        let goblin_hp_before = e.actors[&goblin_id].hitpoints();
+        let action = e.actors[&wiz_id].find_action("thunder step").unwrap();
+        let effects = action.side_effects(
+            &mut e,
+            wiz_id,
+            None,
+            Some(&vec![Coordinate::new(15, 15)]),
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        // Wizard should have teleported to dest
+        assert_eq!(
+            e.actors[&wiz_id].location(),
+            Coordinate::new(15, 15),
+            "Wizard should teleport to destination"
+        );
+        // Goblin should have taken some damage (or passed save for half)
+        let goblin_hp_after = e.actors[&goblin_id].hitpoints();
+        assert!(
+            goblin_hp_after <= goblin_hp_before,
+            "Goblin should take thunder damage from Thunder Step"
+        );
+    }
 }

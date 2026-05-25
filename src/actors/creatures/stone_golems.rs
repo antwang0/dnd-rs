@@ -92,6 +92,8 @@ pub static STONE_GOLEM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // signature. Three failed saves per long rest are auto-promoted
         // to passes, neutralizing the party's save-or-suck control spells.
         legendary_resistances: 3,
+        has_evasion: false,
+        has_uncanny_dodge: false,
     }
 });
 

@@ -80,5 +80,7 @@ pub static BALOR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         regen_suppressors: HashSet::new(),
         // Balor: 3/Day Legendary Resistance — boss-tier control immunity.
         legendary_resistances: 3,
+        has_evasion: false,
+        has_uncanny_dodge: false,
     }
 });

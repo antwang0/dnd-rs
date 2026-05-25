@@ -161,6 +161,7 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // ally in the aura at cast time so a clustered party benefits as a
     // group.
     actions.push(&*crate::actions::spells::PASS_WITHOUT_TRACE);
+    actions.push(&*crate::actions::spells::ABSORB_ELEMENTS);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',
@@ -195,5 +196,7 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),
         legendary_resistances: 0,
+        has_evasion: false,
+        has_uncanny_dodge: false,
     }
 });

@@ -99,5 +99,7 @@ pub static TARRASQUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // to shrug off Power Word Kill / Banishment / Hold Monster from
         // the party's casters mid-fight.
         legendary_resistances: 3,
+        has_evasion: false,
+        has_uncanny_dodge: false,
     }
 });

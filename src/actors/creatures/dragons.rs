@@ -76,5 +76,7 @@ pub static ADULT_RED_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         // 5e Legendary Resistance (3/Day) — RAW per MM. Lets the dragon
         // shrug off a mid-fight Hold Monster / Banishment / Slow.
         legendary_resistances: 3,
+        has_evasion: false,
+        has_uncanny_dodge: false,
     }
 });

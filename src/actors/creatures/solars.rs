@@ -90,6 +90,8 @@ pub static SOLAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // signature anti-save defense rounding out the celestial boss
         // envelope (Holy Aura + Foresight + Mass Heal).
         legendary_resistances: 3,
+        has_evasion: false,
+        has_uncanny_dodge: false,
     }
 });
 

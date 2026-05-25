@@ -101,8 +101,11 @@ pub fn resolve_attack_outcome(
     // d20 alone doesn't account for the swing's hit.
     let (bless_die, bless_note) = encounter.bless_bane_attack_die(p.caster_id);
     let attack_total = raw_attack + p.attack_bonus + buff + cond_attack_bonus + bless_die;
-    let hit = is_crit || attack_total >= target_ac;
-    let outcome = if is_crit {
+    let is_nat_one = raw_attack == 1;
+    let hit = !is_nat_one && (is_crit || attack_total >= target_ac);
+    let outcome = if is_nat_one {
+        "miss (nat 1)"
+    } else if is_crit {
         "CRIT!"
     } else if hit {
         "hit"
@@ -168,12 +171,22 @@ pub fn resolve_attack_outcome(
             hm_total, p.damage_type
         ));
     }
-    // Hex rider: 1d6 necrotic on every hit against the Hexed target. Like
-    // Hunter's Mark, crits double the rider die. The necrotic typing
-    // matters more than HM's weapon-typed rider — it can chip past
-    // physical resistance but bounces off necrotic-resistant undead. The
-    // necrotic damage is a separate `DealDamage` so the target's typed
-    // resistance / immunity / vulnerability applies to it independently.
+    // 5e Uncanny Dodge (Rogue 5): when hit by an attack, spend reaction
+    // to halve the damage. Only fires if the target has the feature, a
+    // reaction available, and can see the attacker (we approximate sight
+    // as "not Blinded").
+    if let Some(target) = encounter.actors.get(&p.target_id)
+        && target.has_uncanny_dodge()
+        && target.has_reaction()
+        && !target.has_condition(Condition::Blinded)
+        && !target.has_condition(Condition::Unconscious)
+    {
+        damage /= 2;
+        encounter.log(format!("  uncanny dodge: damage halved to {}", damage));
+        if let Some(t) = encounter.actors.get_mut(&p.target_id) {
+            t.consume_resource(crate::engine::side_effects::Resource::Reaction);
+        }
+    }
     let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
         actor_id: p.target_id,
         amount: damage,

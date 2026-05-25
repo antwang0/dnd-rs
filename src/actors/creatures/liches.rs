@@ -128,5 +128,7 @@ pub static LICH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // signature defense against the party's save-or-die / save-or-
         // suck spells (Hold Monster, Banishment, Power Word Stun).
         legendary_resistances: 3,
+        has_evasion: false,
+        has_uncanny_dodge: false,
     }
 });

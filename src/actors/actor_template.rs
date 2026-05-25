@@ -155,6 +155,13 @@ pub struct CreatureTemplate {
     /// Long rest restores to this template max. 0 = no legendary
     /// resistance (the default for ordinary creatures).
     pub legendary_resistances: u32,
+    /// 5e Evasion (Rogue 7, Monk 7): on DEX saves for half damage, take 0
+    /// on a pass and half on a fail instead of half / full.
+    pub has_evasion: bool,
+    /// 5e Uncanny Dodge (Rogue 5): use reaction to halve damage from one
+    /// attack you can see. Modeled as a passive flag checked in the
+    /// attack resolution pipeline.
+    pub has_uncanny_dodge: bool,
 }
 
 #[derive(Clone, PartialEq)]
@@ -335,6 +342,12 @@ pub struct ActorInstance {
     /// `DealDamage::apply`. Cleared when the WardingBonded condition is
     /// removed (timer expiry / dispel / either party drops).
     warding_partner: Option<usize>,
+    /// 5e Evasion (Rogue 7, Monk 7): on DEX saves that deal half on pass,
+    /// take 0 on pass and half on fail.
+    has_evasion: bool,
+    /// 5e Uncanny Dodge (Rogue 5): reaction to halve damage from one
+    /// visible attack per round.
+    has_uncanny_dodge: bool,
 }
 
 impl ActorInstance {
@@ -412,6 +425,8 @@ impl ActorInstance {
             legendary_resistance_remaining: ct.legendary_resistances,
             legendary_resistance_max: ct.legendary_resistances,
             warding_partner: None,
+            has_evasion: ct.has_evasion,
+            has_uncanny_dodge: ct.has_uncanny_dodge,
         })
     }
 
@@ -475,6 +490,14 @@ impl ActorInstance {
     /// the `WardingBonded` condition is removed via `remove_condition`.
     pub fn set_warding_partner(&mut self, id: Option<usize>) {
         self.warding_partner = id;
+    }
+
+    pub fn has_evasion(&self) -> bool {
+        self.has_evasion
+    }
+
+    pub fn has_uncanny_dodge(&self) -> bool {
+        self.has_uncanny_dodge
     }
 
     /// HP regenerated each round-end while combat-active. 0 disables the
@@ -918,6 +941,10 @@ impl ActorInstance {
             }
             Resource::LegendaryAction => !action_blocked && self.legendary_action_slots >= 1,
         }
+    }
+
+    pub fn has_reaction(&self) -> bool {
+        self.reaction_slots >= 1 && !self.conditions.keys().any(|c| c.blocks_reactions())
     }
 
     pub fn consume_resource(&mut self, resource: Resource) -> bool {
@@ -1397,15 +1424,19 @@ impl ActorInstance {
                     self.temp_hp = 0;
                     r
                 };
+                let hp_before = self.hitpoints;
                 self.hitpoints = self.hitpoints.saturating_sub(after_temp);
                 if self.hitpoints == 0 {
+                    // 5e Massive Damage (PHB p.197): if remaining damage
+                    // after hitting 0 HP equals or exceeds the creature's
+                    // max HP, it dies instantly — no death saves.
+                    let overflow = after_temp.saturating_sub(hp_before);
+                    if overflow >= self.max_hitpoints() {
+                        self.hp_state = HpState::Dead;
+                        return DamageOutcome::Killed;
+                    }
                     // 5e Death Ward: when the holder would drop to 0 HP,
                     // they instead drop to 1 HP and the ward burns off.
-                    // We intercept here (post-HP-bookkeeping) so resistance
-                    // / immunity / temp HP all run normally first — the
-                    // ward only fires when the damage would actually
-                    // floor them. Massive-damage-instant-kill is rare in
-                    // our model so we don't special-case it.
                     if self.conditions.contains_key(&Condition::DeathWarded) {
                         self.hitpoints = 1;
                         self.conditions.remove(&Condition::DeathWarded);
@@ -1416,7 +1447,6 @@ impl ActorInstance {
                             successes: 0,
                             failures: 0,
                         };
-                        // Falling unconscious is part of going Dying.
                         self.add_condition(Condition::Unconscious, ConditionTimer::Permanent);
                         self.add_condition(Condition::Prone, ConditionTimer::Permanent);
                         DamageOutcome::Downed

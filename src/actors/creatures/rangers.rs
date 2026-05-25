@@ -60,6 +60,7 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // — the ranger's signature stealth utility, slotted in the lv2 lane
     // alongside Spike Growth / Hunter's Mark.
     actions.push(&*crate::actions::spells::PASS_WITHOUT_TRACE);
+    actions.push(&*crate::actions::spells::ABSORB_ELEMENTS);
     CreatureTemplate {
         name: "Ranger",
         glyph: 'R',
@@ -95,5 +96,7 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),
         legendary_resistances: 0,
+        has_evasion: false,
+        has_uncanny_dodge: false,
     }
 });
