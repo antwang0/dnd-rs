@@ -11,6 +11,19 @@ pub enum AbilityScoreType {
     Charisma,
 }
 
+impl fmt::Display for AbilityScoreType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            AbilityScoreType::Strength => write!(f, "STR"),
+            AbilityScoreType::Dexterity => write!(f, "DEX"),
+            AbilityScoreType::Constitution => write!(f, "CON"),
+            AbilityScoreType::Intelligence => write!(f, "INT"),
+            AbilityScoreType::Wisdom => write!(f, "WIS"),
+            AbilityScoreType::Charisma => write!(f, "CHA"),
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Hash, Eq)]
 pub enum Skill {
     Acrobatics,
@@ -28,7 +41,7 @@ pub enum Skill {
     Performance,
     Persuasion,
     Religion,
-    SlightOfHand,
+    SleightOfHand,
     Stealth,
     Survival,
 }
@@ -50,6 +63,26 @@ pub enum DamageType {
     Thunder,
 }
 
+impl fmt::Display for DamageType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            DamageType::Acid => write!(f, "acid"),
+            DamageType::Bludgeoning => write!(f, "bludgeoning"),
+            DamageType::Cold => write!(f, "cold"),
+            DamageType::Fire => write!(f, "fire"),
+            DamageType::Force => write!(f, "force"),
+            DamageType::Lightning => write!(f, "lightning"),
+            DamageType::Necrotic => write!(f, "necrotic"),
+            DamageType::Piercing => write!(f, "piercing"),
+            DamageType::Poison => write!(f, "poison"),
+            DamageType::Psychic => write!(f, "psychic"),
+            DamageType::Radiant => write!(f, "radiant"),
+            DamageType::Slashing => write!(f, "slashing"),
+            DamageType::Thunder => write!(f, "thunder"),
+        }
+    }
+}
+
 /// 5e damage modifier categories for a creature against a damage type.
 /// Resistance halves incoming damage, immunity nullifies it, vulnerability
 /// doubles it. A creature can declare any subset across damage types via
@@ -65,14 +98,21 @@ pub enum DamageModifier {
 }
 
 impl DamageModifier {
-    /// Apply this modifier to a raw damage value. Resistance halves (round
-    /// down, min 0). Immunity zeroes. Vulnerability doubles. Halving uses
-    /// integer division — 1 damage with resistance becomes 0.
     pub fn apply(self, raw: u32) -> u32 {
         match self {
             DamageModifier::Resistance => raw / 2,
             DamageModifier::Immunity => 0,
             DamageModifier::Vulnerability => raw.saturating_mul(2),
+        }
+    }
+}
+
+impl fmt::Display for DamageModifier {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            DamageModifier::Resistance => write!(f, "resistant"),
+            DamageModifier::Immunity => write!(f, "immune"),
+            DamageModifier::Vulnerability => write!(f, "vulnerable"),
         }
     }
 }
@@ -85,6 +125,19 @@ pub enum Size {
     Large,
     Huge,
     Gargantuan,
+}
+
+impl fmt::Display for Size {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Size::Tiny => write!(f, "Tiny"),
+            Size::Small => write!(f, "Small"),
+            Size::Medium => write!(f, "Medium"),
+            Size::Large => write!(f, "Large"),
+            Size::Huge => write!(f, "Huge"),
+            Size::Gargantuan => write!(f, "Gargantuan"),
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Hash, Eq)]

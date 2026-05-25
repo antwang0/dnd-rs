@@ -415,12 +415,9 @@ fn try_hold_person(
     // soft. New entries land in priority order.
     const SOFT_LOCKS: &[(&str, Condition)] = &[
         ("hold person", Condition::Stunned),
-        // Couatl's Sleep Gaze: single-target Asleep (mechanically same
-        // envelope as Stunned — blocks actions / movement, melee auto-
-        // crit on hit). Hard lock that doesn't compete with Stunned for
-        // the same target.
         ("sleep gaze", Condition::Asleep),
         ("cause fear", Condition::Frightened),
+        ("ray of enfeeblement", Condition::Poisoned),
     ];
     let candidates: Vec<(&'static (dyn Action + Send + Sync), Condition)> = actor
         .actions

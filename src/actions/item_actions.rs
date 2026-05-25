@@ -670,3 +670,88 @@ impl Action for DrinkPotionOfInvisibility {
 
 pub static DRINK_POTION_OF_INVISIBILITY: DrinkPotionOfInvisibility =
     DrinkPotionOfInvisibility {};
+
+const SCROLL_OF_LIGHTNING_BOLT_NAME: &str = "Scroll of Lightning Bolt";
+
+pub struct ReadLightningBoltScroll {}
+
+impl Action for ReadLightningBoltScroll {
+    fn name(&self) -> &str {
+        "read lightning bolt scroll"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["lb scroll", "lightning scroll"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 2 }
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(40)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_item_named(SCROLL_OF_LIGHTNING_BOLT_NAME))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::saves::SaveOutcome;
+        use crate::engine::types::AbilityScoreType;
+
+        let Some(&center) = target_locations.and_then(|locs| locs.first()) else {
+            return Vec::new();
+        };
+        let removed = encounter
+            .actors
+            .get_mut(&caster_id)
+            .is_some_and(|a| a.remove_item_by_name(SCROLL_OF_LIGHTNING_BOLT_NAME));
+        if !removed {
+            return Vec::new();
+        }
+
+        let damage = encounter.roll(&Dice::new(8, 6));
+        encounter.log(format!("  scroll of lightning bolt: 8d6 = {} damage", damage));
+
+        const BLAST_RADIUS: isize = 2;
+        let dc: i32 = 15;
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for id in encounter.actors_in_burst(center, BLAST_RADIUS) {
+            let outcome = encounter.roll_save(id, AbilityScoreType::Dexterity, dc);
+            let final_damage = match outcome {
+                SaveOutcome::Pass => damage / 2,
+                SaveOutcome::Fail => damage,
+            };
+            effects.push(Box::new(DealDamage {
+                actor_id: id,
+                amount: final_damage,
+                damage_type: DamageType::Lightning,
+            }));
+        }
+        effects
+    }
+}
+
+pub static READ_LIGHTNING_BOLT_SCROLL: ReadLightningBoltScroll = ReadLightningBoltScroll {};

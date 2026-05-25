@@ -162,6 +162,11 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // group.
     actions.push(&*crate::actions::spells::PASS_WITHOUT_TRACE);
     actions.push(&*crate::actions::spells::ABSORB_ELEMENTS);
+    actions.push(&*crate::actions::spells::PRODUCE_FLAME);
+    actions.push(&*crate::actions::spells::CREATE_BONFIRE);
+    actions.push(&*crate::actions::spells::ENTANGLE);
+    actions.push(&*crate::actions::spells::FLAME_BLADE);
+    actions.push(&*crate::actions::spells::WITHER_AND_BLOOM);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

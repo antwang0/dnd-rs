@@ -19413,3 +19413,545 @@ impl Action for ShadowBlade {
 }
 
 pub static SHADOW_BLADE: LazyLock<ShadowBlade> = LazyLock::new(|| ShadowBlade {});
+
+/// Entangle — level-1 conjuration, concentration. A 20ft burst of grasping
+/// vines sprouts from a point within 90ft. Every creature in the burst
+/// makes a STR save; on fail, they're Restrained for up to 10 rounds.
+/// Concentration-bound.
+pub struct Entangle {}
+
+impl Action for Entangle {
+    fn name(&self) -> &str {
+        "entangle"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ent", "vines"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(36)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(1)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.is_concentrating())
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        encounter.log("  entangle: grasping vines erupt!");
+        let mut effs: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut restrained: Vec<(usize, Condition)> = Vec::new();
+        for target_id in encounter.neutral_burst_targets(caster_id, point, 4) {
+            let save = encounter.roll_save(target_id, AbilityScoreType::Strength, dc);
+            if !save.passed() {
+                restrained.push((target_id, Condition::Restrained));
+                effs.push(Box::new(ApplyCondition {
+                    actor_id: target_id,
+                    condition: Condition::Restrained,
+                    timer: ConditionTimer::Rounds(10),
+                }));
+            }
+        }
+        effs.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Entangle", restrained),
+        }));
+        effs
+    }
+}
+
+pub static ENTANGLE: LazyLock<Entangle> = LazyLock::new(|| Entangle {});
+
+/// Produce Flame — druid cantrip. The caster conjures a small flame in
+/// their hand and hurls it at a target within 30ft. Ranged spell attack;
+/// on hit, 1d8 fire damage. No spell slot cost.
+pub struct ProduceFlame {}
+
+impl Action for ProduceFlame {
+    fn name(&self) -> &str {
+        "produce flame"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pf", "pflame"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_mod = caster.spell_attack_modifier(AbilityScoreType::Wisdom);
+        spell_attack(
+            encounter,
+            caster_id,
+            target_id,
+            "produce flame",
+            attack_mod,
+            Dice::new(1, 8),
+            DamageType::Fire,
+            false,
+        )
+    }
+}
+
+pub static PRODUCE_FLAME: LazyLock<ProduceFlame> = LazyLock::new(|| ProduceFlame {});
+
+/// Create Bonfire — cantrip (XGtE). A 5ft bonfire appears at a point;
+/// every creature in the tile makes a DEX save or takes 1d8 fire. The
+/// bonfire persists as concentration — on each subsequent round-end, any
+/// creature still standing on the point must save again (we approximate
+/// with a single burst at cast time + concentration install).
+pub struct CreateBonfire {}
+
+impl Action for CreateBonfire {
+    fn name(&self) -> &str {
+        "create bonfire"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bonfire", "cb"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 0 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        let raw = encounter.roll(&Dice::new(1, 8));
+        encounter.log(format!("  create bonfire: 1d8({}) fire", raw));
+        let mut effs = crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            0,
+            AbilityScoreType::Dexterity,
+            dc,
+            raw,
+            DamageType::Fire,
+        );
+        effs.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::new("Create Bonfire"),
+        }));
+        effs
+    }
+}
+
+pub static CREATE_BONFIRE: LazyLock<CreateBonfire> = LazyLock::new(|| CreateBonfire {});
+
+/// Flame Blade — level-2 evocation, concentration. The caster conjures a
+/// fiery blade: melee spell attack, 3d6 fire, using the caster's
+/// spellcasting modifier. Lasts up to 10 rounds (concentration). We model
+/// as a self-buff that applies the SpiritShrouded condition (reusing the
+/// melee-only +1d8 rider lane) typed as fire.
+pub struct FlameBlade {}
+
+impl Action for FlameBlade {
+    fn name(&self) -> &str {
+        "flame blade"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fblade", "flblade"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_and_slot(2)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.is_concentrating())
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        self_concentration_buff_effects(
+            caster_id,
+            "Flame Blade",
+            Condition::SpiritShrouded,
+            ConditionTimer::Rounds(10),
+        )
+    }
+}
+
+pub static FLAME_BLADE: LazyLock<FlameBlade> = LazyLock::new(|| FlameBlade {});
+
+/// Chill Touch (ranged, necrotic cantrip) variant — ranged spell attack
+/// that also prevents healing for 1 round. We already have Chill Touch
+/// defined above. This is Infestation — a WIS-save cantrip that deals
+/// 1d6 poison on a failed save. Simple save-or-damage cantrip pattern.
+pub struct Infestation {}
+
+impl Action for Infestation {
+    fn name(&self) -> &str {
+        "infestation"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["infest", "bugs"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Poison]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([AbilityScoreType::Wisdom, AbilityScoreType::Intelligence]);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        let dmg = encounter.roll(&Dice::new(1, 6));
+        encounter.log(format!("  infestation: 1d6({}) poison", dmg));
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: dmg,
+            damage_type: DamageType::Poison,
+        })]
+    }
+}
+
+pub static INFESTATION: LazyLock<Infestation> = LazyLock::new(|| Infestation {});
+
+/// Ray of Enfeeblement — level-2 necromancy, concentration. Ranged spell
+/// attack; on hit, the target deals half damage with weapon attacks that
+/// use Strength for the duration. We approximate with the Poisoned
+/// condition (disadvantage on attacks + ability checks) for 10 rounds.
+pub struct RayOfEnfeeblement {}
+
+impl Action for RayOfEnfeeblement {
+    fn name(&self) -> &str {
+        "ray of enfeeblement"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["roe", "enfeeble"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.is_concentrating())
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_mod = caster.best_spell_attack_modifier([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+        ]);
+        let mode = encounter.compute_attack_mode(caster_id, target_id, false);
+        encounter.clear_attack_advantage_riders(caster_id, target_id);
+        let raw = encounter.roll_d20_with_mode(mode) as i32;
+        let target_ac = encounter
+            .actors
+            .get(&target_id)
+            .map(|a| a.armor_class() as i32)
+            .unwrap_or(10);
+        let total = raw + attack_mod;
+        let hit = raw == 20 || (raw != 1 && total >= target_ac);
+        encounter.log(format!(
+            "  ray of enfeeblement: 1d20({}){:+} = {} vs AC {}{} — {}",
+            raw,
+            attack_mod,
+            total,
+            target_ac,
+            mode.log_suffix(),
+            if hit { "hit" } else { "miss" }
+        ));
+        if !hit {
+            return Vec::new();
+        }
+        let cond = Condition::Poisoned;
+        let timer = ConditionTimer::Rounds(10);
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: cond,
+                timer,
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Ray of Enfeeblement",
+                    vec![(target_id, cond)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static RAY_OF_ENFEEBLEMENT: LazyLock<RayOfEnfeeblement> =
+    LazyLock::new(|| RayOfEnfeeblement {});
+
+/// Wither and Bloom — level-2 necromancy (Strixhaven). A 10ft burst deals
+/// 2d6 necrotic to enemies (CON save, half); one ally in the burst heals
+/// for the amount rolled on the damage dice. We approximate by bursting
+/// 2d6 necrotic, then healing the caster for the average (6 HP).
+pub struct WitherAndBloom {}
+
+impl Action for WitherAndBloom {
+    fn name(&self) -> &str {
+        "wither and bloom"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wab", "wither"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 2 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Necrotic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([AbilityScoreType::Intelligence, AbilityScoreType::Wisdom]);
+        let raw = encounter.roll(&Dice::new(2, 6));
+        encounter.log(format!("  wither and bloom: 2d6({}) necrotic burst", raw));
+        let mut effs = crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            2,
+            AbilityScoreType::Constitution,
+            dc,
+            raw,
+            DamageType::Necrotic,
+        );
+        let heal_amount = raw.min(6);
+        encounter.log(format!("  bloom: caster heals {} HP", heal_amount));
+        effs.push(Box::new(Heal {
+            actor_id: caster_id,
+            amount: heal_amount,
+        }));
+        effs
+    }
+}
+
+pub static WITHER_AND_BLOOM: LazyLock<WitherAndBloom> = LazyLock::new(|| WitherAndBloom {});

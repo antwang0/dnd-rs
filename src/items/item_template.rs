@@ -266,6 +266,49 @@ pub static POTION_OF_INVISIBILITY: Item = Item {
     on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_INVISIBILITY),
 };
 
+/// Periapt of Wound Closure — +5 max HP passive trinket. Thematic
+/// flavor: stabilizes a dying wearer (modeled as extra HP cushion).
+pub static PERIAPT_OF_WOUND_CLOSURE: Item = Item {
+    name: "Periapt of Wound Closure",
+    glyph: '+',
+    bonuses: ItemBonuses {
+        ac: 0,
+        max_hp: 5,
+        speed: 0,
+        save: 0,
+    },
+    on_use: None,
+};
+
+/// Gauntlets of Ogre Power — +1 AC from the reinforced plates on the
+/// gauntlets, plus +5 max HP from the magical vigor. A martial
+/// trinket that makes the front-liner stickier.
+pub static GAUNTLETS_OF_OGRE_POWER: Item = Item {
+    name: "Gauntlets of Ogre Power",
+    glyph: 'G',
+    bonuses: ItemBonuses {
+        ac: 1,
+        max_hp: 5,
+        speed: 0,
+        save: 0,
+    },
+    on_use: None,
+};
+
+/// Scroll of Lightning Bolt — one-shot 8d6 lightning burst along a
+/// line. Uses the same mechanics as Fireball scroll but typed lightning.
+pub static SCROLL_OF_LIGHTNING_BOLT: Item = Item {
+    name: "Scroll of Lightning Bolt",
+    glyph: 'l',
+    bonuses: ItemBonuses {
+        ac: 0,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: Some(&crate::actions::item_actions::READ_LIGHTNING_BOLT_SCROLL),
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -290,4 +333,7 @@ pub static LOOT_POOL: &[&Item] = &[
     &POTION_OF_INVISIBILITY,
     &SCROLL_OF_FIREBALL,
     &SCROLL_OF_MAGIC_MISSILE,
+    &SCROLL_OF_LIGHTNING_BOLT,
+    &PERIAPT_OF_WOUND_CLOSURE,
+    &GAUNTLETS_OF_OGRE_POWER,
 ];

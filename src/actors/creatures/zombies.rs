@@ -25,7 +25,7 @@ pub static ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         wisdom: 6,
         constitution: 16,
         charisma: 5,
-        skills: HashSet::new(), // TODO
+        skills: HashSet::new(),
         items: Vec::new(),
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
         languages: HashSet::from([Language::Common]), // plus one other

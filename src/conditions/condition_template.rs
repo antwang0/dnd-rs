@@ -990,6 +990,12 @@ impl Condition {
     }
 }
 
+impl std::fmt::Display for Condition {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 /// How long a condition application persists. `Permanent` requires an
 /// explicit removal (e.g. Stand-up clears Prone, Lesser Restoration clears
 /// Poisoned). `Rounds(n)` ticks down by 1 every time the initiative queue

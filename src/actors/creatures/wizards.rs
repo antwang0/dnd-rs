@@ -321,6 +321,8 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::THUNDER_STEP);
     actions.push(&*crate::actions::spells::ABSORB_ELEMENTS);
     actions.push(&*crate::actions::spells::SHADOW_BLADE);
+    actions.push(&*crate::actions::spells::RAY_OF_ENFEEBLEMENT);
+    actions.push(&*crate::actions::spells::INFESTATION);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

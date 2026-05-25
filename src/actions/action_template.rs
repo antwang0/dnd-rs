@@ -35,8 +35,28 @@ pub fn resolve_burst_save_damage(
     // ids invariant in one place instead of re-inlining the loop.
     for target_id in encounter.neutral_burst_targets(caster_id, center, radius) {
         let save = encounter.roll_save(target_id, save_ability, dc);
-        let dmg = if save.passed() { damage / 2 } else { damage };
+        let has_evasion = save_ability == AbilityScoreType::Dexterity
+            && encounter
+                .actors
+                .get(&target_id)
+                .is_some_and(|a| a.has_evasion());
+        let dmg = match (save.passed(), has_evasion) {
+            (true, true) => 0,
+            (true, false) => damage / 2,
+            (false, true) => damage / 2,
+            (false, false) => damage,
+        };
         if dmg == 0 {
+            if has_evasion && save.passed() {
+                encounter.log(format!(
+                    "  evasion: {} takes no damage",
+                    encounter
+                        .actors
+                        .get(&target_id)
+                        .map(|a| a.name().to_string())
+                        .unwrap_or_default()
+                ));
+            }
             continue;
         }
         effects.push(Box::new(DealDamage {

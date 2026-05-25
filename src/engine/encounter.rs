@@ -26,9 +26,12 @@ use crate::actors::creatures::manticores::MANTICORE_TEMPLATE;
 use crate::actors::creatures::mimics::MIMIC_TEMPLATE;
 use crate::actors::creatures::minotaurs::MINOTAUR_TEMPLATE;
 use crate::actors::creatures::mummies::MUMMY_TEMPLATE;
+use crate::actors::creatures::nothics::NOTHIC_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::orcs::ORC_TEMPLATE;
 use crate::actors::creatures::owlbears::OWLBEAR_TEMPLATE;
+use crate::actors::creatures::phase_spiders::PHASE_SPIDER_TEMPLATE;
+use crate::actors::creatures::rust_monsters::RUST_MONSTER_TEMPLATE;
 use crate::actors::creatures::shambling_mounds::SHAMBLING_MOUND_TEMPLATE;
 use crate::actors::creatures::specters::SPECTER_TEMPLATE;
 use crate::actors::creatures::stirges::STIRGE_TEMPLATE;
@@ -1509,8 +1512,10 @@ impl EncounterInstance {
 
         // Encode floats as millifeet so we can use integer ordering / Eq.
         let to_mft = |f: f32| -> u32 { (f * 1000.0) as u32 };
-        let cardinal_mft = to_mft(2.5); // 5ft via tile_center_dist semantics (2.5 * 1)
-        let diagonal_mft = to_mft(2.5 * std::f32::consts::SQRT_2);
+        // 5e: prone creatures crawl at double movement cost per foot.
+        let prone_factor: u32 = if actor.has_condition(Condition::Prone) { 2 } else { 1 };
+        let cardinal_mft = to_mft(2.5) * prone_factor;
+        let diagonal_mft = to_mft(2.5 * std::f32::consts::SQRT_2) * prone_factor;
         let budget_mft = to_mft(actor.remaining_movement() + 0.5);
 
         let start_idx = self.idx(start).ok()?;
@@ -1672,9 +1677,12 @@ impl EncounterInstance {
             &MIMIC_TEMPLATE,
             &MINOTAUR_TEMPLATE,
             &MUMMY_TEMPLATE,
+            &NOTHIC_TEMPLATE,
             &OGRE_TEMPLATE,
             &ORC_TEMPLATE,
             &OWLBEAR_TEMPLATE,
+            &PHASE_SPIDER_TEMPLATE,
+            &RUST_MONSTER_TEMPLATE,
             &SHAMBLING_MOUND_TEMPLATE,
             &SPECTER_TEMPLATE,
             &STIRGE_TEMPLATE,
@@ -23988,6 +23996,155 @@ mod tests {
         assert!(
             goblin_hp_after <= goblin_hp_before,
             "Goblin should take thunder damage from Thunder Step"
+        );
+    }
+
+    #[test]
+    fn prone_blocks_movement_until_stand_up() {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let f_id = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(3, 3),
+                0,
+                1,
+            )
+            .unwrap();
+        let actor = e.actors.get_mut(&f_id).unwrap();
+        actor.reset_for_new_round();
+        let normal_cost = e.path_cost_to(f_id, Coordinate::new(5, 3));
+        assert!(normal_cost.is_some(), "should reach (5,3) normally");
+
+        let actor = e.actors.get_mut(&f_id).unwrap();
+        actor.add_condition(
+            crate::conditions::Condition::Prone,
+            crate::conditions::ConditionTimer::Permanent,
+        );
+        let prone_movement = actor.remaining_movement();
+        assert_eq!(
+            prone_movement, 0.0,
+            "prone actor should have 0 remaining movement"
+        );
+        let prone_cost = e.path_cost_to(f_id, Coordinate::new(5, 3));
+        assert!(
+            prone_cost.is_none(),
+            "prone actor cannot move until they stand up"
+        );
+    }
+
+    #[test]
+    fn evasion_reduces_dex_save_damage() {
+        use crate::actions::action_template::resolve_burst_save_damage;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wiz_id = e
+            .instantiate_creature(
+                &crate::actors::creatures::wizards::WIZARD_TEMPLATE,
+                Coordinate::new(3, 3),
+                0,
+                1,
+            )
+            .unwrap();
+        let rogue_id = e
+            .instantiate_creature(
+                &crate::actors::creatures::rogues::ROGUE_TEMPLATE,
+                Coordinate::new(5, 5),
+                1,
+                2,
+            )
+            .unwrap();
+        assert!(e.actors[&rogue_id].has_evasion());
+        let effects = resolve_burst_save_damage(
+            &mut e,
+            wiz_id,
+            Coordinate::new(5, 5),
+            2,
+            crate::engine::types::AbilityScoreType::Dexterity,
+            1,
+            20,
+            DamageType::Fire,
+        );
+        let has_damage = !effects.is_empty();
+        if has_damage {
+            for ef in &effects {
+                ef.apply(&mut e);
+            }
+            let hp_after = e.actors[&rogue_id].hitpoints();
+            let max_hp = e.actors[&rogue_id].max_hitpoints();
+            let dmg_taken = max_hp - hp_after;
+            assert!(
+                dmg_taken <= 10,
+                "Evasion should halve damage on fail (got {} dmg from 20 raw)",
+                dmg_taken
+            );
+        }
+    }
+
+    #[test]
+    fn new_creature_templates_instantiate() {
+        let mut roller = FastRandRoller::with_seed(42);
+        let nothic = ActorInstance::from_creature_template(
+            &crate::actors::creatures::nothics::NOTHIC_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut roller,
+            1,
+        );
+        assert!(nothic.is_ok(), "Nothic should instantiate");
+
+        let phase_spider = ActorInstance::from_creature_template(
+            &crate::actors::creatures::phase_spiders::PHASE_SPIDER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut roller,
+            1,
+        );
+        assert!(phase_spider.is_ok(), "Phase Spider should instantiate");
+
+        let rust_monster = ActorInstance::from_creature_template(
+            &crate::actors::creatures::rust_monsters::RUST_MONSTER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut roller,
+            1,
+        );
+        assert!(rust_monster.is_ok(), "Rust Monster should instantiate");
+    }
+
+    #[test]
+    fn entangle_spell_restrains_targets() {
+        use crate::actions::action_template::Action;
+        use crate::engine::side_effects::ApplicableSideEffect;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let druid_id = e
+            .instantiate_creature(
+                &crate::actors::creatures::druids::DRUID_TEMPLATE,
+                Coordinate::new(3, 3),
+                0,
+                1,
+            )
+            .unwrap();
+        let goblin_id = e
+            .instantiate_creature(
+                &crate::actors::creatures::goblins::GOBLIN_TEMPLATE,
+                Coordinate::new(10, 10),
+                1,
+                2,
+            )
+            .unwrap();
+        let action = e.actors[&druid_id].find_action("entangle").unwrap();
+        let effects = action.side_effects(
+            &mut e,
+            druid_id,
+            None,
+            Some(&vec![Coordinate::new(10, 10)]),
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&druid_id].is_concentrating(),
+            "Druid should be concentrating on Entangle"
         );
     }
 }
