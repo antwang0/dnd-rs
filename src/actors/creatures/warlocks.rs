@@ -119,6 +119,10 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     burst with STR save for half + no-reactions rider on fail.
     //     Punishes melee swarms that close on the warlock.
     actions.push(&*crate::actions::spells::ARMS_OF_HADAR);
+    // lv3 **Hunger of Hadar** — warlock signature: cold + acid sphere.
+    actions.push(&*crate::actions::spells::HUNGER_OF_HADAR);
+    // lv5 **Eldritch Smite** — warlock melee burst + prone on fail.
+    actions.push(&*crate::actions::spells::ELDRITCH_SMITE);
     // Telekinetic — cantrip bonus-action shove. 5ft pull on a failed
     // STR save, no slot. Cheap repositioning for the warlock's
     // bonus-action lane (otherwise empty between Hex / Hex re-target).

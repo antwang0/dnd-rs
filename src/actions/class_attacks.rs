@@ -112,17 +112,23 @@ impl Action for RogueShortsword {
             mode == crate::engine::dice::RollMode::Advantage,
         );
         if sneak_eligible {
-            let sneak_raw = encounter.roll(&Dice::new(1, 6));
+            let level = encounter
+                .actors
+                .get(&caster_id)
+                .map(|a| a.level())
+                .unwrap_or(1);
+            let sneak_dice = sneak_attack_dice(level);
+            let sneak_raw = encounter.roll(&Dice::new(sneak_dice, 6));
             let sneak_extra = if is_crit {
-                encounter.roll(&Dice::new(1, 6))
+                encounter.roll(&Dice::new(sneak_dice, 6))
             } else {
                 0
             };
             let sneak_total = sneak_raw + sneak_extra;
             damage = damage.saturating_add(sneak_total);
             encounter.log(format!(
-                "  sneak attack: 1d6({}) = {} extra piercing",
-                sneak_raw, sneak_total
+                "  sneak attack: {}d6({}) = {} extra piercing",
+                sneak_dice, sneak_raw, sneak_total
             ));
             if let Some(rogue) = encounter.actors.get_mut(&caster_id) {
                 rogue.mark_sneak_attack_used();
@@ -144,6 +150,16 @@ impl Action for RogueShortsword {
 }
 
 pub static ROGUE_SHORTSWORD: LazyLock<RogueShortsword> = LazyLock::new(|| RogueShortsword {});
+
+/// 5e Sneak Attack dice scaling: ceil(level / 2) d6.
+/// Level 1 = 1d6, level 3 = 2d6, level 5 = 3d6, etc.
+fn sneak_attack_dice(level: u32) -> u32 {
+    sneak_attack_dice_for_level(level)
+}
+
+pub fn sneak_attack_dice_for_level(level: u32) -> u32 {
+    level.div_ceil(2).max(1)
+}
 
 /// 5e Sneak Attack trigger:
 /// - Rogue has advantage on the attack (and not disadvantage), OR

@@ -181,6 +181,12 @@ impl Coordinate {
     pub fn new(x: isize, y: isize) -> Self {
         Self { x, y }
     }
+
+    /// Chebyshev (chessboard) distance between two single-tile points.
+    /// Used for quick range checks where footprint size doesn't matter.
+    pub fn chebyshev_to(self, other: Self) -> isize {
+        (self.x - other.x).abs().max((self.y - other.y).abs())
+    }
 }
 
 impl Add for Coordinate {

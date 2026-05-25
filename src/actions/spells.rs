@@ -19955,3 +19955,339 @@ impl Action for WitherAndBloom {
 }
 
 pub static WITHER_AND_BLOOM: LazyLock<WitherAndBloom> = LazyLock::new(|| WitherAndBloom {});
+
+/// Hunger of Hadar — level-3 conjuration (warlock-exclusive, concentration).
+/// A 20ft sphere of frigid blackness: enemies inside the sphere take 2d6
+/// cold (no save) + 2d6 acid (DEX save for none) at the start of their turns
+/// RAW. We collapse the sustained-zone mechanic to a one-shot burst at cast
+/// time: 2d6 cold + DEX-save 2d6 acid to every enemy in a radius-4 sphere.
+/// The burst runs through `enemy_burst_save_for_half` for the acid half,
+/// then flat cold damage for the cold half. Concentration-bound on the caster.
+pub struct HungerOfHadar {}
+
+impl Action for HungerOfHadar {
+    fn name(&self) -> &str {
+        "hunger of hadar"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hoh", "hadar"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(60)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Cold, DamageType::Acid]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.is_concentrating())
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([AbilityScoreType::Charisma]);
+        encounter.log("  hunger of hadar: the void opens...".to_string());
+        let cold_raw = encounter.roll(&Dice::new(2, 6));
+        let targets = encounter.enemy_burst_targets(caster_id, point, 4);
+        let mut effs: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in &targets {
+            encounter.log(format!(
+                "  cold lash: 2d6({}) cold on {}",
+                cold_raw,
+                encounter.actors.get(tid).map(|a| a.name()).unwrap_or("?")
+            ));
+            effs.push(Box::new(DealDamage {
+                actor_id: *tid,
+                amount: cold_raw,
+                damage_type: DamageType::Cold,
+            }));
+        }
+        let (acid_effs, _) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            4,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(2, 6),
+            DamageType::Acid,
+            "hadar acid",
+        );
+        effs.extend(acid_effs);
+        effs.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::new("Hunger of Hadar"),
+        }));
+        effs
+    }
+}
+
+pub static HUNGER_OF_HADAR: LazyLock<HungerOfHadar> = LazyLock::new(|| HungerOfHadar {});
+
+/// Cloud of Locusts — level-3 conjuration (druid / ranger). Swarm of
+/// biting insects fills a 20ft sphere. Enemies in the burst take 4d10
+/// piercing (CON save, half). Concentration-free instant burst that fits
+/// the druid's "nature damage" niche between Moonbeam and Insect Plague.
+/// We reuse the enemy_burst_save_for_half template.
+pub struct SwarmOfLocusts {}
+
+impl Action for SwarmOfLocusts {
+    fn name(&self) -> &str {
+        "conjure locusts"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["locusts", "swarm"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([AbilityScoreType::Wisdom, AbilityScoreType::Intelligence]);
+        let (effs, _) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            4,
+            AbilityScoreType::Constitution,
+            dc,
+            Dice::new(4, 10),
+            DamageType::Piercing,
+            "conjure locusts",
+        );
+        effs
+    }
+}
+
+pub static CONJURE_LOCUSTS: LazyLock<SwarmOfLocusts> = LazyLock::new(|| SwarmOfLocusts {});
+
+/// Toll the Dead cantrip scaling — this spell already exists but let's
+/// add Eldritch Smite as a lv5 warlock ability. The Eldritch Smite is
+/// modeled as a single-target force damage attack plus a prone rider
+/// on a failed STR save. Level 5 spell, warlock-only.
+pub struct EldritchSmite {}
+
+impl Action for EldritchSmite {
+    fn name(&self) -> &str {
+        "eldritch smite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["esmite"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(1)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Force]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(&tid) = target_ids.and_then(|ids| ids.first()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([AbilityScoreType::Charisma]);
+        let raw = encounter.roll(&Dice::new(4, 8));
+        encounter.log(format!("  eldritch smite: 4d8({}) force", raw));
+        let mut effs: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
+            actor_id: tid,
+            amount: raw,
+            damage_type: DamageType::Force,
+        })];
+        let save = encounter.roll_save(tid, AbilityScoreType::Strength, dc);
+        if !save.passed() {
+            encounter.log("  the target is knocked prone!".to_string());
+            effs.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Prone,
+                timer: ConditionTimer::Permanent,
+            }));
+        }
+        effs
+    }
+}
+
+pub static ELDRITCH_SMITE: LazyLock<EldritchSmite> = LazyLock::new(|| EldritchSmite {});
+
+/// Crown of Thorns — a homebrew-adjacent lv2 druid concentration spell.
+/// An enemy-only 10ft burst of thorny vines deals 2d8 piercing and
+/// applies Restrained on a failed STR save. Fits the druid's
+/// "control-through-nature" niche between Spike Growth and Plant Growth.
+pub struct CrownOfThorns {}
+
+impl Action for CrownOfThorns {
+    fn name(&self) -> &str {
+        "crown of thorns"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["thorns", "cot"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 2 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.is_concentrating())
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([AbilityScoreType::Wisdom]);
+        let (mut effs, saves) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            2,
+            AbilityScoreType::Strength,
+            dc,
+            Dice::new(2, 8),
+            DamageType::Piercing,
+            "crown of thorns",
+        );
+        let mut conc_conditions: Vec<(usize, Condition)> = Vec::new();
+        for (tid, passed) in &saves {
+            if !passed {
+                effs.push(Box::new(ApplyCondition {
+                    actor_id: *tid,
+                    condition: Condition::Restrained,
+                    timer: ConditionTimer::Rounds(10),
+                }));
+                conc_conditions.push((*tid, Condition::Restrained));
+            }
+        }
+        effs.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Crown of Thorns", conc_conditions),
+        }));
+        effs
+    }
+}
+
+pub static CROWN_OF_THORNS: LazyLock<CrownOfThorns> = LazyLock::new(|| CrownOfThorns {});

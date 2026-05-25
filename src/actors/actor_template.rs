@@ -10,6 +10,15 @@ use crate::items::item_template::{Item, ItemBonuses};
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 
+/// Features that refresh on a 5e short rest (Fighter's Second Wind +
+/// Action Surge). The warlock's Pact Magic spell-slot refresh is handled
+/// separately because it operates on the slot manager rather than the
+/// feature-flag pool.
+const SHORT_REST_FEATURES: &[&str] = &[
+    "fighter.second_wind",
+    "fighter.action_surge",
+];
+
 /// Lifecycle state of an actor's hit points. Replaces the previous
 /// `dying: bool` + `stable: bool` pair so the four meaningful states are
 /// type-checked, and the death-save counters are scoped to the only
@@ -592,6 +601,27 @@ impl ActorInstance {
         self.legendary_resistance_remaining = self.legendary_resistance_max;
     }
 
+    /// 5e Short Rest — 1 hour of downtime. Restores: Hit Dice-based
+    /// healing (we approximate with CON-mod * level HP), fighter features
+    /// (Second Wind, Action Surge), and warlock Pact Magic slots (lv1-5).
+    /// Does NOT restore full HP, clear conditions, or reset concentration.
+    pub fn short_rest(&mut self, roller: &mut impl Roller) {
+        if !matches!(self.hp_state, HpState::Active) {
+            return;
+        }
+        let con_mod = modifier_from_score(self.constitution);
+        let dice_count = (self.level / 2).max(1);
+        let roll = roller.roll(&Dice::new(dice_count, 8)) as i32;
+        let heal = (roll + con_mod * dice_count as i32).max(0) as u32;
+        self.heal(heal);
+
+        for tag in SHORT_REST_FEATURES {
+            if self.features_max.contains(tag) {
+                self.features_remaining.insert(tag);
+            }
+        }
+    }
+
     pub fn temp_hp(&self) -> u32 {
         self.temp_hp
     }
@@ -611,51 +641,47 @@ impl ActorInstance {
     /// Returns the post-modifier damage value (immunity → 0, resistance
     /// → halve, vulnerability → double, none → unchanged). Doesn't touch
     /// temp HP — that's `take_typed_damage`'s job.
+    ///
+    /// 5e stacking rule (PHB p.197): "Multiple instances of resistance or
+    /// vulnerability that affect the same damage type count as only one
+    /// instance." We track whether any resistance source has applied via
+    /// `resisted` and skip further halving once it's set. Immunity still
+    /// trumps everything and zeros the amount immediately.
     pub fn effective_damage(&self, raw: u32, dt: DamageType) -> u32 {
-        let mut amt = match self.damage_modifiers.get(&dt).copied() {
-            Some(m) => m.apply(raw),
-            None => raw,
-        };
-        // Stoneskin-like generic resistance: half the damage on top.
-        if self.has_condition(Condition::DamageResistant) {
-            amt /= 2;
+        // Template-level modifier (resistance / immunity / vulnerability).
+        let modifier = self.damage_modifiers.get(&dt).copied();
+        // Immunity from any source zeroes damage outright.
+        if matches!(modifier, Some(DamageModifier::Immunity)) {
+            return 0;
         }
-        // 5e Barbarian Rage: resistance to bludgeoning / piercing / slashing.
-        if self.has_condition(Condition::Raging)
-            && matches!(
-                dt,
-                DamageType::Bludgeoning | DamageType::Piercing | DamageType::Slashing
-            )
-        {
-            amt /= 2;
-        }
-        // Globe of Invulnerability: generic damage halving (we approximate
-        // the spell-level immunity with a blanket resistance — see the
-        // Globed condition docs for the full RAW-vs-impl note).
-        if self.has_condition(Condition::Globed) {
-            amt /= 2;
-        }
-        // 5e Investiture of Flame: caster gains fire resistance for the
-        // duration. Lives here rather than on `damage_modifiers` so the
-        // resistance drops cleanly when concentration ends without
-        // touching the template's static modifier table.
-        if dt == DamageType::Fire && self.has_condition(Condition::InvestedInFlame) {
-            amt /= 2;
-        }
-        // 5e Warding Bond: bonded target gains resistance to all damage.
-        // Mirrors the DamageResistant clause but distinct so dispel can
-        // target the bond mark specifically without touching Stoneskin
-        // or Rage resistance.
-        if self.has_condition(Condition::WardingBonded) {
-            amt /= 2;
-        }
-        // 5e Mind Blank: psychic-damage immunity for the duration. Lives
-        // here rather than on `damage_modifiers` so the immunity drops
-        // cleanly when the buff expires or is dispelled, without
-        // touching the template's static modifier table. Hard zero,
-        // matching the Immunity damage modifier's behavior.
+        // 5e Mind Blank: psychic-damage immunity for the duration.
         if dt == DamageType::Psychic && self.has_condition(Condition::MindBlanked) {
-            amt = 0;
+            return 0;
+        }
+        // Start with raw and apply vulnerability / template resistance.
+        let mut amt = match modifier {
+            Some(DamageModifier::Vulnerability) => raw.saturating_mul(2),
+            Some(DamageModifier::Resistance) => raw / 2,
+            _ => raw,
+        };
+        // Collect condition-based resistance sources. Per 5e stacking
+        // rules, only one halving applies regardless of how many sources
+        // grant resistance. If the template already provided Resistance
+        // above, we skip condition-based halving too.
+        let template_resisted = matches!(modifier, Some(DamageModifier::Resistance));
+        let condition_resistance = !template_resisted
+            && (self.has_condition(Condition::DamageResistant)
+                || self.has_condition(Condition::Globed)
+                || self.has_condition(Condition::WardingBonded)
+                || self.has_condition(Condition::Petrified)
+                || (self.has_condition(Condition::Raging)
+                    && matches!(
+                        dt,
+                        DamageType::Bludgeoning | DamageType::Piercing | DamageType::Slashing
+                    ))
+                || (dt == DamageType::Fire && self.has_condition(Condition::InvestedInFlame)));
+        if condition_resistance {
+            amt /= 2;
         }
         amt
     }
@@ -1758,5 +1784,40 @@ mod tests {
         s.remove_condition(Condition::MindBlanked);
         // After dispel / expire, psychic damage flows through normally.
         assert_eq!(s.effective_damage(20, DamageType::Psychic), 20);
+    }
+
+    #[test]
+    fn petrified_grants_damage_resistance() {
+        let mut s = make(&SKELETON_TEMPLATE);
+        assert_eq!(s.effective_damage(20, DamageType::Fire), 20);
+        s.add_condition(Condition::Petrified, ConditionTimer::Permanent);
+        assert_eq!(
+            s.effective_damage(20, DamageType::Fire),
+            10,
+            "petrified creature should take half fire damage"
+        );
+        assert_eq!(
+            s.effective_damage(20, DamageType::Slashing),
+            10,
+            "petrified creature should take half slashing damage"
+        );
+    }
+
+    #[test]
+    fn resistance_does_not_stack_per_5e_rules() {
+        let mut s = make(&SKELETON_TEMPLATE);
+        // Skeleton is vulnerable to bludgeoning (doubles), so test with
+        // a creature that has no template-level modifier for fire.
+        assert_eq!(s.effective_damage(20, DamageType::Fire), 20);
+        // Add DamageResistant (Stoneskin).
+        s.add_condition(Condition::DamageResistant, ConditionTimer::Rounds(10));
+        assert_eq!(s.effective_damage(20, DamageType::Fire), 10);
+        // Add WardingBonded on top — 5e says resistance doesn't stack.
+        s.add_condition(Condition::WardingBonded, ConditionTimer::Rounds(10));
+        assert_eq!(
+            s.effective_damage(20, DamageType::Fire),
+            10,
+            "two resistance sources should halve only once (5e stacking rule)"
+        );
     }
 }

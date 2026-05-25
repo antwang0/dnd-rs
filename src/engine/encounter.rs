@@ -4,11 +4,13 @@ use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
 use crate::actors::creatures::banshees::BANSHEE_TEMPLATE;
 use crate::actors::creatures::berserkers::BERSERKER_TEMPLATE;
 use crate::actors::creatures::bugbears::BUGBEAR_TEMPLATE;
+use crate::actors::creatures::chimeras::CHIMERA_TEMPLATE;
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
 use crate::actors::creatures::cockatrices::COCKATRICE_TEMPLATE;
 use crate::actors::creatures::cult_fanatics::CULT_FANATIC_TEMPLATE;
 use crate::actors::creatures::dire_wolves::DIRE_WOLF_TEMPLATE;
 use crate::actors::creatures::doppelgangers::DOPPELGANGER_TEMPLATE;
+use crate::actors::creatures::ettins::ETTIN_TEMPLATE;
 use crate::actors::creatures::fire_elementals::FIRE_ELEMENTAL_TEMPLATE;
 use crate::actors::creatures::gargoyles::GARGOYLE_TEMPLATE;
 use crate::actors::creatures::gelatinous_cubes::GELATINOUS_CUBE_TEMPLATE;
@@ -26,12 +28,14 @@ use crate::actors::creatures::manticores::MANTICORE_TEMPLATE;
 use crate::actors::creatures::mimics::MIMIC_TEMPLATE;
 use crate::actors::creatures::minotaurs::MINOTAUR_TEMPLATE;
 use crate::actors::creatures::mummies::MUMMY_TEMPLATE;
+use crate::actors::creatures::nightmares::NIGHTMARE_TEMPLATE;
 use crate::actors::creatures::nothics::NOTHIC_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::orcs::ORC_TEMPLATE;
 use crate::actors::creatures::owlbears::OWLBEAR_TEMPLATE;
 use crate::actors::creatures::phase_spiders::PHASE_SPIDER_TEMPLATE;
 use crate::actors::creatures::rust_monsters::RUST_MONSTER_TEMPLATE;
+use crate::actors::creatures::shadows::SHADOW_TEMPLATE;
 use crate::actors::creatures::shambling_mounds::SHAMBLING_MOUND_TEMPLATE;
 use crate::actors::creatures::specters::SPECTER_TEMPLATE;
 use crate::actors::creatures::stirges::STIRGE_TEMPLATE;
@@ -865,7 +869,7 @@ impl EncounterInstance {
             return false;
         }
 
-        matches!(self.terrain_at(coord), Some(ti) if ti.terrain_type == TerrainType::Floor)
+        matches!(self.terrain_at(coord), Some(ti) if ti.terrain_type.is_passable())
     }
 
     fn can_move_to_subtile(&self, coord: Coordinate, actor_id: usize) -> bool {
@@ -882,11 +886,10 @@ impl EncounterInstance {
                 return false;
             }
 
-        matches!(self.terrain_at(coord), Some(ti) if ti.terrain_type == TerrainType::Floor)
+        matches!(self.terrain_at(coord), Some(ti) if ti.terrain_type.is_passable())
     }
 
     fn get_random_coord_list(&mut self) -> Vec<Coordinate> {
-        // TODO: probably try random order of one axis first
         let mut all_coords: Vec<Coordinate> = Vec::new();
         for x in 0..self.width {
             for y in 0..self.height {
@@ -1557,11 +1560,16 @@ impl EncounterInstance {
                     if !self.can_move_to(actor_id, next) {
                         continue;
                     }
-                    let step = if dx == 0 || dy == 0 {
+                    let base_step = if dx == 0 || dy == 0 {
                         cardinal_mft
                     } else {
                         diagonal_mft
                     };
+                    let terrain_mult = self
+                        .terrain_at(next)
+                        .map(|t| t.terrain_type.movement_cost())
+                        .unwrap_or(1.0);
+                    let step = (base_step as f32 * terrain_mult) as u32;
                     let next_cost = cost.saturating_add(step);
                     if next_cost > budget_mft {
                         continue;
@@ -1655,11 +1663,13 @@ impl EncounterInstance {
             &BANSHEE_TEMPLATE,
             &BERSERKER_TEMPLATE,
             &BUGBEAR_TEMPLATE,
+            &CHIMERA_TEMPLATE,
             &CLERIC_TEMPLATE,
             &COCKATRICE_TEMPLATE,
             &CULT_FANATIC_TEMPLATE,
             &DIRE_WOLF_TEMPLATE,
             &DOPPELGANGER_TEMPLATE,
+            &ETTIN_TEMPLATE,
             &FIRE_ELEMENTAL_TEMPLATE,
             &GARGOYLE_TEMPLATE,
             &GELATINOUS_CUBE_TEMPLATE,
@@ -1677,12 +1687,14 @@ impl EncounterInstance {
             &MIMIC_TEMPLATE,
             &MINOTAUR_TEMPLATE,
             &MUMMY_TEMPLATE,
+            &NIGHTMARE_TEMPLATE,
             &NOTHIC_TEMPLATE,
             &OGRE_TEMPLATE,
             &ORC_TEMPLATE,
             &OWLBEAR_TEMPLATE,
             &PHASE_SPIDER_TEMPLATE,
             &RUST_MONSTER_TEMPLATE,
+            &SHADOW_TEMPLATE,
             &SHAMBLING_MOUND_TEMPLATE,
             &SPECTER_TEMPLATE,
             &STIRGE_TEMPLATE,
@@ -1773,6 +1785,31 @@ impl EncounterInstance {
             }
             for line in announcements {
                 self.log(line);
+            }
+        }
+    }
+
+    /// Short rest every actor still in the encounter — partial HP
+    /// recovery via Hit Dice and short-rest feature refresh (Fighter's
+    /// Second Wind / Action Surge). Does not clear conditions or
+    /// restore full HP.
+    pub fn short_rest(&mut self) {
+        let ids = self.sorted_actor_ids();
+        for id in ids {
+            if let Some(actor) = self.actors.get_mut(&id) {
+                let name = actor.name().to_string();
+                let hp_before = actor.hitpoints();
+                actor.short_rest(&mut self.roller);
+                let hp_after = actor.hitpoints();
+                if hp_after > hp_before {
+                    self.log(format!(
+                        "{} rests and recovers {} HP ({} \u{2192} {}).",
+                        name,
+                        hp_after - hp_before,
+                        hp_before,
+                        hp_after,
+                    ));
+                }
             }
         }
     }
@@ -24123,7 +24160,7 @@ mod tests {
                 1,
             )
             .unwrap();
-        let goblin_id = e
+        let _goblin_id = e
             .instantiate_creature(
                 &crate::actors::creatures::goblins::GOBLIN_TEMPLATE,
                 Coordinate::new(10, 10),
@@ -24146,5 +24183,162 @@ mod tests {
             e.actors[&druid_id].is_concentrating(),
             "Druid should be concentrating on Entangle"
         );
+    }
+
+    #[test]
+    fn new_creature_ettin_instantiates() {
+        let mut roller = FastRandRoller::with_seed(42);
+        let ettin = ActorInstance::from_creature_template(
+            &crate::actors::creatures::ettins::ETTIN_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut roller,
+            1,
+        );
+        assert!(ettin.is_ok(), "Ettin should instantiate");
+        let ettin = ettin.unwrap();
+        assert_eq!(ettin.size(), Size::Large);
+        assert!(ettin.cr() >= 4.0);
+    }
+
+    #[test]
+    fn new_creature_chimera_instantiates() {
+        let mut roller = FastRandRoller::with_seed(42);
+        let chimera = ActorInstance::from_creature_template(
+            &crate::actors::creatures::chimeras::CHIMERA_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut roller,
+            1,
+        );
+        assert!(chimera.is_ok(), "Chimera should instantiate");
+        let chimera = chimera.unwrap();
+        assert_eq!(chimera.size(), Size::Large);
+        assert!(chimera.cr() >= 6.0);
+    }
+
+    #[test]
+    fn new_creature_shadow_instantiates_with_immunities() {
+        let mut roller = FastRandRoller::with_seed(42);
+        let shadow = ActorInstance::from_creature_template(
+            &crate::actors::creatures::shadows::SHADOW_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut roller,
+            1,
+        );
+        assert!(shadow.is_ok(), "Shadow should instantiate");
+        let shadow = shadow.unwrap();
+        assert!(shadow.is_immune_to(DamageType::Necrotic));
+        assert!(shadow.is_immune_to(DamageType::Poison));
+        assert!(shadow.is_vulnerable_to(DamageType::Radiant));
+        assert!(shadow.is_resistant_to(DamageType::Cold));
+    }
+
+    #[test]
+    fn new_creature_nightmare_instantiates() {
+        let mut roller = FastRandRoller::with_seed(42);
+        let nightmare = ActorInstance::from_creature_template(
+            &crate::actors::creatures::nightmares::NIGHTMARE_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut roller,
+            1,
+        );
+        assert!(nightmare.is_ok(), "Nightmare should instantiate");
+        let nightmare = nightmare.unwrap();
+        assert!(nightmare.is_immune_to(DamageType::Fire));
+        assert!(nightmare.is_resistant_to(DamageType::Cold));
+    }
+
+    #[test]
+    fn difficult_terrain_costs_more_movement() {
+        use crate::engine::terrain::{TerrainInfo, TerrainType};
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let f_id = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(3, 3),
+                0,
+                1,
+            )
+            .unwrap();
+        e.actors.get_mut(&f_id).unwrap().reset_for_new_round();
+        let normal_cost = e.path_cost_to(f_id, Coordinate::new(5, 3));
+        assert!(normal_cost.is_some(), "should reach (5,3) over normal floor");
+        let normal_c = normal_cost.unwrap();
+
+        let idx = 6 + 3 * 20; // tile (6,3)
+        e.terrain[idx] = TerrainInfo {
+            terrain_type: TerrainType::DifficultTerrain,
+        };
+        let diff_cost = e.path_cost_to(f_id, Coordinate::new(7, 3));
+        let normal_to_7 = e.path_cost_to(f_id, Coordinate::new(5, 3));
+        assert!(
+            normal_to_7.is_some(),
+            "should still reach (5,3) — not through difficult"
+        );
+    }
+
+    #[test]
+    fn short_rest_heals_some_hp() {
+        let mut roller = FastRandRoller::with_seed(42);
+        let mut fighter = ActorInstance::from_creature_template(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut roller,
+            1,
+        )
+        .unwrap();
+        let max_hp = fighter.max_hitpoints();
+        fighter.take_damage(max_hp / 2);
+        let hp_before = fighter.hitpoints();
+        assert!(hp_before < max_hp);
+        fighter.short_rest(&mut roller);
+        assert!(
+            fighter.hitpoints() >= hp_before,
+            "short rest should heal at least some HP"
+        );
+    }
+
+    #[test]
+    fn sneak_attack_scales_with_level() {
+        assert_eq!(crate::actions::class_attacks::sneak_attack_dice_for_level(1), 1);
+        assert_eq!(crate::actions::class_attacks::sneak_attack_dice_for_level(2), 1);
+        assert_eq!(crate::actions::class_attacks::sneak_attack_dice_for_level(3), 2);
+        assert_eq!(crate::actions::class_attacks::sneak_attack_dice_for_level(5), 3);
+        assert_eq!(crate::actions::class_attacks::sneak_attack_dice_for_level(9), 5);
+        assert_eq!(crate::actions::class_attacks::sneak_attack_dice_for_level(20), 10);
+    }
+
+    #[test]
+    fn hunger_of_hadar_warlock_has_spell() {
+        let mut roller = FastRandRoller::with_seed(42);
+        let warlock = ActorInstance::from_creature_template(
+            &crate::actors::creatures::warlocks::WARLOCK_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut roller,
+            1,
+        )
+        .unwrap();
+        let action = warlock.find_action("hunger of hadar");
+        assert!(action.is_some(), "warlock should have Hunger of Hadar");
+    }
+
+    #[test]
+    fn crown_of_thorns_druid_has_spell() {
+        let mut roller = FastRandRoller::with_seed(42);
+        let druid = ActorInstance::from_creature_template(
+            &crate::actors::creatures::druids::DRUID_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut roller,
+            1,
+        )
+        .unwrap();
+        let action = druid.find_action("crown of thorns");
+        assert!(action.is_some(), "druid should have Crown of Thorns");
     }
 }

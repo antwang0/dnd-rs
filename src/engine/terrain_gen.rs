@@ -182,6 +182,42 @@ fn binary_space_partition(params: &TerrainGenParams, rng: &mut Rng) -> Vec<Terra
 }
 
 pub fn generate_terrain(params: &TerrainGenParams, rng: &mut Rng) -> Vec<TerrainInfo> {
-    // TODO: modify terrain
-    binary_space_partition(params, rng)
+    let mut terrain = binary_space_partition(params, rng);
+    scatter_difficult_terrain(&mut terrain, params, rng);
+    terrain
+}
+
+/// Randomly convert ~8% of floor tiles into difficult terrain (rubble,
+/// undergrowth, shallow water). Skips tiles adjacent to walls to keep
+/// corridors passable; the scatter rate is low enough that pathfinding
+/// still finds routes but high enough to make positioning matter.
+fn scatter_difficult_terrain(
+    terrain: &mut [TerrainInfo],
+    params: &TerrainGenParams,
+    rng: &mut Rng,
+) {
+    let w = params.width;
+    let h = params.height;
+    for y in 1..h.saturating_sub(1) {
+        for x in 1..w.saturating_sub(1) {
+            let i = idx(x, y, params);
+            if terrain[i].terrain_type != TerrainType::Floor {
+                continue;
+            }
+            let adj_wall = [
+                idx(x.wrapping_sub(1), y, params),
+                idx(x + 1, y, params),
+                idx(x, y.wrapping_sub(1), params),
+                idx(x, y + 1, params),
+            ]
+            .iter()
+            .any(|&ni| ni < terrain.len() && terrain[ni].terrain_type == TerrainType::Wall);
+            if adj_wall {
+                continue;
+            }
+            if rng.f32() < 0.08 {
+                terrain[i].terrain_type = TerrainType::DifficultTerrain;
+            }
+        }
+    }
 }

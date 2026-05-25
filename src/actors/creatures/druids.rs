@@ -167,6 +167,10 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::ENTANGLE);
     actions.push(&*crate::actions::spells::FLAME_BLADE);
     actions.push(&*crate::actions::spells::WITHER_AND_BLOOM);
+    // lv2 Crown of Thorns: piercing burst + restrained on failed STR save.
+    actions.push(&*crate::actions::spells::CROWN_OF_THORNS);
+    // lv3 Conjure Locusts: 4d10 piercing burst (CON save, half).
+    actions.push(&*crate::actions::spells::CONJURE_LOCUSTS);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

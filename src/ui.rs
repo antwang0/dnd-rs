@@ -201,6 +201,7 @@ pub fn render_map(
                     match encounter.terrain_at(coord).map(|t| &t.terrain_type) {
                         Some(TerrainType::Floor) => '░',
                         Some(TerrainType::Wall) => '█',
+                        Some(TerrainType::DifficultTerrain) => '▒',
                         _ => ' ',
                     }
                     .to_string(),
