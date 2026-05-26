@@ -171,6 +171,16 @@ pub struct CreatureTemplate {
     /// attack you can see. Modeled as a passive flag checked in the
     /// attack resolution pipeline.
     pub has_uncanny_dodge: bool,
+    /// 5e Displacer Beast trait: the creature projects a displaced image.
+    /// Attacks against it have disadvantage. Breaks on damage; restores
+    /// at the start of the creature's next turn.
+    pub has_displacement: bool,
+    /// 5e Barbarian Danger Sense (level 2): advantage on DEX saves against
+    /// effects you can see while not blinded, deafened, or incapacitated.
+    pub has_danger_sense: bool,
+    /// 5e Pack Tactics (Wolf, Dire Wolf, Kobold): advantage on attack rolls
+    /// when an ally is adjacent to the target. Read by `compute_attack_mode`.
+    pub has_pack_tactics: bool,
 }
 
 #[derive(Clone, PartialEq)]
@@ -357,6 +367,9 @@ pub struct ActorInstance {
     /// 5e Uncanny Dodge (Rogue 5): reaction to halve damage from one
     /// visible attack per round.
     has_uncanny_dodge: bool,
+    has_displacement: bool,
+    has_danger_sense: bool,
+    has_pack_tactics: bool,
 }
 
 impl ActorInstance {
@@ -436,6 +449,9 @@ impl ActorInstance {
             warding_partner: None,
             has_evasion: ct.has_evasion,
             has_uncanny_dodge: ct.has_uncanny_dodge,
+            has_displacement: ct.has_displacement,
+            has_danger_sense: ct.has_danger_sense,
+            has_pack_tactics: ct.has_pack_tactics,
         })
     }
 
@@ -507,6 +523,18 @@ impl ActorInstance {
 
     pub fn has_uncanny_dodge(&self) -> bool {
         self.has_uncanny_dodge
+    }
+
+    pub fn has_displacement(&self) -> bool {
+        self.has_displacement
+    }
+
+    pub fn has_danger_sense(&self) -> bool {
+        self.has_danger_sense
+    }
+
+    pub fn has_pack_tactics(&self) -> bool {
+        self.has_pack_tactics
     }
 
     /// HP regenerated each round-end while combat-active. 0 disables the
@@ -1173,13 +1201,7 @@ impl ActorInstance {
     }
 
     pub fn remaining_movement(&self) -> f32 {
-        // Prone is special-cased: standing up is the only legal use of
-        // movement while Prone. We surface 0 here for UI / AI purposes
-        // (you can't *walk* while prone), but `can_consume_resource`
-        // still allows the half-speed payment for Stand Up.
-        if self.has_condition(Condition::Prone)
-            || self.conditions.keys().any(|c| c.zeros_movement())
-        {
+        if self.conditions.keys().any(|c| c.zeros_movement()) {
             return 0.0;
         }
         self.movement

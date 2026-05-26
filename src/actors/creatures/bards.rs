@@ -51,6 +51,7 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     Dissonant Whispers single-target lane.
     actions.push(&*crate::actions::spells::BLADE_WARD);
     actions.push(&*crate::actions::spells::EARTH_TREMOR);
+    actions.push(&*crate::actions::spells::SILVERY_BARBS);
     CreatureTemplate {
         name: "Bard",
         glyph: 'B',
@@ -88,5 +89,8 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         legendary_resistances: 0,
         has_evasion: false,
         has_uncanny_dodge: false,
+        has_displacement: false,
+        has_danger_sense: false,
+        has_pack_tactics: false,
     }
 });

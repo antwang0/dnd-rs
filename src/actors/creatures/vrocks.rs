@@ -77,6 +77,9 @@ pub static VROCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         legendary_resistances: 0,
         has_evasion: false,
         has_uncanny_dodge: false,
+        has_displacement: false,
+        has_danger_sense: false,
+        has_pack_tactics: false,
     }
 });
 

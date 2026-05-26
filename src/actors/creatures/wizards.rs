@@ -323,6 +323,9 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::SHADOW_BLADE);
     actions.push(&*crate::actions::spells::RAY_OF_ENFEEBLEMENT);
     actions.push(&*crate::actions::spells::INFESTATION);
+    actions.push(&*crate::actions::spells::SILVERY_BARBS);
+    actions.push(&*crate::actions::spells::PROTECTION_FROM_ENERGY);
+    actions.push(&*crate::actions::spells::REMOVE_CURSE);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.
@@ -364,5 +367,8 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         legendary_resistances: 0,
         has_evasion: false,
         has_uncanny_dodge: false,
+        has_displacement: false,
+        has_danger_sense: false,
+        has_pack_tactics: false,
     }
 });

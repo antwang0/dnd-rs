@@ -19274,11 +19274,18 @@ impl Action for AbsorbElements {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        vec![Box::new(ApplyCondition {
-            actor_id: caster_id,
-            condition: Condition::DamageResistant,
-            timer: ConditionTimer::UntilStartOfNextTurn,
-        })]
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::DamageResistant,
+                timer: ConditionTimer::UntilStartOfNextTurn,
+            }),
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::AbsorbedElements,
+                timer: ConditionTimer::Rounds(2),
+            }),
+        ]
     }
 }
 
@@ -20291,3 +20298,257 @@ impl Action for CrownOfThorns {
 }
 
 pub static CROWN_OF_THORNS: LazyLock<CrownOfThorns> = LazyLock::new(|| CrownOfThorns {});
+
+/// Silvery Barbs — level-1 enchantment, reaction (Strixhaven). When a
+/// creature you can see within 60 feet succeeds on an attack roll, ability
+/// check, or saving throw, you magically distract them: they must reroll
+/// and use the lower result. Additionally, you can choose one creature
+/// you can see (including yourself) to gain advantage on their next
+/// attack roll, ability check, or saving throw.
+///
+/// We model the load-bearing half: the target gets Mocked (disadvantage on
+/// their next attack roll) and an ally gets Inspired (advantage on their
+/// next roll). The "force a reroll" part is too tightly coupled with the
+/// event pipeline to model retroactively — Mocked is the RAW-closest
+/// approximation.
+pub struct SilveryBarbs {}
+
+impl Action for SilveryBarbs {
+    fn name(&self) -> &str {
+        "silvery barbs"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["barbs", "sb"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn is_harmful(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Reaction, Resource::SpellSlot(1)]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effs: Vec<Box<dyn ApplicableSideEffect>> = vec![
+            Box::new(ApplyCondition {
+                actor_id: target,
+                condition: Condition::Mocked,
+                timer: ConditionTimer::UntilStartOfNextTurn,
+            }),
+        ];
+        if !encounter.actors.get(&caster_id).is_some_and(|a| a.has_condition(Condition::Inspired)) {
+            effs.push(Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::Inspired,
+                timer: ConditionTimer::Rounds(10),
+            }));
+        }
+        effs
+    }
+}
+
+pub static SILVERY_BARBS: LazyLock<SilveryBarbs> = LazyLock::new(|| SilveryBarbs {});
+
+/// Protection from Energy — level-3 abjuration, concentration, touch range.
+/// Grant one creature resistance to one damage type (acid, cold, fire,
+/// lightning, or thunder) for the spell's duration. We model as a
+/// DamageResistant condition install with concentration. The generic
+/// DamageResistant flag halves all incoming damage — close enough for
+/// the load-bearing defensive half.
+pub struct ProtectionFromEnergy {}
+
+impl Action for ProtectionFromEnergy {
+    fn name(&self) -> &str {
+        "protection from energy"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pfe", "prot energy"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(0)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let actor = match encounter.actors.get(&caster_id) {
+            Some(a) => a,
+            None => return false,
+        };
+        if actor.is_concentrating() {
+            return false;
+        }
+        let Some(tid) = first_target_id(target_ids) else {
+            return false;
+        };
+        let caster_team = actor.team();
+        encounter.actors.get(&tid).is_some_and(|t| {
+            t.team() == caster_team
+                && t.is_combat_active()
+                && !t.has_condition(Condition::DamageResistant)
+        })
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(tid) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::DamageResistant,
+                timer: ConditionTimer::Rounds(100),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Protection from Energy",
+                    vec![(tid, Condition::DamageResistant)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static PROTECTION_FROM_ENERGY: LazyLock<ProtectionFromEnergy> =
+    LazyLock::new(|| ProtectionFromEnergy {});
+
+/// Remove Curse — level-3 abjuration, touch range. Remove all curses
+/// from one creature. We model by stripping the most impactful debuff
+/// conditions: Hexed, Bestow Curse variants (modeled as Poisoned in our
+/// engine), and Frightened (Wrathful Smite). No concentration.
+pub struct RemoveCurse {}
+
+impl Action for RemoveCurse {
+    fn name(&self) -> &str {
+        "remove curse"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["rc"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(0)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(tid) = first_target_id(target_ids) else {
+            return false;
+        };
+        let actor = match encounter.actors.get(&caster_id) {
+            Some(a) => a,
+            None => return false,
+        };
+        let caster_team = actor.team();
+        encounter.actors.get(&tid).is_some_and(|t| {
+            t.team() == caster_team
+                && t.is_combat_active()
+                && (t.has_condition(Condition::Hexed)
+                    || t.has_condition(Condition::Frightened)
+                    || t.has_condition(Condition::Poisoned))
+        })
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::RemoveCondition;
+        let Some(tid) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![
+            Box::new(RemoveCondition { actor_id: tid, condition: Condition::Hexed }),
+            Box::new(RemoveCondition { actor_id: tid, condition: Condition::Frightened }),
+            Box::new(RemoveCondition { actor_id: tid, condition: Condition::Poisoned }),
+        ]
+    }
+}
+
+pub static REMOVE_CURSE: LazyLock<RemoveCurse> = LazyLock::new(|| RemoveCurse {});

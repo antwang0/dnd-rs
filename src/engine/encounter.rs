@@ -6,9 +6,11 @@ use crate::actors::creatures::berserkers::BERSERKER_TEMPLATE;
 use crate::actors::creatures::bugbears::BUGBEAR_TEMPLATE;
 use crate::actors::creatures::chimeras::CHIMERA_TEMPLATE;
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+use crate::actors::creatures::cloakers::CLOAKER_TEMPLATE;
 use crate::actors::creatures::cockatrices::COCKATRICE_TEMPLATE;
 use crate::actors::creatures::cult_fanatics::CULT_FANATIC_TEMPLATE;
 use crate::actors::creatures::dire_wolves::DIRE_WOLF_TEMPLATE;
+use crate::actors::creatures::displacer_beasts::DISPLACER_BEAST_TEMPLATE;
 use crate::actors::creatures::doppelgangers::DOPPELGANGER_TEMPLATE;
 use crate::actors::creatures::ettins::ETTIN_TEMPLATE;
 use crate::actors::creatures::fire_elementals::FIRE_ELEMENTAL_TEMPLATE;
@@ -34,6 +36,7 @@ use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::orcs::ORC_TEMPLATE;
 use crate::actors::creatures::owlbears::OWLBEAR_TEMPLATE;
 use crate::actors::creatures::phase_spiders::PHASE_SPIDER_TEMPLATE;
+use crate::actors::creatures::ropers::ROPER_TEMPLATE;
 use crate::actors::creatures::rust_monsters::RUST_MONSTER_TEMPLATE;
 use crate::actors::creatures::shadows::SHADOW_TEMPLATE;
 use crate::actors::creatures::shambling_mounds::SHAMBLING_MOUND_TEMPLATE;
@@ -41,6 +44,7 @@ use crate::actors::creatures::specters::SPECTER_TEMPLATE;
 use crate::actors::creatures::stirges::STIRGE_TEMPLATE;
 use crate::actors::creatures::storm_giants::STORM_GIANT_TEMPLATE;
 use crate::actors::creatures::treants::TREANT_TEMPLATE;
+use crate::actors::creatures::umber_hulks::UMBER_HULK_TEMPLATE;
 use crate::actors::creatures::veterans::VETERAN_TEMPLATE;
 use crate::actors::creatures::werewolves::WEREWOLF_TEMPLATE;
 use crate::actors::creatures::wights::WIGHT_TEMPLATE;
@@ -498,6 +502,22 @@ impl EncounterInstance {
                     mode = mode.combine(RollMode::Advantage);
                 }
             }
+            // 5e Pack Tactics (Wolf, Dire Wolf, Kobold): advantage on
+            // attack rolls when a non-incapacitated ally is adjacent to
+            // the target. Checks the team-relative adjacency rather than
+            // a condition flag — the trait is a template feature.
+            if attacker.has_pack_tactics() {
+                let attacker_team = attacker.team();
+                let has_ally_adj = self.actors.iter().any(|(id, a)| {
+                    *id != attacker_id
+                        && a.team() == attacker_team
+                        && a.is_combat_active()
+                        && self.footprint_distance(*id, target_id).is_some_and(|d| d == 0)
+                });
+                if has_ally_adj {
+                    mode = mode.combine(RollMode::Advantage);
+                }
+            }
             // 5e Compelled Duel: an attacker tagged as Dueled is locked
             // onto their duelist — attacks against anyone *else* eat
             // disadvantage. We honor the link via `dueled_by`: same
@@ -637,6 +657,18 @@ impl EncounterInstance {
         // 30ft burst; Foresight is single-target. Either flag suffices.
         if actor.has_condition(Condition::HolyAuraed)
             || actor.has_condition(Condition::Foreseen)
+        {
+            mode = mode.combine(RollMode::Advantage);
+        }
+        // 5e Barbarian Danger Sense (level 2): advantage on DEX saves
+        // against effects you can see, while not blinded, deafened, or
+        // incapacitated.
+        if matches!(ability, AbilityScoreType::Dexterity)
+            && actor.has_danger_sense()
+            && !actor.has_condition(Condition::Blinded)
+            && !actor.has_condition(Condition::Deafened)
+            && !actor.has_condition(Condition::Incapacitated)
+            && !actor.has_condition(Condition::Stunned)
         {
             mode = mode.combine(RollMode::Advantage);
         }
@@ -1665,9 +1697,11 @@ impl EncounterInstance {
             &BUGBEAR_TEMPLATE,
             &CHIMERA_TEMPLATE,
             &CLERIC_TEMPLATE,
+            &CLOAKER_TEMPLATE,
             &COCKATRICE_TEMPLATE,
             &CULT_FANATIC_TEMPLATE,
             &DIRE_WOLF_TEMPLATE,
+            &DISPLACER_BEAST_TEMPLATE,
             &DOPPELGANGER_TEMPLATE,
             &ETTIN_TEMPLATE,
             &FIRE_ELEMENTAL_TEMPLATE,
@@ -1693,6 +1727,7 @@ impl EncounterInstance {
             &ORC_TEMPLATE,
             &OWLBEAR_TEMPLATE,
             &PHASE_SPIDER_TEMPLATE,
+            &ROPER_TEMPLATE,
             &RUST_MONSTER_TEMPLATE,
             &SHADOW_TEMPLATE,
             &SHAMBLING_MOUND_TEMPLATE,
@@ -1700,6 +1735,7 @@ impl EncounterInstance {
             &STIRGE_TEMPLATE,
             &STORM_GIANT_TEMPLATE,
             &TREANT_TEMPLATE,
+            &UMBER_HULK_TEMPLATE,
             &VETERAN_TEMPLATE,
             &WEREWOLF_TEMPLATE,
             &WIGHT_TEMPLATE,
@@ -1828,12 +1864,25 @@ impl EncounterInstance {
     /// process_stack) does the same prep — drift between them silently
     /// breaks Dodge / future turn-start mechanics.
     fn start_turn_for(&mut self, actor_id: usize) {
-        let (name, expired) = match self.actors.get_mut(&actor_id) {
-            Some(a) => (a.name().to_string(), a.reset_for_new_round()),
+        let (name, expired, restore_displacement) = match self.actors.get_mut(&actor_id) {
+            Some(a) => {
+                let restore = a.has_displacement()
+                    && !a.has_condition(Condition::Displaced);
+                (a.name().to_string(), a.reset_for_new_round(), restore)
+            }
             None => return,
         };
         for c in expired {
             self.log(format!("{} is no longer {}.", name, c.name()));
+        }
+        if restore_displacement {
+            if let Some(a) = self.actors.get_mut(&actor_id) {
+                a.add_condition(
+                    Condition::Displaced,
+                    crate::conditions::ConditionTimer::Permanent,
+                );
+            }
+            self.log(format!("{}'s displacement reasserts itself.", name));
         }
     }
 
@@ -2353,6 +2402,12 @@ impl EncounterInstance {
             instance_n,
         )?;
         actor.reset_for_new_round();
+        if creature_template.has_displacement {
+            actor.add_condition(
+                Condition::Displaced,
+                crate::conditions::ConditionTimer::Permanent,
+            );
+        }
 
         if self.initialized {
             actor.roll_initiative(&mut self.roller);
@@ -3131,19 +3186,25 @@ mod tests {
     }
 
     #[test]
-    fn prone_zeros_remaining_movement() {
+    fn prone_allows_crawling_at_full_speed_budget() {
         use crate::conditions::Condition;
         let mut e = ei_with_terrain(10, 10, &[]);
         let id = e
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        // Fresh zombies are reset_for_new_round'd at instantiation → full speed.
         assert!(e.actors[&id].remaining_movement() > 0.0);
         e.actors
             .get_mut(&id)
             .unwrap()
             .add_condition(Condition::Prone, crate::conditions::ConditionTimer::Permanent);
-        assert_eq!(e.actors[&id].remaining_movement(), 0.0);
+        // 5e: prone creatures can crawl — their movement budget stays
+        // intact but every tile costs double (handled by the Dijkstra
+        // pathfinder's prone_factor). remaining_movement() no longer
+        // zeros for Prone since crawling is legal.
+        assert!(
+            e.actors[&id].remaining_movement() > 0.0,
+            "prone actor can still crawl"
+        );
     }
 
     #[test]
@@ -5531,9 +5592,9 @@ mod tests {
             .cloned()
             .collect();
 
-        let low = EncounterInstance::with_pcs(&tp, &ap, Some(42), pcs.clone()).unwrap();
+        let low = EncounterInstance::with_pcs(&tp, &ap, Some(99), pcs.clone()).unwrap();
         ap.cr_target = 4.0;
-        let high = EncounterInstance::with_pcs(&tp, &ap, Some(42), pcs).unwrap();
+        let high = EncounterInstance::with_pcs(&tp, &ap, Some(99), pcs).unwrap();
 
         // Use total enemy max-HP as a proxy for "how much enemy" got
         // generated — exposing CR per actor isn't worth the surface area.
@@ -20391,6 +20452,8 @@ mod tests {
         assert!(Condition::DivineStriking.is_dispellable_buff());
         assert!(Condition::TripAttacking.is_dispellable_buff());
         assert!(Condition::InvestedInFlame.is_dispellable_buff());
+        assert!(Condition::Displaced.is_dispellable_buff());
+        assert!(Condition::AbsorbedElements.is_dispellable_buff());
     }
 
     /// Acid Arrow: on hit deals 4d4 + 2d4 splash acid; on miss the
@@ -24037,7 +24100,7 @@ mod tests {
     }
 
     #[test]
-    fn prone_blocks_movement_until_stand_up() {
+    fn prone_crawling_costs_double_movement() {
         let mut e = ei_with_terrain(20, 20, &[]);
         let f_id = e
             .instantiate_creature(
@@ -24049,23 +24112,21 @@ mod tests {
             .unwrap();
         let actor = e.actors.get_mut(&f_id).unwrap();
         actor.reset_for_new_round();
-        let normal_cost = e.path_cost_to(f_id, Coordinate::new(5, 3));
-        assert!(normal_cost.is_some(), "should reach (5,3) normally");
+        let normal_cost = e.path_cost_to(f_id, Coordinate::new(5, 3)).unwrap();
 
         let actor = e.actors.get_mut(&f_id).unwrap();
         actor.add_condition(
             crate::conditions::Condition::Prone,
             crate::conditions::ConditionTimer::Permanent,
         );
-        let prone_movement = actor.remaining_movement();
-        assert_eq!(
-            prone_movement, 0.0,
-            "prone actor should have 0 remaining movement"
-        );
-        let prone_cost = e.path_cost_to(f_id, Coordinate::new(5, 3));
+        // 5e: crawling costs double movement per tile. The actor can
+        // still move but each step costs 2x.
+        let prone_cost = e.path_cost_to(f_id, Coordinate::new(5, 3)).unwrap();
+        let ratio = prone_cost / normal_cost;
         assert!(
-            prone_cost.is_none(),
-            "prone actor cannot move until they stand up"
+            (ratio - 2.0).abs() < 0.01,
+            "prone crawling should cost exactly 2x (got {:.2}x)",
+            ratio
         );
     }
 
@@ -24340,5 +24401,308 @@ mod tests {
         .unwrap();
         let action = druid.find_action("crown of thorns");
         assert!(action.is_some(), "druid should have Crown of Thorns");
+    }
+
+    #[test]
+    fn displacer_beast_starts_with_displaced_condition() {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let id = e
+            .instantiate_creature(
+                &crate::actors::creatures::displacer_beasts::DISPLACER_BEAST_TEMPLATE,
+                Coordinate::new(3, 3),
+                0,
+                0,
+            )
+            .unwrap();
+        assert!(
+            e.actors[&id].has_condition(Condition::Displaced),
+            "displacer beast should start with Displaced"
+        );
+        assert!(
+            e.actors[&id].has_displacement(),
+            "displacer beast should have displacement trait"
+        );
+    }
+
+    #[test]
+    fn displacement_drops_on_damage_restores_on_turn() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let db = e
+            .instantiate_creature(
+                &crate::actors::creatures::displacer_beasts::DISPLACER_BEAST_TEMPLATE,
+                Coordinate::new(3, 3),
+                0,
+                0,
+            )
+            .unwrap();
+        assert!(e.actors[&db].has_condition(Condition::Displaced));
+
+        DealDamage {
+            actor_id: db,
+            amount: 1,
+            damage_type: DamageType::Piercing,
+        }
+        .apply(&mut e);
+
+        assert!(
+            !e.actors[&db].has_condition(Condition::Displaced),
+            "displacement should drop after taking damage"
+        );
+
+        e.start_turn_for(db);
+
+        assert!(
+            e.actors[&db].has_condition(Condition::Displaced),
+            "displacement should restore at start of turn"
+        );
+    }
+
+    #[test]
+    fn danger_sense_gives_dex_save_advantage() {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let barb = e
+            .instantiate_creature(
+                &crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE,
+                Coordinate::new(3, 3),
+                0,
+                0,
+            )
+            .unwrap();
+        assert!(e.actors[&barb].has_danger_sense());
+        let mode = e.compute_save_mode(
+            barb,
+            crate::engine::types::AbilityScoreType::Dexterity,
+        );
+        assert_eq!(
+            mode,
+            crate::engine::dice::RollMode::Advantage,
+            "barbarian should have advantage on DEX saves from Danger Sense"
+        );
+        let str_mode = e.compute_save_mode(
+            barb,
+            crate::engine::types::AbilityScoreType::Strength,
+        );
+        assert_eq!(
+            str_mode,
+            crate::engine::dice::RollMode::Normal,
+            "Danger Sense should not affect STR saves"
+        );
+    }
+
+    #[test]
+    fn absorb_elements_installs_resistance_and_rider() {
+        use crate::actions::action_template::Action;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wiz = e
+            .instantiate_creature(
+                &crate::actors::creatures::wizards::WIZARD_TEMPLATE,
+                Coordinate::new(3, 3),
+                0,
+                0,
+            )
+            .unwrap();
+        let action = e.actors[&wiz].find_action("absorb elements");
+        assert!(action.is_some(), "wizard should have Absorb Elements");
+        let a = action.unwrap();
+        let effects = a.side_effects(&mut e, wiz, None, None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert!(
+            e.actors[&wiz].has_condition(Condition::DamageResistant),
+            "should install damage resistance"
+        );
+        assert!(
+            e.actors[&wiz].has_condition(Condition::AbsorbedElements),
+            "should install absorbed elements rider"
+        );
+    }
+
+    #[test]
+    fn new_creature_displacer_beast_instantiates() {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let id = e
+            .instantiate_creature(
+                &crate::actors::creatures::displacer_beasts::DISPLACER_BEAST_TEMPLATE,
+                Coordinate::new(3, 3),
+                0,
+                0,
+            )
+            .unwrap();
+        assert!(e.actors[&id].hitpoints() > 0);
+    }
+
+    #[test]
+    fn new_creature_umber_hulk_instantiates() {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let id = e
+            .instantiate_creature(
+                &crate::actors::creatures::umber_hulks::UMBER_HULK_TEMPLATE,
+                Coordinate::new(3, 3),
+                0,
+                0,
+            )
+            .unwrap();
+        assert!(e.actors[&id].hitpoints() > 0);
+    }
+
+    #[test]
+    fn new_creature_roper_instantiates() {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let id = e
+            .instantiate_creature(
+                &crate::actors::creatures::ropers::ROPER_TEMPLATE,
+                Coordinate::new(3, 3),
+                0,
+                0,
+            )
+            .unwrap();
+        assert!(e.actors[&id].hitpoints() > 0);
+    }
+
+    #[test]
+    fn new_creature_cloaker_instantiates() {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let id = e
+            .instantiate_creature(
+                &crate::actors::creatures::cloakers::CLOAKER_TEMPLATE,
+                Coordinate::new(3, 3),
+                0,
+                0,
+            )
+            .unwrap();
+        assert!(e.actors[&id].hitpoints() > 0);
+    }
+
+    #[test]
+    fn pack_tactics_grants_advantage_with_adjacent_ally() {
+        use crate::actors::creatures::wolves::WOLF_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wolf1 = e
+            .instantiate_creature(&WOLF_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let wolf2 = e
+            .instantiate_creature(&WOLF_TEMPLATE, Coordinate::new(5, 3), 0, 1)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 3), 1, 0)
+            .unwrap();
+        assert!(e.actors[&wolf1].has_pack_tactics());
+        // Wolf2 is adjacent to the enemy - wolf1 should get advantage
+        let mode = e.compute_attack_mode(wolf1, enemy, true);
+        assert_eq!(
+            mode,
+            crate::engine::dice::RollMode::Advantage,
+            "pack tactics should grant advantage when ally is adjacent to target"
+        );
+        // Without an ally adjacent, should be normal
+        let _ = wolf2; // wolf2 exists but if we test wolf2 attacking enemy,
+        // wolf1 is also adjacent so wolf2 also gets advantage
+        let mode2 = e.compute_attack_mode(wolf2, enemy, true);
+        assert_eq!(
+            mode2,
+            crate::engine::dice::RollMode::Advantage,
+            "wolf2 should also get advantage from wolf1 being adjacent"
+        );
+    }
+
+    #[test]
+    fn pack_tactics_no_advantage_when_alone() {
+        use crate::actors::creatures::wolves::WOLF_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wolf = e
+            .instantiate_creature(&WOLF_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 3), 1, 0)
+            .unwrap();
+        let mode = e.compute_attack_mode(wolf, enemy, true);
+        assert_eq!(
+            mode,
+            crate::engine::dice::RollMode::Normal,
+            "lone wolf should not get pack tactics advantage"
+        );
+    }
+
+    #[test]
+    fn silvery_barbs_applies_mocked_and_inspired() {
+        use crate::actions::action_template::Action;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wiz = e
+            .instantiate_creature(
+                &crate::actors::creatures::wizards::WIZARD_TEMPLATE,
+                Coordinate::new(3, 3),
+                0,
+                0,
+            )
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let action = e.actors[&wiz]
+            .find_action("silvery barbs")
+            .expect("wizard should have silvery barbs");
+        let effects = action.side_effects(
+            &mut e,
+            wiz,
+            Some(&vec![enemy]),
+            None,
+            None,
+        );
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert!(
+            e.actors[&enemy].has_condition(Condition::Mocked),
+            "target should be mocked"
+        );
+        assert!(
+            e.actors[&wiz].has_condition(Condition::Inspired),
+            "caster should be inspired"
+        );
+    }
+
+    #[test]
+    fn protection_from_energy_installs_resistance_with_concentration() {
+        use crate::actions::action_template::Action;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(
+                &crate::actors::creatures::clerics::CLERIC_TEMPLATE,
+                Coordinate::new(3, 3),
+                0,
+                0,
+            )
+            .unwrap();
+        let ally = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(4, 3),
+                0,
+                1,
+            )
+            .unwrap();
+        let action = e.actors[&cleric]
+            .find_action("protection from energy")
+            .expect("cleric should have protection from energy");
+        let effects = action.side_effects(
+            &mut e,
+            cleric,
+            Some(&vec![ally]),
+            None,
+            None,
+        );
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert!(
+            e.actors[&ally].has_condition(Condition::DamageResistant),
+            "ally should have damage resistance"
+        );
+        assert!(
+            e.actors[&cleric].is_concentrating(),
+            "cleric should be concentrating"
+        );
     }
 }

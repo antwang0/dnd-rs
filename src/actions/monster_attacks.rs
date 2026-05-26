@@ -6185,3 +6185,56 @@ impl Action for ShamblingMoundEngulf {
 
 pub static SHAMBLING_MOUND_ENGULF: LazyLock<ShamblingMoundEngulf> =
     LazyLock::new(|| ShamblingMoundEngulf {});
+
+/// Displacer Beast tentacle — STR-based 2d6 bludgeoning melee attack with
+/// 10ft reach (2 tiles). The displacer beast lashes out with a barbed
+/// tentacle; two of these compose its multiattack.
+pub static TENTACLE: SimpleWeapon = SimpleWeapon {
+    display_name: "tentacle",
+    aliases: &["tent"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Bludgeoning,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Displacer Beast multiattack — two tentacle strikes per Action.
+pub static DISPLACER_BEAST_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "tentacle flurry",
+    sub_attack: &TENTACLE,
+    count: 2,
+});
+
+/// Umber Hulk claw — STR-based 1d8 slashing melee attack. The umber hulk
+/// rakes with a massive chitinous claw; standard 5ft reach.
+pub static UMBER_CLAW: SimpleWeapon = SimpleWeapon {
+    display_name: "umber claw",
+    aliases: &["uclaw"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};
+
+/// Cloaker tail — STR-based 1d8 slashing melee attack with 10ft reach
+/// (2 tiles). The cloaker whips its barbed tail at nearby prey.
+pub static CLOAKER_TAIL: SimpleWeapon = SimpleWeapon {
+    display_name: "cloaker tail",
+    aliases: &["ctail"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Slashing,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+};

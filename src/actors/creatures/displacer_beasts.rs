@@ -1,37 +1,36 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{GREATAXE, MINOTAUR_GORE};
+use crate::actions::monster_attacks::{DISPLACER_BEAST_MULTI, TENTACLE};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{Language, Size};
+use crate::engine::types::Size;
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
-/// Minotaur — CR 3 monstrosity. Mid-tier melee bruiser with two action
-/// options: a big greataxe swing (1d12+STR slashing) or a gore charge
-/// (2d8+STR piercing) — both single-target heavy hitters tuned for the
-/// AI to pick between depending on what's in reach. AC 14 with 76
-/// average HP makes them notably tankier than the bandit-tier mooks.
-pub static MINOTAUR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+/// Displacer Beast — CR 3 monstrosity. Six-legged panther with two
+/// barbed tentacles sprouting from its shoulders. Attacks with a
+/// multiattack of two tentacle strikes at 10ft reach. Its signature
+/// displacement trait gives disadvantage on attacks against it; the
+/// displacement flickers off when the beast takes damage and restores
+/// at the start of its next turn.
+pub static DISPLACER_BEAST_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*GREATAXE);
-    actions.push(&*MINOTAUR_GORE);
+    actions.push(&TENTACLE);
+    actions.push(&*DISPLACER_BEAST_MULTI);
     CreatureTemplate {
-        name: "Minotaur",
-        // 'N' for miNotaur — distinct from existing glyphs.
-        glyph: 'N',
-        ac: 14,
-        // 9d10+27 = 76 average per MM.
-        hitpoints: "9d10+27".parse().unwrap(),
+        name: "Displacer Beast",
+        glyph: 'D',
+        ac: 13,
+        hitpoints: "10d10+30".parse().unwrap(),
         speed: 40.,
         strength: 18,
         intelligence: 6,
-        dexterity: 11,
-        wisdom: 16,
+        dexterity: 15,
+        wisdom: 12,
         constitution: 16,
-        charisma: 9,
+        charisma: 8,
         skills: HashSet::new(),
         items: Vec::new(),
         senses: HashSet::new(),
-        languages: HashSet::from([Language::Common]),
+        languages: HashSet::new(),
         cr: 3.0,
         size: Size::Large,
         actions,
@@ -46,8 +45,8 @@ pub static MINOTAUR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         legendary_resistances: 0,
         has_evasion: false,
         has_uncanny_dodge: false,
-        has_displacement: false,
         has_danger_sense: false,
         has_pack_tactics: false,
+        has_displacement: true,
     }
 });

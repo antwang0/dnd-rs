@@ -271,6 +271,14 @@ impl ApplicableSideEffect for DealDamage {
         if landed > 0 {
             actor.remove_condition(crate::conditions::Condition::Asleep);
         }
+        // 5e Displacer Beast: displacement flickers off the moment the
+        // creature takes any damage. It restores at the start of its
+        // next turn (handled by start_turn_for).
+        let displacement_dropped = landed > 0
+            && actor.has_condition(crate::conditions::Condition::Displaced);
+        if displacement_dropped {
+            actor.remove_condition(crate::conditions::Condition::Displaced);
+        }
         let temp_after = actor.temp_hp();
         let temp_absorbed = temp_before.saturating_sub(temp_after);
         // 5e Armor of Agathys: the ice shield IS the temp HP. The
@@ -291,6 +299,9 @@ impl ApplicableSideEffect for DealDamage {
         }
         if agathys_shatters {
             ei.log(format!("{}'s armor of agathys shatters.", name));
+        }
+        if displacement_dropped {
+            ei.log(format!("  {}'s displacement flickers off.", name));
         }
         ei.log(format!(
             "  {} takes {} {:?} damage",

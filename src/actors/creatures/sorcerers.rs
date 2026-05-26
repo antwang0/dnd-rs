@@ -193,6 +193,8 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::THUNDER_STEP);
     actions.push(&*crate::actions::spells::ABSORB_ELEMENTS);
     actions.push(&*crate::actions::spells::SHADOW_BLADE);
+    actions.push(&*crate::actions::spells::SILVERY_BARBS);
+    actions.push(&*crate::actions::spells::PROTECTION_FROM_ENERGY);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.
@@ -234,5 +236,8 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         legendary_resistances: 0,
         has_evasion: false,
         has_uncanny_dodge: false,
+        has_displacement: false,
+        has_danger_sense: false,
+        has_pack_tactics: false,
     }
 });

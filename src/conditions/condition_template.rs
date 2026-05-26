@@ -670,6 +670,28 @@ pub enum Condition {
     /// Shroud — persistent (not consumed on trigger) and self-only.
     /// Concentration-bound on the caster.
     HolyWeaponed,
+    /// Displaced (5e Displacer Beast trait). The holder's outline shifts
+    /// and wavers: attacks against them have disadvantage. Broken the
+    /// first time the holder takes damage — once hit, the beast's
+    /// displacement flickers off until the end of its next turn.
+    /// Modeled as a condition that imposes disadvantage to attackers
+    /// (joins `imposes_disadvantage_to_attackers`) and self-restores at
+    /// the start of the holder's turn.
+    Displaced,
+    /// Absorb Elements (5e level-1 abjuration, reaction). The holder
+    /// has captured incoming elemental energy: they gain resistance to
+    /// the triggering damage type for the rest of the round, and their
+    /// next melee attack deals +1d6 of the absorbed element. We model
+    /// the load-bearing resistance half as a one-round `DamageResistant`
+    /// style flag. The melee rider is handled through the on_hit_riders
+    /// table. Self-clears via `UntilStartOfNextTurn`.
+    AbsorbedElements,
+    /// Danger Sense active (5e Barbarian level 2). The holder has
+    /// advantage on DEX saving throws against effects they can see
+    /// (traps, spells). We model as a permanent passive: always-on
+    /// advantage on DEX saves while not Blinded / Incapacitated /
+    /// Deafened. Read by `compute_save_mode`'s DEX-advantage clause.
+    DangerSense,
 }
 
 impl Condition {
@@ -775,6 +797,9 @@ impl Condition {
             Condition::Barkskinned => "barkskinned",
             Condition::Untracked => "passing without trace",
             Condition::HolyWeaponed => "wielding a holy weapon",
+            Condition::Displaced => "displaced",
+            Condition::AbsorbedElements => "absorbing elements",
+            Condition::DangerSense => "sensing danger",
         }
     }
 
@@ -853,6 +878,8 @@ impl Condition {
                 | Condition::Barkskinned
                 | Condition::Untracked
                 | Condition::HolyWeaponed
+                | Condition::Displaced
+                | Condition::AbsorbedElements
         )
     }
 
@@ -965,6 +992,7 @@ impl Condition {
                 | Condition::HolyAuraed
                 | Condition::Foreseen
                 | Condition::Untracked
+                | Condition::Displaced
         )
     }
 

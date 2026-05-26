@@ -1,34 +1,38 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::SLAM;
+use crate::actions::monster_attacks::UMBER_CLAW;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{Language, Size, SpecialSense};
+use crate::engine::types::{Size, SpecialSense};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
-pub static NOTHIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+/// Umber Hulk — CR 5 monstrosity. Heavily armoured burrowing predator
+/// with massive claws and confusing gaze (gaze not yet modelled).
+/// High AC (18) from its thick carapace, strong STR-based claw attacks.
+/// Darkvision 120ft and Tremorsense 60ft make it a subterranean ambusher.
+pub static UMBER_HULK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&SLAM);
+    actions.push(&UMBER_CLAW);
     CreatureTemplate {
-        name: "Nothic",
-        glyph: 'N',
-        ac: 15,
-        hitpoints: "6d8+18".parse().unwrap(),
+        name: "Umber Hulk",
+        glyph: 'U',
+        ac: 18,
+        hitpoints: "12d10+48".parse().unwrap(),
         speed: 30.,
-        strength: 14,
-        intelligence: 13,
-        dexterity: 16,
+        strength: 20,
+        intelligence: 9,
+        dexterity: 13,
         wisdom: 10,
-        constitution: 16,
-        charisma: 8,
+        constitution: 18,
+        charisma: 10,
         skills: HashSet::new(),
         items: Vec::new(),
         senses: HashSet::from([
             SpecialSense::Darkvision(120),
-            SpecialSense::Truesight(120),
+            SpecialSense::Tremorsense(60),
         ]),
-        languages: HashSet::from([Language::Undercommon]),
-        cr: 2.0,
-        size: Size::Medium,
+        languages: HashSet::new(),
+        cr: 5.0,
+        size: Size::Large,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
@@ -41,8 +45,8 @@ pub static NOTHIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         legendary_resistances: 0,
         has_evasion: false,
         has_uncanny_dodge: false,
-        has_displacement: false,
         has_danger_sense: false,
         has_pack_tactics: false,
+        has_displacement: false,
     }
 });

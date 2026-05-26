@@ -171,6 +171,7 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::CROWN_OF_THORNS);
     // lv3 Conjure Locusts: 4d10 piercing burst (CON save, half).
     actions.push(&*crate::actions::spells::CONJURE_LOCUSTS);
+    actions.push(&*crate::actions::spells::PROTECTION_FROM_ENERGY);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',
@@ -207,5 +208,8 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         legendary_resistances: 0,
         has_evasion: false,
         has_uncanny_dodge: false,
+        has_displacement: false,
+        has_danger_sense: false,
+        has_pack_tactics: false,
     }
 });

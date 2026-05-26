@@ -444,7 +444,7 @@ pub struct SmiteFollowUp {
 /// than declared `const` because `Dice::new` isn't a const fn — but the
 /// runtime cost is one stack-allocated array of plain data, so the
 /// indirection is free.
-fn on_hit_riders() -> [OnHitRider; 19] {
+fn on_hit_riders() -> [OnHitRider; 20] {
     [
         OnHitRider {
             condition: Condition::CrusadersMantled,
@@ -793,6 +793,23 @@ fn on_hit_riders() -> [OnHitRider; 19] {
             melee_only: false,
             ranged_only: false,
             consume_on_trigger: false,
+            follow_up: None,
+        },
+        // 5e Absorb Elements — 1st-level abjuration, reaction. The caster
+        // stores captured elemental energy and releases it on their next
+        // melee attack: +1d6 of the absorbed element's damage type. We
+        // model the rider as generic Force since the per-element type
+        // isn't tracked. One-shot — consumed the moment a melee swing
+        // lands. The resistance half is handled by the spell's
+        // DamageResistant condition install.
+        OnHitRider {
+            condition: Condition::AbsorbedElements,
+            dice: Dice::new(1, 6),
+            label: "absorb elements",
+            damage_type: DamageType::Force,
+            melee_only: true,
+            ranged_only: false,
+            consume_on_trigger: true,
             follow_up: None,
         },
     ]
