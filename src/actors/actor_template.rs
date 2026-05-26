@@ -1204,6 +1204,12 @@ impl ActorInstance {
         if self.conditions.keys().any(|c| c.zeros_movement()) {
             return 0.0;
         }
+        // 5e RAW: a prone creature crawls at half speed. Every tile of
+        // movement costs double while prone, which we approximate by
+        // halving the remaining budget so the actor gets half as far.
+        if self.has_condition(Condition::Prone) {
+            return self.movement * 0.5;
+        }
         self.movement
     }
 

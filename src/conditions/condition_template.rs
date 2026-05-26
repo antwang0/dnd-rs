@@ -692,6 +692,38 @@ pub enum Condition {
     /// advantage on DEX saves while not Blinded / Incapacitated /
     /// Deafened. Read by `compute_save_mode`'s DEX-advantage clause.
     DangerSense,
+    /// Witch Bolt tethered (5e level-1 evocation, concentration). The
+    /// caster maintains a lightning tether to the target: at the start of
+    /// each of the caster's turns, the target takes 1d12 lightning
+    /// automatically (no attack roll, no save). Concentration-bound; the
+    /// bolt ends when concentration drops or the target moves out of
+    /// range. We model as a DoT condition on the target with the standard
+    /// ROUND_END_DOTS drip so the damage ticks uniformly.
+    WitchBolted,
+    /// Spirit Guardians (5e level-3 conjuration, concentration). The
+    /// caster is surrounded by spectral warriors: every hostile creature
+    /// that starts its turn within 15ft (6 tiles) takes 3d8 radiant
+    /// damage on a failed WIS save (half on pass). We model the
+    /// load-bearing half as a condition on the caster that triggers an
+    /// aura-style DoT at round-end for each nearby enemy.
+    SpiritGuarding,
+    /// Moonbeam (5e level-2 evocation, concentration). A 5ft-radius
+    /// cylinder of pale light shines down: creatures entering or starting
+    /// their turn in the area make a CON save or take 2d10 radiant (half
+    /// on pass). Shapechangers auto-fail. We collapse the zone to a
+    /// condition on targets caught in the initial burst, with a round-end
+    /// DoT drip for the sustained damage.
+    Moonbeamed,
+    /// Cloud of Daggers (5e level-2 conjuration, concentration). A 5ft
+    /// cube of spinning daggers fills the area: any creature that enters
+    /// or starts its turn there takes 4d4 slashing automatically (no
+    /// save). We collapse to a condition-tagged DoT on targets caught in
+    /// the initial placement.
+    CloudOfDaggered,
+    /// Counterspelled — marker placed briefly during the counter-magic
+    /// resolution. Not a real debuff; used by the engine to track that
+    /// a spell was counterspelled this stack frame. Inert otherwise.
+    Counterspelled,
 }
 
 impl Condition {
@@ -800,6 +832,11 @@ impl Condition {
             Condition::Displaced => "displaced",
             Condition::AbsorbedElements => "absorbing elements",
             Condition::DangerSense => "sensing danger",
+            Condition::WitchBolted => "tethered by witch bolt",
+            Condition::SpiritGuarding => "guarded by spirits",
+            Condition::Moonbeamed => "caught in moonbeam",
+            Condition::CloudOfDaggered => "shredded by daggers",
+            Condition::Counterspelled => "counterspelled",
         }
     }
 
@@ -880,6 +917,7 @@ impl Condition {
                 | Condition::HolyWeaponed
                 | Condition::Displaced
                 | Condition::AbsorbedElements
+                | Condition::SpiritGuarding
         )
     }
 

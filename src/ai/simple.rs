@@ -296,6 +296,21 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 4b. Spirit Guardians — cleric level-3 self-aura that deals 3d8
+        //     radiant each round to nearby enemies. Fire when 2+ hostiles
+        //     sit within the 6-tile aura radius and the caster isn't already
+        //     concentrating on something better. The no-args validation
+        //     inside the action handles the rest.
+        if let Some(aei) = try_self_buff_concentration(
+            encounter,
+            actor_id,
+            "spirit guardians",
+            Condition::SpiritGuarding,
+            6,
+        ) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 5. Hold Person — lock down toughest enemy if we have it and
         //    aren't already concentrating on something.
         if let Some(aei) = try_hold_person(encounter, actor_id) {

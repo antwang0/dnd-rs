@@ -17,6 +17,7 @@ use crate::actors::creatures::fire_elementals::FIRE_ELEMENTAL_TEMPLATE;
 use crate::actors::creatures::gargoyles::GARGOYLE_TEMPLATE;
 use crate::actors::creatures::gelatinous_cubes::GELATINOUS_CUBE_TEMPLATE;
 use crate::actors::creatures::ghouls::GHOUL_TEMPLATE;
+use crate::actors::creatures::ghosts::GHOST_TEMPLATE;
 use crate::actors::creatures::gnolls::GNOLL_TEMPLATE;
 use crate::actors::creatures::goblin_bosses::GOBLIN_BOSS_TEMPLATE;
 use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -25,9 +26,14 @@ use crate::actors::creatures::hell_hounds::HELL_HOUND_TEMPLATE;
 use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
 use crate::actors::creatures::hippogriffs::HIPPOGRIFF_TEMPLATE;
 use crate::actors::creatures::hobgoblins::HOBGOBLIN_TEMPLATE;
+use crate::actors::creatures::hydras::HYDRA_TEMPLATE;
+use crate::actors::creatures::kobolds::KOBOLD_TEMPLATE;
 use crate::actors::creatures::knights::KNIGHT_TEMPLATE;
+use crate::actors::creatures::mages::MAGE_TEMPLATE;
 use crate::actors::creatures::manticores::MANTICORE_TEMPLATE;
+use crate::actors::creatures::medusas::MEDUSA_TEMPLATE;
 use crate::actors::creatures::mimics::MIMIC_TEMPLATE;
+use crate::actors::creatures::mind_flayers::MIND_FLAYER_TEMPLATE;
 use crate::actors::creatures::minotaurs::MINOTAUR_TEMPLATE;
 use crate::actors::creatures::mummies::MUMMY_TEMPLATE;
 use crate::actors::creatures::nightmares::NIGHTMARE_TEMPLATE;
@@ -36,16 +42,22 @@ use crate::actors::creatures::ogres::OGRE_TEMPLATE;
 use crate::actors::creatures::orcs::ORC_TEMPLATE;
 use crate::actors::creatures::owlbears::OWLBEAR_TEMPLATE;
 use crate::actors::creatures::phase_spiders::PHASE_SPIDER_TEMPLATE;
+use crate::actors::creatures::salamanders::SALAMANDER_TEMPLATE;
 use crate::actors::creatures::ropers::ROPER_TEMPLATE;
 use crate::actors::creatures::rust_monsters::RUST_MONSTER_TEMPLATE;
 use crate::actors::creatures::shadows::SHADOW_TEMPLATE;
 use crate::actors::creatures::shambling_mounds::SHAMBLING_MOUND_TEMPLATE;
 use crate::actors::creatures::specters::SPECTER_TEMPLATE;
+use crate::actors::creatures::spiders::SPIDER_TEMPLATE;
 use crate::actors::creatures::stirges::STIRGE_TEMPLATE;
+use crate::actors::creatures::stone_giants::STONE_GIANT_TEMPLATE;
 use crate::actors::creatures::storm_giants::STORM_GIANT_TEMPLATE;
 use crate::actors::creatures::treants::TREANT_TEMPLATE;
+use crate::actors::creatures::trolls::TROLL_TEMPLATE;
 use crate::actors::creatures::umber_hulks::UMBER_HULK_TEMPLATE;
+use crate::actors::creatures::vampire_spawns::VAMPIRE_SPAWN_TEMPLATE;
 use crate::actors::creatures::veterans::VETERAN_TEMPLATE;
+use crate::actors::creatures::vrocks::VROCK_TEMPLATE;
 use crate::actors::creatures::werewolves::WEREWOLF_TEMPLATE;
 use crate::actors::creatures::wights::WIGHT_TEMPLATE;
 use crate::actors::creatures::wisps::WISP_TEMPLATE;
@@ -132,6 +144,31 @@ const ROUND_END_DOTS: &[RoundEndDot] = &[
         dice: Dice::new(5, 4),
         damage_type: DamageType::Acid,
         log_verb: "drips with vitriolic acid:",
+    },
+    // 5e Witch Bolt — concentration-bound. 1d12 lightning per round as
+    // the tether crackles. Dropping concentration severs the bolt.
+    RoundEndDot {
+        condition: Condition::WitchBolted,
+        dice: Dice::new(1, 12),
+        damage_type: DamageType::Lightning,
+        log_verb: "is shocked by witch bolt:",
+    },
+    // 5e Moonbeam — concentration-bound. 2d10 radiant per round as the
+    // pale light sears the creature (CON save for half handled at the
+    // drip site would add complexity; we use the flat DoT model).
+    RoundEndDot {
+        condition: Condition::Moonbeamed,
+        dice: Dice::new(2, 10),
+        damage_type: DamageType::Radiant,
+        log_verb: "is seared by moonbeam:",
+    },
+    // 5e Cloud of Daggers — concentration-bound. 4d4 slashing per round,
+    // no save (RAW: automatic damage on enter / start of turn).
+    RoundEndDot {
+        condition: Condition::CloudOfDaggered,
+        dice: Dice::new(4, 4),
+        damage_type: DamageType::Slashing,
+        log_verb: "is shredded by the cloud of daggers:",
     },
 ];
 
@@ -1707,6 +1744,7 @@ impl EncounterInstance {
             &FIRE_ELEMENTAL_TEMPLATE,
             &GARGOYLE_TEMPLATE,
             &GELATINOUS_CUBE_TEMPLATE,
+            &GHOST_TEMPLATE,
             &GHOUL_TEMPLATE,
             &GNOLL_TEMPLATE,
             &GOBLIN_TEMPLATE,
@@ -1716,8 +1754,13 @@ impl EncounterInstance {
             &HILL_GIANT_TEMPLATE,
             &HIPPOGRIFF_TEMPLATE,
             &HOBGOBLIN_TEMPLATE,
+            &HYDRA_TEMPLATE,
+            &KOBOLD_TEMPLATE,
             &KNIGHT_TEMPLATE,
+            &MAGE_TEMPLATE,
             &MANTICORE_TEMPLATE,
+            &MEDUSA_TEMPLATE,
+            &MIND_FLAYER_TEMPLATE,
             &MIMIC_TEMPLATE,
             &MINOTAUR_TEMPLATE,
             &MUMMY_TEMPLATE,
@@ -1727,16 +1770,22 @@ impl EncounterInstance {
             &ORC_TEMPLATE,
             &OWLBEAR_TEMPLATE,
             &PHASE_SPIDER_TEMPLATE,
+            &SALAMANDER_TEMPLATE,
             &ROPER_TEMPLATE,
             &RUST_MONSTER_TEMPLATE,
             &SHADOW_TEMPLATE,
             &SHAMBLING_MOUND_TEMPLATE,
             &SPECTER_TEMPLATE,
+            &SPIDER_TEMPLATE,
             &STIRGE_TEMPLATE,
+            &STONE_GIANT_TEMPLATE,
             &STORM_GIANT_TEMPLATE,
             &TREANT_TEMPLATE,
+            &TROLL_TEMPLATE,
             &UMBER_HULK_TEMPLATE,
+            &VAMPIRE_SPAWN_TEMPLATE,
             &VETERAN_TEMPLATE,
+            &VROCK_TEMPLATE,
             &WEREWOLF_TEMPLATE,
             &WIGHT_TEMPLATE,
             &WISP_TEMPLATE,
@@ -2262,6 +2311,56 @@ impl EncounterInstance {
         }
     }
 
+    /// 5e Spirit Guardians aura: if `actor_id` has the `SpiritGuarding`
+    /// condition, every hostile creature within 6 tiles takes 3d8 radiant
+    /// damage (WIS save for half). Called at round-end for each actor.
+    fn apply_spirit_guardians_aura(&mut self, caster_id: usize) {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::AbilityScoreType;
+        let has = self
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_condition(Condition::SpiritGuarding) && a.is_combat_active());
+        if !has {
+            return;
+        }
+        let caster_loc = match self.actors.get(&caster_id) {
+            Some(a) => a.location(),
+            None => return,
+        };
+        let dc = self
+            .actors
+            .get(&caster_id)
+            .map(|a| a.best_spell_save_dc([AbilityScoreType::Wisdom, AbilityScoreType::Charisma]))
+            .unwrap_or(13);
+        let targets = self.enemy_burst_targets(caster_id, caster_loc, 6);
+        if targets.is_empty() {
+            return;
+        }
+        let dmg = self.roll(&Dice::new(3, 8));
+        let caster_name = self
+            .actors
+            .get(&caster_id)
+            .map(|a| a.name().to_string())
+            .unwrap_or_default();
+        self.log(format!(
+            "  {}'s spirit guardians lash out: 3d8({}) radiant",
+            caster_name, dmg
+        ));
+        for tid in targets {
+            let save = self.roll_save(tid, AbilityScoreType::Wisdom, dc);
+            let actual = if save.passed() { dmg / 2 } else { dmg };
+            if actual > 0 {
+                DealDamage {
+                    actor_id: tid,
+                    amount: actual,
+                    damage_type: DamageType::Radiant,
+                }
+                .apply(self);
+            }
+        }
+    }
+
     /// Tick condition timers on every actor. `Rounds(n)` becomes
     /// `Rounds(n-1)`; `Rounds(0|1)` removes the condition. Logs each
     /// expiration. Iterates by sorted id for deterministic ordering.
@@ -2278,6 +2377,11 @@ impl EncounterInstance {
             // lands before timer ticks so a final-round expiry still
             // pays the drip (matches 5e DoT timing).
             self.apply_condition_round_end_dots(id);
+            // 5e Spirit Guardians aura: at round-end, every hostile
+            // creature within 6 tiles of a SpiritGuarding caster takes
+            // 3d8 radiant (WIS save for half). We iterate the aura here
+            // so it fires once per round alongside the other DoTs.
+            self.apply_spirit_guardians_aura(id);
             // Regeneration: heal `regen_per_round` HP at end-of-round if
             // the actor is combat-active and hasn't been hit by a
             // suppressor damage type this round (5e troll: fire/acid).

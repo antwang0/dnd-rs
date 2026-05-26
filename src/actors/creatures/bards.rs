@@ -52,6 +52,8 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::BLADE_WARD);
     actions.push(&*crate::actions::spells::EARTH_TREMOR);
     actions.push(&*crate::actions::spells::SILVERY_BARBS);
+    actions.push(&*crate::actions::spells::CLOUD_OF_DAGGERS);
+    actions.push(&*crate::actions::spells::HEALING_SPIRIT);
     CreatureTemplate {
         name: "Bard",
         glyph: 'B',

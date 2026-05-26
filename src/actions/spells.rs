@@ -4411,6 +4411,12 @@ pub static DIVINE_FAVOR: LazyLock<DivineFavor> = LazyLock::new(|| DivineFavor {}
 /// flavor is collapsed to a powerful single-cast radiant burst that
 /// matches a typical first-round application. Concentration tracks the
 /// cast so re-casting drops cleanly.
+/// Spirit Guardians — level-3 conjuration, concentration. On cast, deals
+/// 3d8 radiant (WIS save for half) to nearby enemies. Then installs the
+/// SpiritGuarding condition on the caster: at every round-end, the aura
+/// repeats the damage to every hostile creature within 6 tiles. The
+/// recurring damage is processed by `apply_spirit_guardians_aura` in
+/// the round-end loop. Concentration-bound — dropping it ends the aura.
 pub struct SpiritGuardians {}
 
 impl Action for SpiritGuardians {
@@ -4418,10 +4424,16 @@ impl Action for SpiritGuardians {
         "spirit guardians"
     }
     fn aliases(&self) -> Vec<&str> {
-        vec!["sg", "spirit"]
+        vec!["sg", "spirit", "guards"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
     }
     fn requires_los(&self) -> bool {
         false
@@ -4438,6 +4450,19 @@ impl Action for SpiritGuardians {
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
         action_and_slot(3)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.is_concentrating() && a.is_combat_active())
     }
     fn side_effects(
         &self,
@@ -4457,20 +4482,27 @@ impl Action for SpiritGuardians {
             "  spirit guardians: 3d8({}) = {} radiant area",
             raw, raw
         ));
-        // 15ft radius = 3 tiles on the 2.5ft grid.
         let mut effs = crate::actions::action_template::resolve_burst_save_damage(
             encounter,
             caster_id,
             caster_loc,
-            3,
+            6,
             AbilityScoreType::Wisdom,
             dc,
             raw,
             DamageType::Radiant,
         );
+        effs.push(Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::SpiritGuarding,
+            timer: ConditionTimer::Rounds(100),
+        }));
         effs.push(Box::new(StartConcentration {
             caster_id,
-            data: ConcentrationData::new("Spirit Guardians"),
+            data: ConcentrationData::with_conditions(
+                "Spirit Guardians",
+                vec![(caster_id, Condition::SpiritGuarding)],
+            ),
         }));
         effs
     }
@@ -5982,17 +6014,25 @@ impl Action for CloudOfDaggers {
             damage, damage
         ));
 
+        let targets = encounter.enemy_burst_targets(caster_id, point, RADIUS);
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
+        let mut conc_conditions: Vec<(usize, Condition)> = Vec::new();
+        for tid in targets {
             effects.push(Box::new(DealDamage {
                 actor_id: tid,
                 amount: damage,
                 damage_type: DamageType::Slashing,
             }));
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::CloudOfDaggered,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            conc_conditions.push((tid, Condition::CloudOfDaggered));
         }
         effects.push(Box::new(StartConcentration {
             caster_id,
-            data: ConcentrationData::new("Cloud of Daggers"),
+            data: ConcentrationData::with_conditions("Cloud of Daggers", conc_conditions),
         }));
         effects
     }
@@ -6069,12 +6109,20 @@ impl Action for WitchBolt {
             DamageType::Lightning,
             false,
         );
-        // Install concentration regardless of hit — the spell can still be
-        // sustained on a miss per RAW (the link forms either way).
-        effects.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::new("Witch Bolt"),
-        }));
+        if !effects.is_empty() {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::WitchBolted,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            effects.push(Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Witch Bolt",
+                    vec![(target_id, Condition::WitchBolted)],
+                ),
+            }));
+        }
         effects
     }
 }
@@ -10586,19 +10634,31 @@ impl Action for Moonbeam {
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
         let raw = encounter.roll(&Dice::new(2, 10));
         encounter.log(format!("  moonbeam: 2d10({}) radiant beam", raw));
-        let mut effs = crate::actions::action_template::resolve_burst_save_damage(
-            encounter,
-            caster_id,
-            point,
-            1,
-            AbilityScoreType::Constitution,
-            dc,
-            raw,
-            DamageType::Radiant,
-        );
+        let targets = encounter.enemy_burst_targets(caster_id, point, 1);
+        let mut effs: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut conc_conditions: Vec<(usize, Condition)> = Vec::new();
+        for tid in targets {
+            let save = encounter.roll_save(tid, AbilityScoreType::Constitution, dc);
+            let dmg = if save.passed() { raw / 2 } else { raw };
+            if dmg > 0 {
+                effs.push(Box::new(DealDamage {
+                    actor_id: tid,
+                    amount: dmg,
+                    damage_type: DamageType::Radiant,
+                }));
+            }
+            if !save.passed() {
+                effs.push(Box::new(ApplyCondition {
+                    actor_id: tid,
+                    condition: Condition::Moonbeamed,
+                    timer: ConditionTimer::Rounds(10),
+                }));
+                conc_conditions.push((tid, Condition::Moonbeamed));
+            }
+        }
         effs.push(Box::new(StartConcentration {
             caster_id,
-            data: ConcentrationData::new("Moonbeam"),
+            data: ConcentrationData::with_conditions("Moonbeam", conc_conditions),
         }));
         effs
     }
@@ -20552,3 +20612,4 @@ impl Action for RemoveCurse {
 }
 
 pub static REMOVE_CURSE: LazyLock<RemoveCurse> = LazyLock::new(|| RemoveCurse {});
+
