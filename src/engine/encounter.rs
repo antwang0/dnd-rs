@@ -760,6 +760,15 @@ impl EncounterInstance {
         {
             mode = mode.combine(RollMode::Disadvantage);
         }
+        // 5e Magic Resistance: advantage on all saving throws. Carried by
+        // fiends (Balor, Pit Fiend), undead bosses (Lich), and other
+        // magically-attuned creatures. We grant blanket advantage on every
+        // save — the "against spells and magical effects" RAW qualifier is
+        // hard to enforce without a spell-vs-mundane tag on every save
+        // source, and in combat nearly all saves originate from spells.
+        if actor.has_magic_resistance() {
+            mode = mode.combine(RollMode::Advantage);
+        }
         mode
     }
 
@@ -795,6 +804,8 @@ impl EncounterInstance {
         actor.has_condition(Condition::Paralyzed)
             || actor.has_condition(Condition::Stunned)
             || actor.has_condition(Condition::Petrified)
+            || actor.has_condition(Condition::Unconscious)
+            || actor.has_condition(Condition::Asleep)
     }
 
     /// Roll a saving throw for `actor_id` against `dc` using `ability`.
@@ -1976,6 +1987,30 @@ impl EncounterInstance {
             }
             self.log(format!("{}'s displacement reasserts itself.", name));
         }
+        // 5e Recharge: at the start of each turn, roll a d6 for each
+        // spent recharge ability. If the roll >= the ability's threshold,
+        // the ability becomes available again.
+        if let Some(a) = self.actors.get(&actor_id) {
+            let actor_name = a.name().to_string();
+            let recharge_checks: Vec<(&'static str, u32, bool)> = a
+                .recharge_entries()
+                .iter()
+                .filter(|(_, _, avail)| !avail)
+                .cloned()
+                .collect();
+            for (ability_name, min_roll, _) in recharge_checks {
+                let roll = self.roll(&crate::engine::dice::Dice::new(1, 6));
+                if roll >= min_roll {
+                    if let Some(a) = self.actors.get_mut(&actor_id) {
+                        a.set_recharge_available(ability_name, true);
+                    }
+                    self.log(format!(
+                        "{}'s {} recharges!",
+                        actor_name, ability_name
+                    ));
+                }
+            }
+        }
     }
 
     /// Advance the initiative queue and fire `round_end` if the queue
@@ -3074,6 +3109,7 @@ mod tests {
     use crate::engine::actor_gen::ActorGenParams;
     use crate::engine::terrain::TerrainInfo;
     use crate::engine::terrain_gen::TerrainGenParams;
+    use crate::engine::types::AbilityScoreType;
 
     /// Builds a tiny encounter with no actors and a hand-crafted terrain
     /// grid so LOS can be tested deterministically (terrain_gen randomness
@@ -25058,5 +25094,164 @@ mod tests {
             .damage_modifiers
             .contains_key(&DamageType::Slashing));
         assert_eq!(GRICK_TEMPLATE.cr, 2.0);
+    }
+
+    #[test]
+    fn magic_resistance_grants_advantage_on_saves() {
+        use crate::actors::creatures::balors::BALOR_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        let tp = crate::engine::terrain_gen::TerrainGenParams {
+            width: 10,
+            height: 10,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = crate::engine::actor_gen::ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(42)).unwrap();
+        let mut roller = FastRandRoller::with_seed(42);
+        let balor = ActorInstance::from_creature_template(
+            &BALOR_TEMPLATE,
+            Coordinate::new(3, 3),
+            0,
+            &mut roller,
+            1,
+        )
+        .unwrap();
+        assert!(balor.has_magic_resistance());
+        let id = e.next_actor_id();
+        e.actors.insert(id, balor);
+        let mode = e.compute_save_mode(id, AbilityScoreType::Wisdom);
+        assert_eq!(
+            mode,
+            crate::engine::dice::RollMode::Advantage,
+            "magic resistance should grant advantage on saves"
+        );
+    }
+
+    #[test]
+    fn no_magic_resistance_normal_saves() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        let tp = crate::engine::terrain_gen::TerrainGenParams {
+            width: 10,
+            height: 10,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = crate::engine::actor_gen::ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(42)).unwrap();
+        let mut roller = FastRandRoller::with_seed(42);
+        let goblin = ActorInstance::from_creature_template(
+            &GOBLIN_TEMPLATE,
+            Coordinate::new(3, 3),
+            0,
+            &mut roller,
+            1,
+        )
+        .unwrap();
+        assert!(!goblin.has_magic_resistance());
+        let id = e.next_actor_id();
+        e.actors.insert(id, goblin);
+        let mode = e.compute_save_mode(id, AbilityScoreType::Wisdom);
+        assert_eq!(
+            mode,
+            crate::engine::dice::RollMode::Normal,
+            "goblin without magic resistance should have normal saves"
+        );
+    }
+
+    #[test]
+    fn asleep_grants_advantage_to_attackers() {
+        let mut a = ActorInstance::from_creature_template(
+            &ZOMBIE_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut crate::engine::dice::FastRandRoller::with_seed(1),
+            0,
+        )
+        .unwrap();
+        a.add_condition(
+            Condition::Asleep,
+            crate::conditions::ConditionTimer::Rounds(3),
+        );
+        assert!(
+            Condition::Asleep.grants_advantage_to_attackers(),
+            "asleep should grant advantage to attackers"
+        );
+    }
+
+    #[test]
+    fn unconscious_auto_fails_str_dex_saves() {
+        use crate::engine::dice::FastRandRoller;
+        let tp = crate::engine::terrain_gen::TerrainGenParams {
+            width: 10,
+            height: 10,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = crate::engine::actor_gen::ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(42)).unwrap();
+        let mut roller = FastRandRoller::with_seed(42);
+        let mut zombie = ActorInstance::from_creature_template(
+            &ZOMBIE_TEMPLATE,
+            Coordinate::new(3, 3),
+            0,
+            &mut roller,
+            1,
+        )
+        .unwrap();
+        zombie.add_condition(
+            Condition::Unconscious,
+            crate::conditions::ConditionTimer::Permanent,
+        );
+        let id = e.next_actor_id();
+        e.actors.insert(id, zombie);
+        assert!(
+            e.auto_fail_save(id, AbilityScoreType::Dexterity),
+            "unconscious creature should auto-fail DEX saves"
+        );
+        assert!(
+            e.auto_fail_save(id, AbilityScoreType::Strength),
+            "unconscious creature should auto-fail STR saves"
+        );
+        assert!(
+            !e.auto_fail_save(id, AbilityScoreType::Wisdom),
+            "unconscious creature should NOT auto-fail WIS saves"
+        );
+    }
+
+    #[test]
+    fn recharge_ability_tracks_availability() {
+        use crate::engine::dice::FastRandRoller;
+        let mut roller = FastRandRoller::with_seed(1);
+        let mut actor = ActorInstance::from_creature_template(
+            &ZOMBIE_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut roller,
+            0,
+        )
+        .unwrap();
+        // Zombie doesn't have recharge abilities by default, so test
+        // the general mechanism directly via the API.
+        assert!(
+            !actor.is_recharge_available("breath_weapon"),
+            "non-existent recharge should be unavailable"
+        );
     }
 }

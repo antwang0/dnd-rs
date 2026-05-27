@@ -69,6 +69,8 @@ pub static LICH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::DELAYED_BLAST_FIREBALL);
     actions.push(&*crate::actions::spells::INCENDIARY_CLOUD);
     actions.push(&*crate::actions::spells::WEIRD);
+    actions.push(&*crate::actions::spells::DOMINATE_MONSTER);
+    actions.push(&*crate::actions::spells::PLANE_SHIFT);
     CreatureTemplate {
         name: "Lich",
         // 'L' is taken in some content; use 'l' (lowercase L) for lich.
@@ -133,5 +135,7 @@ pub static LICH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         has_displacement: false,
         has_danger_sense: false,
         has_pack_tactics: false,
+        has_magic_resistance: true,
+        recharge_abilities: Vec::new(),
     }
 });

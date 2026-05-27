@@ -181,6 +181,19 @@ pub struct CreatureTemplate {
     /// 5e Pack Tactics (Wolf, Dire Wolf, Kobold): advantage on attack rolls
     /// when an ally is adjacent to the target. Read by `compute_attack_mode`.
     pub has_pack_tactics: bool,
+    /// 5e Magic Resistance (Balor, Lich, Pit Fiend, etc.): advantage on
+    /// saving throws against spells and other magical effects. Read by
+    /// `compute_save_mode` — applies to every save the creature rolls
+    /// (we don't yet distinguish spell vs non-spell save sources, so we
+    /// conservatively grant advantage on all saves, matching the most
+    /// common interpretation for combat engines).
+    pub has_magic_resistance: bool,
+    /// 5e Recharge ability: some creature abilities recharge on a d6 roll
+    /// at the start of each turn (e.g. "Recharge 5-6" means the ability
+    /// recharges if the d6 shows 5 or 6). Each entry is (action_name,
+    /// min_roll) — the action becomes available again when the d6 >=
+    /// min_roll. Empty for creatures without recharge abilities.
+    pub recharge_abilities: Vec<(&'static str, u32)>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -370,6 +383,11 @@ pub struct ActorInstance {
     has_displacement: bool,
     has_danger_sense: bool,
     has_pack_tactics: bool,
+    has_magic_resistance: bool,
+    /// Recharge tracking: maps action name → (min_roll, is_available).
+    /// At start-of-turn the engine rolls a d6 for each exhausted ability;
+    /// if the roll >= min_roll the ability becomes available again.
+    recharge_abilities: Vec<(&'static str, u32, bool)>,
 }
 
 impl ActorInstance {
@@ -452,6 +470,12 @@ impl ActorInstance {
             has_displacement: ct.has_displacement,
             has_danger_sense: ct.has_danger_sense,
             has_pack_tactics: ct.has_pack_tactics,
+            has_magic_resistance: ct.has_magic_resistance,
+            recharge_abilities: ct
+                .recharge_abilities
+                .iter()
+                .map(|&(name, min_roll)| (name, min_roll, true))
+                .collect(),
         })
     }
 
@@ -535,6 +559,40 @@ impl ActorInstance {
 
     pub fn has_pack_tactics(&self) -> bool {
         self.has_pack_tactics
+    }
+
+    pub fn has_magic_resistance(&self) -> bool {
+        self.has_magic_resistance
+    }
+
+    /// Check if a recharge ability is currently available.
+    pub fn is_recharge_available(&self, action_name: &str) -> bool {
+        self.recharge_abilities
+            .iter()
+            .any(|(name, _, avail)| *name == action_name && *avail)
+    }
+
+    /// Mark a recharge ability as spent (unavailable until recharged).
+    pub fn spend_recharge(&mut self, action_name: &str) {
+        for entry in &mut self.recharge_abilities {
+            if entry.0 == action_name {
+                entry.2 = false;
+            }
+        }
+    }
+
+    /// Raw recharge entries for inspection by the encounter engine.
+    pub fn recharge_entries(&self) -> &[(& 'static str, u32, bool)] {
+        &self.recharge_abilities
+    }
+
+    /// Set a recharge ability's availability state.
+    pub fn set_recharge_available(&mut self, action_name: &str, available: bool) {
+        for entry in &mut self.recharge_abilities {
+            if entry.0 == action_name {
+                entry.2 = available;
+            }
+        }
     }
 
     /// HP regenerated each round-end while combat-active. 0 disables the
@@ -627,6 +685,9 @@ impl ActorInstance {
         self.features_remaining = self.features_max.clone();
         self.indomitable_pending = false;
         self.legendary_resistance_remaining = self.legendary_resistance_max;
+        for entry in &mut self.recharge_abilities {
+            entry.2 = true;
+        }
     }
 
     /// 5e Short Rest — 1 hour of downtime. Restores: Hit Dice-based

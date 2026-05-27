@@ -151,6 +151,7 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::REGENERATE);
     actions.push(&*crate::actions::spells::PROTECTION_FROM_ENERGY);
     actions.push(&*crate::actions::spells::REMOVE_CURSE);
+    actions.push(&*crate::actions::spells::ANTILIFE_SHELL);
     CreatureTemplate {
         name: "Cleric",
         glyph: 'C',
@@ -196,5 +197,7 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         has_displacement: false,
         has_danger_sense: false,
         has_pack_tactics: false,
+        has_magic_resistance: false,
+        recharge_abilities: Vec::new(),
     }
 });

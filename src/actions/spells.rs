@@ -873,9 +873,17 @@ impl Action for CureWounds {
         _caster_id: usize,
         _target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_and_slot(1)
+        action_and_slot(crate::engine::action_overrides::cast_level(overrides, 1))
+    }
+
+    fn is_heal(&self) -> bool {
+        true
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
     }
 
     fn side_effects(
@@ -884,7 +892,7 @@ impl Action for CureWounds {
         caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
             return Vec::new();
@@ -893,11 +901,13 @@ impl Action for CureWounds {
             return Vec::new();
         };
         let wis_mod = caster.ability_modifier(AbilityScoreType::Wisdom);
-        let raw = encounter.roll(&Dice::new(1, 8)) as i32;
+        let lvl = crate::engine::action_overrides::cast_level(overrides, 1);
+        let dice = lvl;
+        let raw = encounter.roll(&Dice::new(dice, 8)) as i32;
         let amount = (raw + wis_mod).max(1) as u32;
         encounter.log(format!(
-            "  cure wounds: 1d8({}){:+} = {} HP",
-            raw, wis_mod, amount
+            "  cure wounds: {}d8({}){:+} = {} HP",
+            dice, raw, wis_mod, amount
         ));
         vec![Box::new(Heal {
             actor_id: target_id,
@@ -1218,9 +1228,9 @@ impl Action for MagicMissile {
         _caster_id: usize,
         _target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_and_slot(1)
+        action_and_slot(crate::engine::action_overrides::cast_level(overrides, 1))
     }
 
     fn side_effects(
@@ -1229,30 +1239,31 @@ impl Action for MagicMissile {
         _caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
             return Vec::new();
         };
-        // Three darts; each auto-hits for 1d4+1 force. We emit three
-        // separate DealDamage effects so concentration-on-hit saves
-        // trigger per-dart (RAW: each dart counts as a separate hit
-        // for concentration check purposes).
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::with_capacity(3);
-        let mut totals = [0u32; 3];
-        for (i, t) in totals.iter_mut().enumerate() {
+        // 5e upcasting: 3 darts at level 1, +1 dart per level above 1.
+        let lvl = crate::engine::action_overrides::cast_level(overrides, 1);
+        let n_darts = (3 + (lvl - 1)) as usize;
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::with_capacity(n_darts);
+        let mut dart_values: Vec<u32> = Vec::with_capacity(n_darts);
+        for _ in 0..n_darts {
             let raw = encounter.roll(&Dice::new(1, 4));
-            *t = raw + 1;
+            let dmg = raw + 1;
+            dart_values.push(dmg);
             effects.push(Box::new(DealDamage {
                 actor_id: target_id,
-                amount: *t,
+                amount: dmg,
                 damage_type: DamageType::Force,
             }));
-            let _ = i;
         }
+        let dart_str: Vec<String> = dart_values.iter().map(|v| v.to_string()).collect();
         encounter.log(format!(
-            "  magic missile: 3 darts [{}, {}, {}] force",
-            totals[0], totals[1], totals[2]
+            "  magic missile: {} darts [{}] force",
+            n_darts,
+            dart_str.join(", ")
         ));
         effects
     }
@@ -1430,9 +1441,9 @@ impl Action for GuidingBolt {
         _c: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_and_slot(1)
+        action_and_slot(crate::engine::action_overrides::cast_level(overrides, 1))
     }
     fn side_effects(
         &self,
@@ -1440,7 +1451,7 @@ impl Action for GuidingBolt {
         caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
@@ -1449,18 +1460,19 @@ impl Action for GuidingBolt {
             return Vec::new();
         };
         let attack_mod = caster.spell_attack_modifier(AbilityScoreType::Wisdom);
+        let lvl = crate::engine::action_overrides::cast_level(overrides, 1);
+        let dice = 4 + (lvl - 1);
         let mut effects = spell_attack(
             encounter,
             caster_id,
             target_id,
             self.name(),
             attack_mod,
-            Dice::new(4, 6),
+            Dice::new(dice, 6),
             DamageType::Radiant,
             false,
         );
         if !effects.is_empty() {
-            // Mark target so the next incoming attack benefits.
             effects.push(Box::new(ApplyCondition {
                 actor_id: target_id,
                 condition: Condition::GuidingBoltLit,
@@ -2570,9 +2582,9 @@ impl Action for InflictWounds {
         _c: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_and_slot(1)
+        action_and_slot(crate::engine::action_overrides::cast_level(overrides, 1))
     }
     fn side_effects(
         &self,
@@ -2580,7 +2592,7 @@ impl Action for InflictWounds {
         caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
@@ -2589,13 +2601,15 @@ impl Action for InflictWounds {
             return Vec::new();
         };
         let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Wisdom);
+        let lvl = crate::engine::action_overrides::cast_level(overrides, 1);
+        let dice = 3 + (lvl - 1);
         spell_attack(
             encounter,
             caster_id,
             target_id,
             "inflict wounds",
             attack_bonus,
-            Dice::new(3, 10),
+            Dice::new(dice, 10),
             DamageType::Necrotic,
             true,
         )
@@ -3331,9 +3345,9 @@ impl Action for Shatter {
         _c: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_and_slot(2)
+        action_and_slot(crate::engine::action_overrides::cast_level(overrides, 2))
     }
     fn side_effects(
         &self,
@@ -3341,7 +3355,7 @@ impl Action for Shatter {
         caster_id: usize,
         _target_ids: Option<&Vec<usize>>,
         target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
             return Vec::new();
@@ -3350,8 +3364,10 @@ impl Action for Shatter {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-        let raw = encounter.roll(&Dice::new(3, 8));
-        encounter.log(format!("  shatter: 3d8({}) = {} thunder area", raw, raw));
+        let lvl = crate::engine::action_overrides::cast_level(overrides, 2);
+        let dice = 3 + (lvl - 2);
+        let raw = encounter.roll(&Dice::new(dice, 8));
+        encounter.log(format!("  shatter: {}d8({}) = {} thunder area", dice, raw, raw));
         crate::actions::action_template::resolve_burst_save_damage(
             encounter,
             caster_id,
@@ -3899,9 +3915,9 @@ impl Action for Fireball {
         _c: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_and_slot(3)
+        action_and_slot(crate::engine::action_overrides::cast_level(overrides, 3))
     }
     fn side_effects(
         &self,
@@ -3909,7 +3925,7 @@ impl Action for Fireball {
         caster_id: usize,
         _target_ids: Option<&Vec<usize>>,
         target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
             return Vec::new();
@@ -3918,8 +3934,10 @@ impl Action for Fireball {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-        let raw = encounter.roll(&Dice::new(8, 6));
-        encounter.log(format!("  fireball: 8d6({}) = {} fire area", raw, raw));
+        let lvl = crate::engine::action_overrides::cast_level(overrides, 3);
+        let dice = 8 + (lvl - 3);
+        let raw = encounter.roll(&Dice::new(dice, 6));
+        encounter.log(format!("  fireball: {}d6({}) = {} fire area", dice, raw, raw));
         crate::actions::action_template::resolve_burst_save_damage(
             encounter,
             caster_id,
@@ -4121,9 +4139,9 @@ impl Action for LightningBolt {
         _c: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_and_slot(3)
+        action_and_slot(crate::engine::action_overrides::cast_level(overrides, 3))
     }
     fn side_effects(
         &self,
@@ -4131,7 +4149,7 @@ impl Action for LightningBolt {
         caster_id: usize,
         _target_ids: Option<&Vec<usize>>,
         target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
             return Vec::new();
@@ -4140,10 +4158,12 @@ impl Action for LightningBolt {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-        let raw = encounter.roll(&Dice::new(8, 6));
+        let lvl = crate::engine::action_overrides::cast_level(overrides, 3);
+        let dice = 8 + (lvl - 3);
+        let raw = encounter.roll(&Dice::new(dice, 6));
         encounter.log(format!(
-            "  lightning bolt: 8d6({}) = {} lightning area",
-            raw, raw
+            "  lightning bolt: {}d6({}) = {} lightning area",
+            dice, raw, raw
         ));
         crate::actions::action_template::resolve_burst_save_damage(
             encounter,
@@ -20625,4 +20645,261 @@ impl Action for RemoveCurse {
 }
 
 pub static REMOVE_CURSE: LazyLock<RemoveCurse> = LazyLock::new(|| RemoveCurse {});
+
+/// Dominate Monster — 5e level-8 enchantment, concentration, action.
+/// Upgraded version of Dominate Person that works on any creature type
+/// (including constructs, undead, elementals, etc.). Target within 60ft
+/// makes a WIS save vs the caster's spell DC. On fail, target is
+/// Charmed AND Dominated for 10 rounds. The `Charmed` half blocks the
+/// target from attacking the dominator (via `charmed_by`); the
+/// `Dominated` half imposes disadvantage on all attacks.
+/// Concentration-bound — dropping concentration frees the target.
+pub struct DominateMonster {}
+
+impl Action for DominateMonster {
+    fn name(&self) -> &str {
+        "dominate monster"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dommon", "dom-monster"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(8)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::SetCharmedBy;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Charmed,
+                timer: ConditionTimer::Rounds(10),
+            }) as Box<dyn ApplicableSideEffect>,
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Dominated,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(SetCharmedBy {
+                target_id,
+                charmer: Some(caster_id),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Dominate Monster",
+                    vec![
+                        (target_id, Condition::Charmed),
+                        (target_id, Condition::Dominated),
+                    ],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static DOMINATE_MONSTER: LazyLock<DominateMonster> = LazyLock::new(|| DominateMonster {});
+
+/// Antilife Shell — 5e level-5 abjuration, concentration, action.
+/// Self-cast that creates a shimmering barrier preventing non-undead /
+/// non-construct creatures from approaching within melee range. We
+/// model the load-bearing half: on cast, all adjacent enemies are
+/// pushed 4 tiles away from the caster, and the caster gains the
+/// `Warded` condition for 10 rounds (disadvantage on incoming attacks
+/// — the closest proxy for "can't approach in melee"). Concentration-
+/// bound — dropping it removes the ward.
+pub struct AntilifeShell {}
+
+impl Action for AntilifeShell {
+    fn name(&self) -> &str {
+        "antilife shell"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["als", "antilife"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn requires_los(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.is_concentrating() && a.is_combat_active())
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::PushActor;
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let center = caster.location();
+        encounter.log("  antilife shell: a shimmering barrier repels nearby creatures");
+        // Push all adjacent enemies 4 tiles (10 ft) away.
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = encounter
+            .enemy_burst_targets(caster_id, center, 1)
+            .into_iter()
+            .map(|id| {
+                Box::new(PushActor {
+                    actor_id: id,
+                    from: center,
+                    max_tiles: 4,
+                }) as Box<dyn ApplicableSideEffect>
+            })
+            .collect();
+        // Apply Warded to the caster as a melee-deterrence marker.
+        effects.push(Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::Warded,
+            timer: ConditionTimer::Rounds(10),
+        }));
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions(
+                "Antilife Shell",
+                vec![(caster_id, Condition::Warded)],
+            ),
+        }));
+        effects
+    }
+}
+
+pub static ANTILIFE_SHELL: LazyLock<AntilifeShell> = LazyLock::new(|| AntilifeShell {});
+
+/// Plane Shift — 5e level-7 conjuration, action. Touch range (1 tile).
+/// The caster forces a single target to make a CHA save vs the caster's
+/// spell DC. On fail the target is banished to another plane — we model
+/// this with the `Mazed` condition for 100 rounds (effectively removed
+/// from combat for the rest of the encounter). No concentration — once
+/// the target is gone, they stay gone (RAW there is no concentration
+/// requirement on the offensive use of Plane Shift).
+pub struct PlaneShift {}
+
+impl Action for PlaneShift {
+    fn name(&self) -> &str {
+        "plane shift"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["planeshift", "ps7"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch = 1 tile.
+        Some(1)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(7)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Charisma, dc);
+        if save.passed() {
+            return Vec::new();
+        }
+        encounter.log("  plane shift: target is hurled to another plane of existence");
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Mazed,
+            timer: ConditionTimer::Rounds(100),
+        })]
+    }
+}
+
+pub static PLANE_SHIFT: LazyLock<PlaneShift> = LazyLock::new(|| PlaneShift {});
 

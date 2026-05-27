@@ -1,6 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
+#[allow(unused_imports)]
 use crate::actions::monster_attacks::{
-    DRAGON_BITE, DRAGON_CLAW, DRAGON_FIRE_BREATH, DRAGON_MULTI, FRIGHTFUL_PRESENCE,
+    DRAGON_BITE, DRAGON_BREATH_COLD, DRAGON_BREATH_FIRE, DRAGON_BREATH_LIGHTNING,
+    DRAGON_BREATH_POISON, DRAGON_CLAW, DRAGON_MULTI, FRIGHTFUL_PRESENCE,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
@@ -27,7 +29,7 @@ pub static ADULT_RED_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
     actions.push(&*DRAGON_MULTI);
     actions.push(&*DRAGON_BITE);
     actions.push(&DRAGON_CLAW);
-    actions.push(&*DRAGON_FIRE_BREATH);
+    actions.push(&*DRAGON_BREATH_FIRE);
     actions.push(&*FRIGHTFUL_PRESENCE);
     CreatureTemplate {
         name: "Adult Red Dragon",
@@ -81,5 +83,7 @@ pub static ADULT_RED_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         has_displacement: false,
         has_danger_sense: false,
         has_pack_tactics: false,
+        has_magic_resistance: true,
+        recharge_abilities: vec![("breath_weapon", 5)],
     }
 });

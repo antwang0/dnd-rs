@@ -3279,16 +3279,16 @@ impl Action for GelatinousCubeEngulf {
 pub static GELATINOUS_CUBE_ENGULF: LazyLock<GelatinousCubeEngulf> =
     LazyLock::new(|| GelatinousCubeEngulf {});
 
-/// Dragon Fire Breath — Adult Red Dragon signature. Cone-shaped 60 ft
-/// (radius 6 burst on our grid) of searing flame. Every creature in the
-/// area makes a DEX save vs DC 21: failed save takes 18d6 fire, success
-/// halves. Resists / immunities apply via the standard pipeline so a
-/// fire-immune ally walking through is unhurt. Recharge dice (5e RAW)
-/// are skipped — the breath fires on demand to keep the AI integration
-/// simple; the limiting factor is that it consumes the dragon's Action.
-pub struct DragonFireBreath {}
+/// Dragon Fire Breath — Adult Red Dragon signature. Burst-4 radius
+/// (range 6) of searing flame. Every creature in the area makes a DEX
+/// save vs DC 21: failed save takes 12d6 fire, success halves. Gated
+/// behind the "breath_weapon" recharge ability (Recharge 5-6): the
+/// custom_validate_input check blocks the action when spent, and
+/// side_effects calls spend_recharge so the dragon must wait for the
+/// start-of-turn d6 roll to get it back.
+pub struct DragonBreathFire {}
 
-impl Action for DragonFireBreath {
+impl Action for DragonBreathFire {
     fn name(&self) -> &str {
         "fire breath"
     }
@@ -3296,17 +3296,29 @@ impl Action for DragonFireBreath {
         vec!["fb", "breath"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 6 }
+        TargetingSchema::Burst { radius: 4 }
     }
     fn reach_tiles(&self) -> Option<isize> {
-        // 60 ft cone — same as the burst radius (cone's far edge).
-        Some(24)
+        Some(6)
     }
     fn requires_los(&self) -> bool {
         true
     }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Fire]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_recharge_available("breath_weapon"))
     }
     fn side_effects(
         &self,
@@ -3319,17 +3331,21 @@ impl Action for DragonFireBreath {
         let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
             return Vec::new();
         };
+        // Spend the recharge resource before resolving damage.
+        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
+            caster.spend_recharge("breath_weapon");
+        }
         const DC: i32 = 21;
-        let raw = encounter.roll(&Dice::new(18, 6));
+        let raw = encounter.roll(&Dice::new(12, 6));
         encounter.log(format!(
-            "  fire breath: 18d6({}) = {} fire area",
-            raw, raw
+            "  fire breath: 12d6({}) = {} fire area (DC {} DEX, half on save)",
+            raw, raw, DC
         ));
         crate::actions::action_template::resolve_burst_save_damage(
             encounter,
             caster_id,
             point,
-            6,
+            4,
             AbilityScoreType::Dexterity,
             DC,
             raw,
@@ -3338,8 +3354,232 @@ impl Action for DragonFireBreath {
     }
 }
 
-pub static DRAGON_FIRE_BREATH: LazyLock<DragonFireBreath> =
-    LazyLock::new(|| DragonFireBreath {});
+pub static DRAGON_BREATH_FIRE: LazyLock<DragonBreathFire> =
+    LazyLock::new(|| DragonBreathFire {});
+
+/// Keep the old name around as an alias so existing templates that
+/// reference `DRAGON_FIRE_BREATH` still compile. Points to the same
+/// action with recharge gating.
+pub static DRAGON_FIRE_BREATH: LazyLock<DragonBreathFire> =
+    LazyLock::new(|| DragonBreathFire {});
+
+/// Dragon Cold Breath — burst-4 radius (range 6) of freezing cold.
+/// 12d6 cold, DEX save DC 21 for half. Recharge 5-6.
+pub struct DragonBreathCold {}
+
+impl Action for DragonBreathCold {
+    fn name(&self) -> &str {
+        "cold breath"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cb", "breath"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(6)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Cold]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_recharge_available("breath_weapon"))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
+            caster.spend_recharge("breath_weapon");
+        }
+        const DC: i32 = 21;
+        let raw = encounter.roll(&Dice::new(12, 6));
+        encounter.log(format!(
+            "  cold breath: 12d6({}) = {} cold area (DC {} DEX, half on save)",
+            raw, raw, DC
+        ));
+        crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            4,
+            AbilityScoreType::Dexterity,
+            DC,
+            raw,
+            DamageType::Cold,
+        )
+    }
+}
+
+pub static DRAGON_BREATH_COLD: LazyLock<DragonBreathCold> =
+    LazyLock::new(|| DragonBreathCold {});
+
+/// Dragon Lightning Breath — burst-4 radius (range 6) of crackling
+/// lightning. 12d6 lightning, DEX save DC 21 for half. Recharge 5-6.
+pub struct DragonBreathLightning {}
+
+impl Action for DragonBreathLightning {
+    fn name(&self) -> &str {
+        "lightning breath"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["lb", "breath"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(6)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Lightning]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_recharge_available("breath_weapon"))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
+            caster.spend_recharge("breath_weapon");
+        }
+        const DC: i32 = 21;
+        let raw = encounter.roll(&Dice::new(12, 6));
+        encounter.log(format!(
+            "  lightning breath: 12d6({}) = {} lightning area (DC {} DEX, half on save)",
+            raw, raw, DC
+        ));
+        crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            4,
+            AbilityScoreType::Dexterity,
+            DC,
+            raw,
+            DamageType::Lightning,
+        )
+    }
+}
+
+pub static DRAGON_BREATH_LIGHTNING: LazyLock<DragonBreathLightning> =
+    LazyLock::new(|| DragonBreathLightning {});
+
+/// Dragon Poison Breath — burst-4 radius (range 6) of noxious gas.
+/// 12d6 poison, CON save DC 21 for half. Recharge 5-6. Note: poison
+/// breath uses a CON save (inhaled toxin) rather than the DEX save
+/// used by the elemental breath weapons.
+pub struct DragonBreathPoison {}
+
+impl Action for DragonBreathPoison {
+    fn name(&self) -> &str {
+        "poison breath"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pb", "breath"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(6)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Poison]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_recharge_available("breath_weapon"))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
+            caster.spend_recharge("breath_weapon");
+        }
+        const DC: i32 = 21;
+        let raw = encounter.roll(&Dice::new(12, 6));
+        encounter.log(format!(
+            "  poison breath: 12d6({}) = {} poison area (DC {} CON, half on save)",
+            raw, raw, DC
+        ));
+        crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            4,
+            AbilityScoreType::Constitution,
+            DC,
+            raw,
+            DamageType::Poison,
+        )
+    }
+}
+
+pub static DRAGON_BREATH_POISON: LazyLock<DragonBreathPoison> =
+    LazyLock::new(|| DragonBreathPoison {});
 
 /// Dragon Bite — Adult Red Dragon's signature melee. d20 + 14 vs AC
 /// (STR+prof at CR 17), on hit 2d10+8 piercing + 4d6 fire. The fire

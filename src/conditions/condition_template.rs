@@ -1004,6 +1004,7 @@ impl Condition {
                 | Condition::Incapacitated
                 | Condition::Paralyzed
                 | Condition::Unconscious
+                | Condition::Asleep
                 | Condition::Outlined
                 | Condition::Petrified
                 | Condition::GuidingBoltLit
@@ -1011,6 +1012,7 @@ impl Condition {
                 | Condition::MentallyImprisoned
                 | Condition::Sphered
                 | Condition::EarthenGrasped
+                | Condition::Lifted
         )
     }
 
@@ -1051,7 +1053,10 @@ impl Condition {
     pub fn blocks_reactions(&self) -> bool {
         matches!(
             self,
-            Condition::NoReaction | Condition::Confused | Condition::Sphered
+            Condition::NoReaction
+                | Condition::Confused
+                | Condition::Sphered
+                | Condition::Dominated
         )
     }
 }

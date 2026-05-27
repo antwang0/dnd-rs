@@ -73,5 +73,7 @@ pub static EARTH_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         has_displacement: false,
         has_danger_sense: false,
         has_pack_tactics: false,
+        has_magic_resistance: false,
+        recharge_abilities: Vec::new(),
     }
 });

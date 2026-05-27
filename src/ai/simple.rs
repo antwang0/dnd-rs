@@ -145,6 +145,16 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3g3. Dragon Breath Weapon — recharge-gated AoE. Fire when
+        //      the breath is available and 2+ enemies cluster within
+        //      burst range. High-priority because the breath is the
+        //      dragon's highest-damage single action; spending it
+        //      before it might get wasted to a lucky recharge roll
+        //      next turn is always correct.
+        if let Some(aei) = try_breath_weapon(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3h. Bardic Inspiration — bonus-action ally buff. Fire on the
         //     highest-HP ally so the inspiration die rides their next
         //     attack swing (front-liners get the most value).
@@ -1234,6 +1244,116 @@ fn try_fear_aura(
         return None;
     }
     try_self_action(encounter, actor_id, "fear aura")
+}
+
+/// Dragon Breath Weapon — fire a Burst-schema breath attack when the
+/// actor has a recharge-gated breath action available and at least 2
+/// enemies cluster inside the burst radius. Mirrors `try_attack_aoe`'s
+/// point-selection logic (center on enemy locations, pick the tile that
+/// catches the most hostiles without friendly fire). The recharge gate
+/// is enforced by the action's `custom_validate_input` (which checks
+/// `is_recharge_available("breath_weapon")`), so we only need to verify
+/// that the actor has any action whose name contains "breath" and that
+/// the recharge resource is up. Spending the recharge happens inside
+/// `side_effects` when the action executes.
+fn try_breath_weapon(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+    let actor = encounter.actors.get(&actor_id)?;
+    // Quick gate: the actor must have at least one breath_weapon recharge
+    // entry that's currently available.
+    if !actor.is_recharge_available("breath_weapon") {
+        return None;
+    }
+    let my_team = actor.team();
+
+    // Collect Burst-schema actions whose name ends with "breath" — these
+    // are the breath weapon variants (fire breath, cold breath, etc.).
+    let breath_actions: Vec<(&'static (dyn Action + Send + Sync), isize)> = actor
+        .actions
+        .iter()
+        .filter_map(|a| {
+            if !a.is_harmful() {
+                return None;
+            }
+            if !a.name().contains("breath") {
+                return None;
+            }
+            match a.targeting_schema() {
+                TargetingSchema::Burst { radius } => Some((*a, radius)),
+                _ => None,
+            }
+        })
+        .collect();
+    if breath_actions.is_empty() {
+        return None;
+    }
+
+    // Candidate burst centers: every combat-active enemy's location.
+    let anchor_ids = encounter.sorted_actor_ids();
+    let mut candidate_points: Vec<(Coordinate, usize)> = Vec::new();
+    for aid in &anchor_ids {
+        let Some(a) = encounter.actors.get(aid) else {
+            continue;
+        };
+        if a.team() == my_team || !a.is_combat_active() {
+            continue;
+        }
+        candidate_points.push((a.location(), *aid));
+    }
+
+    let mut best: Option<(usize, usize, ActionExecutionInfo)> = None;
+    for (point, anchor_id) in &candidate_points {
+        let point = *point;
+        let anchor_id = *anchor_id;
+
+        for (action, radius) in &breath_actions {
+            let aei =
+                ActionExecutionInfo::new(*action, actor_id, None, Some(vec![point]), None);
+            if !aei.validate(encounter) {
+                continue;
+            }
+
+            let mut enemy_hits = 0usize;
+            let mut friendly_fire = false;
+            for (id, a) in encounter.actors.iter() {
+                if !a.is_combat_active() {
+                    continue;
+                }
+                let dist = footprint_chebyshev(
+                    a.location(),
+                    get_tiles_from_size(a.size()),
+                    point,
+                    1,
+                );
+                if dist > *radius {
+                    continue;
+                }
+                if *id == actor_id || a.team() == my_team {
+                    friendly_fire = true;
+                    break;
+                }
+                enemy_hits += 1;
+            }
+            if friendly_fire || enemy_hits < 2 {
+                continue;
+            }
+            let pick = match &best {
+                None => true,
+                Some((best_hits, best_anchor, _)) => {
+                    enemy_hits > *best_hits
+                        || (enemy_hits == *best_hits && anchor_id < *best_anchor)
+                }
+            };
+            if pick {
+                best = Some((enemy_hits, anchor_id, aei));
+            }
+        }
+    }
+    best.map(|(_, _, aei)| aei)
 }
 
 /// Bard Bardic Inspiration — bonus action giving an ally a +3 die for
