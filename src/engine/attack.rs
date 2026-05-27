@@ -24,6 +24,12 @@ pub struct AttackParams<'a> {
     /// attacks. Drives the prone-target advantage / disadvantage clause
     /// in `compute_attack_mode`.
     pub is_melee: bool,
+    /// 5e long-range threshold (in tiles). Ranged attacks beyond this
+    /// distance impose disadvantage. `None` means no long-range penalty
+    /// (melee weapons, spells). Set to the weapon's "normal range"
+    /// converted to tiles — attacks between `long_range` and `reach`
+    /// roll with disadvantage per RAW.
+    pub long_range: Option<isize>,
 }
 
 /// Resolve a 5e d20 attack roll against a single target's AC. On a hit,
@@ -78,7 +84,18 @@ pub fn resolve_attack_outcome(
     // sanctuary_save_blocks branch returns early on fail).
     encounter.break_sanctuary_on_hostile(p.caster_id);
 
-    let mode = encounter.compute_attack_mode(p.caster_id, p.target_id, p.is_melee);
+    let mut mode = encounter.compute_attack_mode(p.caster_id, p.target_id, p.is_melee);
+    // 5e long-range disadvantage: ranged weapon attacks beyond normal
+    // range but within max range impose disadvantage. The `long_range`
+    // threshold (in tiles) is set by the weapon definition — melee
+    // weapons and spells leave it `None`.
+    if let Some(nr) = p.long_range
+        && !p.is_melee
+        && let Some(dist) = encounter.footprint_distance(p.caster_id, p.target_id)
+        && dist > nr
+    {
+        mode = mode.combine(crate::engine::dice::RollMode::Disadvantage);
+    }
     // Burn through the one-shot rider stack (Helped, Hidden,
     // per-target help grant, Invisibility concentration) before the
     // d20 lands so a second swing this turn doesn't double-dip the

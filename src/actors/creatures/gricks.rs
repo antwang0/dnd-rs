@@ -1,0 +1,55 @@
+use crate::actions::default_actions::DEFAULT_ACTIONS;
+use crate::actions::monster_attacks::{GRICK_TENTACLES_WEAPON, GRICK_BEAK};
+use crate::actors::actor_template::CreatureTemplate;
+use crate::engine::types::{DamageModifier, DamageType, Size, SpecialSense};
+use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
+
+/// Grick — CR 2 monstrosity. Worm-like ambush predator that lurks in
+/// caverns. Tentacles deal 2d6+2 slashing, beak deals 1d6+2 piercing.
+/// Resistant to bludgeoning/piercing/slashing from nonmagical attacks
+/// (we model as resistance to all three physical types). AC 14, ~27 HP
+/// (6d8). Darkvision 60ft.
+pub static GRICK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&GRICK_TENTACLES_WEAPON);
+    actions.push(&*GRICK_BEAK);
+    CreatureTemplate {
+        name: "Grick",
+        glyph: 'ğ',
+        ac: 14,
+        hitpoints: "6d8".parse().unwrap(),
+        speed: 30.,
+        strength: 14,
+        intelligence: 3,
+        dexterity: 14,
+        wisdom: 14,
+        constitution: 11,
+        charisma: 5,
+        skills: HashSet::new(),
+        items: Vec::new(),
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
+        languages: HashSet::new(),
+        cr: 2.0,
+        size: Size::Medium,
+        actions,
+        spell_slots_by_level: Vec::new(),
+        rolls_death_saves: false,
+        damage_modifiers: HashMap::from([
+            (DamageType::Bludgeoning, DamageModifier::Resistance),
+            (DamageType::Piercing, DamageModifier::Resistance),
+            (DamageType::Slashing, DamageModifier::Resistance),
+        ]),
+        proficient_saves: HashSet::new(),
+        condition_immunities: HashSet::new(),
+        features: HashSet::new(),
+        regen_per_round: 0,
+        regen_suppressors: HashSet::new(),
+        legendary_resistances: 0,
+        has_evasion: false,
+        has_uncanny_dodge: false,
+        has_displacement: false,
+        has_danger_sense: false,
+        has_pack_tactics: false,
+    }
+});

@@ -34,6 +34,25 @@ pub fn simple_weapon_attack(
     damage_type: DamageType,
     is_melee: bool,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
+    simple_weapon_attack_ranged(
+        encounter, caster_id, target_ids, action_name, attack_ability,
+        damage_ability, damage_dice, damage_type, is_melee, None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn simple_weapon_attack_ranged(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    target_ids: Option<&Vec<usize>>,
+    action_name: &str,
+    attack_ability: AbilityScoreType,
+    damage_ability: Option<AbilityScoreType>,
+    damage_dice: Dice,
+    damage_type: DamageType,
+    is_melee: bool,
+    normal_range: Option<isize>,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
     let Some(target_id) = first_target_id(target_ids) else {
         return Vec::new();
     };
@@ -55,6 +74,7 @@ pub fn simple_weapon_attack(
             damage_bonus: damage_mod,
             damage_type,
             is_melee,
+            long_range: normal_range,
         },
     )
 }
@@ -80,6 +100,11 @@ pub struct SimpleWeapon {
     pub is_melee: bool,
     pub requires_los: bool,
     pub cost_resource: Resource,
+    /// 5e normal range (in tiles) for ranged weapons. Attacks beyond this
+    /// distance but within `reach` (max range) impose disadvantage. `None`
+    /// means no long-range penalty (melee weapons). Longbow: 12 tiles
+    /// (30ft normal), reach 20 tiles (50ft max). Shortbow: 8 tiles, reach 12.
+    pub normal_range: Option<isize>,
 }
 
 impl Action for SimpleWeapon {
@@ -119,7 +144,7 @@ impl Action for SimpleWeapon {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        simple_weapon_attack(
+        simple_weapon_attack_ranged(
             encounter,
             caster_id,
             target_ids,
@@ -129,6 +154,7 @@ impl Action for SimpleWeapon {
             self.damage_dice,
             self.damage_type,
             self.is_melee,
+            self.normal_range,
         )
     }
 }
@@ -147,6 +173,7 @@ pub static LONGBOW: SimpleWeapon = SimpleWeapon {
     is_melee: false,
     requires_los: true,
     cost_resource: Resource::Action,
+    normal_range: Some(12),
 };
 
 /// Generic STR-based 2d6 bludgeoning slam used by zombies. Stays as the
@@ -162,6 +189,7 @@ pub static SLAM: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Scimitar — generic STR-based 1d6 slashing melee attack. Used by
@@ -178,6 +206,7 @@ pub static SCIMITAR: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Shortbow — DEX-based 1d4 piercing ranged attack on a *bonus action*.
@@ -193,6 +222,7 @@ pub static SHORTBOW: SimpleWeapon = SimpleWeapon {
     is_melee: false,
     requires_los: true,
     cost_resource: Resource::BonusAction,
+    normal_range: Some(8),
 };
 
 /// Dagger — finesse 1d4 piercing melee weapon. STR-or-DEX choice;
@@ -208,6 +238,7 @@ pub static DAGGER: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Greatclub — Ogre's signature weapon. STR-based 1d10 bludgeoning with
@@ -223,6 +254,7 @@ pub static GREATCLUB: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Generic STR-based bite attack — 1d6+STR piercing, no rider. Use this
@@ -413,6 +445,7 @@ impl Action for AcidSpit {
                 damage_bonus: 0,
                 damage_type: DamageType::Acid,
                 is_melee: false,
+                long_range: None,
             },
         );
         if effects.is_empty() {
@@ -1206,6 +1239,7 @@ impl Action for LifeDrain {
                 damage_bonus: 3,
                 damage_type: DamageType::Necrotic,
                 is_melee: true,
+                long_range: None,
             },
         );
         if damage == 0 {
@@ -1281,6 +1315,7 @@ impl Action for VampiricBite {
                 damage_bonus: str_mod,
                 damage_type: DamageType::Piercing,
                 is_melee: true,
+                long_range: None,
             },
         );
         if piercing_damage == 0 {
@@ -1639,6 +1674,7 @@ pub static WEREWOLF_CLAWS: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Werewolf bite — 1d8+STR piercing. On a hit against a humanoid (we
@@ -1848,6 +1884,7 @@ pub static HARPY_TALONS: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Luring Song — harpy's AoE charm. Every creature within 12 tiles (30ft)
@@ -1944,6 +1981,7 @@ pub static LONGSWORD: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Greatsword — STR-based 2d6 slashing melee weapon. The paladin's
@@ -1961,6 +1999,7 @@ pub static GREATSWORD: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Lance — 1d12 piercing reach-2 melee weapon. Mounted-only RAW, but we
@@ -1977,6 +2016,7 @@ pub static LANCE: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Knight's double-longsword multiattack — two swings per Action,
@@ -2001,6 +2041,7 @@ pub static GARGOYLE_CLAWS: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Gargoyle multiattack — claws + bite, two swings per Action. Reuses
@@ -2066,6 +2107,7 @@ impl Action for WorgBite {
                 damage_bonus: str_mod,
                 damage_type: DamageType::Piercing,
                 is_melee: true,
+                long_range: None,
             },
         );
         if dealt == 0 {
@@ -2103,6 +2145,7 @@ pub static STIRGE_PROBOSCIS: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Cockatrice bite — DEX-flavored melee that deals 1d4 piercing on hit
@@ -2227,6 +2270,7 @@ impl Action for WightLifeDrain {
                 damage_bonus: damage_mod,
                 damage_type: DamageType::Necrotic,
                 is_melee: true,
+                long_range: None,
             },
         );
         if damage == 0 {
@@ -2388,6 +2432,7 @@ pub static CORRUPTING_TOUCH: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Hippogriff Beak — melee, STR-based, 1d10+3 piercing. The bigger
@@ -2404,6 +2449,7 @@ pub static HIPPOGRIFF_BEAK: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Hippogriff Talons — melee, STR-based, 2d6+3 slashing. Companion
@@ -2420,6 +2466,7 @@ pub static HIPPOGRIFF_TALONS: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Hippogriff multiattack — beak + talons in a single action (we
@@ -2446,6 +2493,7 @@ pub static DOPPELGANGER_SLAM: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Doppelganger multiattack — 2 slams per Action. Vanilla shape, but
@@ -2510,6 +2558,7 @@ impl Action for MummyRottingFist {
                 damage_bonus: damage_mod,
                 damage_type: DamageType::Bludgeoning,
                 is_melee: true,
+                long_range: None,
             },
         );
         if damage == 0 {
@@ -2621,6 +2670,7 @@ pub static BERSERKER_GREATAXE: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Reckless Attack — berserker class feature. Free no-cost self-flag:
@@ -2703,6 +2753,7 @@ pub static VETERAN_LONGSWORD: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Veteran multiattack — 2 longsword swings per Action. The veteran
@@ -2765,6 +2816,7 @@ impl Action for YetiClaws {
                 damage_bonus: damage_mod,
                 damage_type: DamageType::Slashing,
                 is_melee: true,
+                long_range: None,
             },
         );
         if damage == 0 {
@@ -3001,6 +3053,7 @@ pub static HILL_GIANT_GREATCLUB: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Hill Giant Boulder — STR-based 3d10 bludgeoning thrown rock with
@@ -3017,6 +3070,7 @@ pub static HILL_GIANT_BOULDER: SimpleWeapon = SimpleWeapon {
     is_melee: false,
     requires_los: true,
     cost_resource: Resource::Action,
+    normal_range: Some(16),
 };
 
 /// Treant Slam — STR-based 3d6 bludgeoning, reach 2 (10 ft). The treant
@@ -3034,6 +3088,7 @@ pub static TREANT_SLAM: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Treant Multiattack — Action: two Treant Slam swings against the same
@@ -3340,6 +3395,7 @@ impl Action for DragonBite {
                 damage_bonus: str_mod,
                 damage_type: DamageType::Piercing,
                 is_melee: true,
+                long_range: None,
             },
         );
         if damage == 0 {
@@ -3374,6 +3430,7 @@ pub static DRAGON_CLAW: SimpleWeapon = SimpleWeapon {
     reach: 2,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Lich Paralyzing Touch — touch attack with a paralysis rider. d20 +
@@ -3428,6 +3485,7 @@ impl Action for LichParalyzingTouch {
                 damage_bonus: 0,
                 damage_type: DamageType::Cold,
                 is_melee: true,
+                long_range: None,
             },
         );
         if damage == 0 {
@@ -3603,6 +3661,7 @@ pub static FROST_GIANT_GREATAXE: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Frost Giant Rock — STR-based 4d10 bludgeoning thrown rock at reach
@@ -3620,6 +3679,7 @@ pub static FROST_GIANT_ROCK: SimpleWeapon = SimpleWeapon {
     is_melee: false,
     requires_los: true,
     cost_resource: Resource::Action,
+    normal_range: Some(16),
 };
 
 /// Vampire Charming Gaze — Action. Target within 30ft makes a WIS save
@@ -3757,6 +3817,7 @@ impl Action for CouatlBite {
                 damage_bonus: str_mod,
                 damage_type: DamageType::Piercing,
                 is_melee: true,
+                long_range: None,
             },
         );
         // 5e RAW: poison rider applies on hit only — bail if the bite missed.
@@ -3862,6 +3923,7 @@ pub static PIT_FIEND_BITE: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Pit Fiend's Devil Claw — STR-based 2d8+8 slashing. The companion
@@ -3879,6 +3941,7 @@ pub static PIT_FIEND_CLAW: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Pit Fiend Multiattack — Action: 1 bite + 2 devil-claw swings,
@@ -3969,6 +4032,7 @@ pub static MONK_UNARMED_STRIKE: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Tarrasque Bite — STR-based 4d12+10 piercing, 10ft reach. The
@@ -3987,6 +4051,7 @@ pub static TARRASQUE_BITE: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Tarrasque Claw — STR-based 3d8 slashing. Companion melee that fills
@@ -4004,6 +4069,7 @@ pub static TARRASQUE_CLAW: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Tarrasque Tail Sweep — STR-based 3d8 bludgeoning + Prone-on-hit. The
@@ -4059,6 +4125,7 @@ impl Action for TarrasqueTail {
                 damage_bonus: str_mod,
                 damage_type: DamageType::Bludgeoning,
                 is_melee: true,
+                long_range: None,
             },
         );
         if dmg > 0 {
@@ -4104,6 +4171,7 @@ pub static ABOLETH_TENTACLE: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Aboleth Multiattack — 3 tentacle swings per Action. Single same-sub
@@ -4173,6 +4241,7 @@ impl Action for SolarLongsword {
                 damage_bonus: damage_mod,
                 damage_type: DamageType::Slashing,
                 is_melee: true,
+                long_range: None,
             },
         );
         // Only fire the radiant rider on a successful hit. We detect
@@ -4335,6 +4404,7 @@ impl Action for MindFlayerTentacles {
                 damage_bonus: str_mod,
                 damage_type: DamageType::Psychic,
                 is_melee: true,
+                long_range: None,
             },
         );
         if effects.is_empty() {
@@ -4409,6 +4479,7 @@ impl Action for ErinyesLongsword {
                 damage_bonus: str_mod,
                 damage_type: DamageType::Slashing,
                 is_melee: true,
+                long_range: None,
             },
         );
         if !effects.is_empty() {
@@ -4574,6 +4645,7 @@ pub static WYVERN_BITE: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Wyvern Stinger — 2d6+STR piercing melee with a brutal poison rider:
@@ -4661,6 +4733,7 @@ pub static STORM_GIANT_GREATSWORD: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Storm Giant Thrown Rock — STR-based 4d12 + STR bludgeoning ranged
@@ -4677,6 +4750,7 @@ pub static STORM_GIANT_ROCK: SimpleWeapon = SimpleWeapon {
     is_melee: false,
     requires_los: true,
     cost_resource: Resource::Action,
+    normal_range: Some(24),
 };
 
 /// Storm Giant Lightning Strike — bonus-action signature ability. Hurls
@@ -4765,6 +4839,7 @@ pub static HYDRA_BITE: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Hydra Multiattack — 5 simultaneous bites (one per head). The number
@@ -4790,6 +4865,7 @@ pub static STONE_GIANT_GREATCLUB: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Stone Giant Boulder — STR-based 4d10+STR bludgeoning ranged, reach 24.
@@ -4806,6 +4882,7 @@ pub static STONE_GIANT_BOULDER: SimpleWeapon = SimpleWeapon {
     is_melee: false,
     requires_los: true,
     cost_resource: Resource::Action,
+    normal_range: Some(16),
 };
 
 /// Stone Giant Multiattack — 2 greatclub swings per Action. Mirrors the
@@ -5126,6 +5203,7 @@ impl Action for DeathKnightLongsword {
                 damage_bonus: str_mod,
                 damage_type: DamageType::Slashing,
                 is_melee: true,
+                long_range: None,
             },
         );
         if slash_dmg == 0 {
@@ -5349,6 +5427,7 @@ pub static STONE_GOLEM_SLAM: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Stone Golem Multiattack — 2 slams per Action. The golem's only
@@ -5432,6 +5511,7 @@ pub static BULLETTE_BITE: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Bullette Deadly Leap — Action; the bullette jumps onto a target,
@@ -5610,6 +5690,7 @@ pub static BONE_DEVIL_CLAWS: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Bone Devil Multiattack — 2 claws + 1 sting per Action via the
@@ -5637,6 +5718,7 @@ pub static AIR_ELEMENTAL_SLAM: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Air Elemental Multiattack — 2 slams per Action via the standard
@@ -5661,6 +5743,7 @@ pub static EARTH_ELEMENTAL_SLAM: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Earth Elemental Multiattack — 2 slams per Action. Mirrors the air
@@ -5893,6 +5976,7 @@ pub static GLABREZU_PINCER: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Glabrezu Fist — STR-based 2d4 + STR bludgeoning melee, reach 1. The
@@ -5909,6 +5993,7 @@ pub static GLABREZU_FIST: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Glabrezu Multiattack — 2 pincers + 2 fists per Action via the
@@ -5935,6 +6020,7 @@ pub static MARILITH_LONGSWORD: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Marilith Tail — STR-based 2d10 + STR bludgeoning melee, reach 2 (the
@@ -5954,6 +6040,7 @@ pub static MARILITH_TAIL: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Marilith Multiattack — 6 longswords + 1 tail per Action via the
@@ -5980,6 +6067,7 @@ pub static VROCK_TALONS: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Vrock Beak — STR-based 2d6 + STR piercing melee, reach 1. The vrock's
@@ -5997,6 +6085,7 @@ pub static VROCK_BEAK: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Vrock Multiattack — 2 talons + 1 beak per Action via `CompoundAttack`.
@@ -6101,6 +6190,7 @@ pub static SHAMBLING_MOUND_SLAM: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Shambling Mound multiattack — 2 slams per Action via the standard
@@ -6200,6 +6290,7 @@ pub static TENTACLE: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Displacer Beast multiattack — two tentacle strikes per Action.
@@ -6222,6 +6313,7 @@ pub static UMBER_CLAW: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
 
 /// Cloaker tail — STR-based 1d8 slashing melee attack with 10ft reach
@@ -6237,4 +6329,522 @@ pub static CLOAKER_TAIL: SimpleWeapon = SimpleWeapon {
     is_melee: true,
     requires_los: false,
     cost_resource: Resource::Action,
+    normal_range: None,
 };
+
+// ─── Basilisk ────────────────────────────────────────────────────────
+
+/// Basilisk bite — STR-based 2d6+3 piercing melee, plus a CON save
+/// (DC 12) for Petrified (1 round) on hit. Same "hit, then save-or-suck"
+/// shape as the cockatrice bite but beefier damage and a harder save.
+pub struct BasiliskBite {}
+
+impl Action for BasiliskBite {
+    fn name(&self) -> &str {
+        "bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["basilisk-bite"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "bite",
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(2, 6),
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 12);
+        if !save.passed() {
+            encounter.log("  petrifying gaze: target turns to stone!");
+            effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Petrified,
+                timer: ConditionTimer::Rounds(1),
+            }));
+        }
+        effects
+    }
+}
+
+pub static BASILISK_BITE: LazyLock<BasiliskBite> = LazyLock::new(|| BasiliskBite {});
+
+// ─── Chuul ───────────────────────────────────────────────────────────
+
+/// Chuul pincer — STR-based 2d6+4 bludgeoning melee, grapples on hit.
+pub static CHUUL_PINCER_WEAPON: SimpleWeapon = SimpleWeapon {
+    display_name: "pincer",
+    aliases: &["claw", "pincer"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Chuul pincer with grapple rider.
+pub struct ChuulPincer {}
+
+impl Action for ChuulPincer {
+    fn name(&self) -> &str {
+        "pincer"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["claw"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "pincer",
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(2, 6),
+            DamageType::Bludgeoning,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        let already = encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| a.has_condition(Condition::Grappled));
+        if !already {
+            encounter.log("  the chuul grapples with its pincer!");
+            effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Grappled,
+                timer: ConditionTimer::Rounds(10),
+            }));
+        }
+        effects
+    }
+}
+
+pub static CHUUL_PINCER: LazyLock<ChuulPincer> = LazyLock::new(|| ChuulPincer {});
+
+/// Chuul tentacles — paralyzing tentacle attack. Deals 1d6+4 poison
+/// and forces a CON save (DC 13) or Paralyzed (1 round). In 5e, this
+/// only targets grappled creatures, but we allow it on any adjacent
+/// target for simplicity.
+pub struct ChuulTentacles {}
+
+impl Action for ChuulTentacles {
+    fn name(&self) -> &str {
+        "tentacles"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["paralyze"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Poison]
+    }
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 13);
+        let dmg = encounter.roll(&Dice::new(1, 6));
+        let caster_str = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.ability_modifier(AbilityScoreType::Strength))
+            .unwrap_or(0);
+        let total_dmg = (dmg as i32 + caster_str).max(0) as u32;
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: total_dmg,
+            damage_type: DamageType::Poison,
+        })];
+        if !save.passed() {
+            encounter.log("  tentacles paralyze the target!");
+            effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Paralyzed,
+                timer: ConditionTimer::Rounds(1),
+            }));
+        }
+        effects
+    }
+}
+
+pub static CHUUL_TENTACLES: LazyLock<ChuulTentacles> = LazyLock::new(|| ChuulTentacles {});
+
+// ─── Ankheg ──────────────────────────────────────────────────────────
+
+/// Ankheg bite — STR-based 2d6+3 slashing + 1d6 acid.
+pub struct AnkhegBite {}
+
+impl Action for AnkhegBite {
+    fn name(&self) -> &str {
+        "bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ankheg-bite"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Slashing, DamageType::Acid]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "bite",
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(2, 6),
+            DamageType::Slashing,
+            true,
+        );
+        if !effects.is_empty() {
+            let acid = encounter.roll(&Dice::new(1, 6));
+            encounter.log(format!("  acid splash: 1d6({}) acid", acid));
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: acid,
+                damage_type: DamageType::Acid,
+            }));
+        }
+        effects
+    }
+}
+
+pub static ANKHEG_BITE: LazyLock<AnkhegBite> = LazyLock::new(|| AnkhegBite {});
+
+/// Ankheg acid spray — 3d6 acid in a 30ft line (6 tiles), DEX save DC 13
+/// for half. Recharge-limited (we model as once per encounter via a
+/// bonus action cost so the AI doesn't spam it).
+pub struct AnkhegAcidSpray {}
+
+impl Action for AnkhegAcidSpray {
+    fn name(&self) -> &str {
+        "acid spit"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["spray", "acid-spray"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(6)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Acid]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let dmg = encounter.roll(&Dice::new(3, 6));
+        let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, 13);
+        let actual = if save.passed() { dmg / 2 } else { dmg };
+        encounter.log(format!("  acid spray: 3d6({}) acid", dmg));
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: actual,
+            damage_type: DamageType::Acid,
+        })]
+    }
+}
+
+pub static ANKHEG_ACID_SPRAY: LazyLock<AnkhegAcidSpray> = LazyLock::new(|| AnkhegAcidSpray {});
+
+// ─── Giant Scorpion ──────────────────────────────────────────────────
+
+/// Giant Scorpion claw — STR-based 1d8+2 bludgeoning, grapple on hit.
+pub struct GiantScorpionClaw {}
+
+impl Action for GiantScorpionClaw {
+    fn name(&self) -> &str {
+        "claw"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["scorpion-claw"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "claw",
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(1, 8),
+            DamageType::Bludgeoning,
+            true,
+        );
+        if !effects.is_empty() {
+            let already = encounter
+                .actors
+                .get(&target_id)
+                .is_some_and(|a| a.has_condition(Condition::Grappled));
+            if !already {
+                encounter.log("  the scorpion grapples with its claw!");
+                effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
+                    actor_id: target_id,
+                    condition: Condition::Grappled,
+                    timer: ConditionTimer::Rounds(10),
+                }));
+            }
+        }
+        effects
+    }
+}
+
+pub static GIANT_SCORPION_CLAW: LazyLock<GiantScorpionClaw> =
+    LazyLock::new(|| GiantScorpionClaw {});
+
+/// Giant Scorpion sting — STR-based 1d10+2 piercing + 4d10 poison
+/// (CON save DC 12 for half).
+pub struct GiantScorpionSting {}
+
+impl Action for GiantScorpionSting {
+    fn name(&self) -> &str {
+        "sting"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["scorpion-sting"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Poison]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "sting",
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(1, 10),
+            DamageType::Piercing,
+            true,
+        );
+        if !effects.is_empty() {
+            let poison_dmg = encounter.roll(&Dice::new(4, 10));
+            let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 12);
+            let actual = if save.passed() {
+                poison_dmg / 2
+            } else {
+                poison_dmg
+            };
+            encounter.log(format!("  venom: 4d10({}) poison", poison_dmg));
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: actual,
+                damage_type: DamageType::Poison,
+            }));
+        }
+        effects
+    }
+}
+
+pub static GIANT_SCORPION_STING: LazyLock<GiantScorpionSting> =
+    LazyLock::new(|| GiantScorpionSting {});
+
+// ─── Grick ───────────────────────────────────────────────────────────
+
+/// Grick tentacles — DEX-based 2d6+2 slashing melee.
+pub static GRICK_TENTACLES_WEAPON: SimpleWeapon = SimpleWeapon {
+    display_name: "tentacles",
+    aliases: &["grick-tent"],
+    attack_ability: AbilityScoreType::Dexterity,
+    damage_ability: Some(AbilityScoreType::Dexterity),
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Grick beak — DEX-based 1d6+2 piercing melee (bonus action).
+pub struct GrickBeak {}
+
+impl Action for GrickBeak {
+    fn name(&self) -> &str {
+        "beak"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["grick-beak"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "beak",
+            AbilityScoreType::Dexterity,
+            Some(AbilityScoreType::Dexterity),
+            Dice::new(1, 6),
+            DamageType::Piercing,
+            true,
+        )
+    }
+}
+
+pub static GRICK_BEAK: LazyLock<GrickBeak> = LazyLock::new(|| GrickBeak {});

@@ -723,10 +723,12 @@ impl Action for SacredBurst {
             _ => return Vec::new(),
         };
 
-        let raw = encounter.roll(&Dice::new(2, 6));
+        let n = crate::engine::util::cantrip_dice_count(caster.level());
+        let die = Dice::new(n + 1, 6);
+        let raw = encounter.roll(&die);
         encounter.log(format!(
-            "  sacred burst: 2d6({}) = {} radiant area",
-            raw, raw
+            "  sacred burst: {}({}) = {} radiant area",
+            die, raw, raw
         ));
         crate::actions::action_template::resolve_burst_save_damage(
             encounter,
@@ -964,6 +966,7 @@ impl Action for FireBolt {
                 damage_bonus: 0,
                 damage_type: DamageType::Fire,
                 is_melee: false,
+                long_range: None,
             },
         )
     }
@@ -1846,6 +1849,7 @@ impl Action for RayOfFrost {
                 damage_bonus: 0,
                 damage_type: DamageType::Cold,
                 is_melee: false,
+                long_range: None,
             },
         )
     }
@@ -3027,12 +3031,14 @@ impl Action for ViciousMockery {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
+        let n = crate::engine::util::cantrip_dice_count(caster.level());
         let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
         if save.passed() {
             return Vec::new();
         }
-        let raw = encounter.roll(&Dice::new(1, 4));
-        encounter.log(format!("  vicious mockery: 1d4({}) = {} psychic", raw, raw));
+        let die = Dice::new(n, 4);
+        let raw = encounter.roll(&die);
+        encounter.log(format!("  vicious mockery: {}({}) = {} psychic", die, raw, raw));
         vec![
             Box::new(DealDamage {
                 actor_id: target_id,
@@ -6888,11 +6894,13 @@ impl Action for WordOfRadiance {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let n = crate::engine::util::cantrip_dice_count(caster.level());
         let center = caster.location();
-        let damage = encounter.roll(&Dice::new(1, 6));
+        let die = Dice::new(n, 6);
+        let damage = encounter.roll(&die);
         encounter.log(format!(
-            "  word of radiance: 1d6({}) = {} radiant (each)",
-            damage, damage
+            "  word of radiance: {}({}) = {} radiant (each)",
+            die, damage, damage
         ));
         crate::actions::action_template::resolve_burst_save_damage(
             encounter,
@@ -19620,13 +19628,14 @@ impl Action for ProduceFlame {
             return Vec::new();
         };
         let attack_mod = caster.spell_attack_modifier(AbilityScoreType::Wisdom);
+        let n = crate::engine::util::cantrip_dice_count(caster.level());
         spell_attack(
             encounter,
             caster_id,
             target_id,
             "produce flame",
             attack_mod,
-            Dice::new(1, 8),
+            Dice::new(n, 8),
             DamageType::Fire,
             false,
         )
@@ -19686,8 +19695,10 @@ impl Action for CreateBonfire {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-        let raw = encounter.roll(&Dice::new(1, 8));
-        encounter.log(format!("  create bonfire: 1d8({}) fire", raw));
+        let n = crate::engine::util::cantrip_dice_count(caster.level());
+        let die = Dice::new(n, 8);
+        let raw = encounter.roll(&die);
+        encounter.log(format!("  create bonfire: {}({}) fire", die, raw));
         let mut effs = crate::actions::action_template::resolve_burst_save_damage(
             encounter,
             caster_id,
@@ -19823,12 +19834,14 @@ impl Action for Infestation {
             return Vec::new();
         };
         let dc = caster.best_spell_save_dc([AbilityScoreType::Wisdom, AbilityScoreType::Intelligence]);
+        let n = crate::engine::util::cantrip_dice_count(caster.level());
         let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
         if save.passed() {
             return Vec::new();
         }
-        let dmg = encounter.roll(&Dice::new(1, 6));
-        encounter.log(format!("  infestation: 1d6({}) poison", dmg));
+        let die = Dice::new(n, 6);
+        let dmg = encounter.roll(&die);
+        encounter.log(format!("  infestation: {}({}) poison", die, dmg));
         vec![Box::new(DealDamage {
             actor_id: target_id,
             amount: dmg,

@@ -1,10 +1,13 @@
+use crate::actors::creatures::ankhegs::ANKHEG_TEMPLATE;
 use crate::actors::creatures::animated_armors::ANIMATED_ARMOR_TEMPLATE;
 use crate::actors::creatures::bandit_captains::BANDIT_CAPTAIN_TEMPLATE;
 use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
 use crate::actors::creatures::banshees::BANSHEE_TEMPLATE;
+use crate::actors::creatures::basilisks::BASILISK_TEMPLATE;
 use crate::actors::creatures::berserkers::BERSERKER_TEMPLATE;
 use crate::actors::creatures::bugbears::BUGBEAR_TEMPLATE;
 use crate::actors::creatures::chimeras::CHIMERA_TEMPLATE;
+use crate::actors::creatures::chuuls::CHUUL_TEMPLATE;
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
 use crate::actors::creatures::cloakers::CLOAKER_TEMPLATE;
 use crate::actors::creatures::cockatrices::COCKATRICE_TEMPLATE;
@@ -18,7 +21,9 @@ use crate::actors::creatures::gargoyles::GARGOYLE_TEMPLATE;
 use crate::actors::creatures::gelatinous_cubes::GELATINOUS_CUBE_TEMPLATE;
 use crate::actors::creatures::ghouls::GHOUL_TEMPLATE;
 use crate::actors::creatures::ghosts::GHOST_TEMPLATE;
+use crate::actors::creatures::giant_scorpions::GIANT_SCORPION_TEMPLATE;
 use crate::actors::creatures::gnolls::GNOLL_TEMPLATE;
+use crate::actors::creatures::gricks::GRICK_TEMPLATE;
 use crate::actors::creatures::goblin_bosses::GOBLIN_BOSS_TEMPLATE;
 use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 use crate::actors::creatures::harpies::HARPY_TEMPLATE;
@@ -84,6 +89,39 @@ use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 use fastrand::Rng;
 use std::cmp::Ordering;
 use crate::engine::dice::{Dice, FastRandRoller, RollMode, Roller};
+
+/// Single entry in the round-end repeated-save table. 5e spells like
+/// Hold Person / Hold Monster allow the target to repeat the saving throw
+/// at the end of each of their turns, ending the condition on a success.
+/// The engine iterates `ROUND_END_SAVES` once per actor at round-end;
+/// for each entry whose `condition` is set on that actor, a save is
+/// rolled vs the original caster's spell save DC. On a pass, the
+/// condition is removed and the caster's concentration (if anchored to
+/// the same condition) is dropped.
+struct RoundEndSave {
+    condition: Condition,
+    save_ability: crate::engine::types::AbilityScoreType,
+    log_verb: &'static str,
+}
+
+const ROUND_END_SAVES: &[RoundEndSave] = &[
+    // 5e Hold Person / Hold Monster — WIS save at end of each turn.
+    // The spells apply Stunned (we model Hold as Stunned + concentration);
+    // on a successful save the target breaks free.
+    RoundEndSave {
+        condition: Condition::Stunned,
+        save_ability: crate::engine::types::AbilityScoreType::Wisdom,
+        log_verb: "strains against the hold:",
+    },
+    // 5e Tasha's Hideous Laughter — WIS save at end of each turn.
+    // Modeled as Incapacitated + Prone; the WIS save lets the target
+    // break free early.
+    RoundEndSave {
+        condition: Condition::Incapacitated,
+        save_ability: crate::engine::types::AbilityScoreType::Wisdom,
+        log_verb: "tries to stop laughing:",
+    },
+];
 
 /// Single entry in the round-end damage-over-time table. The engine
 /// iterates `ROUND_END_DOTS` once per actor at round-end and rolls each
@@ -1726,13 +1764,16 @@ impl EncounterInstance {
 
     fn template_pool() -> Vec<&'static CreatureTemplate> {
         vec![
+            &ANKHEG_TEMPLATE,
             &ANIMATED_ARMOR_TEMPLATE,
             &BANDIT_TEMPLATE,
             &BANDIT_CAPTAIN_TEMPLATE,
             &BANSHEE_TEMPLATE,
+            &BASILISK_TEMPLATE,
             &BERSERKER_TEMPLATE,
             &BUGBEAR_TEMPLATE,
             &CHIMERA_TEMPLATE,
+            &CHUUL_TEMPLATE,
             &CLERIC_TEMPLATE,
             &CLOAKER_TEMPLATE,
             &COCKATRICE_TEMPLATE,
@@ -1746,7 +1787,9 @@ impl EncounterInstance {
             &GELATINOUS_CUBE_TEMPLATE,
             &GHOST_TEMPLATE,
             &GHOUL_TEMPLATE,
+            &GIANT_SCORPION_TEMPLATE,
             &GNOLL_TEMPLATE,
+            &GRICK_TEMPLATE,
             &GOBLIN_TEMPLATE,
             &GOBLIN_BOSS_TEMPLATE,
             &HARPY_TEMPLATE,
@@ -2311,6 +2354,76 @@ impl EncounterInstance {
         }
     }
 
+    /// 5e repeated saves: at the end of each turn, targets of certain
+    /// hold / control spells get to repeat the saving throw. On a pass
+    /// the condition is removed and the caster's concentration (if
+    /// anchored to the same condition) is dropped. Only fires when the
+    /// condition came from a concentration spell — permanent or timer-only
+    /// applications (e.g. monster innate stun) don't grant repeated saves.
+    fn apply_round_end_saves(&mut self, actor_id: usize) {
+        for entry in ROUND_END_SAVES {
+            let has = self
+                .actors
+                .get(&actor_id)
+                .is_some_and(|a| a.has_condition(entry.condition) && a.is_combat_active());
+            if !has {
+                continue;
+            }
+            // Find the caster whose concentration anchors this condition on
+            // the target. If no caster holds concentration keyed to this
+            // condition on this actor, it's a non-spell source (monster
+            // ability, permanent) — skip the repeated save.
+            let caster_id = self.find_concentration_owner(actor_id, entry.condition);
+            let Some(cid) = caster_id else {
+                continue;
+            };
+            let dc = self
+                .actors
+                .get(&cid)
+                .map(|a| a.best_spell_save_dc([
+                    crate::engine::types::AbilityScoreType::Wisdom,
+                    crate::engine::types::AbilityScoreType::Charisma,
+                    crate::engine::types::AbilityScoreType::Intelligence,
+                ]))
+                .unwrap_or(13);
+            let name = self
+                .actors
+                .get(&actor_id)
+                .map(|a| a.name().to_string())
+                .unwrap_or_default();
+            self.log(format!("  {} {}", name, entry.log_verb));
+            let save = self.roll_save(actor_id, entry.save_ability, dc);
+            if save.passed() {
+                if let Some(actor) = self.actors.get_mut(&actor_id) {
+                    actor.remove_condition(entry.condition);
+                }
+                self.log(format!("  {} breaks free!", name));
+                self.drop_concentration(cid);
+            }
+        }
+    }
+
+    /// Find the actor who is concentrating on a spell that installed
+    /// `condition` on `target_id`. Returns `None` if no such caster
+    /// exists (the condition came from a non-concentration source).
+    fn find_concentration_owner(
+        &self,
+        target_id: usize,
+        condition: Condition,
+    ) -> Option<usize> {
+        for (&aid, actor) in &self.actors {
+            if let Some(conc) = actor.concentration()
+                && conc
+                    .conditions
+                    .iter()
+                    .any(|&(tid, c)| tid == target_id && c == condition)
+            {
+                return Some(aid);
+            }
+        }
+        None
+    }
+
     /// 5e Spirit Guardians aura: if `actor_id` has the `SpiritGuarding`
     /// condition, every hostile creature within 6 tiles takes 3d8 radiant
     /// damage (WIS save for half). Called at round-end for each actor.
@@ -2382,6 +2495,12 @@ impl EncounterInstance {
             // 3d8 radiant (WIS save for half). We iterate the aura here
             // so it fires once per round alongside the other DoTs.
             self.apply_spirit_guardians_aura(id);
+            // 5e repeated saves: Hold Person / Hold Monster / Hideous
+            // Laughter grant the target a save at the end of each turn.
+            // On a pass, the hold breaks and the caster's concentration
+            // drops. Runs after DoTs so the damage for this round has
+            // already landed; matches RAW timing.
+            self.apply_round_end_saves(id);
             // Regeneration: heal `regen_per_round` HP at end-of-round if
             // the actor is combat-active and hasn't been hit by a
             // suppressor damage type this round (5e troll: fire/acid).
@@ -5696,9 +5815,9 @@ mod tests {
             .cloned()
             .collect();
 
-        let low = EncounterInstance::with_pcs(&tp, &ap, Some(99), pcs.clone()).unwrap();
+        let low = EncounterInstance::with_pcs(&tp, &ap, Some(42), pcs.clone()).unwrap();
         ap.cr_target = 4.0;
-        let high = EncounterInstance::with_pcs(&tp, &ap, Some(99), pcs).unwrap();
+        let high = EncounterInstance::with_pcs(&tp, &ap, Some(42), pcs).unwrap();
 
         // Use total enemy max-HP as a proxy for "how much enemy" got
         // generated — exposing CR per actor isn't worth the surface area.
@@ -24142,6 +24261,7 @@ mod tests {
                     damage_bonus: 3,
                     damage_type: DamageType::Slashing,
                     is_melee: true,
+                long_range: None,
                 },
             );
             if !effects.is_empty() {
@@ -24808,5 +24928,135 @@ mod tests {
             e.actors[&cleric].is_concentrating(),
             "cleric should be concentrating"
         );
+    }
+
+    #[test]
+    fn repeated_save_breaks_hold_person() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+
+        // Manually apply Hold Person: Stunned + concentration link.
+        {
+            let actor = e.actors.get_mut(&target).unwrap();
+            actor.add_condition(Condition::Stunned, ConditionTimer::Rounds(10));
+        }
+        {
+            let caster = e.actors.get_mut(&cleric).unwrap();
+            caster.start_concentration(
+                crate::actors::actor_template::ConcentrationData::with_conditions(
+                    "Hold Person",
+                    vec![(target, Condition::Stunned)],
+                ),
+            );
+        }
+
+        // Run several round-ends; with enough attempts the fighter should
+        // eventually pass the WIS save and break free.
+        let mut broke_free = false;
+        for _ in 0..20 {
+            e.apply_round_end_saves(target);
+            if !e.actors[&target].has_condition(Condition::Stunned) {
+                broke_free = true;
+                break;
+            }
+        }
+        // The fighter has decent WIS; across 20 attempts at least one
+        // should pass. The caster's concentration should also drop.
+        assert!(
+            broke_free,
+            "fighter should break free of hold person via repeated saves"
+        );
+        assert!(
+            !e.actors[&cleric].is_concentrating(),
+            "cleric's concentration should drop when target breaks free"
+        );
+    }
+
+    #[test]
+    fn repeated_save_skips_non_concentration_stun() {
+        use crate::conditions::ConditionTimer;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        {
+            let actor = e.actors.get_mut(&target).unwrap();
+            actor.add_condition(Condition::Stunned, ConditionTimer::Permanent);
+        }
+        // No caster is concentrating on this condition, so the repeated
+        // save should be skipped entirely.
+        for _ in 0..10 {
+            e.apply_round_end_saves(target);
+        }
+        assert!(
+            e.actors[&target].has_condition(Condition::Stunned),
+            "non-concentration stun should NOT get a repeated save"
+        );
+    }
+
+    #[test]
+    fn basilisk_template_has_petrifying_bite() {
+        use crate::actors::creatures::basilisks::BASILISK_TEMPLATE;
+        assert!(
+            BASILISK_TEMPLATE.actions.iter().any(|a| a.name() == "bite"),
+            "basilisk should have a bite action"
+        );
+        assert_eq!(BASILISK_TEMPLATE.cr, 3.0);
+        assert_eq!(BASILISK_TEMPLATE.ac, 15);
+    }
+
+    #[test]
+    fn chuul_template_is_poison_immune() {
+        use crate::actors::creatures::chuuls::CHUUL_TEMPLATE;
+        assert!(CHUUL_TEMPLATE.damage_modifiers.contains_key(&DamageType::Poison));
+        assert!(CHUUL_TEMPLATE.condition_immunities.contains(&Condition::Poisoned));
+        assert_eq!(CHUUL_TEMPLATE.cr, 4.0);
+    }
+
+    #[test]
+    fn ankheg_template_has_bite_and_spray() {
+        use crate::actors::creatures::ankhegs::ANKHEG_TEMPLATE;
+        let names: Vec<&str> = ANKHEG_TEMPLATE.actions.iter().map(|a| a.name()).collect();
+        assert!(names.contains(&"bite"), "ankheg should have bite");
+        assert!(names.contains(&"acid spit"), "ankheg should have acid spit");
+        assert_eq!(ANKHEG_TEMPLATE.cr, 2.0);
+    }
+
+    #[test]
+    fn giant_scorpion_has_claw_and_sting() {
+        use crate::actors::creatures::giant_scorpions::GIANT_SCORPION_TEMPLATE;
+        let names: Vec<&str> = GIANT_SCORPION_TEMPLATE
+            .actions
+            .iter()
+            .map(|a| a.name())
+            .collect();
+        assert!(names.contains(&"claw"), "scorpion should have claw");
+        assert!(names.contains(&"sting"), "scorpion should have sting");
+        assert_eq!(GIANT_SCORPION_TEMPLATE.cr, 3.0);
+    }
+
+    #[test]
+    fn grick_resists_physical_damage() {
+        use crate::actors::creatures::gricks::GRICK_TEMPLATE;
+        assert!(GRICK_TEMPLATE
+            .damage_modifiers
+            .contains_key(&DamageType::Bludgeoning));
+        assert!(GRICK_TEMPLATE
+            .damage_modifiers
+            .contains_key(&DamageType::Piercing));
+        assert!(GRICK_TEMPLATE
+            .damage_modifiers
+            .contains_key(&DamageType::Slashing));
+        assert_eq!(GRICK_TEMPLATE.cr, 2.0);
     }
 }

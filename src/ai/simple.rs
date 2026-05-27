@@ -2557,15 +2557,14 @@ mod tests {
         let cleric = e
             .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
             .unwrap();
-        // Two enemies: a low-HP goblin (would be focus-fire pick) and a
-        // high-HP goblin (Hold Person target). Hold should beat single-
-        // target attack in priority since it's a bigger lockdown.
-        // Goblins are non-undead so Turn Undead doesn't pre-empt.
+        // Place enemies outside Spirit Guardians 6-tile aura range so the
+        // AI falls through to Hold Person. At distance 8+, Spirit Guardians
+        // won't fire, letting the disabler priority shine.
         let _e1 = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(14, 5), 1, 0)
             .unwrap();
         let _e2 = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(11, 5), 1, 1)
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(15, 5), 1, 1)
             .unwrap();
 
         let ai = SimpleAi;
