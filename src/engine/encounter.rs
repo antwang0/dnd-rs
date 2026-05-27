@@ -24942,4 +24942,163 @@ mod tests {
             "non-existent recharge should be unavailable"
         );
     }
+
+    /// Fireball at level 5 should roll 10d6 instead of the base 8d6.
+    /// We verify by checking that the cost consumes a level-5 slot and
+    /// that side_effects runs without panic (the damage scaling is
+    /// computed inside `side_effects` from the override).
+    #[test]
+    fn fireball_upcast_level_5_costs_level_5_slot() {
+        use crate::actions::spells::FIREBALL;
+        use crate::engine::action_overrides::ActionOverride;
+        use crate::engine::side_effects::Resource;
+        use std::collections::HashSet;
+
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let wiz = e
+            .instantiate_creature(
+                &crate::actors::creatures::wizards::WIZARD_TEMPLATE,
+                Coordinate::new(3, 3),
+                0,
+                0,
+            )
+            .unwrap();
+        let _goblin = e
+            .instantiate_creature(
+                &crate::actors::creatures::goblins::GOBLIN_TEMPLATE,
+                Coordinate::new(15, 15),
+                1,
+                1,
+            )
+            .unwrap();
+        let overrides = HashSet::from([ActionOverride::CastLevel(5)]);
+        // Cost should require a level-5 slot.
+        let costs = FIREBALL.cost(&e, wiz, None, Some(&vec![Coordinate::new(15, 15)]), Some(&overrides));
+        assert!(
+            costs.contains(&Resource::SpellSlot(5)),
+            "upcast fireball should consume a level-5 slot, got {:?}",
+            costs
+        );
+        assert!(
+            !costs.contains(&Resource::SpellSlot(3)),
+            "upcast fireball should NOT consume a level-3 slot"
+        );
+        // Execute side effects — the damage dice count is 8 + (5-3) = 10d6.
+        // We can't easily inspect the dice count, but we verify it runs
+        // without panic and the log mentions "10d6".
+        let effects = FIREBALL.side_effects(
+            &mut e,
+            wiz,
+            None,
+            Some(&vec![Coordinate::new(15, 15)]),
+            Some(&overrides),
+        );
+        // Should produce at least an empty vec (goblin might be out of burst
+        // range depending on exact positioning); the key assertion is no panic.
+        let _ = effects;
+        // Verify the log contains "10d6" — the upcast dice count.
+        let log = e.messages();
+        let has_10d6 = log.iter().any(|entry| entry.contains("10d6"));
+        assert!(has_10d6, "fireball log should mention 10d6 for level-5 upcast, log: {:?}", log);
+    }
+
+    /// Magic Missile at level 3 should fire 5 darts instead of the base 3.
+    #[test]
+    fn magic_missile_upcast_level_3_fires_5_darts() {
+        use crate::actions::spells::MAGIC_MISSILE;
+        use crate::engine::action_overrides::ActionOverride;
+        use crate::engine::side_effects::Resource;
+        use std::collections::HashSet;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wiz = e
+            .instantiate_creature(
+                &crate::actors::creatures::wizards::WIZARD_TEMPLATE,
+                Coordinate::new(3, 3),
+                0,
+                0,
+            )
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(
+                &crate::actors::creatures::goblins::GOBLIN_TEMPLATE,
+                Coordinate::new(5, 3),
+                1,
+                1,
+            )
+            .unwrap();
+        let overrides = HashSet::from([ActionOverride::CastLevel(3)]);
+        // Cost should require a level-3 slot.
+        let costs = MAGIC_MISSILE.cost(&e, wiz, Some(&vec![goblin]), None, Some(&overrides));
+        assert!(
+            costs.contains(&Resource::SpellSlot(3)),
+            "upcast magic missile should consume a level-3 slot, got {:?}",
+            costs
+        );
+        // Fire side effects — should produce 5 darts (3 base + 2 extra).
+        let effects = MAGIC_MISSILE.side_effects(
+            &mut e,
+            wiz,
+            Some(&vec![goblin]),
+            None,
+            Some(&overrides),
+        );
+        assert_eq!(
+            effects.len(),
+            5,
+            "magic missile at level 3 should produce 5 damage effects (darts), got {}",
+            effects.len()
+        );
+        // Verify the log mentions "5 darts".
+        let log = e.messages();
+        let has_5_darts = log.iter().any(|entry| entry.contains("5 darts"));
+        assert!(
+            has_5_darts,
+            "magic missile log should mention '5 darts' for level-3 upcast, log: {:?}",
+            log
+        );
+    }
+
+    /// Dragon breath weapon should be unavailable after spending it, and
+    /// the `custom_validate_input` gate should reject the action.
+    #[test]
+    fn dragon_breath_weapon_unavailable_after_spending() {
+        use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
+
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let dragon = e
+            .instantiate_creature(
+                &ADULT_RED_DRAGON_TEMPLATE,
+                Coordinate::new(5, 5),
+                0,
+                0,
+            )
+            .unwrap();
+        // Dragon should start with breath_weapon available.
+        assert!(
+            e.actors[&dragon].is_recharge_available("breath_weapon"),
+            "dragon breath weapon should start available"
+        );
+        // Find the fire breath action.
+        let breath = e.actors[&dragon]
+            .find_action("fire breath")
+            .expect("adult red dragon should have fire breath");
+        // Validate that the action is initially valid (recharge available).
+        assert!(
+            breath.custom_validate_input(&e, dragon, None, None, None),
+            "fire breath should validate when recharge is available"
+        );
+        // Spend the recharge.
+        e.actors.get_mut(&dragon).unwrap().spend_recharge("breath_weapon");
+        // Now the breath weapon should be unavailable.
+        assert!(
+            !e.actors[&dragon].is_recharge_available("breath_weapon"),
+            "breath weapon should be unavailable after spending"
+        );
+        // And the action should fail validation.
+        assert!(
+            !breath.custom_validate_input(&e, dragon, None, None, None),
+            "fire breath should NOT validate when recharge is spent"
+        );
+    }
 }
