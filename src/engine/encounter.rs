@@ -72,6 +72,19 @@ use crate::actors::creatures::yetis::YETI_TEMPLATE;
 use crate::actors::creatures::wolves::WOLF_TEMPLATE;
 use crate::actors::creatures::worgs::WORG_TEMPLATE;
 use crate::actors::creatures::wyverns::WYVERN_TEMPLATE;
+use crate::actors::creatures::drow::DROW_TEMPLATE;
+use crate::actors::creatures::gnoll_pack_lords::GNOLL_PACK_LORD_TEMPLATE;
+use crate::actors::creatures::bone_devils::BONE_DEVIL_TEMPLATE;
+use crate::actors::creatures::erinyes::ERINYES_TEMPLATE;
+use crate::actors::creatures::frost_giants::FROST_GIANT_TEMPLATE;
+use crate::actors::creatures::earth_elementals::EARTH_ELEMENTAL_TEMPLATE;
+use crate::actors::creatures::air_elementals::AIR_ELEMENTAL_TEMPLATE;
+use crate::actors::creatures::bullettes::BULLETTE_TEMPLATE;
+use crate::actors::creatures::flameskulls::FLAMESKULL_TEMPLATE;
+use crate::actors::creatures::spectators::SPECTATOR_TEMPLATE;
+use crate::actors::creatures::wraiths::WRAITH_TEMPLATE;
+use crate::actors::creatures::vampires::VAMPIRE_TEMPLATE;
+use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -1848,9 +1861,19 @@ impl EncounterInstance {
             &WIZARD_TEMPLATE,
             &WYVERN_TEMPLATE,
             &YETI_TEMPLATE,
-            // Wraith / vampire spawn / skeleton / zombie / slime sit
-            // outside the random pool — CR-5+ undead and trash mobs are
-            // reserved for hand-built encounters via `instantiate_creature`.
+            &DROW_TEMPLATE,
+            &GNOLL_PACK_LORD_TEMPLATE,
+            &BONE_DEVIL_TEMPLATE,
+            &ERINYES_TEMPLATE,
+            &FROST_GIANT_TEMPLATE,
+            &EARTH_ELEMENTAL_TEMPLATE,
+            &AIR_ELEMENTAL_TEMPLATE,
+            &BULLETTE_TEMPLATE,
+            &FLAMESKULL_TEMPLATE,
+            &SPECTATOR_TEMPLATE,
+            &WRAITH_TEMPLATE,
+            &VAMPIRE_TEMPLATE,
+            &ADULT_RED_DRAGON_TEMPLATE,
         ]
     }
 
@@ -2571,8 +2594,17 @@ impl EncounterInstance {
             // including Blessed / ShieldOfFaith, and reports each
             // exact expiry so we don't double-log or false-positive.
             let expired = actor.tick_condition_timers();
+            // Snapshot legendary-action state before dropping the mutable
+            // borrow so the self.log calls below can proceed.
+            let legendary_spent = actor.legendary_actions_per_round() > 0
+                && !actor.can_consume_resource(crate::engine::side_effects::Resource::LegendaryAction);
             for c in expired {
                 self.log(format!("{} is no longer {}.", name, c.name()));
+            }
+            // Cosmetic debug aid: flag when a legendary creature has burned
+            // through all of its legendary action points for the round.
+            if legendary_spent {
+                self.log(format!("{}'s legendary actions are spent.", name));
             }
         }
         self.cleanup_dead_actors();
@@ -4483,6 +4515,73 @@ mod tests {
     }
 
     #[test]
+    fn stand_up_leaves_remaining_movement() {
+        use crate::actions::default_actions::STAND_UP;
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Prone, crate::conditions::ConditionTimer::Permanent);
+        let speed = e.actors[&id].speed();
+
+        // Execute stand-up.
+        let aei = ActionExecutionInfo::new(&*STAND_UP, id, None, None, None);
+        assert!(aei.validate(&e));
+        e.pop_prompt();
+        e.push_action(aei);
+        e.process_stack();
+
+        // After standing the actor should still have half their speed
+        // available for normal movement (stand costs half, leaving half).
+        let actor = &e.actors[&id];
+        assert!(!actor.has_condition(Condition::Prone));
+        assert!(
+            actor.can_consume_resource(Resource::Movement(speed / 2.0 - 0.01)),
+            "actor should have ~half speed remaining after standing"
+        );
+        assert!(
+            !actor.can_consume_resource(Resource::Movement(speed / 2.0 + 0.01)),
+            "actor should not have more than half speed remaining"
+        );
+    }
+
+    #[test]
+    fn stand_up_fails_without_enough_movement() {
+        use crate::actions::default_actions::STAND_UP;
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Prone, crate::conditions::ConditionTimer::Permanent);
+        let speed = e.actors[&id].speed();
+
+        // Burn most of the actor's movement so less than half speed remains.
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .consume_resource(Resource::Movement(speed / 2.0 + 5.0));
+
+        // Standing costs half speed, but we no longer have that much.
+        let aei = ActionExecutionInfo::new(&*STAND_UP, id, None, None, None);
+        assert!(
+            !aei.validate(&e),
+            "stand should fail when movement budget is too low"
+        );
+    }
+
+    #[test]
     fn magic_missile_auto_hits_with_force_damage() {
         use crate::actions::spells::MAGIC_MISSILE;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
@@ -5841,9 +5940,9 @@ mod tests {
             .cloned()
             .collect();
 
-        let low = EncounterInstance::with_pcs(&tp, &ap, Some(42), pcs.clone()).unwrap();
+        let low = EncounterInstance::with_pcs(&tp, &ap, Some(99), pcs.clone()).unwrap();
         ap.cr_target = 4.0;
-        let high = EncounterInstance::with_pcs(&tp, &ap, Some(42), pcs).unwrap();
+        let high = EncounterInstance::with_pcs(&tp, &ap, Some(99), pcs).unwrap();
 
         // Use total enemy max-HP as a proxy for "how much enemy" got
         // generated — exposing CR per actor isn't worth the surface area.
@@ -25099,6 +25198,481 @@ mod tests {
         assert!(
             !breath.custom_validate_input(&e, dragon, None, None, None),
             "fire breath should NOT validate when recharge is spent"
+        );
+    }
+
+    // ---- Grapple / Shove tests ----
+
+    #[test]
+    fn grapple_succeeds_applies_grappled() {
+        // Two medium zombies adjacent — iterate many seeds until we find
+        // one where the grapple roll succeeds.
+        use crate::actions::default_actions::GRAPPLE;
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::Resource;
+
+        let mut found_success = false;
+        for seed in 0..200u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let attacker = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+                .unwrap();
+            // Give the attacker an action resource.
+            e.actors.get_mut(&attacker).unwrap().give_resource(Resource::Action);
+
+            let effects = GRAPPLE.execute(
+                &mut e,
+                attacker,
+                Some(&vec![target]),
+                None,
+                None,
+            );
+            for eff in &effects {
+                eff.apply(&mut e);
+            }
+            if e.actors[&target].has_condition(Condition::Grappled) {
+                found_success = true;
+                // Grappled condition zeros movement.
+                assert_eq!(
+                    e.actors[&target].remaining_movement(),
+                    0.0,
+                    "grappled target should have 0 movement"
+                );
+                break;
+            }
+        }
+        assert!(found_success, "grapple should succeed at least once in 200 seeds");
+    }
+
+    #[test]
+    fn grapple_fails_no_condition() {
+        // Iterate seeds until we find one where the grapple fails.
+        use crate::actions::default_actions::GRAPPLE;
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::Resource;
+
+        let mut found_fail = false;
+        for seed in 0..200u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let attacker = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+                .unwrap();
+            e.actors.get_mut(&attacker).unwrap().give_resource(Resource::Action);
+
+            let effects = GRAPPLE.execute(
+                &mut e,
+                attacker,
+                Some(&vec![target]),
+                None,
+                None,
+            );
+            for eff in &effects {
+                eff.apply(&mut e);
+            }
+            if !e.actors[&target].has_condition(Condition::Grappled) {
+                found_fail = true;
+                break;
+            }
+        }
+        assert!(found_fail, "grapple should fail at least once in 200 seeds");
+    }
+
+    #[test]
+    fn shove_succeeds_knocks_prone() {
+        use crate::actions::default_actions::SHOVE;
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::Resource;
+
+        let mut found_success = false;
+        for seed in 0..200u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let attacker = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+                .unwrap();
+            e.actors.get_mut(&attacker).unwrap().give_resource(Resource::Action);
+
+            let effects = SHOVE.execute(
+                &mut e,
+                attacker,
+                Some(&vec![target]),
+                None,
+                None,
+            );
+            for eff in &effects {
+                eff.apply(&mut e);
+            }
+            if e.actors[&target].has_condition(Condition::Prone) {
+                found_success = true;
+                break;
+            }
+        }
+        assert!(found_success, "shove should succeed at least once in 200 seeds");
+    }
+
+    #[test]
+    fn grapple_size_check_rejects_too_large() {
+        // A medium creature (zombie) cannot grapple a huge creature.
+        use crate::actions::default_actions::GRAPPLE;
+        use crate::actors::creatures::hydras::HYDRA_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Hydra is Huge (two sizes above Medium).
+        let target = e
+            .instantiate_creature(&HYDRA_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.actors.get_mut(&attacker).unwrap().give_resource(Resource::Action);
+
+        // validate_input should fail because the target is too large.
+        assert!(
+            !GRAPPLE.validate_input(
+                &e,
+                attacker,
+                Some(&vec![target]),
+                None,
+                None,
+            ),
+            "grapple should not validate against a target more than one size larger"
+        );
+    }
+
+    #[test]
+    fn size_can_grapple_one_larger() {
+        use crate::engine::types::Size;
+        // Medium can grapple Large (one larger).
+        assert!(Size::Medium.can_grapple(Size::Large));
+        // Medium cannot grapple Huge (two larger).
+        assert!(!Size::Medium.can_grapple(Size::Huge));
+        // Large can grapple Huge.
+        assert!(Size::Large.can_grapple(Size::Huge));
+        // Tiny can grapple Small.
+        assert!(Size::Tiny.can_grapple(Size::Small));
+        // Tiny cannot grapple Medium.
+        assert!(!Size::Tiny.can_grapple(Size::Medium));
+        // Same size is always fine.
+        assert!(Size::Medium.can_grapple(Size::Medium));
+        // Larger can always grapple smaller.
+        assert!(Size::Gargantuan.can_grapple(Size::Tiny));
+    }
+
+    /// 5e Extra Attack: a Fighter's scimitar swing should resolve two attacks
+    /// (the original + extra) because the Fighter template has `has_extra_attack: true`.
+    /// A zombie's slam should only resolve once (no extra attack).
+    #[test]
+    fn extra_attack_fires_second_swing_for_fighter() {
+        use crate::actions::monster_attacks::SCIMITAR;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let fighter_id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+
+        // Verify the fighter has extra attack.
+        assert!(
+            e.actors[&fighter_id].has_extra_attack(),
+            "Fighter should have Extra Attack"
+        );
+
+        // Swing the scimitar — an Action-cost weapon on a fighter with Extra Attack.
+        let log_before = e.messages().len();
+        let target_vec = vec![target_id];
+        let effects =
+            SCIMITAR.side_effects(&mut e, fighter_id, Some(&target_vec), None, None);
+
+        // The "Extra Attack:" log line must appear exactly once.
+        let extra_attack_logs = e.messages()[log_before..]
+            .iter()
+            .filter(|line| line.contains("Extra Attack:"))
+            .count();
+        assert_eq!(
+            extra_attack_logs, 1,
+            "Expected exactly one 'Extra Attack:' log line for a Fighter scimitar swing"
+        );
+
+        // There should be two scimitar attack lines (one from the primary swing,
+        // one from the extra attack).
+        let scimitar_roll_logs = e.messages()[log_before..]
+            .iter()
+            .filter(|line| line.contains("scimitar: 1d20"))
+            .count();
+        assert_eq!(
+            scimitar_roll_logs, 2,
+            "Expected two scimitar d20 roll lines (primary + extra attack)"
+        );
+
+        // Apply effects so the test doesn't leak.
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+    }
+
+    /// A creature without Extra Attack (zombie) should not get a second swing.
+    #[test]
+    fn no_extra_attack_for_creature_without_feature() {
+        use crate::actions::monster_attacks::SLAM;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let zombie_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+
+        // Verify the zombie does NOT have extra attack.
+        assert!(
+            !e.actors[&zombie_id].has_extra_attack(),
+            "Zombie should not have Extra Attack"
+        );
+
+        let log_before = e.messages().len();
+        let target_vec = vec![target_id];
+        let effects =
+            SLAM.side_effects(&mut e, zombie_id, Some(&target_vec), None, None);
+
+        // No "Extra Attack:" line should appear.
+        let extra_attack_logs = e.messages()[log_before..]
+            .iter()
+            .filter(|line| line.contains("Extra Attack:"))
+            .count();
+        assert_eq!(
+            extra_attack_logs, 0,
+            "Zombie should not get Extra Attack"
+        );
+
+        // Only one slam d20 roll line.
+        let slam_roll_logs = e.messages()[log_before..]
+            .iter()
+            .filter(|line| line.contains("slam: 1d20"))
+            .count();
+        assert_eq!(
+            slam_roll_logs, 1,
+            "Zombie should only get one slam attack roll"
+        );
+
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+    }
+
+    /// Extra Attack should NOT trigger for bonus-action-cost weapons (e.g. Shortbow).
+    #[test]
+    fn extra_attack_does_not_fire_for_bonus_action_weapon() {
+        use crate::actions::monster_attacks::SHORTBOW;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let fighter_id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+            .unwrap();
+
+        let log_before = e.messages().len();
+        let target_vec = vec![target_id];
+        let effects =
+            SHORTBOW.side_effects(&mut e, fighter_id, Some(&target_vec), None, None);
+
+        // No "Extra Attack:" line should appear for a bonus-action weapon.
+        let extra_attack_logs = e.messages()[log_before..]
+            .iter()
+            .filter(|line| line.contains("Extra Attack:"))
+            .count();
+        assert_eq!(
+            extra_attack_logs, 0,
+            "Bonus-action weapon should not trigger Extra Attack"
+        );
+
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+    }
+
+    /// Barbarian's Greataxe (custom Action impl, not SimpleWeapon) should also
+    /// fire Extra Attack since the Barbarian template has `has_extra_attack: true`.
+    #[test]
+    fn extra_attack_fires_for_barbarian_greataxe() {
+        use crate::actions::monster_attacks::GREATAXE;
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let barb_id = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+
+        assert!(
+            e.actors[&barb_id].has_extra_attack(),
+            "Barbarian should have Extra Attack"
+        );
+
+        let log_before = e.messages().len();
+        let target_vec = vec![target_id];
+        let effects =
+            GREATAXE.side_effects(&mut e, barb_id, Some(&target_vec), None, None);
+
+        let extra_attack_logs = e.messages()[log_before..]
+            .iter()
+            .filter(|line| line.contains("Extra Attack:"))
+            .count();
+        assert_eq!(
+            extra_attack_logs, 1,
+            "Expected one 'Extra Attack:' log for Barbarian greataxe"
+        );
+
+        let axe_roll_logs = e.messages()[log_before..]
+            .iter()
+            .filter(|line| line.contains("greataxe: 1d20"))
+            .count();
+        assert_eq!(
+            axe_roll_logs, 2,
+            "Expected two greataxe d20 roll lines (primary + extra attack)"
+        );
+
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+    }
+
+    // ── Legendary action tests ──────────────────────────────────────
+
+    #[test]
+    fn legendary_actions_refresh_on_new_round() {
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let dragon_id = e
+            .instantiate_creature(&ADULT_RED_DRAGON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+
+        // After instantiation (which calls reset_for_new_round), the dragon
+        // should have 3 legendary action slots available.
+        assert!(
+            e.actors[&dragon_id].can_consume_resource(Resource::LegendaryAction),
+            "dragon should have legendary actions after instantiation"
+        );
+
+        // Consume all 3 legendary actions.
+        for _ in 0..3 {
+            assert!(e.actors.get_mut(&dragon_id).unwrap().consume_resource(Resource::LegendaryAction));
+        }
+        assert!(
+            !e.actors[&dragon_id].can_consume_resource(Resource::LegendaryAction),
+            "dragon should have no legendary actions left after spending 3"
+        );
+
+        // Reset for a new round — legendary actions should refresh.
+        e.actors.get_mut(&dragon_id).unwrap().reset_for_new_round();
+        assert!(
+            e.actors[&dragon_id].can_consume_resource(Resource::LegendaryAction),
+            "dragon should have legendary actions after reset_for_new_round"
+        );
+
+        // Consume one and verify we can still consume more (started with 3).
+        assert!(e.actors.get_mut(&dragon_id).unwrap().consume_resource(Resource::LegendaryAction));
+        assert!(
+            e.actors[&dragon_id].can_consume_resource(Resource::LegendaryAction),
+            "dragon should still have legendary actions after consuming only 1 of 3"
+        );
+    }
+
+    #[test]
+    fn legendary_actions_zero_for_normal_creatures() {
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let zombie_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+
+        assert_eq!(
+            e.actors[&zombie_id].legendary_actions_per_round(),
+            0,
+            "zombie should have 0 legendary actions per round"
+        );
+        assert!(
+            !e.actors[&zombie_id].can_consume_resource(Resource::LegendaryAction),
+            "zombie should not be able to use legendary actions"
+        );
+    }
+
+    #[test]
+    fn extra_attack_flag_on_fighter() {
+        assert!(
+            crate::actors::creatures::fighters::FIGHTER_TEMPLATE.has_extra_attack,
+            "Fighter template should have has_extra_attack: true"
+        );
+    }
+
+    #[test]
+    fn extra_attack_flag_off_on_wizard() {
+        assert!(
+            !crate::actors::creatures::wizards::WIZARD_TEMPLATE.has_extra_attack,
+            "Wizard template should have has_extra_attack: false"
+        );
+    }
+
+    // ── Size::can_grapple tests ─────────────────────────────────────
+
+    #[test]
+    fn medium_can_grapple_medium() {
+        assert!(
+            Size::Medium.can_grapple(Size::Medium),
+            "Medium should be able to grapple Medium"
+        );
+    }
+
+    #[test]
+    fn medium_can_grapple_large() {
+        assert!(
+            Size::Medium.can_grapple(Size::Large),
+            "Medium should be able to grapple Large (one size larger)"
+        );
+    }
+
+    #[test]
+    fn medium_cannot_grapple_huge() {
+        assert!(
+            !Size::Medium.can_grapple(Size::Huge),
+            "Medium should not be able to grapple Huge (two sizes larger)"
+        );
+    }
+
+    #[test]
+    fn small_can_grapple_medium() {
+        assert!(
+            Size::Small.can_grapple(Size::Medium),
+            "Small should be able to grapple Medium (one size larger)"
+        );
+    }
+
+    #[test]
+    fn tiny_cannot_grapple_large() {
+        assert!(
+            !Size::Tiny.can_grapple(Size::Large),
+            "Tiny should not be able to grapple Large (three sizes larger)"
         );
     }
 }

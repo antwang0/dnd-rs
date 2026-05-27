@@ -85,5 +85,7 @@ pub static ADULT_RED_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         has_pack_tactics: false,
         has_magic_resistance: true,
         recharge_abilities: vec![("breath_weapon", 5)],
+        legendary_actions_per_round: 3,
+        has_extra_attack: false,
     }
 });

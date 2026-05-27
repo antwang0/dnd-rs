@@ -434,10 +434,10 @@ impl Action for Help {
 
 pub static HELP: LazyLock<Help> = LazyLock::new(|| Help {});
 
-/// 5e Shove (special melee attack): contested STR (Athletics) vs target's
-/// STR or DEX (best of). On success, knock prone OR push 5 ft. We model
-/// the simpler "knock prone" variant — push-direction needs movement
-/// modeling we don't have. Costs an Action.
+/// 5e Shove (special melee attack): contested Athletics check — attacker's
+/// d20 + STR mod vs target's d20 + max(STR mod, DEX mod). On success the
+/// target is knocked prone AND pushed 1 tile (5 ft) away from the attacker.
+/// Target must be no more than one size category larger. Costs an Action.
 pub struct Shove {}
 
 impl Action for Shove {
@@ -456,6 +456,26 @@ impl Action for Shove {
     fn deals_damage(&self) -> bool {
         false
     }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(target_id) = target_ids.and_then(|v| v.first().copied()) else {
+            return false;
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return false;
+        };
+        // 5e: target must be no more than one size larger.
+        caster.size().can_grapple(target.size())
+    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -464,35 +484,59 @@ impl Action for Shove {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::engine::dice::Dice;
         use crate::engine::types::AbilityScoreType;
         let Some(target_id) = target_ids.and_then(|v| v.first().copied()) else {
             return Vec::new();
         };
-        // Contested STR check — caster's d20+STR vs target's d20+max(STR,DEX).
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let dc = 10 + caster.ability_modifier(AbilityScoreType::Strength);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, dc);
-        if save.passed() {
-            encounter.log("  shove: target stays upright");
+        let caster_name = caster.name().to_string();
+        let caster_str_mod = caster.ability_modifier(AbilityScoreType::Strength);
+        let caster_loc = caster.location();
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return Vec::new();
+        };
+        let target_name = target.name().to_string();
+        let target_str_mod = target.ability_modifier(AbilityScoreType::Strength);
+        let target_dex_mod = target.ability_modifier(AbilityScoreType::Dexterity);
+        let target_best = target_str_mod.max(target_dex_mod);
+
+        // Contested check: d20 + STR vs d20 + max(STR, DEX). Attacker wins ties.
+        let d20 = Dice::new(1, 20);
+        let atk_roll = encounter.roll(&d20) as i32 + caster_str_mod;
+        let def_roll = encounter.roll(&d20) as i32 + target_best;
+        encounter.log(format!(
+            "  shove: {} rolls {} vs {} rolls {}",
+            caster_name, atk_roll, target_name, def_roll
+        ));
+        if atk_roll < def_roll {
+            encounter.log("  shove: target resists");
             return Vec::new();
         }
-        encounter.log("  shove: target knocked prone");
-        vec![Box::new(crate::engine::side_effects::ApplyCondition {
-            actor_id: target_id,
-            condition: crate::conditions::Condition::Prone,
-            timer: crate::conditions::ConditionTimer::Permanent,
-        })]
+        encounter.log("  shove: target knocked prone and pushed");
+        vec![
+            Box::new(crate::engine::side_effects::ApplyCondition {
+                actor_id: target_id,
+                condition: crate::conditions::Condition::Prone,
+                timer: crate::conditions::ConditionTimer::Permanent,
+            }) as Box<dyn crate::engine::side_effects::ApplicableSideEffect>,
+            Box::new(crate::engine::side_effects::PushActor {
+                actor_id: target_id,
+                from: caster_loc,
+                max_tiles: 1,
+            }),
+        ]
     }
 }
 
 pub static SHOVE: LazyLock<Shove> = LazyLock::new(|| Shove {});
 
-/// 5e Grapple (special melee attack): contested STR (Athletics) vs the
-/// target's STR or DEX (best). On success, target is Grappled — speed
-/// drops to 0 until the grappler releases or is knocked Incapacitated.
-/// Costs an Action. Symmetric implementation with Shove (knock-prone).
+/// 5e Grapple (special melee attack): contested Athletics check — attacker's
+/// d20 + STR mod vs target's d20 + max(STR mod, DEX mod). On success the
+/// target gains the Grappled condition (speed = 0). Target must be no more
+/// than one size category larger. Costs an Action.
 pub struct Grapple {}
 
 impl Action for Grapple {
@@ -511,6 +555,26 @@ impl Action for Grapple {
     fn deals_damage(&self) -> bool {
         false
     }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(target_id) = target_ids.and_then(|v| v.first().copied()) else {
+            return false;
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return false;
+        };
+        // 5e: target must be no more than one size larger.
+        caster.size().can_grapple(target.size())
+    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -519,6 +583,7 @@ impl Action for Grapple {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::engine::dice::Dice;
         use crate::engine::types::AbilityScoreType;
         let Some(target_id) = target_ids.and_then(|v| v.first().copied()) else {
             return Vec::new();
@@ -526,13 +591,25 @@ impl Action for Grapple {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        // Athletics-flavored: DC 10 + grappler's STR mod (matches Shove).
-        let dc = 10
-            + crate::engine::util::modifier_from_score(
-                caster.ability_score(AbilityScoreType::Strength),
-            );
-        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, dc);
-        if save.passed() {
+        let caster_name = caster.name().to_string();
+        let caster_str_mod = caster.ability_modifier(AbilityScoreType::Strength);
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return Vec::new();
+        };
+        let target_name = target.name().to_string();
+        let target_str_mod = target.ability_modifier(AbilityScoreType::Strength);
+        let target_dex_mod = target.ability_modifier(AbilityScoreType::Dexterity);
+        let target_best = target_str_mod.max(target_dex_mod);
+
+        // Contested check: d20 + STR vs d20 + max(STR, DEX). Attacker wins ties.
+        let d20 = Dice::new(1, 20);
+        let atk_roll = encounter.roll(&d20) as i32 + caster_str_mod;
+        let def_roll = encounter.roll(&d20) as i32 + target_best;
+        encounter.log(format!(
+            "  grapple: {} rolls {} vs {} rolls {}",
+            caster_name, atk_roll, target_name, def_roll
+        ));
+        if atk_roll < def_roll {
             encounter.log("  grapple: target slips free");
             return Vec::new();
         }

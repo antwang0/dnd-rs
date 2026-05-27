@@ -144,7 +144,7 @@ impl Action for SimpleWeapon {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        simple_weapon_attack_ranged(
+        let mut effects = simple_weapon_attack_ranged(
             encounter,
             caster_id,
             target_ids,
@@ -155,7 +155,31 @@ impl Action for SimpleWeapon {
             self.damage_type,
             self.is_melee,
             self.normal_range,
-        )
+        );
+        // 5e Extra Attack: when the Attack action costs an Action resource
+        // and the caster has Extra Attack, resolve a second swing against
+        // the same target as part of the same action.
+        if self.cost_resource == Resource::Action
+            && encounter
+                .actors
+                .get(&caster_id)
+                .is_some_and(|a| a.has_extra_attack())
+        {
+            encounter.log("  Extra Attack:");
+            effects.extend(simple_weapon_attack_ranged(
+                encounter,
+                caster_id,
+                target_ids,
+                self.name(),
+                self.attack_ability,
+                self.damage_ability,
+                self.damage_dice,
+                self.damage_type,
+                self.is_melee,
+                self.normal_range,
+            ));
+        }
+        effects
     }
 }
 
@@ -603,7 +627,7 @@ impl Action for Greataxe {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        simple_weapon_attack(
+        let mut effects = simple_weapon_attack(
             encounter,
             caster_id,
             target_ids,
@@ -613,7 +637,28 @@ impl Action for Greataxe {
             Dice::new(1, 12),
             DamageType::Slashing,
             true,
-        )
+        );
+        // 5e Extra Attack: Greataxe costs an Action, so if the caster has
+        // Extra Attack, resolve a second swing against the same target.
+        if encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_extra_attack())
+        {
+            encounter.log("  Extra Attack:");
+            effects.extend(simple_weapon_attack(
+                encounter,
+                caster_id,
+                target_ids,
+                self.name(),
+                AbilityScoreType::Strength,
+                Some(AbilityScoreType::Strength),
+                Dice::new(1, 12),
+                DamageType::Slashing,
+                true,
+            ));
+        }
+        effects
     }
 }
 pub static GREATAXE: LazyLock<Greataxe> = LazyLock::new(|| Greataxe {});

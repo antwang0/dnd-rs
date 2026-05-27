@@ -177,6 +177,18 @@ pub fn resolve_attack_outcome(
             p.action_name, p.damage_dice, raw_damage, p.damage_bonus, damage, p.damage_type,
         ));
     }
+    // 5e Barbarian Rage: +2 melee weapon damage (scales to +3/+4 at
+    // higher levels in RAW, but we use +2 for the base tier). Only
+    // applies to STR-based melee attacks.
+    if p.is_melee
+        && encounter
+            .actors
+            .get(&p.caster_id)
+            .is_some_and(|a| a.has_condition(Condition::Raging))
+    {
+        damage = damage.saturating_add(2);
+        encounter.log("  rage: +2 melee damage");
+    }
     // Hunter's Mark rider: attacker concentrating on Hunter's Mark with
     // this target marked deals +1d6 (weapon-typed). Crits double the
     // mark die per RAW — the rider folds into the weapon's damage type.

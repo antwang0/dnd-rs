@@ -54,5 +54,7 @@ pub static FIRE_IMP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         has_pack_tactics: false,
         has_magic_resistance: true,
         recharge_abilities: Vec::new(),
+        legendary_actions_per_round: 0,
+        has_extra_attack: false,
     }
 });

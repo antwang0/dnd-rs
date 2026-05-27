@@ -376,6 +376,21 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 5c. Shove — knock an adjacent enemy prone when at least one
+        //     ally is also adjacent (the prone condition gives them
+        //     advantage on melee attacks). Only fires when the target
+        //     isn't already prone — no point double-shoving.
+        if let Some(aei) = try_shove(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 5d. Grapple — lock down a ranged enemy in melee so their
+        //     movement is zero and they can't kite. Only fires when
+        //     the target has a ranged attack and isn't already grappled.
+        if let Some(aei) = try_grapple(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 6. Focus-fire: pick targets with advantage > normal > disadv;
         //    tie-break by lower HP (finish wounded).
         if let Some(aei) = try_attack_focus_fire(encounter, actor_id) {
@@ -1493,6 +1508,131 @@ fn try_dodge_when_low_hp(
         return None;
     }
     try_self_action(encounter, actor_id, "dodge")
+}
+
+/// Shove an adjacent enemy prone when at least one ally is also adjacent
+/// to the same target. Knocking the target prone gives those allies
+/// advantage on their next melee swing — high leverage in a team fight.
+/// Skips targets already prone (wasted action) and targets too large to
+/// shove (the action's `custom_validate_input` handles this, but we
+/// gate early to avoid burning the validation cost).
+fn try_shove(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor.find_action("shove")?;
+    let my_team = actor.team();
+    let my_loc = actor.location();
+    let my_size = get_tiles_from_size(actor.size());
+
+    // Candidate targets: adjacent hostile, not already prone.
+    let mut best: Option<(u32, ActionExecutionInfo)> = None;
+    for tid in encounter.sorted_actor_ids() {
+        let Some(t) = encounter.actors.get(&tid) else {
+            continue;
+        };
+        if tid == actor_id || t.team() == my_team || !t.is_combat_active() {
+            continue;
+        }
+        if t.has_condition(Condition::Prone) {
+            continue;
+        }
+        // Must be in melee reach.
+        let dist = footprint_chebyshev(
+            my_loc,
+            my_size,
+            t.location(),
+            get_tiles_from_size(t.size()),
+        );
+        if dist > MELEE_REACH {
+            continue;
+        }
+        // Only shove when at least one friendly melee ally is also adjacent
+        // to the target — otherwise prone just halves the target's speed
+        // and doesn't give us advantage on our own attack (we already used
+        // our Action on the shove).
+        let t_loc = t.location();
+        let t_size = get_tiles_from_size(t.size());
+        let ally_adjacent = encounter.actors.iter().any(|(aid, ally)| {
+            *aid != actor_id
+                && ally.team() == my_team
+                && ally.is_combat_active()
+                && footprint_chebyshev(ally.location(), get_tiles_from_size(ally.size()), t_loc, t_size)
+                    <= MELEE_REACH
+        });
+        if !ally_adjacent {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![tid]), None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        // Prefer highest-HP target (shove the biggest threat).
+        let hp = t.hitpoints();
+        if best.as_ref().is_none_or(|(best_hp, _)| hp > *best_hp) {
+            best = Some((hp, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
+}
+
+/// Grapple a nearby ranged enemy to lock their movement to zero. Ranged
+/// enemies often kite — pinning them prevents escape and forces them to
+/// make ranged attacks at disadvantage (due to adjacent hostiles). Skips
+/// targets already grappled or without ranged attacks (melee enemies are
+/// already where we want them).
+fn try_grapple(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor.find_action("grapple")?;
+    let my_team = actor.team();
+    let my_loc = actor.location();
+    let my_size = get_tiles_from_size(actor.size());
+
+    let mut best: Option<(u32, ActionExecutionInfo)> = None;
+    for tid in encounter.sorted_actor_ids() {
+        let Some(t) = encounter.actors.get(&tid) else {
+            continue;
+        };
+        if tid == actor_id || t.team() == my_team || !t.is_combat_active() {
+            continue;
+        }
+        if t.has_condition(Condition::Grappled) {
+            continue;
+        }
+        // Must be adjacent.
+        let dist = footprint_chebyshev(
+            my_loc,
+            my_size,
+            t.location(),
+            get_tiles_from_size(t.size()),
+        );
+        if dist > MELEE_REACH {
+            continue;
+        }
+        // Only grapple enemies that have ranged attacks — melee-only foes
+        // gain nothing from breaking free since they want to be in melee.
+        let has_ranged = t.actions.iter().any(|a| {
+            a.is_harmful()
+                && matches!(a.targeting_schema(), TargetingSchema::SingleActor)
+                && a.reach_tiles().is_some_and(|r| r > MELEE_REACH)
+        });
+        if !has_ranged {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![tid]), None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        let hp = t.hitpoints();
+        if best.as_ref().is_none_or(|(best_hp, _)| hp > *best_hp) {
+            best = Some((hp, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
 }
 
 /// Sort key for advantage-aware target selection — lower wins.

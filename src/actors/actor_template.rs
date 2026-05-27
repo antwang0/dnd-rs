@@ -194,6 +194,19 @@ pub struct CreatureTemplate {
     /// min_roll) — the action becomes available again when the d6 >=
     /// min_roll. Empty for creatures without recharge abilities.
     pub recharge_abilities: Vec<(&'static str, u32)>,
+    /// 5e Legendary Actions — number of legendary action points refreshed
+    /// at the start of each of the creature's turns. Dragons get 3,
+    /// liches 3, beholders 3, etc. 0 = no legendary actions (the default
+    /// for ordinary creatures). The encounter loop grants this many
+    /// LegendaryAction resource tokens at the start of the creature's
+    /// turn and the AI spends them between other actors' turns.
+    pub legendary_actions_per_round: u32,
+    /// 5e Extra Attack — when this creature takes the Attack action, it
+    /// can make two attacks instead of one. True for Fighters, Paladins,
+    /// Rangers, Barbarians, Monks (level 5+), and monsters with
+    /// Multiattack. Unlike class features, this is permanent and never
+    /// consumed.
+    pub has_extra_attack: bool,
 }
 
 #[derive(Clone, PartialEq)]
@@ -388,6 +401,10 @@ pub struct ActorInstance {
     /// At start-of-turn the engine rolls a d6 for each exhausted ability;
     /// if the roll >= min_roll the ability becomes available again.
     recharge_abilities: Vec<(&'static str, u32, bool)>,
+    /// 5e Legendary Actions per round. See `CreatureTemplate` docs.
+    legendary_actions_per_round: u32,
+    /// 5e Extra Attack. See `CreatureTemplate` docs.
+    has_extra_attack: bool,
 }
 
 impl ActorInstance {
@@ -476,6 +493,8 @@ impl ActorInstance {
                 .iter()
                 .map(|&(name, min_roll)| (name, min_roll, true))
                 .collect(),
+            legendary_actions_per_round: ct.legendary_actions_per_round,
+            has_extra_attack: ct.has_extra_attack,
         })
     }
 
@@ -563,6 +582,14 @@ impl ActorInstance {
 
     pub fn has_magic_resistance(&self) -> bool {
         self.has_magic_resistance
+    }
+
+    pub fn legendary_actions_per_round(&self) -> u32 {
+        self.legendary_actions_per_round
+    }
+
+    pub fn has_extra_attack(&self) -> bool {
+        self.has_extra_attack
     }
 
     /// Check if a recharge ability is currently available.
@@ -688,6 +715,7 @@ impl ActorInstance {
         for entry in &mut self.recharge_abilities {
             entry.2 = true;
         }
+        self.legendary_action_slots = self.legendary_actions_per_round;
     }
 
     /// 5e Short Rest — 1 hour of downtime. Restores: Hit Dice-based
@@ -1307,6 +1335,7 @@ impl ActorInstance {
         self.action_slots = 1;
         self.bonus_action_slots = 1;
         self.reaction_slots = 1;
+        self.legendary_action_slots = self.legendary_actions_per_round;
         // 5e Tasha's Mind Whip: on the holder's next turn, they lose one
         // of action / bonus action / reaction. We zero the action slot
         // (most-impactful pick) and burn the condition the moment it

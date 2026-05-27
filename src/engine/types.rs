@@ -127,6 +127,27 @@ pub enum Size {
     Gargantuan,
 }
 
+impl Size {
+    /// Numeric ordering for size comparison. Tiny=0, Small=1, ..., Gargantuan=5.
+    pub fn ordinal(self) -> i32 {
+        match self {
+            Size::Tiny => 0,
+            Size::Small => 1,
+            Size::Medium => 2,
+            Size::Large => 3,
+            Size::Huge => 4,
+            Size::Gargantuan => 5,
+        }
+    }
+
+    /// 5e grapple / shove gate: the target must be no more than one size
+    /// category larger than the attacker. E.g. a Medium creature can
+    /// grapple up to Large, but not Huge.
+    pub fn can_grapple(self, target: Size) -> bool {
+        target.ordinal() <= self.ordinal() + 1
+    }
+}
+
 impl fmt::Display for Size {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {

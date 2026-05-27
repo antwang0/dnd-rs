@@ -926,9 +926,11 @@ impl Condition {
     /// conditions in one place.
     pub fn zeros_movement(&self) -> bool {
         // Note: Prone is NOT in this list. RAW: prone halves movement
-        // (you crawl). We don't yet model the half-speed reduction;
-        // movement just costs the same. But blocking it entirely creates
-        // a catch-22 — standing up pays in movement.
+        // (you crawl). The half-speed reduction is modelled in
+        // `ActorInstance::remaining_movement()`, and standing up costs
+        // half the actor's speed via `StandUp::cost()`. Blocking
+        // movement entirely would create a catch-22 — standing up pays
+        // in movement.
         matches!(
             self,
             Condition::Stunned
