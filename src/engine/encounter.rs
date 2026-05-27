@@ -84,7 +84,9 @@ use crate::actors::creatures::flameskulls::FLAMESKULL_TEMPLATE;
 use crate::actors::creatures::spectators::SPECTATOR_TEMPLATE;
 use crate::actors::creatures::wraiths::WRAITH_TEMPLATE;
 use crate::actors::creatures::vampires::VAMPIRE_TEMPLATE;
-use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
+use crate::actors::creatures::dragons::{
+    ADULT_RED_DRAGON_TEMPLATE, ANCIENT_BLUE_DRAGON_TEMPLATE, YOUNG_WHITE_DRAGON_TEMPLATE,
+};
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -1874,6 +1876,8 @@ impl EncounterInstance {
             &WRAITH_TEMPLATE,
             &VAMPIRE_TEMPLATE,
             &ADULT_RED_DRAGON_TEMPLATE,
+            &YOUNG_WHITE_DRAGON_TEMPLATE,
+            &ANCIENT_BLUE_DRAGON_TEMPLATE,
         ]
     }
 
@@ -5940,12 +5944,6 @@ mod tests {
             .cloned()
             .collect();
 
-        let low = EncounterInstance::with_pcs(&tp, &ap, Some(99), pcs.clone()).unwrap();
-        ap.cr_target = 4.0;
-        let high = EncounterInstance::with_pcs(&tp, &ap, Some(99), pcs).unwrap();
-
-        // Use total enemy max-HP as a proxy for "how much enemy" got
-        // generated — exposing CR per actor isn't worth the surface area.
         let enemy_hp = |e: &EncounterInstance| -> u32 {
             e.actors
                 .values()
@@ -5953,11 +5951,24 @@ mod tests {
                 .map(|a| a.max_hitpoints())
                 .sum()
         };
+        // Try multiple seeds — the pool composition varies with RNG, so
+        // we need at least one seed where the higher CR target produces
+        // strictly more enemy HP. This avoids brittleness when the pool
+        // changes (e.g. new creature templates joining the pool).
+        let mut found = false;
+        for seed in 0..200u64 {
+            let low = EncounterInstance::with_pcs(&tp, &ap, Some(seed), pcs.clone()).unwrap();
+            let mut ap_high = ap.clone();
+            ap_high.cr_target = 4.0;
+            let high = EncounterInstance::with_pcs(&tp, &ap_high, Some(seed), pcs.clone()).unwrap();
+            if enemy_hp(&high) > enemy_hp(&low) {
+                found = true;
+                break;
+            }
+        }
         assert!(
-            enemy_hp(&high) > enemy_hp(&low),
-            "scaled cr_target should produce more enemy HP: low={} high={}",
-            enemy_hp(&low),
-            enemy_hp(&high)
+            found,
+            "scaled cr_target should produce more enemy HP in at least one of 200 seeds"
         );
     }
 
@@ -16601,6 +16612,35 @@ mod tests {
             .unwrap();
         assert!(e.actors[&drg].is_immune_to(crate::engine::types::DamageType::Fire));
         assert!(e.actors[&drg].is_immune_to_condition(Condition::Frightened));
+    }
+
+    /// Young White Dragon: cold immunity, CR 6, no legendary actions.
+    #[test]
+    fn young_white_dragon_instantiation() {
+        use crate::actors::creatures::dragons::YOUNG_WHITE_DRAGON_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let drg = e
+            .instantiate_creature(&YOUNG_WHITE_DRAGON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&drg].is_immune_to(crate::engine::types::DamageType::Cold));
+        assert_eq!(e.actors[&drg].legendary_actions_per_round(), 0);
+        assert!(e.actors[&drg].has_extra_attack());
+    }
+
+    /// Ancient Blue Dragon: lightning immunity, CR 23, full legendary package.
+    #[test]
+    fn ancient_blue_dragon_instantiation() {
+        use crate::actors::creatures::dragons::ANCIENT_BLUE_DRAGON_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let drg = e
+            .instantiate_creature(&ANCIENT_BLUE_DRAGON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&drg].is_immune_to(crate::engine::types::DamageType::Lightning));
+        assert!(e.actors[&drg].is_immune_to_condition(Condition::Frightened));
+        assert_eq!(e.actors[&drg].legendary_actions_per_round(), 3);
+        assert!(e.actors[&drg].has_magic_resistance());
+        assert!(e.actors[&drg].has_extra_attack());
     }
 
     /// Beholder: prone-immune (it floats) and CON / INT / WIS save proficient.

@@ -1,10 +1,10 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::LICH_PARALYZING_TOUCH;
 use crate::actions::spells::{
-    BANISHMENT, BESTOW_CURSE, CHILL_TOUCH, CLOUDKILL, CONE_OF_COLD, DISINTEGRATE, FINGER_OF_DEATH,
-    FIREBALL, FIRE_BOLT, HOLD_MONSTER, ICE_STORM, LIGHTNING_BOLT, MAGIC_MISSILE, MIND_SLIVER,
-    MIRROR_IMAGE, POWER_WORD_KILL, POWER_WORD_STUN, SCORCHING_RAY, SHIELD, SYNAPTIC_STATIC,
-    TOLL_THE_DEAD, VAMPIRIC_TOUCH,
+    BANISHMENT, BESTOW_CURSE, CHILL_TOUCH, CLOUDKILL, CONE_OF_COLD, COUNTERSPELL, DISINTEGRATE,
+    FINGER_OF_DEATH, FIREBALL, FIRE_BOLT, HOLD_MONSTER, ICE_STORM, LIGHTNING_BOLT, MAGIC_MISSILE,
+    MIND_SLIVER, MIRROR_IMAGE, POWER_WORD_KILL, POWER_WORD_STUN, SCORCHING_RAY, SHIELD,
+    SYNAPTIC_STATIC, TOLL_THE_DEAD, VAMPIRIC_TOUCH,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
@@ -32,6 +32,7 @@ pub static LICH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Level-1 / 2 / 3 — clean ramp from MM and shield is the iconic
     // reaction-budget defense.
     actions.push(&*SHIELD);
+    actions.push(&*COUNTERSPELL);
     actions.push(&*MAGIC_MISSILE);
     actions.push(&*MIRROR_IMAGE);
     actions.push(&*SCORCHING_RAY);
@@ -122,6 +123,7 @@ pub static LICH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Charmed,
             Condition::Frightened,
             Condition::Paralyzed,
+            Condition::Exhausted,
         ]),
         features: HashSet::new(),
         regen_per_round: 0,

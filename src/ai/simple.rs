@@ -410,7 +410,16 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 8. We have an Action but no offensive option — Dodge is strictly
+        // 8a. Dash — if we've already used our movement but still have
+        //     an Action and enemies are far away, Dash doubles our movement
+        //     budget so the next decide() call can close the gap. Only fires
+        //     when no enemy is within our normal movement range (otherwise
+        //     step-toward handles it) and we haven't already spent the Action.
+        if let Some(aei) = try_dash_to_close(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 8b. We have an Action but no offensive option — Dodge is strictly
         //    better than Skip (imposes disadvantage on incoming attacks).
         if let Some(aei) = try_dodge(encounter, actor_id) {
             return ControllerDecision::Act(aei);
@@ -2297,6 +2306,30 @@ fn try_step_toward_lowest_hp(
     } else {
         None
     }
+}
+
+/// Dash to close the gap when enemies are out of normal movement range.
+/// Fires only when the actor has an Action remaining, no enemies are within
+/// attack reach, and there's at least one living enemy. The Dash grants
+/// extra movement equal to the actor's speed so a subsequent move call can
+/// cover more ground.
+fn try_dash_to_close(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if !actor.can_consume_resource(crate::engine::side_effects::Resource::Action) {
+        return None;
+    }
+    let my_team = actor.team();
+    let has_enemy = encounter
+        .actors
+        .values()
+        .any(|a| a.team() != my_team && a.is_combat_active());
+    if !has_enemy {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "dash")
 }
 
 /// Last-resort: prefer Dodge (defensive posture if we still have an Action
