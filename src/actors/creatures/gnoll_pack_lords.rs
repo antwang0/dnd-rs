@@ -1,36 +1,37 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{DROW_POISONED_CROSSBOW, SCIMITAR};
+use crate::actions::monster_attacks::{GNOLL_PACK_LORD_MULTI, LONGBOW};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{Language, Size, SpecialSense};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
-/// Drow — Underdark elf raider. Trained scimitarist + ranged poisoned-bolt
-/// pressure via a hand crossbow. The poison rider is the headline (CON
-/// save DC 13, fail = +2d4 poison and Poisoned for 2 rounds). Stat shape
-/// follows MM Drow at CR 1/4: 14 AC (chain shirt), 13 HP, +4 to hit.
-/// Senses: Darkvision (120 ft, doubling a goblin's 60 ft).
-pub static DROW_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+/// Gnoll Pack Lord — CR 2 gnoll warband leader. Tougher and smarter than
+/// a baseline gnoll, the pack lord wields a glaive with reach-2 and
+/// swings it twice per Action via multiattack. Falls back to a longbow
+/// when enemies stay at range. The higher STR (16) and CON (14) make it
+/// a credible frontliner that can anchor a pack of CR 1/2 gnolls.
+pub static GNOLL_PACK_LORD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&SCIMITAR);
-    actions.push(&*DROW_POISONED_CROSSBOW);
+    actions.push(&*GNOLL_PACK_LORD_MULTI);
+    actions.push(&LONGBOW);
     CreatureTemplate {
-        name: "Drow",
-        glyph: 'D',
+        name: "Gnoll Pack Lord",
+        // 'L' for pack Lord — 'N' is taken by the base gnoll.
+        glyph: 'L',
         ac: 15,
-        hitpoints: "3d8".parse().unwrap(),
+        hitpoints: "3d10+6".parse().unwrap(),
         speed: 30.,
-        strength: 10,
-        intelligence: 11,
+        strength: 16,
+        intelligence: 12,
         dexterity: 14,
         wisdom: 11,
-        constitution: 10,
+        constitution: 14,
         charisma: 12,
         skills: HashSet::new(),
         items: Vec::new(),
-        senses: HashSet::from([SpecialSense::Darkvision(120)]),
-        languages: HashSet::from([Language::Elvish, Language::Undercommon]),
-        cr: 0.25,
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
+        languages: HashSet::from([Language::Common]),
+        cr: 2.0,
         size: Size::Medium,
         actions,
         spell_slots_by_level: Vec::new(),
@@ -47,7 +48,7 @@ pub static DROW_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         has_displacement: false,
         has_danger_sense: false,
         has_pack_tactics: false,
-        has_magic_resistance: true,
+        has_magic_resistance: false,
         recharge_abilities: Vec::new(),
     }
 });

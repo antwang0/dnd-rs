@@ -625,9 +625,10 @@ impl Action for HealSpell {
         _caster_id: usize,
         _target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![self.action_cost, Resource::SpellSlot(self.spell_slot_lvl)]
+        let lvl = crate::engine::action_overrides::cast_level(overrides, self.spell_slot_lvl);
+        vec![self.action_cost, Resource::SpellSlot(lvl)]
     }
     fn side_effects(
         &self,
@@ -635,7 +636,7 @@ impl Action for HealSpell {
         caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
@@ -644,11 +645,15 @@ impl Action for HealSpell {
             return Vec::new();
         };
         let ability_mod = caster.ability_modifier(self.ability);
-        let raw = encounter.roll(&self.heal_dice) as i32;
+        // Upcasting: +1 die per level above the spell's base slot level.
+        let lvl = crate::engine::action_overrides::cast_level(overrides, self.spell_slot_lvl);
+        let extra_dice = lvl - self.spell_slot_lvl;
+        let dice = Dice::new(self.heal_dice.count + extra_dice, self.heal_dice.faces);
+        let raw = encounter.roll(&dice) as i32;
         let amount = (raw + ability_mod).max(1) as u32;
         encounter.log(format!(
             "  {}: {}({}){:+} = {} HP",
-            self.display_name, self.heal_dice, raw, ability_mod, amount
+            self.display_name, dice, raw, ability_mod, amount
         ));
         vec![Box::new(Heal {
             actor_id: target_id,
@@ -781,10 +786,10 @@ impl Action for HoldPerson {
         _caster_id: usize,
         _target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        // Level-2 leveled spell — Action + a level-2 spell slot.
-        action_and_slot(2)
+        // Level-2 leveled spell — Action + a level-2 (or upcast) spell slot.
+        action_and_slot(crate::engine::action_overrides::cast_level(overrides, 2))
     }
 
     fn side_effects(

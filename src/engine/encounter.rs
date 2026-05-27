@@ -1,3 +1,4 @@
+use crate::engine::side_effects::ApplicableSideEffect;
 use crate::actors::creatures::ankhegs::ANKHEG_TEMPLATE;
 use crate::actors::creatures::animated_armors::ANIMATED_ARMOR_TEMPLATE;
 use crate::actors::creatures::bandit_captains::BANDIT_CAPTAIN_TEMPLATE;
@@ -80,7 +81,6 @@ use crate::conditions::Condition;
 use crate::engine::actor_gen::{ActorGenParams, generate_actors};
 use crate::engine::errors::{NegativeAbsCoord, NoLegalPosition};
 use crate::engine::prompt::Prompt;
-use crate::engine::side_effects::ApplicableSideEffect;
 use crate::engine::terrain::{TerrainInfo, TerrainType};
 use crate::engine::terrain_gen::{TerrainGenParams, generate_terrain};
 use crate::engine::triggers::TriggerEvent;
@@ -3103,6 +3103,8 @@ impl EncounterInstance {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actions::action_template::Action;
+    use crate::engine::side_effects::ApplicableSideEffect;
     use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
     use crate::actors::creatures::slimes::SLIME_TEMPLATE;
     use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
@@ -3265,7 +3267,6 @@ mod tests {
 
     #[test]
     fn multiattack_runs_sub_attack_n_times() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::ZOMBIE_MULTISLAM;
         // Static-cast to verify the trait wiring; no roll done here.
         let action: &dyn Action = &*ZOMBIE_MULTISLAM;
@@ -3468,7 +3469,6 @@ mod tests {
 
     #[test]
     fn acid_splash_only_hits_actors_adjacent_to_primary() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::ACID_SPIT;
         use crate::actors::creatures::slimes::SLIME_TEMPLATE;
         let mut e = ei_with_terrain(25, 25, &[]);
@@ -3518,7 +3518,6 @@ mod tests {
 
     #[test]
     fn acid_splash_hits_allies_too() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::ACID_SPIT;
         use crate::actors::creatures::slimes::SLIME_TEMPLATE;
         let mut e = ei_with_terrain(25, 25, &[]);
@@ -3559,7 +3558,6 @@ mod tests {
 
     #[test]
     fn crit_fires_at_least_once_in_many_attacks() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::SLAM;
 
         let mut e = ei_with_terrain(20, 20, &[]);
@@ -3640,7 +3638,6 @@ mod tests {
 
     #[test]
     fn ogre_has_large_footprint_and_reach_2() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::GREATCLUB;
         use crate::actors::creatures::ogres::OGRE_TEMPLATE;
         use crate::engine::types::Size;
@@ -3673,7 +3670,6 @@ mod tests {
 
     #[test]
     fn goblin_can_use_action_and_bonus_action_in_one_turn() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::{SCIMITAR, SHORTBOW};
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -3694,7 +3690,6 @@ mod tests {
 
     #[test]
     fn wolf_bite_validates_in_melee() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::WOLF_BITE;
         use crate::actors::creatures::wolves::WOLF_TEMPLATE;
 
@@ -3771,7 +3766,6 @@ mod tests {
 
     #[test]
     fn cantrip_does_not_consume_spell_slot() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::SACRED_FLAME;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
 
@@ -3792,7 +3786,6 @@ mod tests {
 
     #[test]
     fn leveled_spell_consumes_slot() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::HOLD_PERSON;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -5513,7 +5506,6 @@ mod tests {
 
     #[test]
     fn magic_missile_deals_damage_without_attack_roll() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::MAGIC_MISSILE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
 
@@ -5538,7 +5530,6 @@ mod tests {
 
     #[test]
     fn cure_wounds_heals_target() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::CURE_WOUNDS;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -5568,7 +5559,6 @@ mod tests {
 
     #[test]
     fn false_life_grants_temp_hp() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::FALSE_LIFE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
 
@@ -5947,7 +5937,6 @@ mod tests {
 
     #[test]
     fn fire_bolt_can_hit_and_damage() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::FIRE_BOLT;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         // Cleric subbed in as caster — INT 10 means +0 attack mod, but
@@ -6722,7 +6711,6 @@ mod tests {
 
     #[test]
     fn multiattack_inherits_sub_attack_cost() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::{Multiattack, SHORTBOW};
         use crate::engine::side_effects::Resource;
 
@@ -6994,7 +6982,6 @@ mod tests {
     #[test]
     fn magic_missile_emits_three_force_effects() {
         // Magic Missile auto-hits; three darts → three DealDamage effects, all Force.
-        use crate::actions::action_template::Action;
         use crate::actions::spells::MAGIC_MISSILE;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
 
@@ -7154,7 +7141,6 @@ mod tests {
         // Frightful Presence shouldn't redundantly target already-frightened
         // actors (waste of saves). Verify by setting one target Frightened
         // and confirming they don't re-roll.
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::FRIGHTFUL_PRESENCE;
         use crate::actors::creatures::fire_imps::FIRE_IMP_TEMPLATE;
         use crate::conditions::{Condition, ConditionTimer};
@@ -7363,7 +7349,6 @@ mod tests {
 
     #[test]
     fn rogue_sneak_attack_fires_with_ally_adjacent() {
-        use crate::actions::action_template::Action;
         use crate::actions::class_attacks::ROGUE_SHORTSWORD;
         use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
 
@@ -7419,7 +7404,6 @@ mod tests {
 
     #[test]
     fn rogue_sneak_attack_fires_only_once_per_turn() {
-        use crate::actions::action_template::Action;
         use crate::actions::class_attacks::ROGUE_SHORTSWORD;
         use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
 
@@ -8086,7 +8070,6 @@ mod tests {
 
     #[test]
     fn spider_bite_can_apply_poisoned() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::SPIDER_BITE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
         use crate::actors::creatures::spiders::SPIDER_TEMPLATE;
@@ -8509,7 +8492,6 @@ mod tests {
 
     #[test]
     fn blindness_consumes_action_and_level2_slot() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::BLINDNESS;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -8530,7 +8512,6 @@ mod tests {
         // 5e Blindness/Deafness is *not* a concentration spell — its
         // 1-minute duration runs without sustain. We just verify a failed
         // CON save applies the Blinded condition.
-        use crate::actions::action_template::Action;
         use crate::actions::spells::BLINDNESS;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::conditions::Condition;
@@ -8569,7 +8550,6 @@ mod tests {
 
     #[test]
     fn web_failed_save_restrains_targets_and_starts_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::WEB;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::conditions::Condition;
@@ -8615,7 +8595,6 @@ mod tests {
 
     #[test]
     fn web_costs_action_and_level2_slot() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::WEB;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -8681,7 +8660,6 @@ mod tests {
 
     #[test]
     fn faerie_fire_failed_save_outlines_target_and_starts_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::FAERIE_FIRE;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::conditions::Condition;
@@ -8806,7 +8784,6 @@ mod tests {
 
     #[test]
     fn magic_missile_auto_hits_for_force_damage_v2() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::MAGIC_MISSILE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
 
@@ -8836,7 +8813,6 @@ mod tests {
 
     #[test]
     fn cure_wounds_heals_dying_ally_back_to_active() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::CURE_WOUNDS;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -9163,7 +9139,6 @@ mod tests {
         // on their next attack). Firing the attack clears it whether they
         // hit or miss, so a second swing in the same turn isn't free
         // advantage.
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::SLAM;
         use crate::conditions::{Condition, ConditionTimer};
 
@@ -9445,7 +9420,6 @@ mod tests {
 
     #[test]
     fn fire_bolt_validates_in_range_and_los() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::FIRE_BOLT;
         let mut e = ei_with_terrain(20, 20, &[]);
         let caster = e
@@ -9738,7 +9712,6 @@ mod tests {
 
     #[test]
     fn bless_adds_to_attack_log_when_active() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::SLAM;
         use crate::conditions::{Condition, ConditionTimer};
 
@@ -9946,7 +9919,6 @@ mod tests {
 
     #[test]
     fn greater_healing_potion_uses_bonus_action() {
-        use crate::actions::action_template::Action;
         use crate::actions::item_actions::DRINK_GREATER_HEALING_POTION;
         use crate::engine::side_effects::Resource;
 
@@ -10261,7 +10233,6 @@ mod tests {
 
     #[test]
     fn heals_flag_distinguishes_heal_from_buff() {
-        use crate::actions::action_template::Action;
         use crate::actions::item_actions::DRINK_HEALING_POTION;
         use crate::actions::spells::{BLESS, HEALING_WORD, SACRED_FLAME};
 
@@ -10396,7 +10367,6 @@ mod tests {
 
     #[test]
     fn cure_wounds_revives_dying_ally() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::CURE_WOUNDS;
         use crate::actors::actor_template::HpState;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
@@ -10432,7 +10402,6 @@ mod tests {
 
     #[test]
     fn magic_missile_emits_three_force_damage_effects() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::MAGIC_MISSILE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::engine::types::DamageType;
@@ -10472,7 +10441,6 @@ mod tests {
         // Web is a Burst spell — target a tile, every actor in the burst
         // makes a DEX save vs the caster's INT-based DC. Drop the burst
         // on the fighter's tile so they're definitely caught.
-        use crate::actions::action_template::Action;
         use crate::actions::spells::WEB;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -10979,7 +10947,6 @@ mod tests {
 
     #[test]
     fn helped_grants_advantage_then_clears() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::SLAM;
         use crate::conditions::{Condition, ConditionTimer};
 
@@ -11145,7 +11112,6 @@ mod tests {
     fn thunderwave_damages_actors_in_burst() {
         // Thunderwave is a 2-tile burst around the caster. We put a
         // zombie adjacent and verify it takes some damage.
-        use crate::actions::action_template::Action;
         use crate::actions::spells::THUNDERWAVE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         let mut e = ei_with_terrain(20, 20, &[]);
@@ -11235,7 +11201,6 @@ mod tests {
         // 5e: making an attack reveals you, even if it misses. The
         // attacker rolls with advantage on the first swing, but a
         // follow-up attack the same turn is at normal mode.
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::SLAM;
         use crate::conditions::{Condition, ConditionTimer};
         let mut e = ei_with_terrain(15, 15, &[]);
@@ -11290,7 +11255,6 @@ mod tests {
 
     #[test]
     fn bane_failed_save_applies_baned_and_starts_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::BANE;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::conditions::Condition;
@@ -11337,7 +11301,6 @@ mod tests {
 
     #[test]
     fn mage_armor_sets_ac_floor_to_13_plus_dex() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::MAGE_ARMOR;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         let mut e = ei_with_terrain(10, 10, &[]);
@@ -11362,7 +11325,6 @@ mod tests {
 
     #[test]
     fn aid_bumps_max_hp_and_heals_target() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::AID;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -11396,7 +11358,6 @@ mod tests {
 
     #[test]
     fn hunters_mark_marks_target_and_starts_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::HUNTERS_MARK;
         use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
         use crate::conditions::Condition;
@@ -11429,7 +11390,6 @@ mod tests {
 
     #[test]
     fn hunters_mark_drops_when_concentration_drops() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::HUNTERS_MARK;
         use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
         use crate::conditions::Condition;
@@ -11455,7 +11415,6 @@ mod tests {
 
     #[test]
     fn grapple_failed_save_applies_grappled() {
-        use crate::actions::action_template::Action;
         use crate::actions::default_actions::GRAPPLE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
         use crate::conditions::Condition;
@@ -11491,7 +11450,6 @@ mod tests {
 
     #[test]
     fn cunning_dash_grants_extra_movement() {
-        use crate::actions::action_template::Action;
         use crate::actions::class_features::CUNNING_DASH;
         use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -11625,7 +11583,6 @@ mod tests {
         // Mark a target, then have the marker swing at it. Compare to
         // a baseline swing without the mark — the marked-hit total
         // damage should be strictly greater (when a hit lands).
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::SCIMITAR;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
         use crate::conditions::{Condition, ConditionTimer};
@@ -11696,7 +11653,6 @@ mod tests {
 
     #[test]
     fn poison_spray_costs_no_spell_slot() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::POISON_SPRAY;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -11747,7 +11703,6 @@ mod tests {
 
     #[test]
     fn inflict_wounds_consumes_level_1_slot() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::INFLICT_WOUNDS;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -11764,7 +11719,6 @@ mod tests {
 
     #[test]
     fn ray_of_sickness_consumes_level_1_slot_and_can_poison() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::RAY_OF_SICKNESS;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -12096,7 +12050,6 @@ mod tests {
 
     #[test]
     fn spare_the_dying_stabilizes_target() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::SPARE_THE_DYING;
         use crate::actors::actor_template::HpState;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
@@ -12193,7 +12146,6 @@ mod tests {
 
     #[test]
     fn shatter_damages_actors_in_burst_around_point() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::SHATTER;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         let mut e = ei_with_terrain(20, 20, &[]);
@@ -12220,7 +12172,6 @@ mod tests {
 
     #[test]
     fn sleep_knocks_out_low_hp_targets() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::SLEEP;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         let mut e = ei_with_terrain(20, 20, &[]);
@@ -12256,7 +12207,6 @@ mod tests {
     #[test]
     fn sleep_skips_undead_target() {
         // Undead are immune to Charmed; Sleep skips them per RAW.
-        use crate::actions::action_template::Action;
         use crate::actions::spells::SLEEP;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         let mut e = ei_with_terrain(20, 20, &[]);
@@ -12307,10 +12257,8 @@ mod tests {
 
     #[test]
     fn charmed_target_cannot_attack_charmer() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::SCIMITAR;
         use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
-        use crate::engine::side_effects::ApplicableSideEffect;
         use crate::engine::side_effects::SetCharmedBy;
         let mut e = ei_with_terrain(15, 15, &[]);
         let charmer = e
@@ -12337,10 +12285,8 @@ mod tests {
 
     #[test]
     fn charmed_target_can_still_attack_others() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::SCIMITAR;
         use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
-        use crate::engine::side_effects::ApplicableSideEffect;
         use crate::engine::side_effects::SetCharmedBy;
         let mut e = ei_with_terrain(15, 15, &[]);
         let charmer = e
@@ -12373,7 +12319,6 @@ mod tests {
         // The auxiliary `charmed_by` link must clear together with the
         // condition flag so a re-charm doesn't leave stale state.
         use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
-        use crate::engine::side_effects::ApplicableSideEffect;
         use crate::engine::side_effects::SetCharmedBy;
         let mut e = ei_with_terrain(10, 10, &[]);
         let charmer = e
@@ -12402,7 +12347,6 @@ mod tests {
 
     #[test]
     fn mirror_image_grants_decoy_pool() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::MIRROR_IMAGE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         let mut e = ei_with_terrain(15, 15, &[]);
@@ -12419,7 +12363,6 @@ mod tests {
 
     #[test]
     fn mirror_image_pool_drains_to_zero_clears_condition() {
-        use crate::engine::side_effects::ApplicableSideEffect;
         use crate::engine::side_effects::SetMirrorImages;
         let mut e = ei_with_terrain(15, 15, &[]);
         let actor = e
@@ -12443,7 +12386,6 @@ mod tests {
 
     #[test]
     fn eldritch_blast_targets_in_range() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::ELDRITCH_BLAST;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         let mut e = ei_with_terrain(20, 20, &[]);
@@ -12566,7 +12508,6 @@ mod tests {
 
     #[test]
     fn fireball_damages_actors_in_burst() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::FIREBALL;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         let mut e = ei_with_terrain(20, 20, &[]);
@@ -12596,7 +12537,6 @@ mod tests {
         // caster, so even a Fireball centered on the wizard's tile shouldn't
         // damage them. (If they don't catch fire from their own AoE we
         // can be confident the helper is wired up.)
-        use crate::actions::action_template::Action;
         use crate::actions::spells::FIREBALL;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         let mut e = ei_with_terrain(20, 20, &[]);
@@ -12618,7 +12558,6 @@ mod tests {
 
     #[test]
     fn color_spray_blinds_low_hp_target() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::COLOR_SPRAY;
         use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -12650,7 +12589,6 @@ mod tests {
     fn command_stuns_failed_save_target() {
         // Command's no-save-immunity check runs against Charmed-immunity.
         // Bandits aren't charm-immune, so the spell's roll path is exercised.
-        use crate::actions::action_template::Action;
         use crate::actions::spells::COMMAND;
         use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -12684,7 +12622,6 @@ mod tests {
     #[test]
     fn command_skips_charm_immune_target() {
         // A zombie (charm-immune) shouldn't be affected by Command.
-        use crate::actions::action_template::Action;
         use crate::actions::spells::COMMAND;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         let mut e = ei_with_terrain(20, 20, &[]);
@@ -12709,7 +12646,6 @@ mod tests {
     fn magic_weapon_buff_reverts_on_concentration_drop() {
         // Magic Weapon installs a +1 attack buff and ends concentration.
         // Dropping concentration must roll back the buff exactly.
-        use crate::actions::action_template::Action;
         use crate::actions::spells::MAGIC_WEAPON;
         use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -12743,7 +12679,6 @@ mod tests {
     fn owlbear_multiattack_lands_two_swings() {
         // Each Action gets two attack rolls. Detect the multiattack by
         // counting beak/claws lines in the log.
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::OWLBEAR_MULTIATTACK;
         use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
         use crate::actors::creatures::owlbears::OWLBEAR_TEMPLATE;
@@ -12771,7 +12706,6 @@ mod tests {
     #[test]
     fn wisp_is_immune_to_lightning() {
         use crate::actors::creatures::wisps::WISP_TEMPLATE;
-        use crate::engine::side_effects::ApplicableSideEffect;
         use crate::engine::side_effects::DealDamage;
         let mut e = ei_with_terrain(15, 15, &[]);
         let wisp = e
@@ -12808,7 +12742,6 @@ mod tests {
         // The fanatic's spell list should include INFLICT_WOUNDS — try to
         // resolve it once on a victim and assert HP changed (or save was
         // rolled — either branch exercises the wiring).
-        use crate::actions::action_template::Action;
         use crate::actions::spells::INFLICT_WOUNDS;
         use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
         use crate::actors::creatures::cult_fanatics::CULT_FANATIC_TEMPLATE;
@@ -12834,7 +12767,6 @@ mod tests {
 
     #[test]
     fn scorching_ray_resolves_three_rolls_against_target() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::SCORCHING_RAY;
         use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -12860,7 +12792,6 @@ mod tests {
 
     #[test]
     fn lightning_bolt_consumes_level_3_slot() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::LIGHTNING_BOLT;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -12878,7 +12809,6 @@ mod tests {
 
     #[test]
     fn vampiric_touch_heals_caster_on_hit() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::VAMPIRIC_TOUCH;
         use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -12916,7 +12846,6 @@ mod tests {
 
     #[test]
     fn hypnotic_pattern_skips_charm_immune_targets() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::HYPNOTIC_PATTERN;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         let mut e = ei_with_terrain(20, 20, &[]);
@@ -12939,7 +12868,6 @@ mod tests {
 
     #[test]
     fn divine_favor_installs_concentration_and_attack_buff() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::DIVINE_FAVOR;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         let mut e = ei_with_terrain(10, 10, &[]);
@@ -12961,7 +12889,6 @@ mod tests {
 
     #[test]
     fn spirit_guardians_radiates_radiant_burst_around_caster() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::SPIRIT_GUARDIANS;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -12990,7 +12917,6 @@ mod tests {
 
     #[test]
     fn vampire_spawn_bite_heals_caster() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::VAMPIRIC_BITE;
         use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
         use crate::actors::creatures::vampire_spawns::VAMPIRE_SPAWN_TEMPLATE;
@@ -13041,7 +12967,6 @@ mod tests {
 
     #[test]
     fn bandit_captain_multiattack_is_three_swings() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::BANDIT_CAPTAIN_MULTI;
         use crate::actors::creatures::bandit_captains::BANDIT_CAPTAIN_TEMPLATE;
         let mut e = ei_with_terrain(10, 10, &[]);
@@ -13088,7 +13013,6 @@ mod tests {
 
     #[test]
     fn cleric_loadout_includes_divine_favor_and_spirit_guardians() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::{DIVINE_FAVOR, SPIRIT_GUARDIANS};
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         let mut e = ei_with_terrain(10, 10, &[]);
@@ -13102,7 +13026,6 @@ mod tests {
 
     #[test]
     fn wizard_loadout_includes_new_l2_l3_spells() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::{HYPNOTIC_PATTERN, LIGHTNING_BOLT, SCORCHING_RAY, VAMPIRIC_TOUCH};
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         let mut e = ei_with_terrain(10, 10, &[]);
@@ -13118,7 +13041,6 @@ mod tests {
 
     #[test]
     fn hex_marks_target_and_starts_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::HEX;
         use crate::actors::creatures::cult_fanatics::CULT_FANATIC_TEMPLATE;
         use crate::conditions::Condition;
@@ -13144,7 +13066,6 @@ mod tests {
         // Mark a target with Hex, then have the caster swing at it.
         // The DealDamage list should include both the weapon hit and a
         // separate necrotic rider.
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::SCIMITAR;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
         use crate::conditions::{Condition, ConditionTimer};
@@ -13216,7 +13137,6 @@ mod tests {
         // Caster invisible via the Invisibility spell; their next weapon
         // attack should drop the concentration (and clear the Invisible
         // condition via drop_concentration).
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::SCIMITAR;
         use crate::actors::actor_template::ConcentrationData;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -13258,7 +13178,6 @@ mod tests {
 
     #[test]
     fn mimic_bite_applies_adhered_condition() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::MIMIC_BITE;
         use crate::actors::creatures::mimics::MIMIC_TEMPLATE;
         use crate::conditions::Condition;
@@ -13318,7 +13237,6 @@ mod tests {
     fn harpy_luring_song_charms_in_radius() {
         // Harpy sings; nearby enemies make WIS saves; failing enemies
         // get Charmed + linked back to the harpy via SetCharmedBy.
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::LURING_SONG;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
         use crate::actors::creatures::harpies::HARPY_TEMPLATE;
@@ -13353,7 +13271,6 @@ mod tests {
         // action list and validates against arbitrary targets. We don't
         // assert the save outcome (RNG-dependent); just that the action
         // is callable.
-        use crate::actions::action_template::Action;
         use crate::actions::spells::HOLD_MONSTER;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         let mut e = ei_with_terrain(20, 20, &[]);
@@ -13388,7 +13305,6 @@ mod tests {
         // low INT: zombies have INT 3 (mod -4) and aren't INT-proficient.
         // DC 11 (wizard INT 16 → +5 spell save DC) is unreachable when
         // raw d20 + (-4) maxes at 16; on failures the rider applies.
-        use crate::actions::action_template::Action;
         use crate::actions::spells::MIND_SLIVER;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::conditions::Condition;
@@ -13525,7 +13441,6 @@ mod tests {
         // Haste hangs on the caster's concentration; dropping the
         // concentration (e.g. failing the CON save on damage) must clear
         // the Hasted condition on the target.
-        use crate::actions::action_template::Action;
         use crate::actions::spells::HASTE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::conditions::Condition;
@@ -13548,7 +13463,6 @@ mod tests {
 
     #[test]
     fn true_strike_applies_helped_on_caster() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::TRUE_STRIKE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::conditions::Condition;
@@ -13571,7 +13485,6 @@ mod tests {
     fn cone_of_cold_damages_targets_in_burst() {
         // 8d8 average ~36; even a CON save halves it. Verify some
         // damage lands on the zombie at the burst center.
-        use crate::actions::action_template::Action;
         use crate::actions::spells::CONE_OF_COLD;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         let mut e = ei_with_terrain(40, 20, &[]);
@@ -13602,7 +13515,6 @@ mod tests {
 
     #[test]
     fn knight_in_pool_and_has_multiattack() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::KNIGHT_MULTI;
         use crate::actors::creatures::knights::KNIGHT_TEMPLATE;
         let mut e = ei_with_terrain(20, 20, &[]);
@@ -13623,7 +13535,6 @@ mod tests {
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::worgs::WORG_TEMPLATE;
         use crate::conditions::Condition;
-        use crate::actions::action_template::Action;
 
         let mut prone_seen = false;
         for _ in 0..50 {
@@ -13712,7 +13623,6 @@ mod tests {
 
     #[test]
     fn dispel_magic_drops_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::{BLESS, DISPEL_MAGIC};
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
 
@@ -13740,7 +13650,6 @@ mod tests {
 
     #[test]
     fn dispel_magic_strips_buff_when_no_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::DISPEL_MAGIC;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::conditions::{Condition, ConditionTimer};
@@ -13768,7 +13677,6 @@ mod tests {
 
     #[test]
     fn greater_invisibility_persists_after_attack() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::GREATER_INVISIBILITY;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
@@ -13810,7 +13718,6 @@ mod tests {
 
     #[test]
     fn revivify_brings_dying_actor_back_at_one_hp() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::REVIVIFY;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -13845,7 +13752,6 @@ mod tests {
 
     #[test]
     fn revivify_invalid_on_active_target() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::REVIVIFY;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -13928,7 +13834,6 @@ mod tests {
 
     #[test]
     fn ice_storm_damages_in_radius() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::ICE_STORM;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
@@ -13962,7 +13867,6 @@ mod tests {
 
     #[test]
     fn cockatrice_bite_can_petrify_target() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::COCKATRICE_BITE;
         use crate::actors::creatures::cockatrices::COCKATRICE_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -14063,7 +13967,6 @@ mod tests {
 
     #[test]
     fn stoneskin_applies_damage_resistant_and_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::STONESKIN;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -14086,7 +13989,6 @@ mod tests {
 
     #[test]
     fn stoneskin_drops_buff_on_concentration_drop() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::STONESKIN;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -14109,7 +14011,6 @@ mod tests {
 
     #[test]
     fn witch_bolt_starts_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::WITCH_BOLT;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
@@ -14132,7 +14033,6 @@ mod tests {
 
     #[test]
     fn banishment_incapacitates_on_failed_save() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::BANISHMENT;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
@@ -14183,7 +14083,6 @@ mod tests {
 
     #[test]
     fn power_word_stun_no_op_above_threshold() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::POWER_WORD_STUN;
         use crate::actors::creatures::trolls::TROLL_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -14214,7 +14113,6 @@ mod tests {
 
     #[test]
     fn power_word_stun_stuns_below_threshold() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::POWER_WORD_STUN;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
@@ -14238,7 +14136,6 @@ mod tests {
 
     #[test]
     fn heal_high_clears_blinded_poisoned_deafened() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::HEAL_SPELL_HIGH;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -14272,7 +14169,6 @@ mod tests {
 
     #[test]
     fn hideous_laughter_applies_prone_and_incapacitated_on_fail() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::TASHAS_HIDEOUS_LAUGHTER;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -14328,7 +14224,6 @@ mod tests {
 
     #[test]
     fn beacon_of_hope_buffs_allies_in_radius() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::BEACON_OF_HOPE;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -14362,7 +14257,6 @@ mod tests {
 
     #[test]
     fn cloud_of_daggers_damages_enemies_in_burst() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::CLOUD_OF_DAGGERS;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -14422,7 +14316,6 @@ mod tests {
 
     #[test]
     fn wight_life_drain_reduces_max_hp_on_fail() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::WIGHT_LIFE_DRAIN;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
         use crate::actors::creatures::wights::WIGHT_TEMPLATE;
@@ -14495,7 +14388,6 @@ mod tests {
 
     #[test]
     fn banshee_wail_frightens_non_undead_in_range() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::BANSHEE_WAIL;
         use crate::actors::creatures::banshees::BANSHEE_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -14753,7 +14645,6 @@ mod tests {
     /// spawns a new Skeleton actor on the wizard's team.
     #[test]
     fn animate_dead_spawns_skeleton() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::ANIMATE_DEAD;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         let mut e = ei_with_terrain(20, 20, &[]);
@@ -14785,7 +14676,6 @@ mod tests {
     /// test).
     #[test]
     fn spirit_shroud_installs_condition_and_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::SPIRIT_SHROUD;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         let mut e = ei_with_terrain(15, 15, &[]);
@@ -14806,7 +14696,6 @@ mod tests {
     /// — verify it produces an effect across enough seeds.
     #[test]
     fn hail_of_thorns_can_damage_clustered_targets() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::HAIL_OF_THORNS;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::rangers::RANGER_TEMPLATE;
@@ -14849,7 +14738,6 @@ mod tests {
     /// 2d10 fire DEX-save damage roll. Confirm the cost and damage type.
     #[test]
     fn hellish_rebuke_costs_bonus_action_slot() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::HELLISH_REBUKE;
         use crate::engine::side_effects::Resource;
         let e = ei_with_terrain(10, 10, &[]);
@@ -14864,7 +14752,6 @@ mod tests {
 
     #[test]
     fn phantasmal_killer_damages_on_failed_save() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::PHANTASMAL_KILLER;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -14926,7 +14813,6 @@ mod tests {
 
     #[test]
     fn disintegrate_does_no_damage_on_passed_save() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::DISINTEGRATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         // Pick a target with a strong DEX save — goblins have +DEX.
@@ -14999,7 +14885,6 @@ mod tests {
     /// spell. Pump a troll past 100 HP and verify it's still standing.
     #[test]
     fn power_word_kill_no_op_above_threshold() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::POWER_WORD_KILL;
         use crate::actors::creatures::trolls::TROLL_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -15033,7 +14918,6 @@ mod tests {
     /// removes them from the map).
     #[test]
     fn power_word_kill_drops_target_at_threshold() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::POWER_WORD_KILL;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -15066,7 +14950,6 @@ mod tests {
     /// adjacent enemy makes a CON save vs 1d6 radiant on fail.
     #[test]
     fn word_of_radiance_damages_adjacent_enemies() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::WORD_OF_RADIANCE;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
@@ -15126,7 +15009,6 @@ mod tests {
     /// least one seed shows the condition stripped.
     #[test]
     fn calm_emotions_strips_frightened_on_fail() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::CALM_EMOTIONS;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -15185,7 +15067,6 @@ mod tests {
     /// attack its charmer (validated via charmed_by linkage).
     #[test]
     fn suggestion_charms_target_on_fail() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::SUGGESTION;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
@@ -15270,7 +15151,6 @@ mod tests {
     /// damage and Blinded landed.
     #[test]
     fn sunburst_damages_and_blinds_on_fail() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::SUNBURST;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -15333,7 +15213,6 @@ mod tests {
     /// most-hurt first. Validate that an injured ally is topped up.
     #[test]
     fn mass_heal_restores_ally_hp() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::MASS_HEAL;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -15360,7 +15239,6 @@ mod tests {
     /// Verify a low-HP creature in the blast dies outright.
     #[test]
     fn meteor_swarm_kills_low_hp_targets() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::METEOR_SWARM;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -15392,7 +15270,6 @@ mod tests {
     /// Frightened. Necrotic-immune (undead) targets are unaffected.
     #[test]
     fn dreadful_glare_frightens_on_fail() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::MUMMY_DREADFUL_GLARE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::mummies::MUMMY_TEMPLATE;
@@ -15442,7 +15319,6 @@ mod tests {
     /// until next turn).
     #[test]
     fn reckless_attack_applies_helped_and_outlined() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::RECKLESS_ATTACK;
         use crate::actors::creatures::berserkers::BERSERKER_TEMPLATE;
         use crate::conditions::Condition;
@@ -15464,7 +15340,6 @@ mod tests {
     /// damage AND become Paralyzed for 10 rounds.
     #[test]
     fn chilling_gaze_paralyzes_on_fail() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::CHILLING_GAZE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::yetis::YETI_TEMPLATE;
@@ -15557,7 +15432,6 @@ mod tests {
     /// damage instances on a guaranteed hit.
     #[test]
     fn veteran_multiattack_swings_twice() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::VETERAN_MULTI;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::veterans::VETERAN_TEMPLATE;
@@ -15595,7 +15469,6 @@ mod tests {
     /// amount on cast.
     #[test]
     fn prayer_of_healing_heals_nearby_allies() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::PRAYER_OF_HEALING;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -15623,7 +15496,6 @@ mod tests {
     /// 30-ft (6-tile) radius shouldn't reach an ally 25 tiles away.
     #[test]
     fn prayer_of_healing_skips_distant_allies() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::PRAYER_OF_HEALING;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -15651,7 +15523,6 @@ mod tests {
     /// seed window for stability.
     #[test]
     fn sunbeam_damages_and_blinds_on_hit() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::SUNBEAM;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -15716,7 +15587,6 @@ mod tests {
     /// up the standard concentration drop-on-damage path.
     #[test]
     fn sunbeam_starts_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::SUNBEAM;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -15746,7 +15616,6 @@ mod tests {
     /// are stripped.
     #[test]
     fn power_word_heal_full_heal_and_cleanse() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::POWER_WORD_HEAL;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -15789,7 +15658,6 @@ mod tests {
     /// up to full HP.
     #[test]
     fn resurrection_revives_dying_to_full() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::RESURRECTION;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -15828,7 +15696,6 @@ mod tests {
     /// 7th-level slot isn't burnt.
     #[test]
     fn resurrection_rejects_healthy_target() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::RESURRECTION;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -15854,7 +15721,6 @@ mod tests {
     /// on a goblin across a seed sweep.
     #[test]
     fn manticore_tail_spikes_hit_at_range() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::MANTICORE_SPIKES;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::manticores::MANTICORE_TEMPLATE;
@@ -15948,7 +15814,6 @@ mod tests {
     /// across a seed sweep that lands the attack.
     #[test]
     fn fire_elemental_touch_ignites_target() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::FIRE_ELEMENTAL_TOUCH;
         use crate::actors::creatures::fire_elementals::FIRE_ELEMENTAL_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -16008,7 +15873,6 @@ mod tests {
     /// restraint.
     #[test]
     fn gelatinous_cube_engulfs_target() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::GELATINOUS_CUBE_ENGULF;
         use crate::actors::creatures::gelatinous_cubes::GELATINOUS_CUBE_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -16116,7 +15980,6 @@ mod tests {
     /// tile without firing OAs against intervening tiles.
     #[test]
     fn dimension_door_teleports_caster() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::DIMENSION_DOOR;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
 
@@ -16142,7 +16005,6 @@ mod tests {
     /// damage and is left Burning for follow-up DOT.
     #[test]
     fn wall_of_fire_damages_and_burns_enemies() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::WALL_OF_FIRE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
@@ -16181,7 +16043,6 @@ mod tests {
     /// (5e RAW: caster picks which side of the wall heats up).
     #[test]
     fn wall_of_fire_spares_allies() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::WALL_OF_FIRE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -16212,7 +16073,6 @@ mod tests {
     /// Sanctuary: applies the Sanctuary buff to the target ally.
     #[test]
     fn sanctuary_applies_buff() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::SANCTUARY;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -16280,7 +16140,6 @@ mod tests {
     /// Daylight: every ally inside the burst gets the Daylit buff.
     #[test]
     fn daylight_lights_allies_in_radius() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::DAYLIGHT;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -16309,7 +16168,6 @@ mod tests {
     /// Fire Shield: caster gets the FireShielded condition.
     #[test]
     fn fire_shield_self_buffs() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::FIRE_SHIELD;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::conditions::Condition;
@@ -16329,7 +16187,6 @@ mod tests {
     /// Poison-immune zombies should take 0 even on a failed save.
     #[test]
     fn cloudkill_respects_poison_immunity() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::CLOUDKILL;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
@@ -16363,7 +16220,6 @@ mod tests {
     /// HP loss across a seed sweep (CON save vs the caster's DC).
     #[test]
     fn insect_plague_damages_enemy() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::INSECT_PLAGUE;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -16393,7 +16249,6 @@ mod tests {
     /// Healing Spirit: 1d6 to every ally in burst.
     #[test]
     fn healing_spirit_heals_allies() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::HEALING_SPIRIT;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -16425,7 +16280,6 @@ mod tests {
     /// the captivating-condition rider stack.
     #[test]
     fn true_resurrection_revives_and_cleanses() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::TRUE_RESURRECTION;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -16498,7 +16352,6 @@ mod tests {
     /// scenario and check the attacker took fire damage afterward.
     #[test]
     fn fire_shield_reflects_melee_damage() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::SLAM;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
         use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
@@ -16547,7 +16400,6 @@ mod tests {
     /// the target on a failed CON save.
     #[test]
     fn lich_paralyzing_touch_can_paralyze() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::LICH_PARALYZING_TOUCH;
         use crate::actors::creatures::liches::LICH_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -16596,7 +16448,6 @@ mod tests {
     /// fire damage. A fire-immune ally inside takes zero even on fail.
     #[test]
     fn dragon_fire_breath_burns_area() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::DRAGON_FIRE_BREATH;
         use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -16670,7 +16521,6 @@ mod tests {
     /// flag, and confers BPS resistance via the damage pipeline.
     #[test]
     fn barbarian_rage_grants_resistance_and_consumes_feature() {
-        use crate::actions::action_template::Action;
         use crate::actions::class_features::{RAGE, RAGE_TAG};
         use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
         use crate::conditions::Condition;
@@ -16696,7 +16546,6 @@ mod tests {
     /// Rogue Cunning Hide: bonus-action Hide that drops the Hidden flag.
     #[test]
     fn cunning_hide_applies_hidden() {
-        use crate::actions::action_template::Action;
         use crate::actions::class_features::CUNNING_HIDE;
         use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
         use crate::conditions::Condition;
@@ -16739,7 +16588,6 @@ mod tests {
     /// starts concentration.
     #[test]
     fn spike_growth_marks_enemies_and_concentrates() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::SPIKE_GROWTH;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -16795,7 +16643,6 @@ mod tests {
     /// starts concentration.
     #[test]
     fn telekinesis_lifts_and_pulls() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::TELEKINESIS;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -16833,7 +16680,6 @@ mod tests {
     /// and starts concentration on the caster.
     #[test]
     fn globe_of_invulnerability_halves_damage() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::GLOBE_OF_INVULNERABILITY;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::conditions::Condition;
@@ -16856,7 +16702,6 @@ mod tests {
     /// until at least one transformation lands.
     #[test]
     fn polymorph_transforms_target() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::POLYMORPH;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -16892,7 +16737,6 @@ mod tests {
     /// against one and yanks their concentration on cast.
     #[test]
     fn counterspell_only_targets_concentrating_enemies() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::{BLESS, COUNTERSPELL};
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
@@ -16991,7 +16835,6 @@ mod tests {
     /// immediately, on top of the slot consumption.
     #[test]
     fn time_stop_grants_extra_actions() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::TIME_STOP;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         let mut e = ei_with_terrain(10, 10, &[]);
@@ -17016,7 +16859,6 @@ mod tests {
     /// full HP. Distant allies / enemies are untouched.
     #[test]
     fn wish_heals_nearby_allies() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::WISH;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -17050,7 +16892,6 @@ mod tests {
     /// who fails their STR save. Allies in the burst are spared.
     #[test]
     fn earthquake_drops_enemies_in_burst() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::EARTHQUAKE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -17087,7 +16928,6 @@ mod tests {
     /// load-bearing piece; the rider damage is exercised in attack.rs.
     #[test]
     fn crusaders_mantle_applies_to_caster() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::CRUSADERS_MANTLE;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::conditions::Condition;
@@ -17107,7 +16947,6 @@ mod tests {
     /// target with `MindWhipped` (action-loss next turn) + `NoReaction`.
     #[test]
     fn mind_whip_debuffs_on_fail() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::MIND_WHIP;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -17191,7 +17030,6 @@ mod tests {
     /// Forcecage: failed CHA save applies Caged for 10 rounds.
     #[test]
     fn forcecage_imprisons_on_fail() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::FORCECAGE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -17225,7 +17063,6 @@ mod tests {
     /// to the caster for the duration. Doesn't require concentration.
     #[test]
     fn crown_of_stars_self_buffs() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::CROWN_OF_STARS;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::conditions::Condition;
@@ -17246,7 +17083,6 @@ mod tests {
     /// target picks up Poisoned + extra poison damage.
     #[test]
     fn drow_poisoned_crossbow_poisons_target() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::DROW_POISONED_CROSSBOW;
         use crate::actors::creatures::drow::DROW_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -17285,7 +17121,6 @@ mod tests {
     /// dropping it cleans the whole pool.
     #[test]
     fn fear_frightens_enemies_in_cone() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::FEAR;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -17324,7 +17159,6 @@ mod tests {
     /// in covering the lockdown conditions (Paralyzed / Stunned / etc.).
     #[test]
     fn greater_restoration_cleanses_and_heals() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::GREATER_RESTORATION;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -17366,7 +17200,6 @@ mod tests {
     /// computations can apply the off-target disadvantage.
     #[test]
     fn compelled_duel_locks_target_to_paladin() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::COMPELLED_DUEL;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
@@ -17436,7 +17269,6 @@ mod tests {
     /// radiant to the damage queue.
     #[test]
     fn divine_smite_primes_and_consumes_on_hit() {
-        use crate::actions::action_template::Action;
         use crate::actions::class_features::DIVINE_SMITE;
         use crate::actions::monster_attacks::GREATSWORD;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -17478,7 +17310,6 @@ mod tests {
     /// flows into the attack-bonus lane through condition_attack_bonus.
     #[test]
     fn sacred_weapon_adds_cha_to_attack_bonus() {
-        use crate::actions::action_template::Action;
         use crate::actions::class_features::SACRED_WEAPON;
         use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
         use crate::conditions::Condition;
@@ -17500,7 +17331,6 @@ mod tests {
     /// `5 * level + CHA` HP and burns the feature flag.
     #[test]
     fn lay_on_hands_heals_and_consumes_feature() {
-        use crate::actions::action_template::Action;
         use crate::actions::class_features::{LAY_ON_HANDS, LAY_ON_HANDS_TAG};
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
         use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
@@ -17538,7 +17368,6 @@ mod tests {
     /// undead immunity set.
     #[test]
     fn vampire_template_has_regen_and_charm_gaze() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::{VAMPIRE_CHARMING_GAZE, VAMPIRE_MULTIATTACK};
         use crate::actors::creatures::vampires::VAMPIRE_TEMPLATE;
         let mut e = ei_with_terrain(10, 10, &[]);
@@ -17563,7 +17392,6 @@ mod tests {
     /// `charmed_by` link pointing back at the vampire.
     #[test]
     fn vampire_charm_gaze_links_target() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::VAMPIRE_CHARMING_GAZE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::vampires::VAMPIRE_TEMPLATE;
@@ -17598,7 +17426,6 @@ mod tests {
     /// attack pair. Sanity-check the canonical CR-8 stat shape.
     #[test]
     fn frost_giant_template_has_cold_immunity() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::{FROST_GIANT_GREATAXE, FROST_GIANT_ROCK};
         use crate::actors::creatures::frost_giants::FROST_GIANT_TEMPLATE;
         let mut e = ei_with_terrain(20, 20, &[]);
@@ -17622,7 +17449,6 @@ mod tests {
     /// target (Burning is an auto-apply follow-up — no save).
     #[test]
     fn searing_smite_primes_concentration_and_burns_on_hit() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::GREATSWORD;
         use crate::actions::spells::SEARING_SMITE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -17676,7 +17502,6 @@ mod tests {
     /// a WIS save (caster CHA-DC) that, on fail, applies Frightened.
     #[test]
     fn wrathful_smite_can_frighten_on_hit() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::GREATSWORD;
         use crate::actions::spells::WRATHFUL_SMITE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -17721,7 +17546,6 @@ mod tests {
     /// `apply_smite_follow_up` — None skips the save roll entirely.
     #[test]
     fn branding_smite_auto_brands_on_hit() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::GREATSWORD;
         use crate::actions::spells::BRANDING_SMITE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -17765,7 +17589,6 @@ mod tests {
     /// a CON save and on fail applies Blinded.
     #[test]
     fn blinding_smite_can_blind_on_hit() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::GREATSWORD;
         use crate::actions::spells::BLINDING_SMITE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -17810,7 +17633,6 @@ mod tests {
     /// Elemental (fire-immune) to confirm only the radiant half lands.
     #[test]
     fn flame_strike_splits_damage_so_fire_immune_takes_radiant() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::FLAME_STRIKE;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fire_elementals::FIRE_ELEMENTAL_TEMPLATE;
@@ -17851,7 +17673,6 @@ mod tests {
     /// and ticks 2d8 more fire each end-of-round while concentration holds.
     #[test]
     fn heat_metal_damages_and_grants_attack_disadvantage() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::HEAT_METAL;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -17893,7 +17714,6 @@ mod tests {
     /// the proxy-by-poison-immunity logic.
     #[test]
     fn turn_undead_targets_only_undead_proxy() {
-        use crate::actions::action_template::Action;
         use crate::actions::class_features::{TURN_UNDEAD, TURN_UNDEAD_TAG};
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -17944,7 +17764,6 @@ mod tests {
     /// target is Stunned for 1 round.
     #[test]
     fn stunning_strike_primes_and_stuns_on_hit() {
-        use crate::actions::action_template::Action;
         use crate::actions::class_features::{STUNNING_STRIKE, STUNNING_STRIKE_TAG};
         use crate::actions::monster_attacks::MONK_UNARMED_STRIKE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -17995,7 +17814,6 @@ mod tests {
     /// holder's `condition_attack_bonus` jumps by +3 (d6-average).
     #[test]
     fn bardic_inspiration_grants_inspired_and_attack_buff() {
-        use crate::actions::action_template::Action;
         use crate::actions::class_features::{BARDIC_INSPIRATION, BARDIC_INSPIRATION_TAG};
         use crate::actors::creatures::bards::BARD_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -18034,7 +17852,6 @@ mod tests {
     #[test]
     fn inspired_consumes_on_attack() {
         use crate::actions::class_features::BARDIC_INSPIRATION;
-        use crate::actions::action_template::Action;
         use crate::actors::creatures::bards::BARD_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -18066,7 +17883,6 @@ mod tests {
     /// MM radiant/psychic resistance + immunity profile.
     #[test]
     fn couatl_template_has_bite_gaze_and_resistances() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::{COUATL_BITE, COUATL_SLEEP_GAZE};
         use crate::actors::creatures::couatls::COUATL_TEMPLATE;
         let mut e = ei_with_terrain(20, 20, &[]);
@@ -18094,7 +17910,6 @@ mod tests {
     /// Frightened (so its own aura can't reflect off allied auras).
     #[test]
     fn pit_fiend_template_is_fire_poison_immune_with_fear_aura() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::PIT_FIEND_FEAR_AURA;
         use crate::actors::creatures::pit_fiends::PIT_FIEND_TEMPLATE;
         let mut e = ei_with_terrain(20, 20, &[]);
@@ -18121,7 +17936,6 @@ mod tests {
     /// across the seed sweep.
     #[test]
     fn pit_fiend_fear_aura_frightens_nearby_enemies() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::PIT_FIEND_FEAR_AURA;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::pit_fiends::PIT_FIEND_TEMPLATE;
@@ -18157,7 +17971,6 @@ mod tests {
     /// in a tight cluster verifies all 4 take damage.
     #[test]
     fn chain_lightning_arcs_to_three_nearby_targets() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::CHAIN_LIGHTNING;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -18253,7 +18066,6 @@ mod tests {
     /// (it's a heal, not a restoration), so the only mutation is HP.
     #[test]
     fn goodberry_heals_ally_for_ten() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::GOODBERRY;
         use crate::actors::creatures::druids::DRUID_TEMPLATE;
         let mut e = ei_with_terrain(15, 15, &[]);
@@ -18282,7 +18094,6 @@ mod tests {
     /// caster is now concentrating on Moonbeam.
     #[test]
     fn moonbeam_damages_burst_and_starts_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::MOONBEAM;
         use crate::actors::creatures::druids::DRUID_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -18325,7 +18136,6 @@ mod tests {
     /// pieces of the spell.
     #[test]
     fn call_lightning_damages_burst_and_starts_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::CALL_LIGHTNING;
         use crate::actors::creatures::druids::DRUID_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -18360,7 +18170,6 @@ mod tests {
     /// is negligible).
     #[test]
     fn sleet_storm_prones_enemies_in_burst() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::SLEET_STORM;
         use crate::actors::creatures::druids::DRUID_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -18396,7 +18205,6 @@ mod tests {
     /// save (low STR keeps the math friendly).
     #[test]
     fn reverse_gravity_damages_and_prones() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::REVERSE_GRAVITY;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -18517,7 +18325,6 @@ mod tests {
     /// Verifies the dual-damage shape lands and concentration installs.
     #[test]
     fn storm_of_vengeance_dual_damages_enemies_only() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::STORM_OF_VENGEANCE;
         use crate::actors::creatures::druids::DRUID_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -18561,7 +18368,6 @@ mod tests {
     /// GR on an exhausted ally lifts the flag.
     #[test]
     fn greater_restoration_lifts_exhausted() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::GREATER_RESTORATION;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::conditions::ConditionTimer;
@@ -18592,7 +18398,6 @@ mod tests {
     /// fails the save so the condition lands.
     #[test]
     fn confusion_disad_attacks_and_blocks_reactions() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::CONFUSION;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -18638,7 +18443,6 @@ mod tests {
     /// movement) for the duration; allies are skipped.
     #[test]
     fn plant_growth_entangles_enemies_only() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::PLANT_GROWTH;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -18677,7 +18481,6 @@ mod tests {
     /// the target's speed by the +60ft fly rider in `speed()`.
     #[test]
     fn fly_boosts_speed_and_starts_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::FLY;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         let mut e = ei_with_terrain(15, 15, &[]);
@@ -18710,7 +18513,6 @@ mod tests {
     /// movement) and installs concentration on the caster.
     #[test]
     fn levitate_lifts_failed_save_target() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::LEVITATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -18744,7 +18546,6 @@ mod tests {
     /// and links charmed_by → caster.
     #[test]
     fn dominate_person_charms_and_dominates() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::DOMINATE_PERSON;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -18783,7 +18584,6 @@ mod tests {
     /// martial-arts strike fits in the turn.
     #[test]
     fn flurry_of_blows_grants_extra_action() {
-        use crate::actions::action_template::Action;
         use crate::actions::class_features::FLURRY_OF_BLOWS;
         use crate::actors::creatures::monks::MONK_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -18839,7 +18639,6 @@ mod tests {
     /// bludgeoning typing (so resistance/immunity to BPS applies).
     #[test]
     fn magic_stone_lands_bludgeoning_via_spell_attack() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::MAGIC_STONE;
         use crate::actors::creatures::druids::DRUID_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -18879,7 +18678,6 @@ mod tests {
     /// path through the burst targeting helper.
     #[test]
     fn heroes_feast_buffs_allies_only() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::HEROES_FEAST;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -18950,7 +18748,6 @@ mod tests {
     /// rider runs on `MoveActor::apply` (existing Spike Growth path).
     #[test]
     fn spike_stones_tags_enemies_only_and_starts_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::SPIKE_STONES;
         use crate::actors::creatures::druids::DRUID_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -18995,7 +18792,6 @@ mod tests {
     /// skip both damage and stun) and the save partition.
     #[test]
     fn mind_blast_burst_stuns_failing_enemies_only() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::MIND_FLAYER_MIND_BLAST;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::mind_flayers::MIND_FLAYER_TEMPLATE;
@@ -19087,7 +18883,6 @@ mod tests {
     /// distinguishable from the slashing main).
     #[test]
     fn erinyes_longsword_deals_poison_rider_on_hit() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::ERINYES_LONGSWORD;
         use crate::actors::creatures::erinyes::ERINYES_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -19161,7 +18956,6 @@ mod tests {
     /// team filter on the support side.
     #[test]
     fn holy_word_partitions_by_team() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::HOLY_WORD;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -19205,7 +18999,6 @@ mod tests {
     /// INT/WIS/CHA saves. Greater Restoration also lifts it.
     #[test]
     fn feeblemind_applies_feebled_on_fail_and_cleanses() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::{FEEBLEMIND, GREATER_RESTORATION};
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -19284,7 +19077,6 @@ mod tests {
     /// allies are spared by the enemy-only filter.
     #[test]
     fn prismatic_spray_partitions_by_team() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::PRISMATIC_SPRAY;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -19342,7 +19134,6 @@ mod tests {
     /// and asserts the target took poison damage on the failed save.
     #[test]
     fn wyvern_stinger_can_apply_poison_rider() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::WYVERN_STINGER;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wyverns::WYVERN_TEMPLATE;
@@ -19380,7 +19171,6 @@ mod tests {
     /// classes of attack roll qualify.
     #[test]
     fn hex_rider_fires_on_spell_attacks() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::{FIRE_BOLT, HEX};
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -19537,7 +19327,6 @@ mod tests {
     /// condition so concentration-drop tracking can prune them.
     #[test]
     fn conjure_animals_spawns_wolves_on_caster_team() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::CONJURE_ANIMALS;
         use crate::actors::creatures::druids::DRUID_TEMPLATE;
         use crate::conditions::Condition;
@@ -19582,7 +19371,6 @@ mod tests {
     /// low enough that the DC dwarfs them across the d20 spread.
     #[test]
     fn ottos_dance_installs_on_low_wis_target() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::OTTOS_IRRESISTIBLE_DANCE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -19622,7 +19410,6 @@ mod tests {
     /// and starts concentration. Mazed blocks action economy + movement.
     #[test]
     fn maze_installs_mazed_and_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::MAZE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -19652,7 +19439,6 @@ mod tests {
     /// gives the target an escape — verifying the install half here.
     #[test]
     fn eyebite_installs_asleep_on_failed_save() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::EYEBITE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
@@ -19690,7 +19476,6 @@ mod tests {
     /// 0 damage; enemy takes some damage.
     #[test]
     fn fire_storm_damages_enemies_spares_allies() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::FIRE_STORM;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::druids::DRUID_TEMPLATE;
@@ -19734,7 +19519,6 @@ mod tests {
     /// enough seeds.
     #[test]
     fn hydra_multiattack_lands_five_bites() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::HYDRA_MULTI;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::hydras::HYDRA_TEMPLATE;
@@ -19818,7 +19602,6 @@ mod tests {
     /// Petrified for 1 round. Low-CON goblin should fail across seeds.
     #[test]
     fn medusa_gaze_petrifies_on_failed_con() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::MEDUSA_PETRIFYING_GAZE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::medusas::MEDUSA_TEMPLATE;
@@ -19961,7 +19744,6 @@ mod tests {
     /// High-HP boss is unaffected; low-HP target is debuffed without a save.
     #[test]
     fn power_word_pain_gates_on_hp_threshold() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::POWER_WORD_PAIN;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE;
@@ -19995,7 +19777,6 @@ mod tests {
     /// reliably fails the save by picking a target with low CON.
     #[test]
     fn frostbite_applies_cold_and_slowed_on_fail() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::FROSTBITE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -20035,7 +19816,6 @@ mod tests {
     /// persists for the duration RAW).
     #[test]
     fn mordenkainens_sword_installs_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::MORDENKAINENS_SWORD;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -20062,7 +19842,6 @@ mod tests {
     /// a goblin (no resistance) takes damage.
     #[test]
     fn negative_energy_flood_respects_necrotic_immunity() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::NEGATIVE_ENERGY_FLOOD;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
@@ -20109,7 +19888,6 @@ mod tests {
     /// low WIS so the save reliably fails.
     #[test]
     fn mass_polymorph_morphs_enemies_spares_allies() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::MASS_POLYMORPH;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -20224,7 +20002,6 @@ mod tests {
     /// reliably fails across seeds.
     #[test]
     fn ghost_horrifying_visage_frightens_nearby_enemies() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::GHOST_HORRIFYING_VISAGE;
         use crate::actors::creatures::ghosts::GHOST_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -20303,7 +20080,6 @@ mod tests {
     /// Verifies the GainTempHp + ApplyCondition side-effect pair.
     #[test]
     fn armor_of_agathys_grants_temp_hp_and_shield() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::ARMOR_OF_AGATHYS;
         use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
         let mut e = ei_with_terrain(10, 10, &[]);
@@ -20323,7 +20099,6 @@ mod tests {
     /// with the Fire Shield reflect path.
     #[test]
     fn armor_of_agathys_reflects_cold_on_melee_hit() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::SLAM;
         use crate::actions::spells::ARMOR_OF_AGATHYS;
         use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
@@ -20365,7 +20140,6 @@ mod tests {
     /// damage hit (force is rare so no resistance shenanigans).
     #[test]
     fn armor_of_agathys_drops_when_temp_hp_drained() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::ARMOR_OF_AGATHYS;
         use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
         use crate::engine::side_effects::DealDamage;
@@ -20397,7 +20171,6 @@ mod tests {
     /// gate on per-seed determinism).
     #[test]
     fn sickening_radiance_exhausts_enemies_spares_allies() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::SICKENING_RADIANCE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
@@ -20449,7 +20222,6 @@ mod tests {
     /// OnHitRider table.
     #[test]
     fn bigbys_hand_self_buffs_with_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::BIGBYS_HAND;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         let mut e = ei_with_terrain(10, 10, &[]);
@@ -20469,7 +20241,6 @@ mod tests {
     /// concentration mark.
     #[test]
     fn tensers_transformation_buffs_temp_hp_and_advantage() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::TENSERS_TRANSFORMATION;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         let mut e = ei_with_terrain(10, 10, &[]);
@@ -20492,7 +20263,6 @@ mod tests {
     /// radius are spared. Concentration is installed regardless.
     #[test]
     fn aura_of_life_installs_death_ward_on_allies() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::AURA_OF_LIFE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
@@ -20523,7 +20293,6 @@ mod tests {
     /// the radius are spared by `enemy_burst_targets`.
     #[test]
     fn aganazzars_scorcher_burns_enemies_spares_allies() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::AGANAZZARS_SCORCHER;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -20573,7 +20342,6 @@ mod tests {
     /// DivineStriking condition and consumes the once-per-rest feature.
     #[test]
     fn divine_strike_primes_caster_and_consumes_feature() {
-        use crate::actions::action_template::Action;
         use crate::actions::class_features::{DIVINE_STRIKE, DIVINE_STRIKE_TAG};
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         let mut e = ei_with_terrain(10, 10, &[]);
@@ -20596,7 +20364,6 @@ mod tests {
     /// TripAttacking condition and consumes the once-per-rest feature.
     #[test]
     fn trip_attack_primes_caster_and_consumes_feature() {
-        use crate::actions::action_template::Action;
         use crate::actions::class_features::{TRIP_ATTACK, TRIP_ATTACK_TAG};
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
         let mut e = ei_with_terrain(10, 10, &[]);
@@ -20656,7 +20423,6 @@ mod tests {
     /// Heroic condition.
     #[test]
     fn potion_of_heroism_grants_temp_hp_and_heroic() {
-        use crate::actions::action_template::Action;
         use crate::actions::item_actions::DRINK_POTION_OF_HEROISM;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
         use crate::items::item_template::POTION_OF_HEROISM;
@@ -20681,7 +20447,6 @@ mod tests {
     /// Potion of Invisibility: drinking applies the Invisible condition.
     #[test]
     fn potion_of_invisibility_grants_invisible() {
-        use crate::actions::action_template::Action;
         use crate::actions::item_actions::DRINK_POTION_OF_INVISIBILITY;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
         use crate::items::item_template::POTION_OF_INVISIBILITY;
@@ -20722,7 +20487,6 @@ mod tests {
     /// both branches across runs.
     #[test]
     fn acid_arrow_deals_acid_damage_across_seeds() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::ACID_ARROW;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -20768,7 +20532,6 @@ mod tests {
     /// spared and at least one failed-save enemy ends up Prone.
     #[test]
     fn tidal_wave_burst_knocks_enemies_prone_spares_allies() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::TIDAL_WAVE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -20813,7 +20576,6 @@ mod tests {
     /// caster ends up concentrating on Dawn.
     #[test]
     fn dawn_spares_allies_and_installs_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::DAWN;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -20854,7 +20616,6 @@ mod tests {
     /// goblin so the fail is reliable across seeds.
     #[test]
     fn mental_prison_imprisons_low_int_target() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::MENTAL_PRISON;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -20892,7 +20653,6 @@ mod tests {
     /// concentration mark; the holder takes half fire damage while up.
     #[test]
     fn investiture_of_flame_installs_self_buff_and_resists_fire() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::INVESTITURE_OF_FLAME;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         let mut e = ei_with_terrain(10, 10, &[]);
@@ -20956,7 +20716,6 @@ mod tests {
     /// least one failed-save enemy ends up Prone across seeds.
     #[test]
     fn grease_knocks_enemies_prone_spares_allies() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::GREASE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -21006,7 +20765,6 @@ mod tests {
     /// caster ends up concentrating on Flaming Sphere.
     #[test]
     fn flaming_sphere_spares_allies_and_installs_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::FLAMING_SPHERE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -21047,7 +20805,6 @@ mod tests {
     /// no concentration mark is installed (the guardian is RAW non-conc).
     #[test]
     fn guardian_of_faith_spares_allies_no_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::GUARDIAN_OF_FAITH;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -21090,7 +20847,6 @@ mod tests {
     /// the caster ends up concentrating on Blade Barrier.
     #[test]
     fn blade_barrier_spares_allies_and_installs_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::BLADE_BARRIER;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -21133,7 +20889,6 @@ mod tests {
     /// warded caster picks up Disadvantage; a melee swing stays Normal.
     #[test]
     fn wind_wall_imposes_ranged_disadvantage_only() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::WIND_WALL;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -21178,7 +20933,6 @@ mod tests {
     /// plus the concentration mark on the caster.
     #[test]
     fn otilukes_resilient_sphere_installs_on_failed_dex_save() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::OTILUKES_RESILIENT_SPHERE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -21243,7 +20997,6 @@ mod tests {
     /// a Black Tentacles concentration mark.
     #[test]
     fn black_tentacles_spares_allies_and_installs_restrained() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::EVARDS_BLACK_TENTACLES;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -21303,7 +21056,6 @@ mod tests {
     /// elsewhere.
     #[test]
     fn staggering_smite_primes_psychic_rider() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::STAGGERING_SMITE;
         use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
         let mut e = ei_with_terrain(15, 15, &[]);
@@ -21328,7 +21080,6 @@ mod tests {
     /// Verifies the prime install + concentration mark.
     #[test]
     fn banishing_smite_primes_force_rider() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::BANISHING_SMITE;
         use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
         let mut e = ei_with_terrain(15, 15, &[]);
@@ -21356,7 +21107,6 @@ mod tests {
     /// smite) should not.
     #[test]
     fn banishing_smite_banishes_below_threshold_only() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::GREATSWORD;
         use crate::actions::spells::BANISHING_SMITE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -21485,7 +21235,6 @@ mod tests {
     /// the prime install + concentration mark.
     #[test]
     fn thunderous_smite_primes_thunder_rider() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::THUNDEROUS_SMITE;
         use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
         let mut e = ei_with_terrain(15, 15, &[]);
@@ -21512,7 +21261,6 @@ mod tests {
     /// end-to-end.
     #[test]
     fn thunderous_smite_prones_failed_save() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::GREATSWORD;
         use crate::actions::spells::THUNDEROUS_SMITE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -21558,7 +21306,6 @@ mod tests {
     /// should drop them onto an adjacent tile).
     #[test]
     fn lightning_lure_pulls_and_zaps_failed_save() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::LIGHTNING_LURE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -21604,7 +21351,6 @@ mod tests {
     /// times across seeds, at least one push lands (goblin's x > 6).
     #[test]
     fn thunderwave_pushes_failed_save_targets() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::THUNDERWAVE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -21647,7 +21393,6 @@ mod tests {
     /// then a melee swing → prime is gone and extra damage landed.
     #[test]
     fn shillelagh_primes_and_riders_force_damage() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::SLAM;
         use crate::actions::spells::SHILLELAGH;
         use crate::actors::creatures::druids::DRUID_TEMPLATE;
@@ -21707,7 +21452,6 @@ mod tests {
     /// starts concentrating. Round-end then crushes for 2d6 more.
     #[test]
     fn maximilians_earthen_grasp_restrains_and_drips() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::MAXIMILIANS_EARTHEN_GRASP;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -21754,7 +21498,6 @@ mod tests {
     /// coat-on-fail on a small cluster.
     #[test]
     fn vitriolic_sphere_burst_damages_and_coats_failed_saves() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::VITRIOLIC_SPHERE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -21818,7 +21561,6 @@ mod tests {
     /// (consumes a lv1 slot, lands damage of the chosen type).
     #[test]
     fn chromatic_orb_picks_vulnerable_damage_type() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::CHROMATIC_ORB;
         use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -21868,7 +21610,6 @@ mod tests {
     /// damage on a failed save across a few seeds.
     #[test]
     fn mind_spike_lands_psychic_save_for_half() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::MIND_SPIKE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -21899,7 +21640,6 @@ mod tests {
     /// the d20 INT-save fail probability.
     #[test]
     fn psychic_lance_can_incapacitate_on_fail() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::PSYCHIC_LANCE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -21947,7 +21687,6 @@ mod tests {
     /// enemies.
     #[test]
     fn thunderclap_is_a_cantrip_action_only() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::THUNDERCLAP;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -21968,7 +21707,6 @@ mod tests {
     /// Verifies the lv2 slot is wired and the burst damages enemies.
     #[test]
     fn snillocs_snowball_swarm_damages_enemy_burst() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::SNILLOCS_SNOWBALL_SWARM;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -22004,7 +21742,6 @@ mod tests {
     /// pre-check skips priming an already-inspired ally.
     #[test]
     fn guidance_applies_inspired_and_skips_re_prime() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::GUIDANCE;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::conditions::{Condition, ConditionTimer};
@@ -22057,7 +21794,6 @@ mod tests {
     /// once so the push rider can be observed.
     #[test]
     fn dissonant_whispers_damages_and_pushes_on_fail() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::DISSONANT_WHISPERS;
         use crate::actors::creatures::bards::BARD_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -22107,7 +21843,6 @@ mod tests {
     /// save.
     #[test]
     fn ice_knife_damages_target_or_burst() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::ICE_KNIFE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -22149,7 +21884,6 @@ mod tests {
     /// the burst behavior — the attack roll itself can hit or miss.
     #[test]
     fn ice_knife_burst_hits_adjacent_targets() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::ICE_KNIFE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
 
@@ -22197,7 +21931,6 @@ mod tests {
     /// fail validation while the target is already Enlarged.
     #[test]
     fn enlarge_installs_buff_and_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::ENLARGE_REDUCE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -22236,7 +21969,6 @@ mod tests {
     /// radius is spared (the `enemy_burst_targets` filter).
     #[test]
     fn destructive_wave_hits_enemies_only_with_prone_rider() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::DESTRUCTIVE_WAVE;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -22298,7 +22030,6 @@ mod tests {
     /// enemy is spared.
     #[test]
     fn sword_burst_is_cantrip_self_centered_burst() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::SWORD_BURST;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -22357,7 +22088,6 @@ mod tests {
     /// short timer is the right shape (not Permanent or Rounds).
     #[test]
     fn blade_ward_installs_resistance_until_next_turn() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::BLADE_WARD;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
 
@@ -22385,7 +22115,6 @@ mod tests {
     /// (failed-save case).
     #[test]
     fn catapult_lands_bludgeoning_on_failed_save() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::CATAPULT;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -22426,7 +22155,6 @@ mod tests {
     /// enemy, and the prone rider eventually fires across seeds.
     #[test]
     fn earth_tremor_damages_and_prones_in_self_burst() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::EARTH_TREMOR;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -22478,7 +22206,6 @@ mod tests {
     /// caster. Drop concentration → Blinded should clear.
     #[test]
     fn fog_cloud_installs_blinded_under_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::FOG_CLOUD;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -22520,7 +22247,6 @@ mod tests {
     /// picks up concentration.
     #[test]
     fn gust_of_wind_pushes_in_wind_path() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::GUST_OF_WIND;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -22571,7 +22297,6 @@ mod tests {
     /// fire and damage the secondary target at least once.
     #[test]
     fn chaos_bolt_damages_primary_and_eventually_chains() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::CHAOS_BOLT;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
@@ -22630,7 +22355,6 @@ mod tests {
     /// seeds.
     #[test]
     fn arms_of_hadar_damages_and_blocks_reactions() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::ARMS_OF_HADAR;
         use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -22679,7 +22403,6 @@ mod tests {
     /// slot cost and damage to an enemy in the cone on a failed DEX save.
     #[test]
     fn dragons_breath_damages_cone_targets() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::DRAGONS_BREATH;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
@@ -22716,7 +22439,6 @@ mod tests {
     /// damage to an in-burst enemy across seeds.
     #[test]
     fn conjure_barrage_damages_in_burst() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::CONJURE_BARRAGE;
         use crate::actors::creatures::druids::DRUID_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -22757,7 +22479,6 @@ mod tests {
     /// to the primary.
     #[test]
     fn steel_wind_strike_damages_primary_and_extra_targets() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::STEEL_WIND_STRIKE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -22828,7 +22549,6 @@ mod tests {
     /// across seeds, and the caster picks up concentration.
     #[test]
     fn wall_of_ice_damages_and_prones_in_burst() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::WALL_OF_ICE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -22951,7 +22671,6 @@ mod tests {
     /// - Removing the `WardingBonded` condition clears the partner link.
     #[test]
     fn warding_bond_buffs_ally_and_mirrors_damage() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::WARDING_BOND;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -23036,7 +22755,6 @@ mod tests {
     /// - A hostile target (this is an ally-only buff).
     #[test]
     fn warding_bond_custom_validate_blocks_invalid_targets() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::WARDING_BOND;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -23109,7 +22827,6 @@ mod tests {
     ///   doesn't pick it as a damage option).
     #[test]
     fn telekinetic_cantrip_pulls_target_on_failed_save() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::TELEKINETIC;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -23173,7 +22890,6 @@ mod tests {
     /// success condition.
     #[test]
     fn green_flame_blade_leaps_to_adjacent_enemy_on_hit() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::GREEN_FLAME_BLADE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -23247,7 +22963,6 @@ mod tests {
     /// "leap_id has no candidate" branch is taken cleanly.
     #[test]
     fn green_flame_blade_no_leap_when_isolated() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::GREEN_FLAME_BLADE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -23287,7 +23002,6 @@ mod tests {
     /// reach setup against a goblin.
     #[test]
     fn primal_savagery_damages_adjacent_target() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::PRIMAL_SAVAGERY;
         use crate::actors::creatures::druids::DRUID_TEMPLATE;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -23348,7 +23062,6 @@ mod tests {
     /// and prone after the cast.
     #[test]
     fn sapping_sting_damages_and_prones_on_failed_save() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::SAPPING_STING;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -23415,7 +23128,6 @@ mod tests {
     /// concentration mark properly cleans up on drop.
     #[test]
     fn self_concentration_buff_helper_installs_and_drops_cleanly() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::BLUR;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
 
@@ -23442,7 +23154,6 @@ mod tests {
     /// outside the burst is untouched (enemy-burst routing).
     #[test]
     fn erupting_earth_damages_enemies_in_burst() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::ERUPTING_EARTH;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -23483,7 +23194,6 @@ mod tests {
     /// failed save across seeds.
     #[test]
     fn blight_lands_necrotic_on_failed_save() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::BLIGHT;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -23526,7 +23236,6 @@ mod tests {
     /// reduced on a failed save across seeds.
     #[test]
     fn harm_lands_damage_and_max_hp_drain_on_failed_save() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::HARM;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -23576,7 +23285,6 @@ mod tests {
     /// in-burst enemy takes damage across seeds.
     #[test]
     fn circle_of_death_damages_in_burst() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::CIRCLE_OF_DEATH;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -23623,7 +23331,6 @@ mod tests {
     /// caster's allies are excluded.
     #[test]
     fn weird_applies_frightened_on_failed_save() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::WEIRD;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -23672,7 +23379,6 @@ mod tests {
     /// to max if already wounded).
     #[test]
     fn regenerate_heals_target() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::REGENERATE;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -23715,7 +23421,6 @@ mod tests {
     /// OnHitRider.
     #[test]
     fn lightning_arrow_rider_consumed_on_ranged_hit_only() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::{LONGBOW, SCIMITAR};
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
         use crate::actors::creatures::rangers::RANGER_TEMPLATE;
@@ -23788,7 +23493,6 @@ mod tests {
     /// verify slot consumption and the action's flag shape.
     #[test]
     fn charm_monster_uses_lv4_slot() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::CHARM_MONSTER;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -23813,7 +23517,6 @@ mod tests {
     /// fails validation (so the lv8 slot isn't wasted).
     #[test]
     fn mind_blank_installs_and_blocks_recast() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::MIND_BLANK;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::conditions::Condition;
@@ -23842,7 +23545,6 @@ mod tests {
     /// LightningArrowPrimed condition on the caster.
     #[test]
     fn lightning_arrow_primes_caster() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::LIGHTNING_ARROW;
         use crate::actors::creatures::rangers::RANGER_TEMPLATE;
         use crate::conditions::Condition;
@@ -23867,7 +23569,6 @@ mod tests {
     /// the spell touched the foe's HP after a few rounds).
     #[test]
     fn conjure_volley_damages_enemies_in_burst() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::CONJURE_VOLLEY;
         use crate::actors::creatures::rangers::RANGER_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -23905,7 +23606,6 @@ mod tests {
     /// concentration anchors the spell duration.
     #[test]
     fn wall_of_thorns_installs_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::WALL_OF_THORNS;
         use crate::actors::creatures::druids::DRUID_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -23938,7 +23638,6 @@ mod tests {
     /// fails the custom_validate gate.
     #[test]
     fn barkskin_installs_buff_and_lifts_ac_floor() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::BARKSKIN;
         use crate::actors::creatures::druids::DRUID_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -23988,7 +23687,6 @@ mod tests {
     /// ally is left uncovered, and the caster picks up concentration.
     #[test]
     fn pass_without_trace_cloaks_nearby_allies() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::PASS_WITHOUT_TRACE;
         use crate::actors::creatures::druids::DRUID_TEMPLATE;
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -24028,7 +23726,6 @@ mod tests {
     /// custom_validate gate while the buff is already up.
     #[test]
     fn holy_weapon_self_buffs_and_marks_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::HOLY_WEAPON;
         use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -24100,7 +23797,6 @@ mod tests {
     /// the paladin's GREATSWORD as the weapon vehicle.
     #[test]
     fn holy_weapon_rider_adds_radiant_damage_on_hit() {
-        use crate::actions::action_template::Action;
         use crate::actions::monster_attacks::GREATSWORD;
         use crate::actions::spells::HOLY_WEAPON;
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
@@ -24152,7 +23848,6 @@ mod tests {
     /// concentration mark (re-casts drop the prior install cleanly).
     #[test]
     fn tsunami_installs_concentration() {
-        use crate::actions::action_template::Action;
         use crate::actions::spells::TSUNAMI;
         use crate::actors::creatures::druids::DRUID_TEMPLATE;
         use crate::engine::side_effects::Resource;
@@ -24314,8 +24009,6 @@ mod tests {
 
     #[test]
     fn thunder_step_deals_damage_and_teleports() {
-        use crate::actions::action_template::Action;
-        use crate::engine::side_effects::ApplicableSideEffect;
         let mut e = ei_with_terrain(20, 20, &[]);
         let wiz_id = e
             .instantiate_creature(
@@ -24470,8 +24163,6 @@ mod tests {
 
     #[test]
     fn entangle_spell_restrains_targets() {
-        use crate::actions::action_template::Action;
-        use crate::engine::side_effects::ApplicableSideEffect;
         let mut e = ei_with_terrain(20, 20, &[]);
         let druid_id = e
             .instantiate_creature(
@@ -24587,13 +24278,13 @@ mod tests {
         e.actors.get_mut(&f_id).unwrap().reset_for_new_round();
         let normal_cost = e.path_cost_to(f_id, Coordinate::new(5, 3));
         assert!(normal_cost.is_some(), "should reach (5,3) over normal floor");
-        let normal_c = normal_cost.unwrap();
+        let _normal_c = normal_cost.unwrap();
 
         let idx = 6 + 3 * 20; // tile (6,3)
         e.terrain[idx] = TerrainInfo {
             terrain_type: TerrainType::DifficultTerrain,
         };
-        let diff_cost = e.path_cost_to(f_id, Coordinate::new(7, 3));
+        let _diff_cost = e.path_cost_to(f_id, Coordinate::new(7, 3));
         let normal_to_7 = e.path_cost_to(f_id, Coordinate::new(5, 3));
         assert!(
             normal_to_7.is_some(),
@@ -24752,7 +24443,6 @@ mod tests {
 
     #[test]
     fn absorb_elements_installs_resistance_and_rider() {
-        use crate::actions::action_template::Action;
         let mut e = ei_with_terrain(20, 20, &[]);
         let wiz = e
             .instantiate_creature(
@@ -24887,7 +24577,6 @@ mod tests {
 
     #[test]
     fn silvery_barbs_applies_mocked_and_inspired() {
-        use crate::actions::action_template::Action;
         let mut e = ei_with_terrain(20, 20, &[]);
         let wiz = e
             .instantiate_creature(
@@ -24925,7 +24614,6 @@ mod tests {
 
     #[test]
     fn protection_from_energy_installs_resistance_with_concentration() {
-        use crate::actions::action_template::Action;
         let mut e = ei_with_terrain(20, 20, &[]);
         let cleric = e
             .instantiate_creature(
@@ -25239,7 +24927,7 @@ mod tests {
     fn recharge_ability_tracks_availability() {
         use crate::engine::dice::FastRandRoller;
         let mut roller = FastRandRoller::with_seed(1);
-        let mut actor = ActorInstance::from_creature_template(
+        let actor = ActorInstance::from_creature_template(
             &ZOMBIE_TEMPLATE,
             Coordinate::new(0, 0),
             0,

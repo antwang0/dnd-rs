@@ -7088,3 +7088,84 @@ impl Action for GrickBeak {
 }
 
 pub static GRICK_BEAK: LazyLock<GrickBeak> = LazyLock::new(|| GrickBeak {});
+
+/// Glaive — STR-based 1d10 slashing melee weapon with reach 2 (10 ft).
+/// Two-handed polearm used by gnoll pack lords and similar martial
+/// leaders. Reach 2 lets the wielder strike from one tile back, matching
+/// the 5e polearm reach property.
+pub static GLAIVE: SimpleWeapon = SimpleWeapon {
+    display_name: "glaive",
+    aliases: &["glv", "polearm"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 10),
+    damage_type: DamageType::Slashing,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Gnoll Pack Lord multiattack — 2 glaive swings per Action. The pack
+/// lord's signature move: two reach-2 slashing strikes that let it
+/// command the battle line from behind the front rank.
+pub static GNOLL_PACK_LORD_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double glaive",
+    sub_attack: &GLAIVE,
+    count: 2,
+});
+
+/// Spectator Eye Ray — ranged spell attack modeled as a single-target
+/// beam. INT-based attack roll, 3d10 force damage, 24-tile range
+/// (≈60 ft). The MM spectator has four distinct eye rays (confusion,
+/// fear, wounding, paralyzing); we collapse them into one high-damage
+/// force beam to keep the action economy simple while preserving the
+/// "ranged magical zap" identity.
+pub struct SpectatorEyeRay {}
+
+impl Action for SpectatorEyeRay {
+    fn name(&self) -> &str {
+        "eye ray"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["er", "ray"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Force]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // INT-based ranged spell attack — no ability mod to damage (pure
+        // magical energy, like a cantrip).
+        simple_weapon_attack_ranged(
+            encounter,
+            caster_id,
+            target_ids,
+            self.name(),
+            AbilityScoreType::Intelligence,
+            None,
+            Dice::new(3, 10),
+            DamageType::Force,
+            false,
+            Some(24),
+        )
+    }
+}
+
+pub static SPECTATOR_EYE_RAY: LazyLock<SpectatorEyeRay> = LazyLock::new(|| SpectatorEyeRay {});

@@ -60,6 +60,13 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3a'. Greater Restoration — cleanse a debuffed ally of a severe
+        //      condition (Petrified, Stunned, Paralyzed, Blinded, etc.).
+        //      High priority because the conditions block the ally's turn.
+        if let Some(aei) = try_greater_restoration(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3a. Self-heal (Second Wind) when below half HP — Fighter's
         // bonus-action restore. Comes before attacks because the heal
         // is bonus-action and doesn't conflict with this turn's swing.
@@ -229,6 +236,19 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3m''''. Antilife Shell — level-5 cleric concentration self-buff.
+        //         Push adjacent enemies away and apply Warded. Fire when
+        //         2+ enemies are in melee reach so the push-back matters.
+        if let Some(aei) = try_self_buff_concentration(
+            encounter,
+            actor_id,
+            "antilife shell",
+            Condition::Warded,
+            2,
+        ) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3n. Aura of Life — level-4 paladin concentration aura. Fire
         //     when at least one ally is clustered in the aura radius
         //     and a fight has started.
@@ -331,6 +351,14 @@ impl Controller for SimpleAi {
         //     already Frightened. Concentration-gated, so we only fire
         //     when nothing else holds the slot.
         if let Some(aei) = try_cause_fear(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 5a'. Dominate Monster — level-8 concentration charm against the
+        //      highest-HP enemy. Works on any creature type (unlike Hold
+        //      Person). Concentration-gated; fire when we have the slot
+        //      and aren't already concentrating.
+        if let Some(aei) = try_dominate_monster(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
@@ -525,6 +553,46 @@ fn try_cause_fear(
             continue;
         }
         let aei = ActionExecutionInfo::new(cf, actor_id, Some(vec![target_id]), None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        let hp = target.hitpoints();
+        if best.as_ref().is_none_or(|(best_hp, _)| hp > *best_hp) {
+            best = Some((hp, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
+}
+
+/// Cast Dominate Monster on the highest-HP in-range enemy if we have it
+/// and aren't already concentrating. Unlike Hold Person this works on any
+/// creature type, so we target the beefiest hostile to flip the toughest
+/// threat to our side. Concentration-gated; the action's own validation
+/// checks the level-8 slot availability.
+fn try_dominate_monster(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() {
+        return None;
+    }
+    let action = actor.find_action("dominate monster")?;
+    let my_team = actor.team();
+
+    let mut best: Option<(u32, ActionExecutionInfo)> = None;
+    for target_id in encounter.sorted_actor_ids() {
+        let Some(target) = encounter.actors.get(&target_id) else {
+            continue;
+        };
+        if target_id == actor_id || target.team() == my_team || !target.is_combat_active() {
+            continue;
+        }
+        // Skip already-dominated targets.
+        if target.has_condition(Condition::Dominated) {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![target_id]), None, None);
         if !aei.validate(encounter) {
             continue;
         }
@@ -1583,6 +1651,60 @@ fn try_self_heal(
 /// failure), then wounded combat-active allies below 50% HP. Stable and
 /// full-HP allies are ignored. Self-targeting is excluded — the actor
 /// should make hostile turns, not heal themselves preemptively.
+/// Greater Restoration — cleanse the worst debuff from a nearby ally.
+/// Priorities: Petrified > Paralyzed > Stunned > Blinded > Frightened >
+/// Charmed > Exhausted > Poisoned. Only fires when an ally has one of
+/// these conditions and the caster has the spell + a lv5 slot.
+fn try_greater_restoration(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor.find_action("greater restoration")?;
+    let my_team = actor.team();
+    let severe_conditions = [
+        Condition::Petrified,
+        Condition::Paralyzed,
+        Condition::Stunned,
+        Condition::Blinded,
+        Condition::Frightened,
+        Condition::Charmed,
+        Condition::Exhausted,
+        Condition::Poisoned,
+        Condition::Feebled,
+    ];
+    let mut best: Option<(usize, ActionExecutionInfo)> = None;
+    for ally_id in encounter.sorted_actor_ids() {
+        if ally_id == actor_id {
+            continue;
+        }
+        let Some(ally) = encounter.actors.get(&ally_id) else {
+            continue;
+        };
+        if ally.team() != my_team || !ally.is_combat_active() {
+            continue;
+        }
+        let severity = severe_conditions
+            .iter()
+            .position(|c| ally.has_condition(*c));
+        let Some(severity) = severity else {
+            continue;
+        };
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![ally_id]), None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        let pick = match &best {
+            None => true,
+            Some((best_sev, _)) => severity < *best_sev,
+        };
+        if pick {
+            best = Some((severity, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
+}
+
 fn try_support_heal(
     encounter: &EncounterInstance,
     actor_id: usize,
