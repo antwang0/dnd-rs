@@ -1,4 +1,6 @@
-use crate::actions::class_features::{BARDIC_INSPIRATION, BARDIC_INSPIRATION_TAG};
+use crate::actions::class_features::{
+    BARDIC_INSPIRATION, BARDIC_INSPIRATION_TAG, CUTTING_WORDS, CUTTING_WORDS_TAG,
+};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::SCIMITAR;
 use crate::actions::spells::{
@@ -54,6 +56,12 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::SILVERY_BARBS);
     actions.push(&*crate::actions::spells::CLOUD_OF_DAGGERS);
     actions.push(&*crate::actions::spells::HEALING_SPIRIT);
+    // Cutting Words — Bard signature defensive feature, once per short
+    // rest. Applies Mocked (disadvantage on next attack) to one enemy
+    // within 60ft. Collapsing the RAW reactive cast into a bonus action
+    // pre-empt loses some flavor but slots cleanly into the action
+    // pipeline without a reaction-trigger framework.
+    actions.push(&*CUTTING_WORDS);
     CreatureTemplate {
         name: "Bard",
         glyph: 'B',
@@ -86,7 +94,7 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Charisma,
         ]),
         condition_immunities: HashSet::new(),
-        features: HashSet::from([BARDIC_INSPIRATION_TAG]),
+        features: HashSet::from([BARDIC_INSPIRATION_TAG, CUTTING_WORDS_TAG]),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),
         legendary_resistances: 0,

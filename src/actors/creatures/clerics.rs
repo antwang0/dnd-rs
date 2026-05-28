@@ -1,5 +1,5 @@
 use crate::actions::class_features::{
-    DIVINE_STRIKE, DIVINE_STRIKE_TAG, TURN_UNDEAD, TURN_UNDEAD_TAG,
+    DIVINE_STRIKE, DIVINE_STRIKE_TAG, PRESERVE_LIFE, PRESERVE_LIFE_TAG, TURN_UNDEAD, TURN_UNDEAD_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
@@ -152,6 +152,12 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::PROTECTION_FROM_ENERGY);
     actions.push(&*crate::actions::spells::REMOVE_CURSE);
     actions.push(&*crate::actions::spells::ANTILIFE_SHELL);
+    // Preserve Life — Cleric Channel Divinity (Life Domain in RAW; we
+    // expose it generically here). Once per short rest pool of 5 × level
+    // HP, healing the most-wounded allies first up to half max HP each.
+    // Mass-stabilizer to balance the cleric's offensive Channel Divinity
+    // (Turn Undead) — the same action-economy slot, different lane.
+    actions.push(&*PRESERVE_LIFE);
     CreatureTemplate {
         name: "Cleric",
         glyph: 'C',
@@ -189,7 +195,7 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Clerics are proficient in WIS and CHA saves (5e PHB).
         proficient_saves: HashSet::from([AbilityScoreType::Wisdom, AbilityScoreType::Charisma]),
         condition_immunities: HashSet::new(),
-        features: HashSet::from([TURN_UNDEAD_TAG, DIVINE_STRIKE_TAG]),
+        features: HashSet::from([TURN_UNDEAD_TAG, DIVINE_STRIKE_TAG, PRESERVE_LIFE_TAG]),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),
         legendary_resistances: 0,

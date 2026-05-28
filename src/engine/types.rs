@@ -24,7 +24,7 @@ impl fmt::Display for AbilityScoreType {
     }
 }
 
-#[derive(Clone, PartialEq, Hash, Eq)]
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
 pub enum Skill {
     Acrobatics,
     AnimalHandling,

@@ -15,6 +15,22 @@ use crate::{
     },
 };
 
+/// Class-feature tags that refresh on a 5e short rest. Read by
+/// `ActorInstance::short_rest` to repopulate `features_remaining` for any
+/// matching tag the actor has on their template. The remaining tags in
+/// this module are long-rest features and only restore via `long_rest`.
+///
+/// Keep this list in sync with new short-rest features as they're added —
+/// the test `short_rest_features_listed_here_match_class_features` (in
+/// class_features tests) covers the obvious additions.
+pub const SHORT_REST_FEATURES: &[&str] = &[
+    SECOND_WIND_TAG,
+    ACTION_SURGE_TAG,
+    ARCANE_RECOVERY_TAG,
+    PRESERVE_LIFE_TAG,
+    CUTTING_WORDS_TAG,
+];
+
 /// Tags used by `ActorInstance::feature_available` / `spend_feature` to
 /// gate once-per-long-rest class features. Stored as `&'static str` so
 /// actor state stays a flat HashSet instead of carrying an enum import.
@@ -1313,3 +1329,362 @@ impl Action for TripAttack {
 }
 
 pub static TRIP_ATTACK: LazyLock<TripAttack> = LazyLock::new(|| TripAttack {});
+
+/// Class-feature tag for the Wizard's Arcane Recovery — once per long
+/// rest, refreshes on long rest. RAW: once per day during a short rest,
+/// recover spell slots whose combined levels equal half the wizard's
+/// level (rounded up), with no slot above 5th. We collapse that pool
+/// into a fixed-shape recovery (one level-1 + one level-2 slot for any
+/// level-3+ wizard, only one level-1 slot below that) so the gate stays
+/// a single feature-flag check rather than a slot picker. Listed in the
+/// `SHORT_REST_FEATURES` registry so a short rest can re-enable the
+/// feature; the long rest already enables it via the default refresh.
+pub const ARCANE_RECOVERY_TAG: &str = "wizard.arcane_recovery";
+
+/// Arcane Recovery — Wizard feature, action. Spend the once-per-rest
+/// feature to restore one level-1 spell slot (plus a level-2 slot if
+/// the wizard is at least level 3 and has a level-2 slot to restore).
+/// Centralizes the RAW "half-level pool, no slot above 5th" math into a
+/// flat per-tier shape; lets the wizard keep firing low-tier control
+/// spells (Magic Missile / Shield / Web) across encounters without a
+/// full long rest.
+pub struct ArcaneRecovery {}
+
+impl Action for ArcaneRecovery {
+    fn name(&self) -> &str {
+        "arcane recovery"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ar", "recover"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // No resource cost — RAW the recovery itself is free during a
+        // short rest. The once-per-rest gate lives on the feature flag.
+        free_cost()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Gate on the feature flag, combat-active state, AND at least one
+        // missing spell slot in the level-1 or level-2 tier — recovering
+        // a slot you didn't spend is a no-op, and gating here keeps the
+        // AI from burning the feature on empty.
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            if !a.is_combat_active() || !a.feature_available(ARCANE_RECOVERY_TAG) {
+                return false;
+            }
+            let l1 = a.spell_slot_manager.spell_slots(1);
+            let l2 = a.spell_slot_manager.spell_slots(2);
+            l1.spell_slots < l1.max_spell_slots || l2.spell_slots < l2.max_spell_slots
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let (level, want_l1, want_l2) = {
+            let Some(a) = encounter.actors.get(&caster_id) else {
+                return Vec::new();
+            };
+            let l1 = a.spell_slot_manager.spell_slots(1);
+            let l2 = a.spell_slot_manager.spell_slots(2);
+            (
+                a.level(),
+                l1.spell_slots < l1.max_spell_slots,
+                l2.spell_slots < l2.max_spell_slots,
+            )
+        };
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(ARCANE_RECOVERY_TAG);
+        }
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        if want_l1 {
+            effects.push(Box::new(GiveResource {
+                actor_id: caster_id,
+                resource: Resource::SpellSlot(1),
+            }));
+        }
+        // RAW: pool of slot-levels equal to ceil(level/2), no slot above
+        // 5th. We hand out the level-2 slot only at level 3+ (where a
+        // ceil(3/2)=2 pool can afford it) and only if a slot was spent.
+        if want_l2 && level >= 3 {
+            effects.push(Box::new(GiveResource {
+                actor_id: caster_id,
+                resource: Resource::SpellSlot(2),
+            }));
+        }
+        encounter.log(format!(
+            "  arcane recovery: {} restores {} spell slot{}.",
+            encounter
+                .actors
+                .get(&caster_id)
+                .map(|a| a.name().to_string())
+                .unwrap_or_default(),
+            effects.len(),
+            if effects.len() == 1 { "" } else { "s" },
+        ));
+        effects
+    }
+}
+
+pub static ARCANE_RECOVERY: LazyLock<ArcaneRecovery> = LazyLock::new(|| ArcaneRecovery {});
+
+/// Class-feature tag for Cleric Channel Divinity: Preserve Life — once
+/// per short or long rest. Shares the "Channel Divinity" RAW lane with
+/// Turn Undead at the cleric level, but they're distinct features in our
+/// model (each tag is a separate once-per-rest charge) so we don't have
+/// to plumb a shared resource pool. Listed in `SHORT_REST_FEATURES`.
+pub const PRESERVE_LIFE_TAG: &str = "cleric.preserve_life";
+
+/// Channel Divinity: Preserve Life — Cleric action. Distribute a pool of
+/// 5 * cleric level HP across wounded allies within 30ft (12 tiles),
+/// healing each up to half their maximum HP. We collapse the RAW per-
+/// target allocation choice into a deterministic algorithm: sort wounded
+/// allies (including self) by HP fraction ascending so the most-hurt
+/// allies get healed first, and bring each up to 50% max HP (or as close
+/// as the remaining pool allows). Once per rest (short or long).
+pub struct PreserveLife {}
+
+impl Action for PreserveLife {
+    fn name(&self) -> &str {
+        "preserve life"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pl", "cd-life", "preserve"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_combat_active() && a.feature_available(PRESERVE_LIFE_TAG))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(PRESERVE_LIFE_TAG);
+        }
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let level = caster.level();
+        let mut pool = 5 * level;
+        let caster_team = caster.team();
+        let caster_loc = caster.location();
+        let caster_size = get_tiles_from_size(caster.size());
+
+        // Sort by HP fraction ascending so the most-wounded ally heals
+        // first. Sorted-by-id within the same fraction keeps the choice
+        // deterministic across runs with the same RNG seed (HashMap
+        // iteration would otherwise shuffle ties).
+        let mut candidates: Vec<(u32, u32, usize)> = encounter
+            .actors
+            .iter()
+            .filter_map(|(id, a)| {
+                if a.team() != caster_team || !a.is_combat_active() {
+                    return None;
+                }
+                let dist = footprint_chebyshev(
+                    a.location(),
+                    get_tiles_from_size(a.size()),
+                    caster_loc,
+                    caster_size,
+                );
+                if dist > 12 {
+                    return None;
+                }
+                let cap = a.max_hitpoints();
+                if a.hitpoints() >= cap / 2 + (cap % 2) {
+                    // Already at >= 50% max HP — RAW: feature can't heal
+                    // a creature whose HP is at half or more.
+                    return None;
+                }
+                // HP fraction scaled to a sortable u32 — multiply by max
+                // so a wholly arbitrary `cap` size doesn't dominate.
+                let frac = (a.hitpoints().saturating_mul(1_000_000)) / cap.max(1);
+                Some((frac, *id as u32, *id))
+            })
+            .collect();
+        candidates.sort_unstable();
+
+        encounter.log(format!(
+            "  preserve life: cleric distributes {} HP among wounded allies.",
+            pool
+        ));
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for (_frac, _id_sort, target_id) in candidates {
+            if pool == 0 {
+                break;
+            }
+            let Some(t) = encounter.actors.get(&target_id) else {
+                continue;
+            };
+            let cap = t.max_hitpoints();
+            let half = cap / 2 + (cap % 2);
+            let needed = half.saturating_sub(t.hitpoints());
+            if needed == 0 {
+                continue;
+            }
+            let amount = needed.min(pool);
+            pool -= amount;
+            effects.push(Box::new(Heal {
+                actor_id: target_id,
+                amount,
+            }));
+        }
+        effects
+    }
+}
+
+pub static PRESERVE_LIFE: LazyLock<PreserveLife> = LazyLock::new(|| PreserveLife {});
+
+/// Class-feature tag for the Bard's Cutting Words — once per short rest
+/// (RAW: spends one Bardic Inspiration use). We collapse the
+/// inspiration-die pool to a single per-rest charge to keep the gating
+/// uniform with the other once-per-rest features; the recovery happens
+/// via `SHORT_REST_FEATURES`.
+pub const CUTTING_WORDS_TAG: &str = "bard.cutting_words";
+
+/// Cutting Words — Bard bonus action (RAW reaction; collapsed to bonus
+/// action because the engine doesn't yet have a reactive cast-on-attack
+/// hook). Targets one enemy within 60ft and applies the `Mocked`
+/// condition: their next attack roll has disadvantage. We approximate
+/// the RAW "subtract a Bardic Inspiration die from an attack roll,
+/// ability check, or damage roll" with the disadvantage clause, which
+/// captures the load-bearing tactical effect (the bard caging an enemy
+/// strike before it lands).
+pub struct CuttingWords {}
+
+impl Action for CuttingWords {
+    fn name(&self) -> &str {
+        "cutting words"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cw-bard", "cut"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60ft RAW = 24 tiles. Matches Bardic Inspiration's range.
+        Some(24)
+    }
+    fn is_harmful(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        if !actor.is_combat_active() || !actor.feature_available(CUTTING_WORDS_TAG) {
+            return false;
+        }
+        // Target must be an enemy, combat-active, not already Mocked
+        // (re-applying with a one-shot timer would just refresh — wasted
+        // bonus action if the target hasn't swung yet).
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return false;
+        };
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return false;
+        };
+        target.team() != actor.team()
+            && target.is_combat_active()
+            && !target.has_condition(Condition::Mocked)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(CUTTING_WORDS_TAG);
+        }
+        encounter.log("  cutting words: bard quips, fouling the target's strike.".to_string());
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Mocked,
+            timer: ConditionTimer::UntilStartOfNextTurn,
+        })]
+    }
+}
+
+pub static CUTTING_WORDS: LazyLock<CuttingWords> = LazyLock::new(|| CuttingWords {});

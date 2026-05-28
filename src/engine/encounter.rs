@@ -970,6 +970,51 @@ impl EncounterInstance {
         &mut self.rng
     }
 
+    /// 5e ability check (skill check): roll 1d20 + ability modifier (+
+    /// proficiency bonus if proficient in the given skill, or no skill
+    /// passed). Returns the total. The check is a generic, non-save
+    /// d20 — no automatic-fail conditions apply (unlike `roll_save`
+    /// for Paralyzed / Stunned STR/DEX saves).
+    ///
+    /// Use this for skill-based mechanics where the holder rolls (e.g.
+    /// an Athletics shove contest, a Stealth check vs a passive perception
+    /// DC, an Investigation roll). Logs the breakdown.
+    pub fn roll_ability_check(
+        &mut self,
+        actor_id: usize,
+        ability: crate::engine::types::AbilityScoreType,
+        skill: Option<crate::engine::types::Skill>,
+    ) -> i32 {
+        let raw = self.roll(&crate::engine::dice::Dice::new(1, 20)) as i32;
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return raw;
+        };
+        let prof = if skill
+            .as_ref()
+            .is_some_and(|s| actor.has_skill(s.clone()))
+        {
+            actor.proficiency_bonus()
+        } else {
+            0
+        };
+        let modifier = actor.ability_modifier(ability) + prof;
+        let total = raw + modifier;
+        let label = match &skill {
+            Some(s) => format!(" ({:?})", s),
+            None => String::new(),
+        };
+        self.log(format!(
+            "  {} {:?}{} check: 1d20({}){:+} = {}",
+            actor.name(),
+            ability,
+            label,
+            raw,
+            modifier,
+            total,
+        ));
+        total
+    }
+
     /// Actor ids sorted ascending. Use when iteration order matters for
     /// determinism — e.g. AoE saves, splash sweeps, AI tiebreakers — since
     /// `HashMap` iteration order is non-deterministic across runs.
@@ -5932,7 +5977,7 @@ mod tests {
             branch_depth: 4,
             branch_prob: 0.5,
         };
-        let mut ap = ActorGenParams {
+        let ap = ActorGenParams {
             cr_target: 1.0,
             n_teams: 2,
             pc_template: Some(&FIGHTER_TEMPLATE),
@@ -18020,6 +18065,164 @@ mod tests {
         );
     }
 
+    /// Arcane Recovery restores spent low-tier slots and consumes the
+    /// feature flag. After firing, the wizard's level-1 slot pool is
+    /// strictly larger (assuming any spent slot pre-cast).
+    #[test]
+    fn arcane_recovery_restores_low_tier_slot() {
+        use crate::actions::class_features::{ARCANE_RECOVERY, ARCANE_RECOVERY_TAG};
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let w = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Burn one level-1 slot so there's something to recover.
+        e.actors
+            .get_mut(&w)
+            .unwrap()
+            .spell_slot_manager
+            .consume_spell_slot(1);
+        let before = e.actors[&w].spell_slot_manager.spell_slots(1).spell_slots;
+        assert!(e.actors[&w].feature_available(ARCANE_RECOVERY_TAG));
+        let effects = ARCANE_RECOVERY.side_effects(&mut e, w, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&w].spell_slot_manager.spell_slots(1).spell_slots > before,
+            "arcane recovery should restore the spent lv1 slot"
+        );
+        assert!(
+            !e.actors[&w].feature_available(ARCANE_RECOVERY_TAG),
+            "the feature should be spent after use"
+        );
+    }
+
+    /// Arcane Recovery's `custom_validate_input` refuses to fire when
+    /// every slot is already full — no slot to recover, so the gate
+    /// short-circuits before burning the feature.
+    #[test]
+    fn arcane_recovery_refuses_when_slots_full() {
+        use crate::actions::class_features::{ARCANE_RECOVERY, ARCANE_RECOVERY_TAG};
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let w = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&w].feature_available(ARCANE_RECOVERY_TAG));
+        assert!(
+            !ARCANE_RECOVERY.custom_validate_input(&e, w, None, None, None),
+            "should refuse when no slot is spent",
+        );
+    }
+
+    /// Channel Divinity: Preserve Life distributes its 5×level HP pool
+    /// to the most-wounded ally first and stops once half-HP is reached.
+    /// The feature is consumed on cast.
+    #[test]
+    fn preserve_life_heals_wounded_allies_up_to_half() {
+        use crate::actions::class_features::{PRESERVE_LIFE, PRESERVE_LIFE_TAG};
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let c = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        // Chip the fighter well below half HP so the heal is observable.
+        let max = e.actors[&f].max_hitpoints();
+        e.actors.get_mut(&f).unwrap().take_typed_damage(max - 1, DamageType::Slashing);
+        assert!(e.actors[&c].feature_available(PRESERVE_LIFE_TAG));
+        let before = e.actors[&f].hitpoints();
+        let effects = PRESERVE_LIFE.side_effects(&mut e, c, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let after = e.actors[&f].hitpoints();
+        assert!(after > before, "fighter should be healed");
+        // Half-HP cap: never exceeds half max HP from this feature.
+        let half = max / 2 + (max % 2);
+        assert!(after <= half + 1, "preserve life caps at half max HP (got {} vs half {})", after, half);
+        assert!(
+            !e.actors[&c].feature_available(PRESERVE_LIFE_TAG),
+            "the feature should be spent after use"
+        );
+    }
+
+    /// Cutting Words applies Mocked to an enemy, imposing disadvantage
+    /// on their next attack. Once-per-rest feature consumed on cast.
+    #[test]
+    fn cutting_words_mocks_target_and_consumes_feature() {
+        use crate::actions::class_features::{CUTTING_WORDS, CUTTING_WORDS_TAG};
+        use crate::actors::creatures::bards::BARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let b = e
+            .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            .unwrap();
+        assert!(e.actors[&b].feature_available(CUTTING_WORDS_TAG));
+        assert!(!e.actors[&g].has_condition(Condition::Mocked));
+        let tv = vec![g];
+        let effects = CUTTING_WORDS.side_effects(&mut e, b, Some(&tv), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&g].has_condition(Condition::Mocked),
+            "enemy should be Mocked"
+        );
+        assert!(
+            !e.actors[&b].feature_available(CUTTING_WORDS_TAG),
+            "feature should be spent on cast"
+        );
+    }
+
+    /// `passive_perception` folds in the Perception skill proficiency
+    /// for actors who have it. Without proficiency it's just `10 + WIS
+    /// modifier`; with it, it's `10 + WIS modifier + proficiency bonus`.
+    #[test]
+    fn passive_perception_includes_skill_proficiency() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::types::Skill;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = &e.actors[&g];
+        // Baseline: WIS-mod-only check vs the helper.
+        let wis_mod = actor.ability_modifier(AbilityScoreType::Wisdom);
+        let proficient = actor.has_skill(Skill::Perception);
+        let expected = 10 + wis_mod + if proficient { actor.proficiency_bonus() } else { 0 };
+        assert_eq!(actor.passive_perception(), expected);
+    }
+
+    /// `roll_ability_check` adds the ability modifier and, optionally,
+    /// the proficiency bonus for an associated skill. The total is the
+    /// d20 roll plus that aggregate modifier.
+    #[test]
+    fn roll_ability_check_adds_modifier_and_proficiency() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Without a skill: total >= ability modifier + 1 (d20 floor),
+        // <= ability modifier + 20 (d20 ceiling).
+        let total = e.roll_ability_check(g, AbilityScoreType::Strength, None);
+        let mod_str = e.actors[&g].ability_modifier(AbilityScoreType::Strength);
+        assert!(
+            total >= mod_str + 1 && total <= mod_str + 20,
+            "roll out of expected band: {} (mod {})",
+            total,
+            mod_str
+        );
+    }
+
     /// Couatl template has the bite + sleep gaze action pair and the
     /// MM radiant/psychic resistance + immunity profile.
     #[test]
@@ -24453,6 +24656,71 @@ mod tests {
             fighter.hitpoints() >= hp_before,
             "short rest should heal at least some HP"
         );
+    }
+
+    /// A short rest should restore every feature in `SHORT_REST_FEATURES`
+    /// for actors that have it on their template. Catch any new feature
+    /// that gets registered in the short-rest list but skipped by the
+    /// per-actor refresh path.
+    #[test]
+    fn short_rest_restores_arcane_recovery() {
+        use crate::actions::class_features::ARCANE_RECOVERY_TAG;
+        let mut roller = FastRandRoller::with_seed(42);
+        let mut wizard = ActorInstance::from_creature_template(
+            &crate::actors::creatures::wizards::WIZARD_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut roller,
+            1,
+        )
+        .unwrap();
+        assert!(wizard.feature_available(ARCANE_RECOVERY_TAG));
+        wizard.spend_feature(ARCANE_RECOVERY_TAG);
+        assert!(!wizard.feature_available(ARCANE_RECOVERY_TAG));
+        wizard.short_rest(&mut roller);
+        assert!(
+            wizard.feature_available(ARCANE_RECOVERY_TAG),
+            "arcane recovery should refresh on short rest"
+        );
+    }
+
+    /// Preserve Life is also a short-rest feature; same refresh path
+    /// covers it.
+    #[test]
+    fn short_rest_restores_preserve_life() {
+        use crate::actions::class_features::PRESERVE_LIFE_TAG;
+        let mut roller = FastRandRoller::with_seed(42);
+        let mut cleric = ActorInstance::from_creature_template(
+            &crate::actors::creatures::clerics::CLERIC_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut roller,
+            1,
+        )
+        .unwrap();
+        assert!(cleric.feature_available(PRESERVE_LIFE_TAG));
+        cleric.spend_feature(PRESERVE_LIFE_TAG);
+        cleric.short_rest(&mut roller);
+        assert!(cleric.feature_available(PRESERVE_LIFE_TAG));
+    }
+
+    /// Cutting Words too.
+    #[test]
+    fn short_rest_restores_cutting_words() {
+        use crate::actions::class_features::CUTTING_WORDS_TAG;
+        let mut roller = FastRandRoller::with_seed(42);
+        let mut bard = ActorInstance::from_creature_template(
+            &crate::actors::creatures::bards::BARD_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut roller,
+            1,
+        )
+        .unwrap();
+        assert!(bard.feature_available(CUTTING_WORDS_TAG));
+        bard.spend_feature(CUTTING_WORDS_TAG);
+        bard.short_rest(&mut roller);
+        assert!(bard.feature_available(CUTTING_WORDS_TAG));
     }
 
     #[test]

@@ -781,8 +781,9 @@ impl Action for Hide {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
         use crate::engine::types::AbilityScoreType;
-        // Find the highest passive Perception among active enemies.
-        // Passive Perception = 10 + WIS modifier.
+        // Find the highest passive Perception among active enemies, via
+        // `ActorInstance::passive_perception` (which folds in Perception
+        // skill proficiency where applicable).
         let caster_team = encounter
             .actors
             .get(&caster_id)
@@ -794,7 +795,7 @@ impl Action for Hide {
             .filter(|(id, a)| {
                 **id != caster_id && a.team() != caster_team && a.is_combat_active()
             })
-            .map(|(_, a)| 10 + a.ability_modifier(AbilityScoreType::Wisdom))
+            .map(|(_, a)| a.passive_perception())
             .max()
             .unwrap_or(10);
         let save = encounter.roll_save(caster_id, AbilityScoreType::Dexterity, dc);

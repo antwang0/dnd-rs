@@ -1,3 +1,4 @@
+use crate::actions::class_features::{ARCANE_RECOVERY, ARCANE_RECOVERY_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
     ACID_SPLASH, BANISHMENT, BESTOW_CURSE, BLINDNESS, BLUR, BOOMING_BLADE, BURNING_HANDS,
@@ -326,6 +327,11 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::SILVERY_BARBS);
     actions.push(&*crate::actions::spells::PROTECTION_FROM_ENERGY);
     actions.push(&*crate::actions::spells::REMOVE_CURSE);
+    // Arcane Recovery — Wizard signature once-per-rest spell-slot
+    // recovery. Slot-restoration on short rest gives the wizard a clean
+    // mid-encounter "I'm out of slots" recovery without a long rest. The
+    // feature itself is a free action — no slot or action-economy cost.
+    actions.push(&*ARCANE_RECOVERY);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.
@@ -362,7 +368,7 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Wisdom,
         ]),
         condition_immunities: HashSet::new(),
-        features: HashSet::new(),
+        features: HashSet::from([ARCANE_RECOVERY_TAG]),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),
         legendary_resistances: 0,

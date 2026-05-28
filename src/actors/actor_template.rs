@@ -11,14 +11,7 @@ use crate::items::item_template::{Item, ItemBonuses};
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 
-/// Features that refresh on a 5e short rest (Fighter's Second Wind +
-/// Action Surge). The warlock's Pact Magic spell-slot refresh is handled
-/// separately because it operates on the slot manager rather than the
-/// feature-flag pool.
-const SHORT_REST_FEATURES: &[&str] = &[
-    "fighter.second_wind",
-    "fighter.action_surge",
-];
+use crate::actions::class_features::SHORT_REST_FEATURES;
 
 /// Lifecycle state of an actor's hit points. Replaces the previous
 /// `dying: bool` + `stable: bool` pair so the four meaningful states are
@@ -857,6 +850,30 @@ impl ActorInstance {
 
     pub fn is_save_proficient(&self, ability: AbilityScoreType) -> bool {
         self.proficient_saves.contains(&ability)
+    }
+
+    /// True if this actor is proficient in the given skill (i.e. adds
+    /// their proficiency bonus to checks made with it). 5e: the skill
+    /// proficiency is tracked separately from the ability score it
+    /// modifies — a creature can be proficient in Stealth (DEX-based)
+    /// without being proficient in DEX-based saves.
+    pub fn has_skill(&self, skill: Skill) -> bool {
+        self.skills.contains(&skill)
+    }
+
+    /// Passive Perception (5e PHB p.175): 10 + WIS modifier + proficiency
+    /// bonus if proficient in Perception. This is the score other actors
+    /// compare against when sneaking (Stealth roll vs passive Perception)
+    /// and when noticing hidden threats. Centralized here so callers
+    /// (Hide / future stealth mechanics) don't open-code the
+    /// `10 + ability_modifier(Wisdom)` and silently miss the proficiency
+    /// bump for skilled scouts.
+    pub fn passive_perception(&self) -> i32 {
+        let mut score = 10 + self.ability_modifier(AbilityScoreType::Wisdom);
+        if self.has_skill(Skill::Perception) {
+            score += self.proficiency_bonus();
+        }
+        score
     }
 
     pub fn xp(&self) -> u32 {

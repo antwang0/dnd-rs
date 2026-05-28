@@ -144,6 +144,32 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3g'. Cleric Preserve Life — once-per-rest Channel Divinity.
+        //      Fire when at least one ally (including self) is wounded
+        //      below half HP and inside the 30ft aura. The action's
+        //      `side_effects` allocates the 5×level pool to the most-
+        //      hurt allies first; we just gate on whether anyone needs
+        //      it so the feature doesn't burn pre-encounter.
+        if let Some(aei) = try_preserve_life(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3g''. Wizard Arcane Recovery — once-per-rest free action that
+        //       restores a level-1 (and a level-2 at lv3+) spell slot.
+        //       Fire when the caster has spent a slot and isn't burning
+        //       it on an empty room.
+        if let Some(aei) = try_arcane_recovery(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3g'''. Bard Cutting Words — bonus-action enemy debuff. Fire
+        //        on the most threatening adjacent-to-an-ally enemy who
+        //        isn't already Mocked, so the disadvantage lands before
+        //        their swing.
+        if let Some(aei) = try_cutting_words(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3g2. Pit Fiend Fear Aura — boss-level "frighten everyone
         //      in the room" burst. Fire when 2+ enemies sit inside
         //      the 20ft radius (single-target a normal swing is
@@ -951,6 +977,119 @@ fn try_telekinetic(
         }
         if best.as_ref().is_none_or(|(best_d, _)| dist < *best_d) {
             best = Some((dist, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
+}
+
+/// Cleric Preserve Life — once-per-rest Channel Divinity mass-heal. The
+/// action's `side_effects` distributes 5×level HP among the most-wounded
+/// allies (including self) within 30ft. We gate on:
+/// - At least one combat-active ally (self counts) below half max HP,
+///   AND inside the 30ft aura.
+/// - At least one enemy nearby — outside a fight, the cleric should heal
+///   with Cure Wounds / Healing Word instead so this once-per-rest stays
+///   for the mass-cleanse moment.
+fn try_preserve_life(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor.find_action("preserve life")?;
+    if !any_enemy_within(encounter, actor_id, 24) {
+        return None;
+    }
+    let my_team = actor.team();
+    let my_loc = actor.location();
+    let my_size = get_tiles_from_size(actor.size());
+    let wounded_nearby = encounter.actors.iter().any(|(_id, a)| {
+        if a.team() != my_team || !a.is_combat_active() {
+            return false;
+        }
+        let cap = a.max_hitpoints();
+        if a.hitpoints() >= cap / 2 + (cap % 2) {
+            return false;
+        }
+        footprint_chebyshev(
+            my_loc,
+            my_size,
+            a.location(),
+            get_tiles_from_size(a.size()),
+        ) <= 12
+    });
+    if !wounded_nearby {
+        return None;
+    }
+    let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
+    aei.validate(encounter).then_some(aei)
+}
+
+/// Wizard Arcane Recovery — free no-cost slot restore. Fire when the
+/// wizard has spent a low-tier slot and is in an active fight (so the
+/// recovered slot has something to land on this encounter).
+fn try_arcane_recovery(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    if !any_enemy_within(encounter, actor_id, 24) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "arcane recovery")
+}
+
+/// Bard Cutting Words — bonus-action enemy debuff. Fires Mocked on the
+/// enemy that's most likely to swing next turn (heuristic: nearest
+/// combat-active enemy within 60ft that isn't already Mocked). The
+/// "biggest threat" picker would need attack-roll inspection; closest-
+/// enemy-with-melee-range-to-an-ally is a reasonable proxy.
+fn try_cutting_words(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor.find_action("cutting words")?;
+    let my_team = actor.team();
+    // Find an enemy that's adjacent to one of our allies — they'll likely
+    // swing at us / our ally next turn, so debuffing them lands the
+    // disadvantage on a strike that matters.
+    let mut best: Option<(isize, ActionExecutionInfo)> = None;
+    for tid in encounter.sorted_actor_ids() {
+        let Some(t) = encounter.actors.get(&tid) else {
+            continue;
+        };
+        if tid == actor_id || t.team() == my_team || !t.is_combat_active() {
+            continue;
+        }
+        if t.has_condition(Condition::Mocked) {
+            continue;
+        }
+        // How close is this enemy to any of our combat-active allies?
+        // The closer they are, the more likely their next attack is the
+        // one we want to spoil.
+        let t_loc = t.location();
+        let t_size = get_tiles_from_size(t.size());
+        let min_ally_gap = encounter
+            .actors
+            .iter()
+            .filter_map(|(_id, a)| {
+                if a.team() != my_team || !a.is_combat_active() {
+                    return None;
+                }
+                Some(footprint_chebyshev(
+                    a.location(),
+                    get_tiles_from_size(a.size()),
+                    t_loc,
+                    t_size,
+                ))
+            })
+            .min()
+            .unwrap_or(isize::MAX);
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![tid]), None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(best_d, _)| min_ally_gap < *best_d) {
+            best = Some((min_ally_gap, aei));
         }
     }
     best.map(|(_, aei)| aei)
@@ -3231,6 +3370,14 @@ mod tests {
                     .consume_spell_slot(lvl);
             }
         }
+        // Also spend Arcane Recovery so the AI can't recover a level-1
+        // slot ahead of the cantrip fallback — this test isolates the
+        // pure-cantrip lane.
+        use crate::actions::class_features::ARCANE_RECOVERY_TAG;
+        e.actors
+            .get_mut(&wizard)
+            .unwrap()
+            .spend_feature(ARCANE_RECOVERY_TAG);
         // Burn the wizard's bonus action so this test isolates the
         // Action lane fallback. Otherwise bonus-action cantrips
         // (Telekinetic) win the first decision call and the test
@@ -3389,5 +3536,102 @@ mod tests {
         assert_eq!(aei.action().name(), "telekinetic");
         let targets = aei.target_ids().expect("telekinetic targets a single actor");
         assert_eq!(targets[0], mid, "should pick the mid-range zombie");
+    }
+
+    /// `try_cutting_words` should pick the enemy closest to one of the
+    /// bard's allies — that's the next strike to spoil. Verifies the
+    /// closest-ally heuristic against two equidistant-to-the-bard
+    /// enemies where one is sitting next to a frontliner.
+    #[test]
+    fn ai_cutting_words_targets_enemy_near_ally() {
+        use crate::actors::creatures::bards::BARD_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = empty_arena();
+        let bard = e
+            .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let _fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 5), 0, 0)
+            .unwrap();
+        // Two enemies equidistant from the bard. The one adjacent to the
+        // fighter is the priority pick — its next swing is what matters.
+        let _far_from_ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 10), 1, 0)
+            .unwrap();
+        let near_ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(11, 5), 1, 1)
+            .unwrap();
+        let aei = try_cutting_words(&e, bard).expect("should pick an enemy");
+        assert_eq!(aei.action().name(), "cutting words");
+        let targets = aei.target_ids().expect("cutting words targets one actor");
+        assert_eq!(
+            targets[0], near_ally,
+            "should pick the enemy adjacent to the fighter, not the empty-side zombie"
+        );
+    }
+
+    /// `try_preserve_life` should fire when an ally is wounded below
+    /// half HP and the cleric has the feature available. Skips when no
+    /// ally is wounded enough to benefit (the feature only heals up to
+    /// half max HP, so a 100% HP ally is excluded).
+    #[test]
+    fn ai_preserve_life_fires_when_ally_is_wounded() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = empty_arena();
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        // Without any wounded ally, the AI should not fire the feature.
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+            .unwrap();
+        assert!(
+            try_preserve_life(&e, cleric).is_none(),
+            "no wounded ally → no fire"
+        );
+        // Wound the fighter to ~25% HP — well below the half-HP gate.
+        let max = e.actors[&fighter].max_hitpoints();
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .take_typed_damage(max.saturating_sub(max / 4), DamageType::Slashing);
+        assert!(
+            try_preserve_life(&e, cleric).is_some(),
+            "wounded ally should trigger the preserve-life heuristic"
+        );
+    }
+
+    /// `try_arcane_recovery` should fire when the wizard has spent
+    /// slots and there's an active fight; skips when slots are full or
+    /// no enemies are nearby.
+    #[test]
+    fn ai_arcane_recovery_fires_when_slots_spent_and_engaged() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = empty_arena();
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // No enemy → no fire even with spent slots.
+        e.actors
+            .get_mut(&wiz)
+            .unwrap()
+            .spell_slot_manager
+            .consume_spell_slot(1);
+        assert!(
+            try_arcane_recovery(&e, wiz).is_none(),
+            "no enemy in range → skip"
+        );
+        // Add an enemy → fires.
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(15, 5), 1, 0)
+            .unwrap();
+        assert!(
+            try_arcane_recovery(&e, wiz).is_some(),
+            "spent slot + enemy → fire"
+        );
     }
 }
