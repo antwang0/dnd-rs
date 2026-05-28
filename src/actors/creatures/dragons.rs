@@ -6,7 +6,7 @@ use crate::actions::monster_attacks::{
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{
-    AbilityScoreType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -54,6 +54,7 @@ pub static ADULT_RED_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         languages: HashSet::from([Language::Common, Language::Draconic]),
         cr: 17.0,
         size: Size::Large,
+        creature_type: CreatureType::Dragon,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
@@ -120,6 +121,7 @@ pub static YOUNG_WHITE_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
         languages: HashSet::from([Language::Common, Language::Draconic]),
         cr: 6.0,
         size: Size::Large,
+        creature_type: CreatureType::Dragon,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
@@ -186,6 +188,7 @@ pub static ANCIENT_BLUE_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
         languages: HashSet::from([Language::Common, Language::Draconic]),
         cr: 23.0,
         size: Size::Large,
+        creature_type: CreatureType::Dragon,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,

@@ -3606,9 +3606,11 @@ impl Action for MirrorImage {
 pub static MIRROR_IMAGE: LazyLock<MirrorImage> = LazyLock::new(|| MirrorImage {});
 
 /// Eldritch Blast — warlock cantrip. Ranged spell attack: d20 + CHA vs
-/// AC. On hit: Nd10 force where N = cantrip tier (1/2/3/4 beams). 5e
-/// fires separate beams, but we collapse into one roll for single-target
-/// simplicity — same expected DPR against one target.
+/// AC. Fires N separate beams (1 at level 1, 2 at level 5, 3 at level
+/// 11, 4 at level 17) — each beam makes its own attack roll for 1d10
+/// force damage. Per 5e RAW each beam is an independent attack, so they
+/// can individually hit or miss and each triggers on-hit riders (Hex,
+/// etc.) separately.
 pub struct EldritchBlast {}
 
 impl Action for EldritchBlast {
@@ -3645,17 +3647,29 @@ impl Action for EldritchBlast {
             return Vec::new();
         };
         let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Charisma);
-        let dice_count = crate::engine::util::cantrip_dice_count(caster.level());
-        spell_attack(
-            encounter,
-            caster_id,
-            target_id,
-            "eldritch blast",
-            attack_bonus,
-            Dice::new(dice_count, 10),
-            DamageType::Force,
-            false,
-        )
+        let beam_count = crate::engine::util::cantrip_dice_count(caster.level());
+        // Fire each beam as an independent attack roll (1d10 force each).
+        // This matches 5e RAW: each beam can hit or miss individually and
+        // triggers on-hit riders (Hex, Hunter's Mark, etc.) per beam.
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for i in 0..beam_count {
+            let label = if beam_count > 1 {
+                format!("eldritch blast (beam {})", i + 1)
+            } else {
+                "eldritch blast".to_string()
+            };
+            effects.extend(spell_attack(
+                encounter,
+                caster_id,
+                target_id,
+                &label,
+                attack_bonus,
+                Dice::new(1, 10),
+                DamageType::Force,
+                false,
+            ));
+        }
+        effects
     }
 }
 
@@ -11080,12 +11094,12 @@ impl Action for StormOfVengeance {
 pub static STORM_OF_VENGEANCE: LazyLock<StormOfVengeance> =
     LazyLock::new(|| StormOfVengeance {});
 
-/// Hellish Rebuke — 5e level-1 evocation (warlock signature). Single-
-/// target bonus-action damage at 60ft: target makes a DEX save vs the
-/// caster's CHA-based DC. On fail: 2d10 fire; on save: half. Cast as a
-/// bonus action here for engine simplicity — RAW's reaction-on-damage
-/// gating doesn't fit the action picker, but the level-1 slot + bonus-
-/// action cost matches the spell's combat tempo.
+/// Hellish Rebuke — 5e level-1 evocation (warlock signature). Reaction
+/// spell: when you take damage, deal fire damage to the attacker. Target
+/// makes a DEX save vs the caster's CHA-based DC. On fail: 2d10 fire;
+/// on save: half. Upcasting: +1d10 per slot level above 1. Cost is a
+/// Reaction + spell slot (RAW: "1 reaction, which you take in response
+/// to being damaged by a creature within 60 feet").
 pub struct HellishRebuke {}
 
 impl Action for HellishRebuke {
@@ -11113,9 +11127,11 @@ impl Action for HellishRebuke {
         _c: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        bonus_action_and_slot(1)
+        // Hellish Rebuke is a reaction spell per RAW.
+        let lvl = crate::engine::action_overrides::cast_level(overrides, 1);
+        vec![Resource::Reaction, Resource::SpellSlot(lvl)]
     }
     fn side_effects(
         &self,
@@ -11123,7 +11139,7 @@ impl Action for HellishRebuke {
         caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
@@ -11132,12 +11148,15 @@ impl Action for HellishRebuke {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
+        // Upcasting: 2d10 at level 1, +1d10 per slot level above 1.
+        let lvl = crate::engine::action_overrides::cast_level(overrides, 1);
+        let dice_count = 1 + lvl; // 2d10 at lv1, 3d10 at lv2, etc.
         let (dmg, _) = save_for_half_damage(
             encounter,
             target_id,
             AbilityScoreType::Dexterity,
             dc,
-            Dice::new(2, 10),
+            Dice::new(dice_count, 10),
             DamageType::Fire,
             "hellish rebuke",
         );
@@ -13332,17 +13351,15 @@ pub static NEGATIVE_ENERGY_FLOOD: LazyLock<NegativeEnergyFlood> =
     LazyLock::new(|| NegativeEnergyFlood {});
 
 /// Armor of Agathys — 5e level-1 abjuration (Warlock signature). Self-only
-/// buff: caster gains 5 temp HP and any creature that hits them with a
-/// melee attack takes 5 cold damage in retaliation. The temp HP IS the
-/// shield — once the pool is drained, the retaliation rider drops with
-/// it (handled in `DealDamage::apply` — when temp HP is exhausted and
-/// `AgathysShielded` is up, the condition is stripped so subsequent
-/// melee hits don't free-trigger off a depleted shield).
+/// buff: caster gains 5 temp HP per spell level and any creature that hits
+/// them with a melee attack takes cold damage in retaliation. The temp HP
+/// IS the shield — once the pool is drained, the retaliation rider drops
+/// with it (handled in `DealDamage::apply` — when temp HP is exhausted and
+/// `AgathysShielded` is up, the condition is stripped so subsequent melee
+/// hits don't free-trigger off a depleted shield).
 ///
-/// We don't scale by slot level (RAW: +5 temp HP and +5 cold per slot
-/// level above 1). The single-level baseline keeps the side-effect path
-/// flat and the AI heuristic ("am I about to be swarmed?") legible.
-/// Concentration-free; flat Rounds timer.
+/// Upcasting: +5 temp HP per slot level above 1 (5 at lv1, 10 at lv2,
+/// 15 at lv3, etc.). Concentration-free; flat Rounds timer.
 pub struct ArmorOfAgathys {}
 
 impl Action for ArmorOfAgathys {
@@ -13367,9 +13384,9 @@ impl Action for ArmorOfAgathys {
         _c: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_and_slot(1)
+        action_and_slot(crate::engine::action_overrides::cast_level(overrides, 1))
     }
     fn side_effects(
         &self,
@@ -13377,12 +13394,15 @@ impl Action for ArmorOfAgathys {
         caster_id: usize,
         _target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // Upcasting: 5 temp HP per spell level (5 at lv1, 10 at lv2, etc.)
+        let lvl = crate::engine::action_overrides::cast_level(overrides, 1);
+        let temp_hp = 5 * lvl;
         vec![
             Box::new(GainTempHp {
                 actor_id: caster_id,
-                amount: 5,
+                amount: temp_hp,
             }),
             Box::new(ApplyCondition {
                 actor_id: caster_id,

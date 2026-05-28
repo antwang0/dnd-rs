@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{FIRE_BOLT, FIREBALL, MAGIC_MISSILE};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
-use crate::engine::types::{DamageModifier, DamageType, Language, Size, SpecialSense};
+use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -39,6 +39,7 @@ pub static FLAMESKULL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common]),
         cr: 4.0,
         size: Size::Tiny,
+        creature_type: CreatureType::Undead,
         actions,
         // Flameskull has innate spellcasting: 3rd-level slots for Fireball,
         // 1st-level slots for Magic Missile. We give it 2 slots at level 3

@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{CHUUL_PINCER, CHUUL_TENTACLES};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
-use crate::engine::types::{DamageModifier, DamageType, Size, SpecialSense};
+use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, SpecialSense};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -37,6 +37,7 @@ pub static CHUUL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::new(),
         cr: 4.0,
         size: Size::Large,
+        creature_type: CreatureType::Aberration,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,

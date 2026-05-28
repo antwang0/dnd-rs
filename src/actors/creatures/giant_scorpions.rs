@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GIANT_SCORPION_CLAW, GIANT_SCORPION_STING};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{Size, SpecialSense};
+use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -32,6 +32,7 @@ pub static GIANT_SCORPION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         languages: HashSet::new(),
         cr: 3.0,
         size: Size::Large,
+        creature_type: CreatureType::Beast,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,

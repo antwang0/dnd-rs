@@ -9,7 +9,7 @@ use crate::actions::spells::{
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{
-    AbilityScoreType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -92,6 +92,7 @@ pub static LICH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common, Language::Draconic, Language::Infernal]),
         cr: 21.0,
         size: Size::Medium,
+        creature_type: CreatureType::Undead,
         actions,
         // Boss-tier loadout: 4/3/3/3/3/2/2/2/2.
         spell_slots_by_level: vec![4, 3, 3, 3, 3, 2, 2, 2, 2],

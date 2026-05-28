@@ -8,7 +8,7 @@ use crate::actions::spells::{
     SHOCKING_GRASP, SLEEP, SUNBURST, TIME_STOP, WITCH_BOLT,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, Language, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -216,6 +216,7 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common]),
         cr: 4.0,
         size: Size::Medium,
+        creature_type: CreatureType::Humanoid,
         actions,
         // Level-9 full-caster loadout — mirrors wizard / cleric / druid.
         // Sorcerers have the same slot table as wizards RAW; the

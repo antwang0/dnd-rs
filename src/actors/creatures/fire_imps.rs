@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{FIRE_BOLT, FRIGHTFUL_PRESENCE};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{DamageModifier, DamageType, Language, Size, SpecialSense};
+use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -33,6 +33,7 @@ pub static FIRE_IMP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Infernal]),
         cr: 1.0,
         size: Size::Tiny,
+        creature_type: CreatureType::Fiend,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,

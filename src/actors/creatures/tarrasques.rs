@@ -5,7 +5,7 @@ use crate::actions::monster_attacks::{
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{
-    AbilityScoreType, DamageModifier, DamageType, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Size, SpecialSense,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -58,6 +58,7 @@ pub static TARRASQUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::new(), // Tarrasques don't speak.
         cr: 30.0,
         size: Size::Gargantuan,
+        creature_type: CreatureType::Monstrosity,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,

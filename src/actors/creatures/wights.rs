@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGBOW, WIGHT_LIFE_DRAIN};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
-use crate::engine::types::{AbilityScoreType, DamageModifier, DamageType, Language, Size, SpecialSense};
+use crate::engine::types::{AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -40,6 +40,7 @@ pub static WIGHT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common]),
         cr: 3.0,
         size: Size::Medium,
+        creature_type: CreatureType::Undead,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,

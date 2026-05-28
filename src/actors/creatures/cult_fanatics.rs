@@ -5,7 +5,7 @@ use crate::actions::spells::{
     SPIRITUAL_WEAPON,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{Language, Size};
+use crate::engine::types::{CreatureType, Language, Size};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -46,6 +46,7 @@ pub static CULT_FANATIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         languages: HashSet::from([Language::Common]),
         cr: 2.0,
         size: Size::Medium,
+        creature_type: CreatureType::Humanoid,
         actions,
         // 4 level-1 + 3 level-2 slots — typical level-4 spellcaster.
         spell_slots_by_level: vec![4, 3],

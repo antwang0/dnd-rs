@@ -18,7 +18,7 @@ use crate::actions::spells::{
     WALL_OF_FORCE, WEB, WISH, WITCH_BOLT,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, Language, Size, SpecialSense};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, SpecialSense};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -345,6 +345,7 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common]),
         cr: 0.5,
         size: Size::Medium,
+        creature_type: CreatureType::Humanoid,
         actions,
         // 4/3/3/2/2/1/1/1/1 — typical level-17 wizard archmage loadout.
         // The high-level slots (6+) fuel exactly one Disintegrate / Heal,

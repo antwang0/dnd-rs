@@ -628,11 +628,105 @@ impl Action for Grapple {
 
 pub static GRAPPLE: LazyLock<Grapple> = LazyLock::new(|| Grapple {});
 
+/// 5e Grapple Escape — a grappled creature uses its Action to attempt to
+/// break free. The actor rolls d20 + max(STR mod, DEX mod) vs DC 13
+/// (approximation of 8 + typical grappler STR mod + prof bonus). On
+/// success the Grappled (or Adhered / EarthenGrasped) condition is removed.
+pub struct GrappleEscape {}
+
+impl Action for GrappleEscape {
+    fn name(&self) -> &str {
+        "escape grapple"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["escape", "break free"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        use crate::conditions::Condition;
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| {
+                a.is_combat_active()
+                    && (a.has_condition(Condition::Grappled)
+                        || a.has_condition(Condition::Adhered)
+                        || a.has_condition(Condition::EarthenGrasped))
+            })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::conditions::Condition;
+        use crate::engine::types::AbilityScoreType;
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let str_mod = actor.ability_modifier(AbilityScoreType::Strength);
+        let dex_mod = actor.ability_modifier(AbilityScoreType::Dexterity);
+        let best_mod = str_mod.max(dex_mod);
+        // Snapshot which grapple-like conditions are active before we
+        // mutably borrow `encounter` for the roll and log calls.
+        let active_conditions: Vec<Condition> =
+            [Condition::Grappled, Condition::Adhered, Condition::EarthenGrasped]
+                .into_iter()
+                .filter(|c| actor.has_condition(*c))
+                .collect();
+        // Drop the immutable borrow of `actor` before rolling.
+        let roll = encounter.roll(&crate::engine::dice::Dice::new(1, 20)) as i32;
+        let total = roll + best_mod;
+        let dc = 13;
+        encounter.log(format!(
+            "  escape grapple: 1d20({}){:+} = {} vs DC {}",
+            roll, best_mod, total, dc
+        ));
+        if total >= dc {
+            encounter.log("  broke free!".to_string());
+            let mut effects: Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> =
+                Vec::new();
+            // Remove whichever grapple-like condition was active
+            for condition in active_conditions {
+                effects.push(Box::new(crate::engine::side_effects::RemoveCondition {
+                    actor_id: caster_id,
+                    condition,
+                }));
+            }
+            effects
+        } else {
+            encounter.log("  failed to break free.".to_string());
+            Vec::new()
+        }
+    }
+}
+
+pub static GRAPPLE_ESCAPE: LazyLock<GrappleEscape> = LazyLock::new(|| GrappleEscape {});
+
 /// 5e Hide action — Stealth check; on success the actor becomes Hidden
 /// (attackers have disadvantage, you have advantage on your next attack).
-/// We use a flat DC 10 since we don't model passive Perception today.
-/// Cannot be used while any enemy is footprint-adjacent — you can't
-/// realistically duck from sight while they're inside arm's reach.
+/// DC is the highest passive Perception (10 + WIS mod) among active
+/// enemies, defaulting to 10 if none are present. Cannot be used while
+/// any enemy is footprint-adjacent — you can't realistically duck from
+/// sight while they're inside arm's reach.
 pub struct Hide {}
 
 impl Action for Hide {
@@ -687,7 +781,23 @@ impl Action for Hide {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
         use crate::engine::types::AbilityScoreType;
-        let save = encounter.roll_save(caster_id, AbilityScoreType::Dexterity, 10);
+        // Find the highest passive Perception among active enemies.
+        // Passive Perception = 10 + WIS modifier.
+        let caster_team = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.team())
+            .unwrap_or(0);
+        let dc = encounter
+            .actors
+            .iter()
+            .filter(|(id, a)| {
+                **id != caster_id && a.team() != caster_team && a.is_combat_active()
+            })
+            .map(|(_, a)| 10 + a.ability_modifier(AbilityScoreType::Wisdom))
+            .max()
+            .unwrap_or(10);
+        let save = encounter.roll_save(caster_id, AbilityScoreType::Dexterity, dc);
         if !save.passed() {
             encounter.log("  hide: stealth fails");
             return Vec::new();
@@ -715,6 +825,7 @@ pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> =
             &*HELP,
             &*SHOVE,
             &*GRAPPLE,
+            &*GRAPPLE_ESCAPE,
             &*HIDE,
         ]
     },

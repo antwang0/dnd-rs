@@ -51,6 +51,7 @@ pub mod harpies;
 pub mod hell_hounds;
 pub mod hill_giants;
 pub mod hippogriffs;
+pub mod hobgoblin_warlords;
 pub mod hobgoblins;
 pub mod hydras;
 pub mod imps;

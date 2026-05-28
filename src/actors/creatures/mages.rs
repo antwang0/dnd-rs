@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{BURNING_HANDS, CAUSE_FEAR};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{Language, Size};
+use crate::engine::types::{CreatureType, Language, Size};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -33,6 +33,7 @@ pub static MAGE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common, Language::Draconic]),
         cr: 0.5,
         size: Size::Medium,
+        creature_type: CreatureType::Humanoid,
         actions,
         // 3 level-1 slots — enough for a couple of Burning Hands or one
         // Burning + one Cause Fear.

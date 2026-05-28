@@ -161,6 +161,66 @@ impl fmt::Display for Size {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CreatureType {
+    Aberration,
+    Beast,
+    Celestial,
+    Construct,
+    Dragon,
+    Elemental,
+    Fey,
+    Fiend,
+    Giant,
+    Humanoid,
+    Monstrosity,
+    Ooze,
+    Plant,
+    Undead,
+}
+
+impl fmt::Display for CreatureType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            CreatureType::Aberration => write!(f, "Aberration"),
+            CreatureType::Beast => write!(f, "Beast"),
+            CreatureType::Celestial => write!(f, "Celestial"),
+            CreatureType::Construct => write!(f, "Construct"),
+            CreatureType::Dragon => write!(f, "Dragon"),
+            CreatureType::Elemental => write!(f, "Elemental"),
+            CreatureType::Fey => write!(f, "Fey"),
+            CreatureType::Fiend => write!(f, "Fiend"),
+            CreatureType::Giant => write!(f, "Giant"),
+            CreatureType::Humanoid => write!(f, "Humanoid"),
+            CreatureType::Monstrosity => write!(f, "Monstrosity"),
+            CreatureType::Ooze => write!(f, "Ooze"),
+            CreatureType::Plant => write!(f, "Plant"),
+            CreatureType::Undead => write!(f, "Undead"),
+        }
+    }
+}
+
+impl CreatureType {
+    /// True if Protection from Evil and Good affects this creature type.
+    /// 5e: aberrations, celestials, elementals, fey, fiends, undead.
+    pub fn affected_by_protection(&self) -> bool {
+        matches!(
+            self,
+            CreatureType::Aberration
+                | CreatureType::Celestial
+                | CreatureType::Elemental
+                | CreatureType::Fey
+                | CreatureType::Fiend
+                | CreatureType::Undead
+        )
+    }
+
+    /// True if Turn Undead affects this creature type.
+    pub fn is_undead(&self) -> bool {
+        matches!(self, CreatureType::Undead)
+    }
+}
+
 #[derive(Clone, PartialEq, Hash, Eq)]
 pub enum Language {
     Common,

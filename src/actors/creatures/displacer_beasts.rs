@@ -1,3 +1,4 @@
+use crate::engine::types::CreatureType;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{DISPLACER_BEAST_MULTI, TENTACLE};
 use crate::actors::actor_template::CreatureTemplate;
@@ -33,6 +34,7 @@ pub static DISPLACER_BEAST_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         languages: HashSet::new(),
         cr: 3.0,
         size: Size::Large,
+        creature_type: CreatureType::Monstrosity,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,

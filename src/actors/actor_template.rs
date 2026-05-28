@@ -3,7 +3,8 @@ use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::{Dice, DiceExpr, Roller};
 use crate::engine::side_effects::Resource;
 use crate::engine::types::{
-    AbilityScoreType, Coordinate, DamageModifier, DamageType, Language, Size, Skill, SpecialSense,
+    AbilityScoreType, Coordinate, CreatureType, DamageModifier, DamageType, Language, Size, Skill,
+    SpecialSense,
 };
 use crate::engine::util::modifier_from_score;
 use crate::items::item_template::{Item, ItemBonuses};
@@ -132,6 +133,7 @@ pub struct CreatureTemplate {
     pub languages: HashSet<Language>,
     pub cr: f32,
     pub size: Size,
+    pub creature_type: CreatureType,
     pub actions: Vec<&'static (dyn Action + Send + Sync)>,
     pub spell_slots_by_level: Vec<u32>,
     pub rolls_death_saves: bool,
@@ -312,6 +314,7 @@ pub struct ActorInstance {
     reaction_slots: u32,
     legendary_action_slots: u32,
     size: Size,
+    creature_type: CreatureType,
     pub spell_slot_manager: SpellSlotManager,
     pub actions: Vec<&'static (dyn Action + Send + Sync)>,
     glyph: char,
@@ -444,6 +447,7 @@ impl ActorInstance {
             reaction_slots: 0,
             legendary_action_slots: 0,
             size: ct.size,
+            creature_type: ct.creature_type,
             spell_slot_manager: SpellSlotManager {
                 ssi_by_lvl: ct
                     .spell_slots_by_level
@@ -1304,6 +1308,10 @@ impl ActorInstance {
 
     pub fn size(&self) -> Size {
         self.size
+    }
+
+    pub fn creature_type(&self) -> CreatureType {
+        self.creature_type
     }
 
     pub fn set_location(&mut self, target: Coordinate) {

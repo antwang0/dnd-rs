@@ -15,7 +15,7 @@ use crate::actions::spells::{
     THORN_WHIP, TOLL_THE_DEAD, TRUE_RESURRECTION, WISH, WORD_OF_RADIANCE,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, Language, Size, SpecialSense};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, SpecialSense};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -170,6 +170,7 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common]),
         cr: 0.25,
         size: Size::Medium,
+        creature_type: CreatureType::Humanoid,
         actions,
         // 4/3/3/2/2/1/1/1/3 — cleric loadout extended to support the
         // full SRD spell list now in their kit. Level-3 slot covers

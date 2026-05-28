@@ -31,6 +31,7 @@ use crate::actors::creatures::harpies::HARPY_TEMPLATE;
 use crate::actors::creatures::hell_hounds::HELL_HOUND_TEMPLATE;
 use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
 use crate::actors::creatures::hippogriffs::HIPPOGRIFF_TEMPLATE;
+use crate::actors::creatures::hobgoblin_warlords::HOBGOBLIN_WARLORD_TEMPLATE;
 use crate::actors::creatures::hobgoblins::HOBGOBLIN_TEMPLATE;
 use crate::actors::creatures::hydras::HYDRA_TEMPLATE;
 use crate::actors::creatures::kobolds::KOBOLD_TEMPLATE;
@@ -1823,6 +1824,7 @@ impl EncounterInstance {
             &HILL_GIANT_TEMPLATE,
             &HIPPOGRIFF_TEMPLATE,
             &HOBGOBLIN_TEMPLATE,
+            &HOBGOBLIN_WARLORD_TEMPLATE,
             &HYDRA_TEMPLATE,
             &KOBOLD_TEMPLATE,
             &KNIGHT_TEMPLATE,
@@ -14844,15 +14846,15 @@ mod tests {
         );
     }
 
-    /// Hellish Rebuke: a SingleActor bonus-action spell that lands a
+    /// Hellish Rebuke: a SingleActor reaction spell (5e RAW) that lands a
     /// 2d10 fire DEX-save damage roll. Confirm the cost and damage type.
     #[test]
-    fn hellish_rebuke_costs_bonus_action_slot() {
+    fn hellish_rebuke_costs_reaction_and_slot() {
         use crate::actions::spells::HELLISH_REBUKE;
         use crate::engine::side_effects::Resource;
         let e = ei_with_terrain(10, 10, &[]);
         let costs = HELLISH_REBUKE.cost(&e, 0, None, None, None);
-        assert!(costs.contains(&Resource::BonusAction));
+        assert!(costs.contains(&Resource::Reaction));
         assert!(costs.contains(&Resource::SpellSlot(1)));
         assert_eq!(
             HELLISH_REBUKE.damage_types(),
@@ -25713,6 +25715,142 @@ mod tests {
         assert!(
             !Size::Tiny.can_grapple(Size::Large),
             "Tiny should not be able to grapple Large (three sizes larger)"
+        );
+    }
+
+    #[test]
+    fn grapple_escape_removes_grappled_condition() {
+        use crate::actions::default_actions::GRAPPLE_ESCAPE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut escaped = false;
+        for seed in 0..50 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let f = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&f)
+                .unwrap()
+                .add_condition(Condition::Grappled, crate::conditions::ConditionTimer::Rounds(10));
+            assert!(e.actors[&f].has_condition(Condition::Grappled));
+            let effects = GRAPPLE_ESCAPE.execute(&mut e, f, None, None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if !e.actors[&f].has_condition(Condition::Grappled) {
+                escaped = true;
+                break;
+            }
+        }
+        assert!(escaped, "fighter never escaped grapple across 50 seeds");
+    }
+
+    #[test]
+    fn grapple_escape_invalid_when_not_grappled() {
+        use crate::actions::default_actions::GRAPPLE_ESCAPE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        assert!(
+            !GRAPPLE_ESCAPE.validate_input(&e, f, None, None, None),
+            "escape grapple should be invalid when not grappled"
+        );
+    }
+
+    #[test]
+    fn creature_type_tags_are_correct() {
+        use crate::engine::types::CreatureType;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::balors::BALOR_TEMPLATE;
+        use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let z = e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0).unwrap();
+        let g = e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0).unwrap();
+        let b = e.instantiate_creature(&BALOR_TEMPLATE, Coordinate::new(2, 10), 2, 0).unwrap();
+        let d = e.instantiate_creature(&ADULT_RED_DRAGON_TEMPLATE, Coordinate::new(10, 10), 3, 0).unwrap();
+        assert_eq!(e.actors[&z].creature_type(), CreatureType::Undead);
+        assert_eq!(e.actors[&g].creature_type(), CreatureType::Humanoid);
+        assert_eq!(e.actors[&b].creature_type(), CreatureType::Fiend);
+        assert_eq!(e.actors[&d].creature_type(), CreatureType::Dragon);
+        assert!(e.actors[&z].creature_type().is_undead());
+        assert!(!e.actors[&g].creature_type().is_undead());
+        assert!(e.actors[&z].creature_type().affected_by_protection());
+        assert!(e.actors[&b].creature_type().affected_by_protection());
+        assert!(!e.actors[&g].creature_type().affected_by_protection());
+    }
+
+    #[test]
+    fn hobgoblin_warlord_instantiates() {
+        use crate::actors::creatures::hobgoblin_warlords::HOBGOBLIN_WARLORD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let w = e.instantiate_creature(&HOBGOBLIN_WARLORD_TEMPLATE, Coordinate::new(3, 3), 0, 0).unwrap();
+        assert!(e.actors[&w].has_extra_attack());
+        assert_eq!(e.actors[&w].armor_class(), 20);
+    }
+
+    #[test]
+    fn hide_dc_uses_passive_perception() {
+        use crate::actions::default_actions::HIDE;
+        use crate::actors::creatures::couatls::COUATL_TEMPLATE;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut successes_with_enemy = 0u32;
+        let mut successes_no_enemy = 0u32;
+        let trials = 200u64;
+
+        for seed in 0..trials {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let rogue = e
+                .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let _couatl = e
+                .instantiate_creature(&COUATL_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&rogue)
+                .unwrap()
+                .give_resource(Resource::Action);
+
+            let effects = HIDE.execute(&mut e, rogue, None, None, None);
+            for eff in &effects {
+                eff.apply(&mut e);
+            }
+            if e.actors[&rogue].has_condition(Condition::Hidden) {
+                successes_with_enemy += 1;
+            }
+
+            let mut e2 = ei_with_terrain(20, 20, &[]);
+            e2.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let rogue2 = e2
+                .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            e2.actors
+                .get_mut(&rogue2)
+                .unwrap()
+                .give_resource(Resource::Action);
+
+            let effects2 = HIDE.execute(&mut e2, rogue2, None, None, None);
+            for eff in &effects2 {
+                eff.apply(&mut e2);
+            }
+            if e2.actors[&rogue2].has_condition(Condition::Hidden) {
+                successes_no_enemy += 1;
+            }
+        }
+
+        assert!(
+            successes_with_enemy < successes_no_enemy,
+            "hide DC should be harder with a high-WIS enemy (successes with={} vs without={})",
+            successes_with_enemy,
+            successes_no_enemy
         );
     }
 }

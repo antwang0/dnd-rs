@@ -3,7 +3,7 @@ use crate::actions::monster_attacks::{
     SHAMBLING_MOUND_ENGULF, SHAMBLING_MOUND_MULTI, SHAMBLING_MOUND_SLAM,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{DamageModifier, DamageType, Size, SpecialSense};
+use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, SpecialSense};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -44,6 +44,7 @@ pub static SHAMBLING_MOUND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         languages: HashSet::new(),
         cr: 5.0,
         size: Size::Large,
+        creature_type: CreatureType::Plant,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,

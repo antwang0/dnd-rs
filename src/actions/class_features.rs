@@ -970,19 +970,11 @@ pub static BARDIC_INSPIRATION: LazyLock<BardicInspiration> = LazyLock::new(|| Ba
 /// Class-feature tag for Cleric Channel Divinity: Turn Undead.
 pub const TURN_UNDEAD_TAG: &str = "cleric.turn_undead";
 
-/// Turn Undead — Cleric Channel Divinity, action. Every undead-flavored
-/// creature (proxied here by Poisoned-immunity, the most reliable
-/// undead/construct shorthand in our pool) within 30ft (12 tiles) makes
-/// a WIS save vs the cleric's WIS-based DC. On fail, they're Frightened
-/// for 10 rounds (1 minute RAW; the spell also says "and must spend its
-/// turns trying to move away" — we model only the disadvantage half via
-/// the existing Frightened condition).
-///
-/// Once per long rest. Uses the cleric's `is_immune_to(Poison)` filter
-/// as the undead proxy — every undead / construct template in our pool
-/// has Poison immunity (zombies, skeletons, wights, ghouls, vampires,
-/// etc.), which is a cleaner proxy than the SRD's "creature type" tag
-/// would be in our engine.
+/// Turn Undead — Cleric Channel Divinity, action. Every creature of the
+/// Undead type within 30ft (12 tiles) makes a WIS save vs the cleric's
+/// WIS-based DC. On fail, they're Frightened for 10 rounds (1 minute
+/// RAW). Uses the `CreatureType::Undead` tag for accurate type checking.
+/// Once per long rest.
 pub struct TurnUndead {}
 
 impl Action for TurnUndead {
@@ -1022,7 +1014,7 @@ impl Action for TurnUndead {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::types::{AbilityScoreType, DamageType};
+        use crate::engine::types::AbilityScoreType;
         use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
         if let Some(actor) = encounter.actors.get_mut(&caster_id) {
@@ -1051,8 +1043,8 @@ impl Action for TurnUndead {
                 if *id == caster_id || a.team() == caster_team || !a.is_combat_active() {
                     return false;
                 }
-                // Undead/construct proxy: Poison-immune.
-                if !a.is_immune_to(DamageType::Poison) {
+                // Only undead are affected by Turn Undead.
+                if !a.creature_type().is_undead() {
                     return false;
                 }
                 let dist = footprint_chebyshev(

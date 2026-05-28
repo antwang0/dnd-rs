@@ -6,7 +6,7 @@ use crate::actions::spells::{
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{
-    AbilityScoreType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -53,6 +53,7 @@ pub static SOLAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Celestial, Language::Common]),
         cr: 21.0,
         size: Size::Large,
+        creature_type: CreatureType::Celestial,
         actions,
         // 4 lv5 + 2 lv6 + 2 lv7 + 2 lv8 + 1 lv9 — enough to fire Holy
         // Aura, Foresight, and Mass Heal once apiece, plus Resurrection

@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{BERSERKER_GREATAXE, RECKLESS_ATTACK};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, Language, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -36,6 +36,7 @@ pub static BERSERKER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common]),
         cr: 2.0,
         size: Size::Medium,
+        creature_type: CreatureType::Humanoid,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,

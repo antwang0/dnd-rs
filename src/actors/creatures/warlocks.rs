@@ -9,7 +9,7 @@ use crate::actions::spells::{
     VAMPIRIC_TOUCH, WITCH_BOLT,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, Language, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -156,6 +156,7 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common, Language::Infernal]),
         cr: 4.0,
         size: Size::Medium,
+        creature_type: CreatureType::Humanoid,
         actions,
         // Pact Magic compromise: a flat 4 lv5 slots (the warlock's
         // top-level slots all sit at the highest available slot level

@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{DROW_POISONED_CROSSBOW, SCIMITAR};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{Language, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -32,6 +32,7 @@ pub static DROW_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Elvish, Language::Undercommon]),
         cr: 0.25,
         size: Size::Medium,
+        creature_type: CreatureType::Humanoid,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,

@@ -6,7 +6,7 @@ use crate::actions::spells::{
     HOLD_PERSON, MASS_HEALING_WORD, PROTECTION_FROM_EVIL_AND_GOOD, SUGGESTION, VICIOUS_MOCKERY,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, Language, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -72,6 +72,7 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common]),
         cr: 1.5,
         size: Size::Medium,
+        creature_type: CreatureType::Humanoid,
         actions,
         // Level-5 half-caster slots: 4/3/2. Plenty of slots for the
         // CC + heal staples, with two level-3 slots for high-leverage

@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{MIND_FLAYER_MIND_BLAST, MIND_FLAYER_TENTACLES};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{
-    AbilityScoreType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -42,6 +42,7 @@ pub static MIND_FLAYER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::DeepSpeech, Language::Undercommon]),
         cr: 7.0,
         size: Size::Medium,
+        creature_type: CreatureType::Aberration,
         actions,
         // Casters with spell-equivalent ability list — we don't model
         // the MM's spell-like-abilities (Detect Thoughts, Plane Shift)

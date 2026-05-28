@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{Multiattack, GREATCLUB};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{Language, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -36,6 +36,7 @@ pub static ETTIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Giant, Language::Orc]),
         cr: 4.0,
         size: Size::Large,
+        creature_type: CreatureType::Giant,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,

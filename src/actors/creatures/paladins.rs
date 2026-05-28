@@ -9,7 +9,7 @@ use crate::actions::spells::{
     SHIELD_OF_FAITH, STAGGERING_SMITE, THUNDEROUS_SMITE, WRATHFUL_SMITE,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, Language, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -99,6 +99,7 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common, Language::Celestial]),
         cr: 1.5,
         size: Size::Medium,
+        creature_type: CreatureType::Humanoid,
         actions,
         // Half-caster ramp: 4/3/3/2/1. Bumps lv3 → 3 slots and adds a
         // lv5 slot for Banishing Smite; lv4 stays at 2 to fuel Aura of

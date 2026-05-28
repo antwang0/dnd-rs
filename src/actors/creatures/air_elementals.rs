@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{AIR_ELEMENTAL_MULTI, AIR_ELEMENTAL_SLAM};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
-use crate::engine::types::{DamageModifier, DamageType, Language, Size, SpecialSense};
+use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -36,6 +36,7 @@ pub static AIR_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         languages: HashSet::from([Language::Primordial]),
         cr: 5.0,
         size: Size::Large,
+        creature_type: CreatureType::Elemental,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,

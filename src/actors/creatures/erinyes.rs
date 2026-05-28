@@ -3,7 +3,7 @@ use crate::actions::monster_attacks::{ERINYES_LONGSWORD, ERINYES_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{
-    AbilityScoreType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -43,6 +43,7 @@ pub static ERINYES_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Infernal, Language::Common]),
         cr: 12.0,
         size: Size::Medium,
+        creature_type: CreatureType::Fiend,
         actions,
         // Devils aren't full casters in the engine yet; we don't wire
         // the MM's spell-like abilities (Plane Shift, Detect Magic).

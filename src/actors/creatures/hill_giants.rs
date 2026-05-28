@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{HILL_GIANT_BOULDER, HILL_GIANT_GREATCLUB};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
-use crate::engine::types::{Language, Size};
+use crate::engine::types::{CreatureType, Language, Size};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -40,6 +40,7 @@ pub static HILL_GIANT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Giant]),
         cr: 5.0,
         size: Size::Huge,
+        creature_type: CreatureType::Giant,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,

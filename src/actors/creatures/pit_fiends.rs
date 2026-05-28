@@ -5,7 +5,7 @@ use crate::actions::monster_attacks::{
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{
-    AbilityScoreType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -47,6 +47,7 @@ pub static PIT_FIEND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Infernal, Language::Common]),
         cr: 20.0,
         size: Size::Large,
+        creature_type: CreatureType::Fiend,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,

@@ -8,7 +8,7 @@ use crate::actions::spells::{
     WALL_OF_FIRE,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, Language, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -192,6 +192,7 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common, Language::Druidic]),
         cr: 4.0,
         size: Size::Medium,
+        creature_type: CreatureType::Humanoid,
         actions,
         // Level-9 full-caster loadout — mirrors wizard / cleric.
         spell_slots_by_level: vec![4, 3, 3, 2, 2, 1, 1, 1, 1],

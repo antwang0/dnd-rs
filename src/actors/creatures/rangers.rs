@@ -5,7 +5,7 @@ use crate::actions::spells::{
     LIGHTNING_ARROW, SPIKE_GROWTH,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, Language, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -79,6 +79,7 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common, Language::Elvish]),
         cr: 1.0,
         size: Size::Medium,
+        creature_type: CreatureType::Humanoid,
         actions,
         // Half-caster slots: bumped to a level-9 ranger loadout so the
         // new lv3 (Lightning Arrow) and lv5 (Conjure Volley) spells

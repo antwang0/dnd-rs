@@ -2,7 +2,7 @@ use crate::actions::class_attacks::ROGUE_SHORTSWORD;
 use crate::actions::class_features::{CUNNING_DASH, CUNNING_DISENGAGE, CUNNING_HIDE};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, Language, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -35,6 +35,7 @@ pub static ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common, Language::ThievesCant]),
         cr: 1.0,
         size: Size::Medium,
+        creature_type: CreatureType::Humanoid,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: true,

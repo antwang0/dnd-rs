@@ -3,7 +3,7 @@ use crate::actions::monster_attacks::{
     STORM_GIANT_GREATSWORD, STORM_GIANT_LIGHTNING_STRIKE, STORM_GIANT_ROCK,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, DamageModifier, DamageType, Language, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -44,6 +44,7 @@ pub static STORM_GIANT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common, Language::Giant]),
         cr: 13.0,
         size: Size::Huge,
+        creature_type: CreatureType::Giant,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,

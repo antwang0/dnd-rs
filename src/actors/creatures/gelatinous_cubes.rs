@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GELATINOUS_CUBE_ENGULF;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
-use crate::engine::types::{Size};
+use crate::engine::types::{CreatureType, Size};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -37,6 +37,7 @@ pub static GELATINOUS_CUBE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         languages: HashSet::new(),
         cr: 2.0,
         size: Size::Large,
+        creature_type: CreatureType::Ooze,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,

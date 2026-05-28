@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{TREANT_MULTIATTACK, TREANT_SLAM};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
-use crate::engine::types::{DamageModifier, DamageType, Language, Size};
+use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -37,6 +37,7 @@ pub static TREANT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common, Language::Sylvan, Language::Druidic]),
         cr: 9.0,
         size: Size::Huge,
+        creature_type: CreatureType::Plant,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,

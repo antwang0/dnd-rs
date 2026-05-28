@@ -9,7 +9,7 @@ use crate::actions::spells::{
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{
-    AbilityScoreType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -66,6 +66,7 @@ pub static DEATH_KNIGHT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         languages: HashSet::from([Language::Common, Language::Infernal]),
         cr: 17.0,
         size: Size::Medium,
+        creature_type: CreatureType::Undead,
         actions,
         // CR 17 paladin-caster equivalent. Slimmer than the Lich's apex
         // loadout — the Death Knight leans on its Hellfire Orb + multi

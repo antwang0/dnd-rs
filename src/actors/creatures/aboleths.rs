@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{ABOLETH_MULTI, ABOLETH_TENTACLE};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
-use crate::engine::types::{AbilityScoreType, Language, Size, SpecialSense};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, SpecialSense};
 #[cfg(test)]
 use crate::engine::types::DamageType;
 use std::collections::{HashMap, HashSet};
@@ -39,6 +39,7 @@ pub static ABOLETH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::DeepSpeech]),
         cr: 10.0,
         size: Size::Large,
+        creature_type: CreatureType::Aberration,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,

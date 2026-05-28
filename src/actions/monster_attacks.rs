@@ -7214,3 +7214,25 @@ impl Action for SpectatorEyeRay {
 }
 
 pub static SPECTATOR_EYE_RAY: LazyLock<SpectatorEyeRay> = LazyLock::new(|| SpectatorEyeRay {});
+
+/// Javelin -- STR-based thrown weapon: 1d6 piercing, 30ft normal / 120ft max.
+pub static JAVELIN: SimpleWeapon = SimpleWeapon {
+    display_name: "javelin",
+    aliases: &["jav", "throw"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 6),
+    damage_type: DamageType::Piercing,
+    reach: 48,
+    is_melee: false,
+    requires_los: true,
+    cost_resource: Resource::Action,
+    normal_range: Some(12),
+};
+
+/// Hobgoblin Warlord multiattack -- three longsword swings per Action.
+pub static HOBGOBLIN_WARLORD_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "triple longsword",
+    sub_attack: &LONGSWORD,
+    count: 3,
+});

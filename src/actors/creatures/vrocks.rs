@@ -3,7 +3,7 @@ use crate::actions::monster_attacks::{VROCK_BEAK, VROCK_MULTI, VROCK_SCREECH, VR
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{
-    AbilityScoreType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -46,6 +46,7 @@ pub static VROCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Abyssal]),
         cr: 6.0,
         size: Size::Large,
+        creature_type: CreatureType::Fiend,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,

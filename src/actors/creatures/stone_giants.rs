@@ -3,7 +3,7 @@ use crate::actions::monster_attacks::{
     STONE_GIANT_BOULDER, STONE_GIANT_GREATCLUB, STONE_GIANT_MULTI,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, Language, Size, SpecialSense};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, SpecialSense};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -43,6 +43,7 @@ pub static STONE_GIANT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Giant]),
         cr: 7.0,
         size: Size::Huge,
+        creature_type: CreatureType::Giant,
         actions,
         spell_slots_by_level: Vec::new(),
         rolls_death_saves: false,
