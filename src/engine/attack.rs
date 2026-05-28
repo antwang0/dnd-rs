@@ -96,14 +96,6 @@ pub fn resolve_attack_outcome(
     {
         mode = mode.combine(crate::engine::dice::RollMode::Disadvantage);
     }
-    // Burn through the one-shot rider stack (Helped, Hidden,
-    // per-target help grant, Invisibility concentration) before the
-    // d20 lands so a second swing this turn doesn't double-dip the
-    // advantage. We pick up the Hidden / Helped / Invisible flags in
-    // `compute_attack_mode` above, then this hook clears them.
-    encounter.clear_attack_advantage_riders(p.caster_id, p.target_id);
-    let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
-    let is_crit = raw_attack == 20;
     // Caster-side flat bonuses. `attack_bonus_buff` is the install-side
     // ledger (Bless's AdjustAttackBuff(+2), etc.). `condition_attack_bonus`
     // is the read-side flag table — Sacred Weapon's +CHA modifier and
@@ -111,12 +103,28 @@ pub fn resolve_attack_outcome(
     // makes Bless's "install once, drop on concentration" pattern reuse
     // cleanly with the read-only condition lane. Shared with spell
     // attacks via `EncounterInstance::caster_attack_buffs`.
+    //
+    // Read these BEFORE clearing the one-shot riders so the Inspired
+    // condition (and any other condition that contributes to
+    // `condition_attack_bonus`) is still active when we sum the bonus.
+    // The rider clear below removes Inspired alongside Helped/Hidden,
+    // so swapping the order would zero out the +3.
     let (buff, cond_attack_bonus) = encounter.caster_attack_buffs(p.caster_id);
     // Bless/Bane: roll an actual 1d4 once per attack and add (Bless) or
     // subtract (Bane) from the total. Both: they cancel and no die is
     // rolled. We log the d4 separately so the player can see why the
     // d20 alone doesn't account for the swing's hit.
     let (bless_die, bless_note) = encounter.bless_bane_attack_die(p.caster_id);
+    // Burn through the one-shot rider stack (Helped, Hidden,
+    // per-target help grant, Invisibility concentration, Inspired)
+    // before the d20 lands so a second swing this turn doesn't double-
+    // dip. The advantage / disadvantage flags were already picked up
+    // into `mode` by `compute_attack_mode` above; the flat bonuses
+    // were just read into `cond_attack_bonus` immediately above. Both
+    // are safe to clear here without losing this swing's modifiers.
+    encounter.clear_attack_advantage_riders(p.caster_id, p.target_id);
+    let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
+    let is_crit = raw_attack == 20;
     let attack_total = raw_attack + p.attack_bonus + buff + cond_attack_bonus + bless_die;
     let is_nat_one = raw_attack == 1;
     let hit = !is_nat_one && (is_crit || attack_total >= target_ac);

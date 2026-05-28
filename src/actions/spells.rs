@@ -124,13 +124,6 @@ fn spell_attack_outcome(
     // consumed exactly once (matching weapon-attack semantics in
     // resolve_attack).
     let mode = encounter.attack_mode_with_riders(caster_id, target_id, is_melee, true);
-    // Burn through the one-shot rider stack (Helped, Hidden, per-target
-    // help grant, Invisibility concentration). Same hook as weapon
-    // attacks — kept identical so a Helped wizard firing Fire Bolt
-    // consumes their help-grant exactly like a Helped fighter swinging
-    // a longsword.
-    encounter.clear_attack_advantage_riders(caster_id, target_id);
-    let raw = encounter.roll_d20_with_mode(mode) as i32;
     // Pull through the same caster-side flat buffs (Bless / Bane d4,
     // attack_bonus_buff, condition_attack_bonus) that weapon attacks
     // get via `resolve_attack`. This keeps spell-attack rolls
@@ -138,8 +131,20 @@ fn spell_attack_outcome(
     // spell attacks too (e.g. a Sacred-Weapon paladin casting Guiding
     // Bolt as a multiclass with cleric / divine soul). Shared with
     // weapon attacks via `EncounterInstance::caster_attack_buffs`.
+    //
+    // Read these BEFORE the rider clear below so the Inspired die's
+    // +3 (and any other `condition_attack_bonus` contribution) is
+    // still active when we sum the bonus. Mirrors the same ordering
+    // fix in `resolve_attack`.
     let (buff, cond_attack_bonus) = encounter.caster_attack_buffs(caster_id);
     let (bless_die, bless_note) = encounter.bless_bane_attack_die(caster_id);
+    // Burn through the one-shot rider stack (Helped, Hidden, per-target
+    // help grant, Invisibility concentration, Inspired). Same hook as
+    // weapon attacks — kept identical so a Helped wizard firing Fire
+    // Bolt consumes their help-grant exactly like a Helped fighter
+    // swinging a longsword.
+    encounter.clear_attack_advantage_riders(caster_id, target_id);
+    let raw = encounter.roll_d20_with_mode(mode) as i32;
     let total = raw + attack_bonus + buff + cond_attack_bonus + bless_die;
     let is_crit = raw == 20;
     let hit = is_crit || total >= target_ac;

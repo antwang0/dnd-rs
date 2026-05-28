@@ -868,6 +868,15 @@ impl EncounterInstance {
         // bookkeeping (Bless's AdjustSaveBuff) and read-only flag
         // bonuses don't double-count.
         let cond_save_bonus = actor.condition_save_bonus();
+        // 5e Bardic Inspiration / Guidance / similar: the Inspired die is
+        // a single-use bonus on "ability check, attack roll, OR saving
+        // throw." We add the bonus on this save and consume the
+        // condition immediately so it can't double-fire on a follow-up
+        // attack or save. Without this clear the actor would benefit
+        // twice — once at save time, once at attack time (where
+        // `clear_attack_advantage_riders` consumes it again). Captured
+        // here so each save site needs no extra bookkeeping.
+        let inspired_used = actor.has_condition(Condition::Inspired);
         // 5e: actors proficient in this save add their proficiency bonus.
         // Previously this lane was dead code — the per-template
         // `proficient_saves` set existed but was never read at roll time,
@@ -901,6 +910,16 @@ impl EncounterInstance {
             mode.log_suffix(),
             if outcome.passed() { "pass" } else { "fail" }
         ));
+        // 5e Bardic Inspiration: consume the Inspired die now that we've
+        // applied its +3 to the save total. RAW limits the inspiration
+        // die to one roll (attack / save / check) — clearing here
+        // prevents a follow-up attack from double-dipping the same die.
+        // Done after the log so the breakdown still credits the bonus.
+        if inspired_used
+            && let Some(a) = self.actors.get_mut(&actor_id)
+        {
+            a.remove_condition(Condition::Inspired);
+        }
         // 5e Fighter Indomitable: on a fail, if the actor has the
         // marker set, re-roll once and keep the better outcome. The
         // marker is consumed regardless of whether the reroll helps.
@@ -18029,6 +18048,95 @@ mod tests {
         assert!(
             !e.actors[&b].feature_available(BARDIC_INSPIRATION_TAG),
             "feature is consumed on cast"
+        );
+    }
+
+    /// Inspired's flat +3 attack bonus must land on the actual d20 roll
+    /// in `resolve_attack`. Pre-fix, `clear_attack_advantage_riders`
+    /// ran BEFORE `caster_attack_buffs`, zeroing out the condition
+    /// bonus on every swing. After the reorder fix, the bonus is read
+    /// before the clear so it lands on this swing (and only this swing).
+    /// Statistical assertion: against a target whose AC is tuned so
+    /// a +3 bonus is the difference between hit / miss, the inspired
+    /// fighter should land *strictly more* hits than a baseline fighter
+    /// over many trials.
+    #[test]
+    fn inspired_bonus_lands_on_weapon_attack() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::engine::attack::{AttackParams, resolve_attack};
+
+        let trials = 400u64;
+        let count_hits = |inspired: bool| -> u32 {
+            let mut hits = 0;
+            for seed in 0..trials {
+                let mut e = ei_with_terrain(15, 15, &[]);
+                e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+                let f = e
+                    .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                    .unwrap();
+                let target = e
+                    .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                    .unwrap();
+                if inspired {
+                    e.actors
+                        .get_mut(&f)
+                        .unwrap()
+                        .add_condition(Condition::Inspired, ConditionTimer::Rounds(10));
+                }
+                let effects = resolve_attack(
+                    &mut e,
+                    AttackParams {
+                        caster_id: f,
+                        target_id: target,
+                        action_name: "longsword",
+                        attack_bonus: 0,
+                        damage_dice: Dice::new(1, 8),
+                        damage_bonus: 0,
+                        damage_type: DamageType::Slashing,
+                        is_melee: true,
+                        long_range: None,
+                    },
+                );
+                if !effects.is_empty() {
+                    hits += 1;
+                }
+            }
+            hits
+        };
+        let inspired_hits = count_hits(true);
+        let baseline_hits = count_hits(false);
+        assert!(
+            inspired_hits > baseline_hits,
+            "inspired should land more hits (got {} inspired vs {} baseline)",
+            inspired_hits,
+            baseline_hits
+        );
+    }
+
+    /// The Inspired condition is consumed by `roll_save` — RAW: "add
+    /// the inspiration die to *one* ability check, attack roll, or
+    /// saving throw." Without this clear, the holder would benefit
+    /// twice (once on a save, then again on a follow-up attack).
+    #[test]
+    fn inspired_consumes_on_save() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::engine::types::AbilityScoreType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .add_condition(Condition::Inspired, ConditionTimer::Rounds(10));
+        assert!(e.actors[&f].has_condition(Condition::Inspired));
+        let _ = e.roll_save(f, AbilityScoreType::Wisdom, 5);
+        assert!(
+            !e.actors[&f].has_condition(Condition::Inspired),
+            "saving throw should consume the inspiration die"
         );
     }
 
