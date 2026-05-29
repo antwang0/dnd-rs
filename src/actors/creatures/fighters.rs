@@ -9,15 +9,6 @@ use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
-/// Fighter — the simplest player class. Heavy armor, decent HP, one
-/// martial weapon (scimitar — STR-based slashing) and the standard
-/// movement actions. No spells. The headline distinction from monsters
-/// is `rolls_death_saves: true` — at 0 HP a Fighter enters the dying
-/// state and rolls saves on each of their turns instead of dropping
-/// outright.
-///
-/// Stats are roughly a level-3 fighter: 24 HP (3d10+6), AC 16 from
-/// chain mail, STR 16 (the standard "strength build" defaults).
 /// Champion Fighter — the PHB's most popular fighter subclass. This is a
 /// level-5 build that exposes the headline subclass feature:
 /// **Improved Critical** (crit on a d20 face of 19 or 20). Higher-level
@@ -81,6 +72,15 @@ pub static CHAMPION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     }
 });
 
+/// Fighter — the simplest player class. Heavy armor, decent HP, one
+/// martial weapon (scimitar — STR-based slashing) and the standard
+/// movement actions. No spells. The headline distinction from monsters
+/// is `rolls_death_saves: true` — at 0 HP a Fighter enters the dying
+/// state and rolls saves on each of their turns instead of dropping
+/// outright.
+///
+/// Stats are roughly a level-3 fighter: 24 HP (3d10+6), AC 16 from
+/// chain mail, STR 16 (the standard "strength build" defaults).
 pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&SCIMITAR);
