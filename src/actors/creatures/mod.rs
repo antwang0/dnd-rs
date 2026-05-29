@@ -17,6 +17,7 @@ pub mod bullettes;
 pub mod chimeras;
 pub mod chuuls;
 pub mod clerics;
+pub mod aasimars;
 pub mod cloakers;
 pub mod cockatrices;
 pub mod couatls;

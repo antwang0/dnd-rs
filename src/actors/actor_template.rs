@@ -11,7 +11,9 @@ use crate::items::item_template::{Item, ItemBonuses};
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 
-use crate::actions::class_features::{BATTLE_MASTER_MANEUVERS, SHORT_REST_FEATURES};
+use crate::actions::class_features::{
+    BATTLE_MASTER_MANEUVERS, RELENTLESS_ENDURANCE_TAG, SHORT_REST_FEATURES,
+};
 
 /// Lifecycle state of an actor's hit points. Replaces the previous
 /// `dying: bool` + `stable: bool` pair so the four meaningful states are
@@ -1665,6 +1667,22 @@ impl ActorInstance {
                     if self.conditions.contains_key(&Condition::DeathWarded) {
                         self.hitpoints = 1;
                         self.conditions.remove(&Condition::DeathWarded);
+                        return DamageOutcome::Reduced;
+                    }
+                    // 5e Half-Orc Relentless Endurance: when the holder
+                    // would drop to 0 HP, they instead drop to 1 HP and
+                    // the once-per-rest feature is spent. Identical
+                    // mechanical hook to Death Ward but gated on a
+                    // feature flag (long-rest refresh) instead of a
+                    // condition timer. Death Ward takes priority — it's
+                    // an active spell the caster chose to maintain, so
+                    // burning the racial first would waste the slot.
+                    if self
+                        .features_remaining
+                        .contains(RELENTLESS_ENDURANCE_TAG)
+                    {
+                        self.hitpoints = 1;
+                        self.features_remaining.remove(RELENTLESS_ENDURANCE_TAG);
                         return DamageOutcome::Reduced;
                     }
                     if self.rolls_death_saves {

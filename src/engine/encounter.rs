@@ -14256,6 +14256,76 @@ mod tests {
         assert!(actor.has_condition(Condition::DeathWarded));
     }
 
+    /// Relentless Endurance: lethal damage drops the half-orc to 1 HP
+    /// instead of zero and the once-per-rest feature is spent. Mirrors
+    /// the Death Ward test but gated on the passive feature flag.
+    #[test]
+    fn relentless_endurance_absorbs_killing_blow_and_spends_feature() {
+        use crate::actions::class_features::RELENTLESS_ENDURANCE_TAG;
+        use crate::actors::creatures::berserkers::BERSERKER_TEMPLATE;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&BERSERKER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        assert!(actor.feature_available(RELENTLESS_ENDURANCE_TAG));
+        let max = actor.max_hitpoints();
+        actor.take_typed_damage(max + 5, DamageType::Slashing);
+        assert_eq!(actor.hitpoints(), 1, "RE pins HP at 1 on killing blow");
+        assert!(
+            !actor.feature_available(RELENTLESS_ENDURANCE_TAG),
+            "RE spent after firing"
+        );
+        assert!(actor.is_combat_active(), "berserker is still up");
+    }
+
+    /// Relentless Endurance only fires on the killing-blow transition;
+    /// survivable damage leaves the feature untouched.
+    #[test]
+    fn relentless_endurance_only_fires_on_killing_damage() {
+        use crate::actions::class_features::RELENTLESS_ENDURANCE_TAG;
+        use crate::actors::creatures::berserkers::BERSERKER_TEMPLATE;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&BERSERKER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        let hp_before = actor.hitpoints();
+        actor.take_typed_damage(1, DamageType::Slashing);
+        assert_eq!(actor.hitpoints(), hp_before - 1);
+        assert!(actor.feature_available(RELENTLESS_ENDURANCE_TAG));
+    }
+
+    /// Death Ward takes priority over Relentless Endurance — both
+    /// triggers can intercept a 0-HP transition, and Death Ward is the
+    /// active spell the actor chose to maintain, so burning the racial
+    /// first would waste the slot. Verifies the order matches the comment
+    /// in `take_damage`.
+    #[test]
+    fn death_ward_takes_priority_over_relentless_endurance() {
+        use crate::actions::class_features::RELENTLESS_ENDURANCE_TAG;
+        use crate::actors::creatures::berserkers::BERSERKER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&BERSERKER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        actor.add_condition(Condition::DeathWarded, ConditionTimer::Rounds(100));
+        let max = actor.max_hitpoints();
+        actor.take_typed_damage(max + 5, DamageType::Slashing);
+        // Death Ward burns; Relentless Endurance is still available.
+        assert!(!actor.has_condition(Condition::DeathWarded));
+        assert!(actor.feature_available(RELENTLESS_ENDURANCE_TAG));
+        assert_eq!(actor.hitpoints(), 1);
+    }
+
     #[test]
     fn dispel_magic_drops_concentration() {
         use crate::actions::spells::{BLESS, DISPEL_MAGIC};
@@ -21357,6 +21427,61 @@ mod tests {
     #[test]
     fn disarmed_imposes_attacker_disadvantage() {
         assert!(Condition::Disarmed.imposes_attacker_disadvantage());
+    }
+
+    /// Healing Hands (Aasimar): touch-range once-per-rest heal restores
+    /// `level` HP to a touched ally and consumes the racial feature.
+    #[test]
+    fn healing_hands_heals_ally_and_consumes_feature() {
+        use crate::actions::class_features::{HEALING_HANDS, HEALING_HANDS_TAG};
+        use crate::actors::creatures::aasimars::AASIMAR_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let a = e
+            .instantiate_creature(&AASIMAR_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&a].feature_available(HEALING_HANDS_TAG));
+        // Wound the fighter so the heal has somewhere to land.
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .take_typed_damage(8, crate::engine::types::DamageType::Slashing);
+        let hp_before = e.actors[&f].hitpoints();
+        let level = e.actors[&a].level();
+        let tv = vec![f];
+        let effects = HEALING_HANDS.side_effects(&mut e, a, Some(&tv), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        // Heals exactly `level` HP (capped at max HP).
+        let max = e.actors[&f].max_hitpoints();
+        let expected = (hp_before + level).min(max);
+        assert_eq!(e.actors[&f].hitpoints(), expected);
+        assert!(
+            !e.actors[&a].feature_available(HEALING_HANDS_TAG),
+            "feature should be consumed"
+        );
+    }
+
+    /// Aasimar template wiring: celestial heritage gives radiant /
+    /// necrotic resistance and the racial Healing Hands flag.
+    #[test]
+    fn aasimar_template_carries_celestial_envelope() {
+        use crate::actions::class_features::HEALING_HANDS_TAG;
+        use crate::actors::creatures::aasimars::AASIMAR_TEMPLATE;
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let a = e
+            .instantiate_creature(&AASIMAR_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = &e.actors[&a];
+        assert!(actor.is_resistant_to(DamageType::Necrotic));
+        assert!(actor.is_resistant_to(DamageType::Radiant));
+        assert!(actor.feature_available(HEALING_HANDS_TAG));
+        assert!(actor.find_action("healing hands").is_some());
     }
 
     /// Pushing Attack primes PushingAttacking and, on a connecting

@@ -49,6 +49,15 @@ pub const BATTLE_MASTER_MANEUVERS: &[&str] = &[
 pub const SECOND_WIND_TAG: &str = "fighter.second_wind";
 pub const ACTION_SURGE_TAG: &str = "fighter.action_surge";
 
+/// Tag for the Half-Orc Relentless Endurance racial trait. Passive
+/// no-action feature: once per long rest, when damage would reduce
+/// the holder to 0 HP, they drop to 1 HP instead. We weave the trigger
+/// into `ActorInstance::take_damage` next to the Death Ward hook —
+/// mirrors the "intercept the 0-HP transition and roll back to 1"
+/// shape, but with the once-per-rest feature flag in place of the
+/// short-duration condition.
+pub const RELENTLESS_ENDURANCE_TAG: &str = "half_orc.relentless_endurance";
+
 /// Fighter Second Wind — bonus action; restore 1d10 + level HP. Once per
 /// long rest. Self-targeted; only valid while combat-active (no reviving
 /// yourself out of dying via this).
@@ -610,6 +619,99 @@ impl Action for LayOnHands {
 }
 
 pub static LAY_ON_HANDS: LazyLock<LayOnHands> = LazyLock::new(|| LayOnHands {});
+
+/// Tag for the Aasimar Healing Hands racial trait. Once per long rest,
+/// the aasimar touches a creature (or themselves) and heals them for a
+/// number of HP equal to their level (RAW: 1 minute action, no other
+/// resource cost). We collapse the duration to an Action cost — single
+/// chunky heal per rest, mirroring Lay on Hands but smaller and racial
+/// rather than class-locked.
+pub const HEALING_HANDS_TAG: &str = "aasimar.healing_hands";
+
+/// Healing Hands — Aasimar racial, touch range. Spend the once-per-rest
+/// feature to heal an ally (or self) for `level` HP. The smaller heal
+/// (compared to Lay on Hands) reflects that this is a racial trait
+/// available to any class chassis, not a paladin-only kit feature.
+/// Action cost (not bonus action) so the aasimar can't combo it with a
+/// big swing — RAW: "Action" per the SRD.
+pub struct HealingHands {}
+
+impl Action for HealingHands {
+    fn name(&self) -> &str {
+        "healing hands"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hh", "heal-hands"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        if !actor.is_combat_active() || !actor.feature_available(HEALING_HANDS_TAG) {
+            return false;
+        }
+        // Target must be an ally (or self) and combat-active. Mirrors
+        // Lay on Hands' gating — no wasted heal on a corpse.
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return false;
+        };
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return false;
+        };
+        target.team() == actor.team() && target.is_combat_active()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let amount = actor.level().max(1);
+        if let Some(aasimar) = encounter.actors.get_mut(&caster_id) {
+            aasimar.spend_feature(HEALING_HANDS_TAG);
+        }
+        encounter.log(format!(
+            "  healing hands: aasimar channels celestial light, healing {} HP.",
+            amount
+        ));
+        vec![Box::new(Heal {
+            actor_id: target_id,
+            amount,
+        })]
+    }
+}
+
+pub static HEALING_HANDS: LazyLock<HealingHands> = LazyLock::new(|| HealingHands {});
 
 /// Divine Smite — paladin feature, bonus action. Spends a level-1 spell
 /// slot to prime the next successful melee weapon hit with +2d8 radiant

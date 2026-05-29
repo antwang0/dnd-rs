@@ -2018,10 +2018,11 @@ fn try_step_away_from_threats(
 }
 
 /// Self-targeted heal (e.g. fighter Second Wind, drink healing potion).
-/// Triggers when the actor is below 50% HP and has any heal action with
-/// a `NoArgs` schema (which by convention self-targets). Picks the first
-/// validating heal — order is action-list order so high-value class
-/// features land before consumables.
+/// Triggers when the actor is below 50% HP. Tries every heal action,
+/// passing self as the target for `SingleActor` schemas (Lay on Hands,
+/// Healing Hands, Cure Wounds) and a no-target call for `NoArgs` schemas
+/// (Second Wind, potions). Picks the first validating heal — action-list
+/// order means high-value class features land before consumables.
 fn try_self_heal(
     encounter: &EncounterInstance,
     actor_id: usize,
@@ -2038,10 +2039,19 @@ fn try_self_heal(
         if !action.is_heal() {
             continue;
         }
-        if !matches!(action.targeting_schema(), TargetingSchema::NoArgs) {
-            continue;
-        }
-        let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
+        let aei = match action.targeting_schema() {
+            TargetingSchema::NoArgs => {
+                ActionExecutionInfo::new(action, actor_id, None, None, None)
+            }
+            TargetingSchema::SingleActor => {
+                // Self-cast: pass own id as the single-actor target. Lets
+                // Lay on Hands / Healing Hands / Cure Wounds repair the
+                // caster when no ally needs them more. The action's
+                // validation handles team / range / once-per-rest gates.
+                ActionExecutionInfo::new(action, actor_id, Some(vec![actor_id]), None, None)
+            }
+            _ => continue,
+        };
         if aei.validate(encounter) {
             return Some(aei);
         }
@@ -2947,6 +2957,19 @@ mod tests {
                 0,
                 14,
             );
+            // Newest additions: Aasimar (celestial-touched humanoid with
+            // racial Healing Hands + radiant/necrotic resistance).
+            // Exercises the AI's new SingleActor-self-target self-heal
+            // path through the racial action when the Aasimar drops
+            // below half HP. The Fighter template also picked up the
+            // three new Battle Master maneuvers (Menacing / Disarming /
+            // Pushing Attack); the Champion template is the level-5
+            // Fighter sans the maneuvers, so the Fighter on team 0
+            // (placed earlier above) is the maneuver picker.
+            use crate::actors::creatures::aasimars::AASIMAR_TEMPLATE;
+            use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+            let _ = e.instantiate_creature(&AASIMAR_TEMPLATE, Coordinate::new(24, 2), 0, 15);
+            let _ = e.instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(26, 2), 0, 16);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

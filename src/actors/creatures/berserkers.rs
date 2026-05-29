@@ -1,3 +1,4 @@
+use crate::actions::class_features::RELENTLESS_ENDURANCE_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{BERSERKER_GREATAXE, RECKLESS_ATTACK};
 use crate::actors::actor_template::CreatureTemplate;
@@ -43,7 +44,11 @@ pub static BERSERKER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         damage_modifiers: HashMap::new(),
         proficient_saves: HashSet::from([AbilityScoreType::Strength]),
         condition_immunities: HashSet::new(),
-        features: HashSet::new(),
+        // 5e Half-Orc racial: Relentless Endurance — once per long rest,
+        // damage that would drop the berserker to 0 HP drops them to 1
+        // HP instead. Modeled as a passive feature flag the take_damage
+        // hook checks before transitioning to the dying / dead state.
+        features: HashSet::from([RELENTLESS_ENDURANCE_TAG]),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),
         legendary_resistances: 0,
