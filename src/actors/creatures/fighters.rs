@@ -1,7 +1,9 @@
 use crate::actions::class_features::{
-    ACTION_SURGE, ACTION_SURGE_TAG, DISARMING_ATTACK, DISARMING_ATTACK_TAG, GOADING_ATTACK,
-    GOADING_ATTACK_TAG, INDOMITABLE, INDOMITABLE_TAG, MENACING_ATTACK, MENACING_ATTACK_TAG,
-    PUSHING_ATTACK, PUSHING_ATTACK_TAG, SECOND_WIND, SECOND_WIND_TAG, TRIP_ATTACK, TRIP_ATTACK_TAG,
+    ACTION_SURGE, ACTION_SURGE_TAG, DISARMING_ATTACK, DISARMING_ATTACK_TAG, FEINTING_ATTACK,
+    FEINTING_ATTACK_TAG, GOADING_ATTACK, GOADING_ATTACK_TAG, INDOMITABLE, INDOMITABLE_TAG,
+    MENACING_ATTACK, MENACING_ATTACK_TAG, PRECISION_ATTACK, PRECISION_ATTACK_TAG, PUSHING_ATTACK,
+    PUSHING_ATTACK_TAG, SECOND_WIND, SECOND_WIND_TAG, SWEEPING_ATTACK, SWEEPING_ATTACK_TAG,
+    TRIP_ATTACK, TRIP_ATTACK_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGSWORD, SCIMITAR};
@@ -105,6 +107,19 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*DISARMING_ATTACK);
     actions.push(&*PUSHING_ATTACK);
     actions.push(&*GOADING_ATTACK);
+    //   - Precision Attack: flat +4 to next attack roll (single-shot,
+    //     consumed by the first swing this turn). The accuracy maneuver
+    //     — pairs well with Action Surge for a guaranteed crit chance.
+    //   - Sweeping Attack: prime that splashes 1d8 slashing onto one
+    //     adjacent enemy of the primary target on hit (the cleave
+    //     maneuver — solid AoE tax in crowded fights).
+    //   - Feinting Attack: targeted bonus action; grants self advantage
+    //     on the next attack against the feinted enemy (the duelist's
+    //     "guaranteed land" tool — pairs with Smite spells or sneak-
+    //     attack riders so the burst doesn't whiff).
+    actions.push(&*PRECISION_ATTACK);
+    actions.push(&*SWEEPING_ATTACK);
+    actions.push(&*FEINTING_ATTACK);
     CreatureTemplate {
         name: "Fighter",
         glyph: 'F',
@@ -140,6 +155,9 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             DISARMING_ATTACK_TAG,
             PUSHING_ATTACK_TAG,
             GOADING_ATTACK_TAG,
+            PRECISION_ATTACK_TAG,
+            SWEEPING_ATTACK_TAG,
+            FEINTING_ATTACK_TAG,
         ]),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),

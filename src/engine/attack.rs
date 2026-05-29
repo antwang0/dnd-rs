@@ -523,8 +523,8 @@ pub struct SmiteFollowUp {
 
 /// What a smite follow-up does on a failed save (or auto-trigger).
 /// Most riders apply a single condition (`Condition`); the Battle Master
-/// Pushing Attack maneuver shoves the target backward instead. Both can
-/// be combined in `Push` form when an effect both displaces and debuffs.
+/// Pushing Attack maneuver shoves the target backward instead, and the
+/// Sweeping Attack maneuver splashes damage onto an adjacent enemy.
 #[derive(Clone, Copy)]
 pub enum FollowUpEffect {
     /// Apply a single condition with the given timer. Used by every
@@ -538,13 +538,24 @@ pub enum FollowUpEffect {
     /// Battle Master Pushing Attack maneuver. No condition apply —
     /// the displacement IS the effect.
     Push { tiles: u32 },
+    /// Splash damage onto one adjacent enemy of the original target.
+    /// Used by the Battle Master Sweeping Attack maneuver: the swing's
+    /// momentum carries through to a nearby foe for an extra die of
+    /// damage. We pick the closest hostile (to the caster) that's
+    /// footprint-adjacent to the target and apply the rolled `dice` as
+    /// `damage_type`. No save — RAW: the original attack roll is
+    /// re-used. If no adjacent enemy exists the effect is a no-op.
+    Splash {
+        dice: Dice,
+        damage_type: DamageType,
+    },
 }
 
 /// Build the caster-side on-hit rider table. Returned by value rather
 /// than declared `const` because `Dice::new` isn't a const fn — but the
 /// runtime cost is one stack-allocated array of plain data, so the
 /// indirection is free.
-fn on_hit_riders() -> [OnHitRider; 24] {
+fn on_hit_riders() -> [OnHitRider; 25] {
     [
         OnHitRider {
             condition: Condition::CrusadersMantled,
@@ -1033,6 +1044,33 @@ fn on_hit_riders() -> [OnHitRider; 24] {
                 hp_threshold: None,
             }),
         },
+        // 5e Battle Master Sweeping Attack maneuver. Zero rider damage on
+        // the primary target (RAW: damage goes to the secondary creature,
+        // not the original); the follow-up's `Splash` variant deals 1d8
+        // slashing to one footprint-adjacent enemy of the primary target.
+        // `save_ability: None` makes the follow-up auto-apply on hit —
+        // RAW: the splash uses the original attack roll, which already
+        // hit. If no adjacent enemy exists, the splash is a no-op
+        // (logged inside `push_follow_up_effect`).
+        OnHitRider {
+            condition: Condition::SweepingAttacking,
+            dice: Dice::new(0, 1),
+            label: "sweeping attack",
+            damage_type: DamageType::Slashing,
+            melee_only: true,
+            ranged_only: false,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: None,
+                dc_ability: AbilityScoreType::Strength,
+                effect: FollowUpEffect::Splash {
+                    dice: Dice::new(1, 8),
+                    damage_type: DamageType::Slashing,
+                },
+                label: "sweeping attack splash",
+                hp_threshold: None,
+            }),
+        },
     ]
 }
 
@@ -1091,9 +1129,11 @@ fn apply_smite_follow_up(
 /// "what does the rider actually do?" decision from the save / threshold
 /// gates above so a future variant (e.g. forced grapple, dispel) plugs
 /// in here without re-walking the gates. `caster_id` is the attacker —
-/// used by `Push` to anchor the shove on the attacker's tile.
+/// used by `Push` to anchor the shove on the attacker's tile and by
+/// `Splash` to scope the secondary-target search to enemies of the
+/// caster.
 fn push_follow_up_effect(
-    encounter: &EncounterInstance,
+    encounter: &mut EncounterInstance,
     effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
     caster_id: usize,
     target_id: usize,
@@ -1128,6 +1168,58 @@ fn push_follow_up_effect(
                 actor_id: target_id,
                 from: caster.location(),
                 max_tiles: tiles,
+            }));
+        }
+        FollowUpEffect::Splash { dice, damage_type } => {
+            // Pick the closest hostile (to the caster) that's
+            // footprint-adjacent to the primary target. Closest = lowest
+            // (footprint-distance, id) tuple so the choice is
+            // deterministic across runs with the same RNG seed.
+            let caster_team = match encounter.actors.get(&caster_id) {
+                Some(c) => c.team(),
+                None => return,
+            };
+            let mut best: Option<(isize, usize)> = None;
+            for (id, other) in encounter.actors.iter() {
+                if *id == caster_id || *id == target_id {
+                    continue;
+                }
+                if other.team() == caster_team || !other.is_combat_active() {
+                    continue;
+                }
+                let Some(dist) = encounter.footprint_distance(*id, target_id) else {
+                    continue;
+                };
+                if dist > 0 {
+                    continue;
+                }
+                let dist_from_caster = encounter
+                    .footprint_distance(caster_id, *id)
+                    .unwrap_or(isize::MAX);
+                let key = (dist_from_caster, *id);
+                if best.map(|b| key < b).unwrap_or(true) {
+                    best = Some(key);
+                }
+            }
+            let Some((_, splash_id)) = best else {
+                encounter.log("  sweeping attack: no adjacent enemy to splash".to_string());
+                return;
+            };
+            let rolled = encounter.roll(&dice);
+            encounter.log(format!(
+                "  sweeping attack: +{} {:?} splashes to {}",
+                rolled,
+                damage_type,
+                encounter
+                    .actors
+                    .get(&splash_id)
+                    .map(|a| a.name().to_string())
+                    .unwrap_or_default()
+            ));
+            effects.push(Box::new(DealDamage {
+                actor_id: splash_id,
+                amount: rolled,
+                damage_type,
             }));
         }
     }

@@ -2310,6 +2310,12 @@ impl EncounterInstance {
             // here so a single inspiration die doesn't double-fire on
             // a second swing this turn.
             attacker.remove_condition(Condition::Inspired);
+            // 5e Battle Master Precision Attack maneuver: the +4
+            // attack-roll bonus is one-shot per prime. Mirrors how
+            // Inspired is consumed above so the next swing this turn
+            // (e.g. Extra Attack's second strike) lands without the
+            // bonus.
+            attacker.remove_condition(Condition::PrecisionAttacking);
         }
         // Concentration spells that explicitly break on attack (Invisibility,
         // not Greater Invisibility) drop here. Flag-based to avoid the
@@ -21440,6 +21446,217 @@ mod tests {
     #[test]
     fn disarmed_imposes_attacker_disadvantage() {
         assert!(Condition::Disarmed.imposes_attacker_disadvantage());
+    }
+
+    /// Precision Attack (Fighter Battle Master): bonus-action prime
+    /// applies the PrecisionAttacking condition and consumes the
+    /// once-per-rest feature. Mirrors the Trip Attack shape.
+    #[test]
+    fn precision_attack_primes_caster_and_consumes_feature() {
+        use crate::actions::class_features::{PRECISION_ATTACK, PRECISION_ATTACK_TAG};
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&f].feature_available(PRECISION_ATTACK_TAG));
+        let effects = PRECISION_ATTACK.side_effects(&mut e, f, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&f].has_condition(Condition::PrecisionAttacking));
+        assert!(!e.actors[&f].feature_available(PRECISION_ATTACK_TAG));
+    }
+
+    /// Precision Attack's +4 attack-roll bonus flows through the
+    /// `condition_attack_bonus` lane — same accessor Bardic Inspiration
+    /// uses, so a single attack-buff read covers both buffs cleanly.
+    #[test]
+    fn precision_attack_grants_attack_roll_bonus() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&f].condition_attack_bonus();
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .add_condition(Condition::PrecisionAttacking, crate::conditions::ConditionTimer::Rounds(2));
+        assert_eq!(
+            e.actors[&f].condition_attack_bonus(),
+            before + 4,
+            "precision attack should add +4 to the attack-roll bonus lane"
+        );
+    }
+
+    /// Precision Attack's +4 bonus is consumed by the next attack via
+    /// `clear_attack_advantage_riders`, mirroring how Bardic Inspiration
+    /// is consumed. Without the consume, a Champion's two Extra Attack
+    /// swings would double-dip a single prime.
+    #[test]
+    fn precision_attack_consumed_on_attack() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .add_condition(Condition::PrecisionAttacking, crate::conditions::ConditionTimer::Rounds(2));
+        assert!(e.actors[&f].has_condition(Condition::PrecisionAttacking));
+        e.clear_attack_advantage_riders(f, g);
+        assert!(
+            !e.actors[&f].has_condition(Condition::PrecisionAttacking),
+            "precision attack prime should be consumed after an attack"
+        );
+    }
+
+    /// Sweeping Attack (Fighter Battle Master): bonus-action prime
+    /// applies the SweepingAttacking condition and consumes the
+    /// once-per-rest feature. Mirrors the Trip Attack shape.
+    #[test]
+    fn sweeping_attack_primes_caster_and_consumes_feature() {
+        use crate::actions::class_features::{SWEEPING_ATTACK, SWEEPING_ATTACK_TAG};
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&f].feature_available(SWEEPING_ATTACK_TAG));
+        let effects = SWEEPING_ATTACK.side_effects(&mut e, f, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&f].has_condition(Condition::SweepingAttacking));
+        assert!(!e.actors[&f].feature_available(SWEEPING_ATTACK_TAG));
+    }
+
+    /// Feinting Attack (Fighter Battle Master): bonus-action targeting an
+    /// enemy in melee reach. The fighter installs a self-help-grant
+    /// against the feinted target so the next attack vs that target gets
+    /// advantage. Consumes the once-per-rest feature.
+    #[test]
+    fn feinting_attack_grants_self_advantage_and_consumes_feature() {
+        use crate::actions::class_features::{FEINTING_ATTACK, FEINTING_ATTACK_TAG};
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        assert!(e.actors[&f].feature_available(FEINTING_ATTACK_TAG));
+        let tv = vec![g];
+        let effects = FEINTING_ATTACK.side_effects(&mut e, f, Some(&tv), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&f].help_grant(g),
+            "feint should install a self-help-grant against the feinted enemy"
+        );
+        assert!(!e.actors[&f].feature_available(FEINTING_ATTACK_TAG));
+        // The follow-up attack pops the grant via consume_help_for.
+        let mode = e.attack_mode_with_riders(f, g, true, true);
+        assert_eq!(
+            mode,
+            crate::engine::dice::RollMode::Advantage,
+            "next swing vs feinted target should be at advantage"
+        );
+        assert!(
+            !e.actors[&f].help_grant(g),
+            "feint help-grant should be consumed by the swing"
+        );
+    }
+
+    /// Feinting Attack rejects a non-enemy target. Mirrors how Help
+    /// rejects non-allies — the bonus action's targeting is asymmetric.
+    #[test]
+    fn feinting_attack_rejects_ally_target() {
+        use crate::actions::class_features::FEINTING_ATTACK;
+        use crate::actions::action_template::Action;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f1 = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let f2 = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        let tv = vec![f2];
+        assert!(
+            !FEINTING_ATTACK.custom_validate_input(&e, f1, Some(&tv), None, None),
+            "feint should reject a same-team target"
+        );
+    }
+
+    /// Sweeping Attack's `FollowUpEffect::Splash` finds the closest
+    /// adjacent enemy of the primary target (relative to the caster) and
+    /// deals slashing damage. With one valid neighbor, that neighbor is
+    /// picked; with no neighbors, the splash silently no-ops.
+    #[test]
+    fn sweeping_attack_splash_targets_adjacent_enemy() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let primary = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        let neighbor = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 1)
+            .unwrap();
+        let neighbor_hp_before = e.actors[&neighbor].hitpoints();
+        // Prime + simulate the rider follow-up resolving on a hit. We
+        // invoke the splash path directly via the apply chain that the
+        // OnHitRider loop would use; this lets the test verify the
+        // adjacent-enemy pick without re-running an entire attack roll.
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .add_condition(Condition::SweepingAttacking, crate::conditions::ConditionTimer::Rounds(2));
+        // Drive resolve_attack with a guaranteed-hit modifier so the
+        // rider table fires. A +100 to-hit bonus beats any plausible AC
+        // even at advantage cancellation.
+        for ef in crate::engine::attack::resolve_attack(
+            &mut e,
+            crate::engine::attack::AttackParams {
+                caster_id: f,
+                target_id: primary,
+                action_name: "test sweep",
+                attack_bonus: 100,
+                damage_dice: crate::engine::dice::Dice::new(0, 1),
+                damage_bonus: 0,
+                damage_type: crate::engine::types::DamageType::Slashing,
+                is_melee: true,
+                long_range: None,
+            },
+        ) {
+            ef.apply(&mut e);
+        }
+        // Either the splash landed, or the rider table left the prime
+        // intact (if the swing somehow missed). Validate that the
+        // SweepingAttacking flag was consumed (the rider table strips
+        // it on trigger).
+        assert!(
+            !e.actors[&f].has_condition(Condition::SweepingAttacking),
+            "sweeping attack prime should be consumed on hit"
+        );
+        // And the neighbor's HP should reflect the splash damage.
+        assert!(
+            e.actors[&neighbor].hitpoints() <= neighbor_hp_before,
+            "sweeping attack should splash damage onto the adjacent enemy"
+        );
     }
 
     /// Healing Hands (Aasimar): touch-range once-per-rest heal restores

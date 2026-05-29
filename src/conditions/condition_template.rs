@@ -772,6 +772,27 @@ pub enum Condition {
     /// (`UntilStartOfNextTurn`) — RAW: lasts until the end of the
     /// fighter's next turn.
     Goaded,
+    /// Precision Attack primed (5e Fighter Battle Master maneuver, once
+    /// per long rest in our model). Bonus action prime; the next attack
+    /// roll gains a flat +4 (modeling the +1d8 superiority die, d8 avg
+    /// rounded down). Consumed by `clear_attack_advantage_riders` the
+    /// moment the attack roll resolves, mirroring how Bardic Inspiration
+    /// (`Inspired`) is consumed. RAW lets you spend the die *after*
+    /// seeing the d20 result; we approximate the "did it land?" tactic
+    /// by applying the bonus before the roll so the AI can use it as a
+    /// proactive accuracy buff. One-shot — the next attack consumes it.
+    PrecisionAttacking,
+    /// Sweeping Attack primed (5e Fighter Battle Master maneuver, once
+    /// per long rest in our model). Bonus action prime; the next melee
+    /// weapon hit splashes a small amount of slashing damage onto one
+    /// adjacent enemy of the primary target (RAW: superiority-die damage
+    /// of the same type as the original attack; we collapse to 1d8
+    /// slashing since the engine's rider table doesn't carry per-weapon
+    /// typing into the splash). The splash bypasses the usual "must hit"
+    /// gate — RAW: it lands as long as the original attack hit. One-shot
+    /// — the rider table strips this flag the moment a melee swing
+    /// lands.
+    SweepingAttacking,
 }
 
 impl Condition {
@@ -891,6 +912,8 @@ impl Condition {
             Condition::Disarmed => "disarmed",
             Condition::GoadingAttacking => "primed to goad",
             Condition::Goaded => "goaded",
+            Condition::PrecisionAttacking => "primed for a precision strike",
+            Condition::SweepingAttacking => "primed for a sweeping strike",
         }
     }
 
@@ -976,6 +999,8 @@ impl Condition {
                 | Condition::DisarmingAttacking
                 | Condition::PushingAttacking
                 | Condition::GoadingAttacking
+                | Condition::PrecisionAttacking
+                | Condition::SweepingAttacking
         )
     }
 

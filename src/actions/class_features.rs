@@ -42,6 +42,9 @@ pub const BATTLE_MASTER_MANEUVERS: &[&str] = &[
     DISARMING_ATTACK_TAG,
     PUSHING_ATTACK_TAG,
     GOADING_ATTACK_TAG,
+    PRECISION_ATTACK_TAG,
+    SWEEPING_ATTACK_TAG,
+    FEINTING_ATTACK_TAG,
 ];
 
 /// Tags used by `ActorInstance::feature_available` / `spend_feature` to
@@ -2124,3 +2127,287 @@ impl Action for CuttingWords {
 }
 
 pub static CUTTING_WORDS: LazyLock<CuttingWords> = LazyLock::new(|| CuttingWords {});
+
+/// Class-feature tag for the Fighter's Precision Attack Battle Master
+/// maneuver (once per long rest in our model). Listed in
+/// `SHORT_REST_FEATURES` so a short rest refreshes the charge alongside
+/// every other maneuver tag.
+pub const PRECISION_ATTACK_TAG: &str = "fighter.precision_attack";
+
+/// Precision Attack — Fighter Battle Master maneuver. Bonus action;
+/// primes the next attack roll with a flat +4 (modeling the +1d8
+/// superiority die, d8 avg rounded down). RAW lets the fighter spend
+/// the die *after* seeing the d20 result; we apply the bonus
+/// proactively so the AI can use it as a "the next swing better land"
+/// accuracy buff. The +4 is read at every attack-roll site via
+/// `condition_attack_bonus`; the prime is consumed by
+/// `clear_attack_advantage_riders` the moment the swing resolves,
+/// mirroring Bardic Inspiration's single-shot lane.
+///
+/// Unlike Trip / Menacing / Disarming / Pushing / Goading, this
+/// maneuver has no melee-only or save gate — it lands on any attack
+/// roll the fighter makes that turn (RAW: weapon attack roll, melee or
+/// ranged). One-shot via the clear-on-attack consume site.
+pub struct PrecisionAttack {}
+
+impl Action for PrecisionAttack {
+    fn name(&self) -> &str {
+        "precision attack"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["precision", "pra"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.is_combat_active()
+                && a.feature_available(PRECISION_ATTACK_TAG)
+                && !a.has_condition(Condition::PrecisionAttacking)
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        prime_self_condition(
+            encounter,
+            caster_id,
+            PRECISION_ATTACK_TAG,
+            Condition::PrecisionAttacking,
+            // 2-round window so the prime survives until the fighter's
+            // next swing even if their turn ends on a movement-only
+            // sequence (mirrors Trip / Menacing / Smite primes).
+            ConditionTimer::Rounds(2),
+            "  precision attack: fighter's next attack roll gains +4.",
+        )
+    }
+}
+
+pub static PRECISION_ATTACK: LazyLock<PrecisionAttack> = LazyLock::new(|| PrecisionAttack {});
+
+/// Class-feature tag for the Fighter's Sweeping Attack Battle Master
+/// maneuver (once per long rest in our model). Listed in
+/// `SHORT_REST_FEATURES` so a short rest refreshes the charge.
+pub const SWEEPING_ATTACK_TAG: &str = "fighter.sweeping_attack";
+
+/// Sweeping Attack — Fighter Battle Master maneuver. Bonus action;
+/// primes the next melee weapon hit to splash 1d8 slashing damage onto
+/// one footprint-adjacent enemy of the primary target (via the
+/// `SweepingAttacking` condition + `FollowUpEffect::Splash` rider).
+/// RAW: damage matches the original weapon's type; we collapse to a
+/// flat 1d8 slashing since the on-hit rider table doesn't carry
+/// per-weapon typing into the splash. The splash auto-applies on hit
+/// (no save) — RAW: the original attack roll is reused.
+///
+/// One-shot — the rider table strips the `SweepingAttacking` flag the
+/// moment a melee swing lands.
+pub struct SweepingAttack {}
+
+impl Action for SweepingAttack {
+    fn name(&self) -> &str {
+        "sweeping attack"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sweep", "swa"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        // Indirect: the splash damage lands on the consuming swing, not
+        // on cast. Mirrors the other Battle Master primes / Smite
+        // bonus-actions.
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.is_combat_active()
+                && a.feature_available(SWEEPING_ATTACK_TAG)
+                && !a.has_condition(Condition::SweepingAttacking)
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        prime_self_condition(
+            encounter,
+            caster_id,
+            SWEEPING_ATTACK_TAG,
+            Condition::SweepingAttacking,
+            ConditionTimer::Rounds(2),
+            "  sweeping attack: fighter's next melee hit splashes to an adjacent foe.",
+        )
+    }
+}
+
+pub static SWEEPING_ATTACK: LazyLock<SweepingAttack> = LazyLock::new(|| SweepingAttack {});
+
+/// Class-feature tag for the Fighter's Feinting Attack Battle Master
+/// maneuver (once per long rest in our model). Listed in
+/// `SHORT_REST_FEATURES` so a short rest refreshes the charge.
+pub const FEINTING_ATTACK_TAG: &str = "fighter.feinting_attack";
+
+/// Feinting Attack — Fighter Battle Master maneuver. Bonus action
+/// targeting one enemy within melee reach. The fighter gains advantage
+/// on the next attack roll against the chosen creature this turn.
+///
+/// Modeled by installing a self-help-grant via `set_help_grant`: the
+/// helper is the fighter themselves, the designated target is the
+/// feinted enemy. `attack_mode_with_riders` reads the grant on the
+/// next swing against that target, folding in advantage and consuming
+/// the grant. Mirrors how Help's lane works but the fighter targets
+/// themselves rather than a separate ally.
+///
+/// Unlike the prime-style maneuvers (Trip / Menacing / Sweeping), this
+/// doesn't go through the OnHitRider table — the entire effect is the
+/// pre-roll advantage, which lands cleanly through the help-grant
+/// machinery already wired into `compute_attack_mode`.
+pub struct FeintingAttack {}
+
+impl Action for FeintingAttack {
+    fn name(&self) -> &str {
+        "feinting attack"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["feint", "fa"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch — same envelope as Help / a melee weapon swing.
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        // The action targets an enemy but doesn't itself deal damage or
+        // apply a condition — it's a setup buff for the *next* swing.
+        // Marking it harmful would route it through the AI's hostile
+        // pipeline (good) but also block it via Sanctuary / Charmed-by
+        // gating (we want Feint to behave like a Help / Hide setup —
+        // unblocked by Sanctuary on the feinter's side). Leaving false
+        // mirrors how Help's lane handles the targeting.
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        if !actor.is_combat_active() || !actor.feature_available(FEINTING_ATTACK_TAG) {
+            return false;
+        }
+        // Target must be a live enemy (RAW: any creature, but feinting a
+        // friendly is a wasted bonus action — the AI's hostile pipeline
+        // is the consumer).
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return false;
+        };
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return false;
+        };
+        target.team() != actor.team() && target.is_combat_active()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(FEINTING_ATTACK_TAG);
+            // Self-help-grant: the fighter helps themselves get
+            // advantage on the next attack vs the feinted target. Read
+            // by `attack_mode_with_riders` which folds in
+            // `consume_help_for` on the next swing.
+            actor.set_help_grant(Some(crate::actors::actor_template::HelpGrant {
+                helper_id: caster_id,
+                against: target_id,
+            }));
+        }
+        encounter.log(
+            "  feinting attack: fighter feints; advantage on the next attack vs the target."
+                .to_string(),
+        );
+        Vec::new()
+    }
+}
+
+pub static FEINTING_ATTACK: LazyLock<FeintingAttack> = LazyLock::new(|| FeintingAttack {});

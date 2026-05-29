@@ -1353,6 +1353,13 @@ impl ActorInstance {
         if self.has_condition(Condition::Inspired) {
             bonus += 3;
         }
+        // 5e Battle Master Precision Attack maneuver: +1d8 (d8 avg,
+        // rounded down to +4) on the primed attack roll. Symmetric with
+        // Inspired; consumed by `clear_attack_advantage_riders` so the
+        // bonus only fires on the first swing after the prime.
+        if self.has_condition(Condition::PrecisionAttacking) {
+            bonus += 4;
+        }
         bonus
     }
 

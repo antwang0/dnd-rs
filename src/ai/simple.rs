@@ -379,6 +379,40 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3p'''''. Sweeping Attack — fighter bonus-action prime (Battle
+        //          Master). Splashes 1d8 slashing onto one adjacent enemy
+        //          of the primary target on hit. Only worth a charge when
+        //          there's actually a second hostile clustered next to the
+        //          first — gate on at least two adjacent enemies to the
+        //          fighter (the splash target sits in the second-enemy
+        //          slot). Slotted before Feinting Attack because Sweeping
+        //          gives raw damage; Feinting gives raw accuracy, which
+        //          the fighter's high STR + Bless / Precision stack
+        //          already covers reasonably well.
+        if let Some(aei) = try_sweeping_attack(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3p''''''. Precision Attack — fighter bonus-action prime (Battle
+        //           Master). +4 to the next attack roll (one-shot via
+        //           `clear_attack_advantage_riders`). The "do I miss?"
+        //           insurance — fire when an enemy is in melee so the
+        //           prime is consumed this turn.
+        if let Some(aei) = try_precision_attack(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3p'''''''. Feinting Attack — fighter bonus-action prime (Battle
+        //            Master). Targets one enemy in melee reach and grants
+        //            self-advantage on the next attack vs them via the
+        //            help-grant lane. Higher leverage than Precision
+        //            against high-AC targets where advantage outperforms
+        //            a flat +4; lower than Sweeping when there's an
+        //            adjacent splash target available.
+        if let Some(aei) = try_feinting_attack(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3q. Shillelagh — druid bonus-action cantrip prime that adds
         //     +1d8 force damage to the next melee weapon hit. Fire when
         //     an enemy is footprint-adjacent so the prime is consumed
@@ -1029,6 +1063,98 @@ fn try_goading_attack(
         return None;
     }
     try_self_action(encounter, actor_id, "goading attack")
+}
+
+/// Fighter Battle Master Precision Attack — bonus-action prime that
+/// adds +4 to the next attack roll. Same engagement gate as Trip Attack
+/// (enemy in melee so the prime lands this turn).
+fn try_precision_attack(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    if !any_enemy_within(encounter, actor_id, 0) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "precision attack")
+}
+
+/// Fighter Battle Master Sweeping Attack — bonus-action prime that
+/// splashes 1d8 slashing onto one adjacent enemy of the primary target.
+/// Only worth a charge when there's at least one *pair* of adjacent
+/// enemies near the fighter, so the splash has somewhere to land. We
+/// approximate by requiring two-plus enemies within melee reach of the
+/// fighter — the rider's adjacency check at trigger time handles the
+/// "no actual splash target" case as a no-op anyway, but the AI gate
+/// keeps the charge for fights where it'll do real work.
+fn try_sweeping_attack(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let my_team = actor.team();
+    let my_loc = actor.location();
+    let my_size = get_tiles_from_size(actor.size());
+    let mut adj_enemies = 0u32;
+    for (id, other) in encounter.actors.iter() {
+        if *id == actor_id || other.team() == my_team || !other.is_combat_active() {
+            continue;
+        }
+        let dist = footprint_chebyshev(
+            my_loc,
+            my_size,
+            other.location(),
+            get_tiles_from_size(other.size()),
+        );
+        if dist <= 1 {
+            adj_enemies += 1;
+        }
+    }
+    if adj_enemies < 2 {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "sweeping attack")
+}
+
+/// Fighter Battle Master Feinting Attack — bonus-action targeting one
+/// enemy in melee reach. Grants self-advantage on the next attack vs the
+/// feinted enemy via the help-grant lane. We pick the closest in-reach
+/// hostile so the swing actually lands on the feinted target.
+fn try_feinting_attack(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor.find_action("feinting attack")?;
+    let my_team = actor.team();
+    let my_loc = actor.location();
+    let my_size = get_tiles_from_size(actor.size());
+    let mut best: Option<(isize, ActionExecutionInfo)> = None;
+    for tid in encounter.sorted_actor_ids() {
+        let Some(t) = encounter.actors.get(&tid) else {
+            continue;
+        };
+        if tid == actor_id || t.team() == my_team || !t.is_combat_active() {
+            continue;
+        }
+        let dist = footprint_chebyshev(
+            my_loc,
+            my_size,
+            t.location(),
+            get_tiles_from_size(t.size()),
+        );
+        // Feint is melee-touch range — same envelope as Help.
+        if dist > 1 {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![tid]), None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(best_d, _)| dist < *best_d) {
+            best = Some((dist, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
 }
 
 /// Druid Shillelagh — bonus-action cantrip prime that adds +1d8 force
