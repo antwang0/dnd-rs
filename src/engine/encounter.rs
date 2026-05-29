@@ -226,6 +226,21 @@ const ROUND_END_DOTS: &[RoundEndDot] = &[
     },
 ];
 
+/// Conditions consumed by `clear_attack_advantage_riders` when the
+/// attacker makes any attack roll. Centralizes the one-shot
+/// attack-buff cohort — Hidden / Helped (drop on attack), Inspired
+/// (Bardic die fires once), PrecisionAttacking (Battle Master prime
+/// fires once). New conditions whose entire effect is a single-shot
+/// attack-roll bonus (a flat +N in `condition_attack_bonus` or an
+/// advantage flip in `compute_attack_mode`) add an entry here so the
+/// engine consumes them uniformly on the next swing.
+const CONSUMED_ON_ATTACK: &[Condition] = &[
+    Condition::Helped,
+    Condition::Hidden,
+    Condition::Inspired,
+    Condition::PrecisionAttacking,
+];
+
 pub enum StackElementEntry {
     SideEffect(Box<dyn ApplicableSideEffect>),
     Action(Box<ActionExecutionInfo>),
@@ -2299,23 +2314,17 @@ impl EncounterInstance {
     /// Symmetric across weapon attacks (`resolve_attack`) and spell
     /// attacks (`spell_attack_outcome` in spells.rs) so a follow-up swing
     /// in the same turn doesn't double-dip the rider.
+    ///
+    /// New one-shot attack-roll riders (next-attack-only conditions like
+    /// Bardic Inspiration's `Inspired` or Battle Master Precision
+    /// Attack's `PrecisionAttacking`) add their condition to
+    /// `CONSUMED_ON_ATTACK` below — the iteration handles the rest.
     pub fn clear_attack_advantage_riders(&mut self, caster_id: usize, target_id: usize) {
         if let Some(attacker) = self.actors.get_mut(&caster_id) {
-            attacker.remove_condition(Condition::Helped);
-            attacker.remove_condition(Condition::Hidden);
+            for c in CONSUMED_ON_ATTACK {
+                attacker.remove_condition(*c);
+            }
             attacker.consume_help_for(target_id);
-            // 5e Bardic Inspiration: the holder can add the inspiration
-            // die to an attack roll, save, or check. The condition
-            // grants a flat +3 to attack rolls and saves; we consume it
-            // here so a single inspiration die doesn't double-fire on
-            // a second swing this turn.
-            attacker.remove_condition(Condition::Inspired);
-            // 5e Battle Master Precision Attack maneuver: the +4
-            // attack-roll bonus is one-shot per prime. Mirrors how
-            // Inspired is consumed above so the next swing this turn
-            // (e.g. Extra Attack's second strike) lands without the
-            // bonus.
-            attacker.remove_condition(Condition::PrecisionAttacking);
         }
         // Concentration spells that explicitly break on attack (Invisibility,
         // not Greater Invisibility) drop here. Flag-based to avoid the
