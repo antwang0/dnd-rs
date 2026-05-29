@@ -788,6 +788,47 @@ impl EncounterInstance {
         mode
     }
 
+    /// 5e Paralyzed / Unconscious / Petrified clause: "any attack that
+    /// hits the creature is a critical hit if the attacker is within 5
+    /// feet of the creature." Returns true when a successful hit against
+    /// `target_id` from `attacker_id` should be promoted to a critical.
+    /// We share the gate across weapon swings (`resolve_attack_outcome`)
+    /// and spell attacks (`spell_attack_outcome`) so a touch-spell hit on
+    /// a paralyzed target crits too — RAW just says "any attack."
+    ///
+    /// `is_melee` gates the "within 5 feet" condition by attack reach
+    /// rather than literal distance: melee swings already imply reach,
+    /// and any explicit-distance check would have to know the spell's
+    /// effective range (range varies per spell). The melee-only filter is
+    /// the load-bearing simplification that keeps callers from threading
+    /// distance everywhere.
+    pub fn target_grants_melee_auto_crit(
+        &self,
+        attacker_id: usize,
+        target_id: usize,
+        is_melee: bool,
+    ) -> bool {
+        if !is_melee {
+            return false;
+        }
+        if attacker_id == target_id {
+            return false;
+        }
+        let Some(target) = self.actors.get(&target_id) else {
+            return false;
+        };
+        // Stunned isn't on the RAW auto-crit list — only Paralyzed and
+        // Unconscious carry the "any hit is a crit in melee" clause.
+        // Petrified inherits Incapacitated but not the auto-crit rider
+        // (RAW: "the creature is incapacitated... unaware of its
+        // surroundings"). Asleep is modeled as Unconscious here for the
+        // action-economy lockout but RAW does grant the same auto-crit
+        // since natural unconsciousness applies.
+        target.has_condition(Condition::Paralyzed)
+            || target.has_condition(Condition::Unconscious)
+            || target.has_condition(Condition::Asleep)
+    }
+
     /// True if the actor auto-fails saves of the given ability. Paralyzed
     /// and Stunned auto-fail STR/DEX saves in 5e. Used by `roll_save` to
     /// short-circuit before the d20 roll.
@@ -6762,6 +6803,118 @@ mod tests {
         assert!(!e.actors[&id].can_consume_resource(Resource::BonusAction));
         assert!(!e.actors[&id].can_consume_resource(Resource::Reaction));
         assert_eq!(e.actors[&id].remaining_movement(), 0.0);
+    }
+
+    /// 5e Paralyzed clause: "any attack that hits the creature is a
+    /// critical hit if the attacker is within 5 feet of the creature."
+    /// `target_grants_melee_auto_crit` is the central gate the attack-
+    /// resolution sites read.
+    #[test]
+    fn paralyzed_grants_melee_auto_crit_gate() {
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let a = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let t = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        // Baseline: no paralysis, no auto-crit gate.
+        assert!(!e.target_grants_melee_auto_crit(a, t, true));
+        // Apply Paralyzed: melee gate flips on, ranged stays off.
+        e.actors
+            .get_mut(&t)
+            .unwrap()
+            .add_condition(Condition::Paralyzed, ConditionTimer::Rounds(2));
+        assert!(e.target_grants_melee_auto_crit(a, t, true));
+        assert!(
+            !e.target_grants_melee_auto_crit(a, t, false),
+            "ranged attacks do not auto-crit on a paralyzed target — only the in-melee clause fires"
+        );
+        // Unconscious also flips the gate.
+        e.actors.get_mut(&t).unwrap().remove_condition(Condition::Paralyzed);
+        e.actors
+            .get_mut(&t)
+            .unwrap()
+            .add_condition(Condition::Unconscious, ConditionTimer::Permanent);
+        assert!(e.target_grants_melee_auto_crit(a, t, true));
+        // Self-target is excluded — a paralyzed creature can't melee
+        // auto-crit itself if some action somehow rolls a self-attack.
+        assert!(!e.target_grants_melee_auto_crit(t, t, true));
+        // Stunned alone is NOT in the RAW auto-crit clause.
+        let other = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 2, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&other)
+            .unwrap()
+            .add_condition(Condition::Stunned, ConditionTimer::Rounds(2));
+        assert!(
+            !e.target_grants_melee_auto_crit(a, other, true),
+            "Stunned is not in the auto-crit cohort per 5e RAW"
+        );
+    }
+
+    /// End-to-end: a melee weapon hit on a paralyzed target deals
+    /// crit-doubled dice. Statistical assertion across many seeds — the
+    /// paralyzed-target damage distribution dominates the baseline.
+    #[test]
+    fn paralyzed_melee_hit_promotes_to_crit() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+
+        let trials = 200u64;
+        let total_damage = |paralyzed: bool| -> u32 {
+            let mut total: u32 = 0;
+            for seed in 0..trials {
+                let mut e = ei_with_terrain(15, 15, &[]);
+                e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+                let attacker = e
+                    .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                    .unwrap();
+                let target = e
+                    .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                    .unwrap();
+                if paralyzed {
+                    e.actors
+                        .get_mut(&target)
+                        .unwrap()
+                        .add_condition(Condition::Paralyzed, ConditionTimer::Rounds(2));
+                }
+                let (_, dmg) = resolve_attack_outcome(
+                    &mut e,
+                    AttackParams {
+                        caster_id: attacker,
+                        target_id: target,
+                        action_name: "longsword",
+                        attack_bonus: 5,
+                        damage_dice: Dice::new(1, 10),
+                        damage_bonus: 3,
+                        damage_type: DamageType::Slashing,
+                        is_melee: true,
+                        long_range: None,
+                    },
+                );
+                total = total.saturating_add(dmg);
+            }
+            total
+        };
+        let with_paralysis = total_damage(true);
+        let baseline = total_damage(false);
+        // Paralyzed grants attacker advantage AND every hit is a crit
+        // (doubling the weapon dice). Combined, the paralyzed damage
+        // total should land well above the baseline. RAW maths:
+        // ~0.9 hit-rate * (2*5.5 + 3) ≈ 12.6 vs ~0.7 * (5.5 + 3) ≈ 6 —
+        // a ~2x edge that 200 trials worth of noise won't drown out.
+        assert!(
+            with_paralysis > baseline.saturating_mul(3) / 2,
+            "paralyzed melee damage should beat 1.5x baseline (got {} paralyzed vs {} baseline)",
+            with_paralysis,
+            baseline
+        );
     }
 
     #[test]

@@ -72,9 +72,13 @@ impl Action for RogueShortsword {
         // helper and roll inline so we keep the mode visible.
         let mode = encounter.attack_mode_with_riders(caster_id, target_id, true, true);
         let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
-        let is_crit = raw_attack == 20;
+        let nat_crit = raw_attack == 20;
         let total = raw_attack + attack_bonus;
-        let hit = is_crit || total >= target_ac;
+        let hit = nat_crit || total >= target_ac;
+        // 5e Paralyzed / Unconscious: any melee hit within 5ft is a crit.
+        // Promote *after* deciding hit so a miss stays a miss.
+        let is_crit =
+            nat_crit || (hit && encounter.target_grants_melee_auto_crit(caster_id, target_id, true));
         let outcome = if is_crit {
             "CRIT!"
         } else if hit {

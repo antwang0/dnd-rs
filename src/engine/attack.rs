@@ -124,10 +124,18 @@ pub fn resolve_attack_outcome(
     // are safe to clear here without losing this swing's modifiers.
     encounter.clear_attack_advantage_riders(p.caster_id, p.target_id);
     let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
-    let is_crit = raw_attack == 20;
+    let nat_crit = raw_attack == 20;
     let attack_total = raw_attack + p.attack_bonus + buff + cond_attack_bonus + bless_die;
     let is_nat_one = raw_attack == 1;
-    let hit = !is_nat_one && (is_crit || attack_total >= target_ac);
+    let hit = !is_nat_one && (nat_crit || attack_total >= target_ac);
+    // 5e Paralyzed / Unconscious clause: any hit from within 5ft is a
+    // crit. The promotion happens after we've decided the swing connected
+    // so a flat miss still misses — the rider only upgrades a regular
+    // hit to a crit (mirrors the RAW "any attack that hits the creature
+    // is a critical hit" wording).
+    let is_crit = nat_crit
+        || (hit
+            && encounter.target_grants_melee_auto_crit(p.caster_id, p.target_id, p.is_melee));
     let outcome = if is_nat_one {
         "miss (nat 1)"
     } else if is_crit {

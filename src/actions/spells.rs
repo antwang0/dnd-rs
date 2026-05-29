@@ -146,8 +146,13 @@ fn spell_attack_outcome(
     encounter.clear_attack_advantage_riders(caster_id, target_id);
     let raw = encounter.roll_d20_with_mode(mode) as i32;
     let total = raw + attack_bonus + buff + cond_attack_bonus + bless_die;
-    let is_crit = raw == 20;
-    let hit = is_crit || total >= target_ac;
+    let nat_crit = raw == 20;
+    let hit = nat_crit || total >= target_ac;
+    // 5e Paralyzed / Unconscious clause — touch spell attacks honor the
+    // "any hit within 5ft becomes a crit" rider too. Mirrors the gate in
+    // `resolve_attack_outcome`: only `is_melee` spells trigger.
+    let is_crit = nat_crit
+        || (hit && encounter.target_grants_melee_auto_crit(caster_id, target_id, is_melee));
     let outcome = if is_crit {
         "CRIT!"
     } else if hit {
