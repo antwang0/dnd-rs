@@ -7020,6 +7020,51 @@ mod tests {
         );
     }
 
+    /// `roll_d20_lucky` re-rolls a nat-1 *only* if the actor has the
+    /// Lucky trait — non-lucky actors get the raw d20 unchanged. We
+    /// drive the test through a deterministic seed sweep so the nat-1
+    /// reroll path is exercised on at least one trial.
+    #[test]
+    fn lucky_reroll_only_fires_for_lucky_actors() {
+        use crate::actors::creatures::halflings::HALFLING_SCOUT_TEMPLATE;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::engine::dice::RollMode;
+
+        // Tight seed sweep — find a seed that rolls a nat-1 to confirm
+        // the reroll behavior is exercised at least once.
+        let mut found_reroll = false;
+        for seed in 0..100u64 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let halfling = e
+                .instantiate_creature(&HALFLING_SCOUT_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let halfling_roll = e.roll_d20_lucky(halfling, RollMode::Normal);
+            // The lucky path's reroll lifts the minimum off 1 — a re-rolled
+            // nat-1 might be 1 again, but the engine consumed two rolls
+            // not one. The cheap check is: replay the same seed on a
+            // non-lucky rogue and verify the d20 distribution differs the
+            // first time a nat-1 falls.
+            let mut e2 = ei_with_terrain(15, 15, &[]);
+            e2.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let rogue = e2
+                .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let rogue_roll = e2.roll_d20_lucky(rogue, RollMode::Normal);
+            // Both rolls without the lucky path would land identically on
+            // the first roll of the same seed. The Halfling's path
+            // diverges only when the first roll is a 1 and gets re-rolled.
+            if rogue_roll == 1 && halfling_roll != rogue_roll {
+                found_reroll = true;
+                break;
+            }
+        }
+        assert!(
+            found_reroll,
+            "expected at least one seed to surface a lucky reroll within 100 trials"
+        );
+    }
+
     /// 5e Halfling Lucky: nat-1 d20 rolls are re-rolled. End-to-end
     /// check at the save site — a Halfling Scout rolling against a
     /// DC-15 save lands more saves than a fixed-roll baseline.
