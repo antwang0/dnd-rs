@@ -21290,6 +21290,171 @@ mod tests {
         assert!(!e.actors[&f].feature_available(TRIP_ATTACK_TAG));
     }
 
+    /// Menacing Attack (Fighter Battle Master): bonus-action prime
+    /// applies the MenacingAttacking condition and consumes the
+    /// once-per-rest feature. Mirrors the Trip Attack shape.
+    #[test]
+    fn menacing_attack_primes_caster_and_consumes_feature() {
+        use crate::actions::class_features::{MENACING_ATTACK, MENACING_ATTACK_TAG};
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&f].feature_available(MENACING_ATTACK_TAG));
+        let effects = MENACING_ATTACK.side_effects(&mut e, f, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&f].has_condition(Condition::MenacingAttacking));
+        assert!(!e.actors[&f].feature_available(MENACING_ATTACK_TAG));
+    }
+
+    /// Disarming Attack (Fighter Battle Master): bonus-action prime
+    /// applies the DisarmingAttacking condition and consumes the
+    /// once-per-rest feature.
+    #[test]
+    fn disarming_attack_primes_caster_and_consumes_feature() {
+        use crate::actions::class_features::{DISARMING_ATTACK, DISARMING_ATTACK_TAG};
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&f].feature_available(DISARMING_ATTACK_TAG));
+        let effects = DISARMING_ATTACK.side_effects(&mut e, f, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&f].has_condition(Condition::DisarmingAttacking));
+        assert!(!e.actors[&f].feature_available(DISARMING_ATTACK_TAG));
+    }
+
+    /// Pushing Attack (Fighter Battle Master): bonus-action prime
+    /// applies the PushingAttacking condition and consumes the
+    /// once-per-rest feature.
+    #[test]
+    fn pushing_attack_primes_caster_and_consumes_feature() {
+        use crate::actions::class_features::{PUSHING_ATTACK, PUSHING_ATTACK_TAG};
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&f].feature_available(PUSHING_ATTACK_TAG));
+        let effects = PUSHING_ATTACK.side_effects(&mut e, f, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&f].has_condition(Condition::PushingAttacking));
+        assert!(!e.actors[&f].feature_available(PUSHING_ATTACK_TAG));
+    }
+
+    /// Disarmed condition imposes disadvantage on the holder's attack
+    /// rolls — the load-bearing penalty of the Disarming Attack rider.
+    /// Verifies the condition is correctly wired into the
+    /// `imposes_attacker_disadvantage` cohort.
+    #[test]
+    fn disarmed_imposes_attacker_disadvantage() {
+        assert!(Condition::Disarmed.imposes_attacker_disadvantage());
+    }
+
+    /// Pushing Attack primes PushingAttacking and, on a connecting
+    /// melee hit, fires the new `FollowUpEffect::Push` rider — the
+    /// target should land further from the attacker than they started
+    /// (or stay put if the save passed; we sweep seeds until a fail
+    /// lands). Validates the new push-only follow-up shape end-to-end.
+    #[test]
+    fn pushing_attack_displaces_target_on_failed_save() {
+        use crate::actions::class_features::PUSHING_ATTACK;
+        use crate::actions::monster_attacks::SCIMITAR;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut pushed_any = false;
+        for seed in 0..80 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let f = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            let start_loc = e.actors[&g].location();
+            let effects = PUSHING_ATTACK.side_effects(&mut e, f, None, None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            assert!(e.actors[&f].has_condition(Condition::PushingAttacking));
+            let tv = vec![g];
+            let weapon_effects = SCIMITAR.side_effects(&mut e, f, Some(&tv), None, None);
+            for ef in weapon_effects {
+                ef.apply(&mut e);
+            }
+            // Goblin may have died on the hit; if alive, check the loc.
+            if let Some(goblin) = e.actors.get(&g) {
+                if goblin.location() != start_loc {
+                    pushed_any = true;
+                    break;
+                }
+            } else {
+                // Killed — that's still a valid outcome (the swing did its
+                // job before the rider could push). Skip this seed; the
+                // sweep is wide enough to find a non-killing hit.
+                continue;
+            }
+        }
+        assert!(
+            pushed_any,
+            "pushing attack never moved the goblin across 80 seeds"
+        );
+    }
+
+    /// Battle Master maneuvers all refresh on a short rest, mirroring
+    /// the RAW superiority-die pool. Verifies that taking a short rest
+    /// repopulates each maneuver flag after they were spent.
+    #[test]
+    fn battle_master_maneuvers_refresh_on_short_rest() {
+        use crate::actions::class_features::{
+            DISARMING_ATTACK_TAG, MENACING_ATTACK_TAG, PUSHING_ATTACK_TAG, TRIP_ATTACK_TAG,
+        };
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Spend every maneuver charge.
+        let actor = e.actors.get_mut(&f).unwrap();
+        for tag in [
+            TRIP_ATTACK_TAG,
+            MENACING_ATTACK_TAG,
+            DISARMING_ATTACK_TAG,
+            PUSHING_ATTACK_TAG,
+        ] {
+            actor.spend_feature(tag);
+            assert!(!actor.feature_available(tag), "{} should be spent", tag);
+        }
+        // Short rest — superiority dice refresh per RAW.
+        let mut roller = FastRandRoller::with_seed(1);
+        e.actors.get_mut(&f).unwrap().short_rest(&mut roller);
+        let actor = &e.actors[&f];
+        for tag in [
+            TRIP_ATTACK_TAG,
+            MENACING_ATTACK_TAG,
+            DISARMING_ATTACK_TAG,
+            PUSHING_ATTACK_TAG,
+        ] {
+            assert!(
+                actor.feature_available(tag),
+                "{} should refresh on short rest",
+                tag
+            );
+        }
+    }
+
     /// Bullette template: high-HP CR-5 monstrosity with bite + multi +
     /// deadly leap. Verifies the template wires cleanly via
     /// instantiate_creature.

@@ -724,6 +724,37 @@ pub enum Condition {
     /// resolution. Not a real debuff; used by the engine to track that
     /// a spell was counterspelled this stack frame. Inert otherwise.
     Counterspelled,
+    /// Menacing Attack primed (5e Fighter Battle Master maneuver, once
+    /// per long rest in our model). Bonus action prime; the next melee
+    /// weapon hit forces the target to make a WIS save vs the fighter's
+    /// maneuver DC (8 + prof + STR); on fail, they're Frightened until
+    /// the end of the fighter's next turn. One-shot — the OnHitRider
+    /// table strips this flag the moment a melee swing lands. Tick-down
+    /// timer (2 rounds) caps the prime if the fighter can't connect.
+    /// Mirrors Trip Attack's shape but with a WIS save and Frightened
+    /// instead of Prone.
+    MenacingAttacking,
+    /// Disarming Attack primed (5e Fighter Battle Master maneuver, once
+    /// per long rest in our model). Bonus action prime; the next melee
+    /// weapon hit forces the target to make a STR save vs the fighter's
+    /// maneuver DC; on fail, they're Disarmed (attacks have disadvantage
+    /// until the start of their next turn). One-shot — the rider table
+    /// strips this flag the moment a melee swing lands.
+    DisarmingAttacking,
+    /// Pushing Attack primed (5e Fighter Battle Master maneuver, once
+    /// per long rest in our model). Bonus action prime; the next melee
+    /// weapon hit forces the target to make a STR save vs the fighter's
+    /// maneuver DC; on fail, they're shoved 10 ft (4 tiles) away via
+    /// the standard `PushActor` helper. One-shot — the rider table
+    /// strips this flag the moment a melee swing lands.
+    PushingAttacking,
+    /// Disarmed (5e Battle Master Disarming Attack rider). The target's
+    /// weapon was knocked from their grip: their attack rolls have
+    /// disadvantage (joins `imposes_attacker_disadvantage`). Short
+    /// timer (`UntilStartOfNextTurn`) clears the debuff after the
+    /// holder's next turn — RAW: lasts until the target picks the
+    /// weapon back up, which any creature can do as part of a move.
+    Disarmed,
 }
 
 impl Condition {
@@ -837,6 +868,10 @@ impl Condition {
             Condition::Moonbeamed => "caught in moonbeam",
             Condition::CloudOfDaggered => "shredded by daggers",
             Condition::Counterspelled => "counterspelled",
+            Condition::MenacingAttacking => "primed to menace",
+            Condition::DisarmingAttacking => "primed to disarm",
+            Condition::PushingAttacking => "primed to push",
+            Condition::Disarmed => "disarmed",
         }
     }
 
@@ -918,6 +953,9 @@ impl Condition {
                 | Condition::Displaced
                 | Condition::AbsorbedElements
                 | Condition::SpiritGuarding
+                | Condition::MenacingAttacking
+                | Condition::DisarmingAttacking
+                | Condition::PushingAttacking
         )
     }
 
@@ -975,6 +1013,7 @@ impl Condition {
                 | Condition::MentallyImprisoned
                 | Condition::Sphered
                 | Condition::EarthenGrasped
+                | Condition::Disarmed
         )
     }
 

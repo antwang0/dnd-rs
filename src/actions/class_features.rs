@@ -31,6 +31,18 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     CUTTING_WORDS_TAG,
 ];
 
+/// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
+/// which refresh on a short or long rest. We collapse the dice pool to
+/// per-tag once-per-rest charges so the gating stays uniform with the
+/// other class features; the tags are listed both here and in the
+/// `SHORT_REST_FEATURES` registry below so a short rest refreshes them.
+pub const BATTLE_MASTER_MANEUVERS: &[&str] = &[
+    TRIP_ATTACK_TAG,
+    MENACING_ATTACK_TAG,
+    DISARMING_ATTACK_TAG,
+    PUSHING_ATTACK_TAG,
+];
+
 /// Tags used by `ActorInstance::feature_available` / `spend_feature` to
 /// gate once-per-long-rest class features. Stored as `&'static str` so
 /// actor state stays a flat HashSet instead of carrying an enum import.
@@ -497,15 +509,14 @@ impl Action for Rage {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
-            actor.spend_feature(RAGE_TAG);
-        }
-        encounter.log("  rage: barbarian enters a battle frenzy.".to_string());
-        vec![Box::new(ApplyCondition {
-            actor_id: caster_id,
-            condition: Condition::Raging,
-            timer: ConditionTimer::Rounds(10),
-        })]
+        prime_self_condition(
+            encounter,
+            caster_id,
+            RAGE_TAG,
+            Condition::Raging,
+            ConditionTimer::Rounds(10),
+            "  rage: barbarian enters a battle frenzy.",
+        )
     }
 }
 
@@ -732,15 +743,14 @@ impl Action for SacredWeapon {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
-            actor.spend_feature(SACRED_WEAPON_TAG);
-        }
-        encounter.log("  sacred weapon: paladin's blade glows with divine light.".to_string());
-        vec![Box::new(ApplyCondition {
-            actor_id: caster_id,
-            condition: Condition::Sacred,
-            timer: ConditionTimer::Rounds(10),
-        })]
+        prime_self_condition(
+            encounter,
+            caster_id,
+            SACRED_WEAPON_TAG,
+            Condition::Sacred,
+            ConditionTimer::Rounds(10),
+            "  sacred weapon: paladin's blade glows with divine light.",
+        )
     }
 }
 
@@ -813,18 +823,17 @@ impl Action for StunningStrike {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
-            actor.spend_feature(STUNNING_STRIKE_TAG);
-        }
-        encounter.log("  stunning strike: monk's next hit primes a stun save.".to_string());
-        vec![Box::new(ApplyCondition {
-            actor_id: caster_id,
-            condition: Condition::StunningStrike,
-            // 2-round prime window so a primed monk who misses the
-            // first swing still has the rest of this turn + next to
-            // connect (same envelope as Divine Smite).
-            timer: ConditionTimer::Rounds(2),
-        })]
+        // 2-round prime window so a primed monk who misses the
+        // first swing still has the rest of this turn + next to
+        // connect (same envelope as Divine Smite).
+        prime_self_condition(
+            encounter,
+            caster_id,
+            STUNNING_STRIKE_TAG,
+            Condition::StunningStrike,
+            ConditionTimer::Rounds(2),
+            "  stunning strike: monk's next hit primes a stun save.",
+        )
     }
 }
 
@@ -1231,18 +1240,14 @@ impl Action for DivineStrike {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
-            actor.spend_feature(DIVINE_STRIKE_TAG);
-        }
-        encounter.log(
-            "  divine strike: cleric's next melee hit will land with radiant fury."
-                .to_string(),
-        );
-        vec![Box::new(ApplyCondition {
-            actor_id: caster_id,
-            condition: Condition::DivineStriking,
-            timer: ConditionTimer::Rounds(2),
-        })]
+        prime_self_condition(
+            encounter,
+            caster_id,
+            DIVINE_STRIKE_TAG,
+            Condition::DivineStriking,
+            ConditionTimer::Rounds(2),
+            "  divine strike: cleric's next melee hit will land with radiant fury.",
+        )
     }
 }
 
@@ -1313,22 +1318,273 @@ impl Action for TripAttack {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
-            actor.spend_feature(TRIP_ATTACK_TAG);
-        }
-        encounter.log(
-            "  trip attack: fighter's next hit forces a STR save vs prone."
-                .to_string(),
-        );
-        vec![Box::new(ApplyCondition {
-            actor_id: caster_id,
-            condition: Condition::TripAttacking,
-            timer: ConditionTimer::Rounds(2),
-        })]
+        prime_self_condition(
+            encounter,
+            caster_id,
+            TRIP_ATTACK_TAG,
+            Condition::TripAttacking,
+            ConditionTimer::Rounds(2),
+            "  trip attack: fighter's next hit forces a STR save vs prone.",
+        )
     }
 }
 
 pub static TRIP_ATTACK: LazyLock<TripAttack> = LazyLock::new(|| TripAttack {});
+
+/// Spend a once-per-rest feature charge and install a self-applied prime
+/// condition on the caster. The classic "bonus-action prime" shape:
+/// `spend_feature(tag)` then `ApplyCondition` for `prime`. Centralizes
+/// the pattern repeated by every Battle Master maneuver, every Smite
+/// prime, Sacred Weapon, Divine Strike, Stunning Strike, etc. Logs the
+/// flavor line so the caller doesn't have to repeat the format string.
+///
+/// Returns the side-effect vector the action site should hand back to
+/// the engine — typically just the one `ApplyCondition`. Note: this is
+/// for *self-only* primes; targeted effects (Cutting Words, Bardic
+/// Inspiration) still inline their own logic since they apply to an
+/// ally / enemy id, not the caster.
+fn prime_self_condition(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    feature_tag: &'static str,
+    prime: Condition,
+    timer: ConditionTimer,
+    log_line: &str,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+        actor.spend_feature(feature_tag);
+    }
+    encounter.log(log_line.to_string());
+    vec![Box::new(ApplyCondition {
+        actor_id: caster_id,
+        condition: prime,
+        timer,
+    })]
+}
+
+/// Class-feature tag for the Fighter's Menacing Attack Battle Master
+/// maneuver (once per long rest in our model). RAW: a pool of superiority
+/// dice; we collapse to a single charge per rest so the gating stays
+/// uniform with Trip Attack / Second Wind / Indomitable.
+pub const MENACING_ATTACK_TAG: &str = "fighter.menacing_attack";
+
+/// Menacing Attack — Fighter Battle Master maneuver. Bonus action; primes
+/// the next melee weapon hit: on connect, the target makes a WIS save
+/// vs the fighter's STR-based maneuver DC; on fail, they're Frightened
+/// until the end of the fighter's next turn. RAW's +1d8 superiority-die
+/// damage is skipped (same caveat as Trip Attack); the frighten-on-fail
+/// IS the load-bearing tactical effect. Mirrors Trip Attack's shape.
+pub struct MenacingAttack {}
+
+impl Action for MenacingAttack {
+    fn name(&self) -> &str {
+        "menacing attack"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["menace", "ma"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.is_combat_active()
+                && a.feature_available(MENACING_ATTACK_TAG)
+                && !a.has_condition(Condition::MenacingAttacking)
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        prime_self_condition(
+            encounter,
+            caster_id,
+            MENACING_ATTACK_TAG,
+            Condition::MenacingAttacking,
+            ConditionTimer::Rounds(2),
+            "  menacing attack: fighter's next hit forces a WIS save vs frighten.",
+        )
+    }
+}
+
+pub static MENACING_ATTACK: LazyLock<MenacingAttack> = LazyLock::new(|| MenacingAttack {});
+
+/// Class-feature tag for the Fighter's Disarming Attack Battle Master
+/// maneuver (once per long rest in our model).
+pub const DISARMING_ATTACK_TAG: &str = "fighter.disarming_attack";
+
+/// Disarming Attack — Fighter Battle Master maneuver. Bonus action;
+/// primes the next melee weapon hit: on connect, the target makes a
+/// STR save vs the fighter's STR-based maneuver DC; on fail, they're
+/// Disarmed — attack rolls have disadvantage until the start of their
+/// next turn. RAW: target drops their weapon; we collapse the
+/// pickup-takes-a-move clause into the `UntilStartOfNextTurn` timer
+/// since the engine doesn't track held items.
+pub struct DisarmingAttack {}
+
+impl Action for DisarmingAttack {
+    fn name(&self) -> &str {
+        "disarming attack"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["disarm", "da"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.is_combat_active()
+                && a.feature_available(DISARMING_ATTACK_TAG)
+                && !a.has_condition(Condition::DisarmingAttacking)
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        prime_self_condition(
+            encounter,
+            caster_id,
+            DISARMING_ATTACK_TAG,
+            Condition::DisarmingAttacking,
+            ConditionTimer::Rounds(2),
+            "  disarming attack: fighter's next hit forces a STR save vs disarm.",
+        )
+    }
+}
+
+pub static DISARMING_ATTACK: LazyLock<DisarmingAttack> = LazyLock::new(|| DisarmingAttack {});
+
+/// Class-feature tag for the Fighter's Pushing Attack Battle Master
+/// maneuver (once per long rest in our model).
+pub const PUSHING_ATTACK_TAG: &str = "fighter.pushing_attack";
+
+/// Pushing Attack — Fighter Battle Master maneuver. Bonus action;
+/// primes the next melee weapon hit: on connect, the target makes a
+/// STR save vs the fighter's STR-based maneuver DC; on fail, they're
+/// shoved 15 ft (4 tiles in our 2.5ft grid) away from the fighter via
+/// the standard `PushActor` helper. RAW's +1d8 superiority-die damage
+/// is skipped (same caveat as the other maneuvers); the displacement
+/// IS the load-bearing tactical effect. First maneuver to use the
+/// `Push` variant of `FollowUpEffect`.
+pub struct PushingAttack {}
+
+impl Action for PushingAttack {
+    fn name(&self) -> &str {
+        "pushing attack"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pa", "shovea"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.is_combat_active()
+                && a.feature_available(PUSHING_ATTACK_TAG)
+                && !a.has_condition(Condition::PushingAttacking)
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        prime_self_condition(
+            encounter,
+            caster_id,
+            PUSHING_ATTACK_TAG,
+            Condition::PushingAttacking,
+            ConditionTimer::Rounds(2),
+            "  pushing attack: fighter's next hit forces a STR save vs shove.",
+        )
+    }
+}
+
+pub static PUSHING_ATTACK: LazyLock<PushingAttack> = LazyLock::new(|| PushingAttack {});
 
 /// Class-feature tag for the Wizard's Arcane Recovery — once per long
 /// rest, refreshes on long rest. RAW: once per day during a short rest,

@@ -11,7 +11,7 @@ use crate::items::item_template::{Item, ItemBonuses};
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 
-use crate::actions::class_features::SHORT_REST_FEATURES;
+use crate::actions::class_features::{BATTLE_MASTER_MANEUVERS, SHORT_REST_FEATURES};
 
 /// Lifecycle state of an actor's hit points. Replaces the previous
 /// `dying: bool` + `stable: bool` pair so the four meaningful states are
@@ -785,7 +785,7 @@ impl ActorInstance {
         let heal = (roll + con_mod * dice_count as i32).max(0) as u32;
         self.heal(heal);
 
-        for tag in SHORT_REST_FEATURES {
+        for tag in SHORT_REST_FEATURES.iter().chain(BATTLE_MASTER_MANEUVERS.iter()) {
             if self.features_max.contains(tag) {
                 self.features_remaining.insert(tag);
             }

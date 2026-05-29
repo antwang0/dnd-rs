@@ -1,6 +1,7 @@
 use crate::actions::class_features::{
-    ACTION_SURGE, ACTION_SURGE_TAG, INDOMITABLE, INDOMITABLE_TAG, SECOND_WIND, SECOND_WIND_TAG,
-    TRIP_ATTACK, TRIP_ATTACK_TAG,
+    ACTION_SURGE, ACTION_SURGE_TAG, DISARMING_ATTACK, DISARMING_ATTACK_TAG, INDOMITABLE,
+    INDOMITABLE_TAG, MENACING_ATTACK, MENACING_ATTACK_TAG, PUSHING_ATTACK, PUSHING_ATTACK_TAG,
+    SECOND_WIND, SECOND_WIND_TAG, TRIP_ATTACK, TRIP_ATTACK_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGSWORD, SCIMITAR};
@@ -87,11 +88,19 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*SECOND_WIND);
     actions.push(&*ACTION_SURGE);
     actions.push(&*INDOMITABLE);
-    // Trip Attack — Battle Master maneuver (once per long rest in our
-    // model). Bonus action prime; next melee hit forces a STR save vs
-    // the fighter's maneuver DC or knocks the target Prone. Sets up
-    // the prone-melee-advantage clause for follow-up swings.
+    // Battle Master maneuvers (once per short rest each in our model).
+    // Bonus-action primes that ride the next melee hit:
+    //   - Trip Attack: STR save vs prone (knockdown sets up advantage).
+    //   - Menacing Attack: WIS save vs frighten (one-round disadv).
+    //   - Disarming Attack: STR save vs disarmed (one-round disadv).
+    //   - Pushing Attack: STR save vs forced shove (4-tile push).
+    // Each maneuver is its own per-rest charge so the AI can pick the
+    // right tool per fight (frighten a caster, shove a melee threat
+    // away from the squishy ally, etc.).
     actions.push(&*TRIP_ATTACK);
+    actions.push(&*MENACING_ATTACK);
+    actions.push(&*DISARMING_ATTACK);
+    actions.push(&*PUSHING_ATTACK);
     CreatureTemplate {
         name: "Fighter",
         glyph: 'F',
@@ -123,6 +132,9 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             ACTION_SURGE_TAG,
             INDOMITABLE_TAG,
             TRIP_ATTACK_TAG,
+            MENACING_ATTACK_TAG,
+            DISARMING_ATTACK_TAG,
+            PUSHING_ATTACK_TAG,
         ]),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),

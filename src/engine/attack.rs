@@ -1,7 +1,7 @@
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::Dice;
 use crate::engine::encounter::EncounterInstance;
-use crate::engine::side_effects::{ApplicableSideEffect, ApplyCondition, DealDamage};
+use crate::engine::side_effects::{ApplicableSideEffect, ApplyCondition, DealDamage, PushActor};
 use crate::engine::types::{AbilityScoreType, DamageType};
 
 /// Inputs to a single attack roll. Lets callers describe attacks without
@@ -490,25 +490,26 @@ pub struct OnHitRider {
     pub follow_up: Option<SmiteFollowUp>,
 }
 
-/// Secondary save + condition rider tagged onto a Smite-spell hit. When
+/// Secondary save + effect rider tagged onto a Smite-spell hit. When
 /// `save_ability` is `Some(ability)`, the target rolls that save against
-/// the caster's spell DC (driven by `dc_ability`); on fail, `apply` lands
-/// with `timer`. When `save_ability` is `None`, the rider auto-applies
+/// the caster's spell DC (driven by `dc_ability`); on fail, the rider's
+/// `effect` lands. When `save_ability` is `None`, the rider auto-applies
 /// on hit with no save (Branding Smite's "brand", Searing Smite's ignite).
 /// Stored as a value so the on-hit rider table stays a flat array of
 /// plain-data entries.
 #[derive(Clone, Copy)]
 pub struct SmiteFollowUp {
     /// Save the target rolls (CON for Blinding Smite, WIS for Wrathful
-    /// Smite). `None` skips the save entirely — the condition lands
+    /// Smite). `None` skips the save entirely — the effect lands
     /// unconditionally on the consuming hit (subject to `hp_threshold`).
     pub save_ability: Option<AbilityScoreType>,
     /// Ability whose mod feeds the caster's spell save DC. Ignored when
     /// `save_ability` is `None` (no save means no DC).
     pub dc_ability: AbilityScoreType,
-    pub apply: Condition,
-    pub timer: ConditionTimer,
-    /// Log-friendly tag ("blinding smite blind", "wrathful smite fear").
+    /// What lands on a failed save: a condition apply, a push, or both.
+    pub effect: FollowUpEffect,
+    /// Log-friendly tag ("blinding smite blind", "wrathful smite fear",
+    /// "pushing attack push").
     pub label: &'static str,
     /// Optional post-damage HP gate. Banishing Smite RAW: the rider lands
     /// only "if this damage reduces the target to 50 hp or fewer." We
@@ -518,11 +519,30 @@ pub struct SmiteFollowUp {
     pub hp_threshold: Option<u32>,
 }
 
+/// What a smite follow-up does on a failed save (or auto-trigger).
+/// Most riders apply a single condition (`Condition`); the Battle Master
+/// Pushing Attack maneuver shoves the target backward instead. Both can
+/// be combined in `Push` form when an effect both displaces and debuffs.
+#[derive(Clone, Copy)]
+pub enum FollowUpEffect {
+    /// Apply a single condition with the given timer. Used by every
+    /// Smite-spell rider that produces a debuff (Blinded, Frightened,
+    /// Prone, Stunned, Outlined, Burning, ...).
+    Condition {
+        condition: Condition,
+        timer: ConditionTimer,
+    },
+    /// Push the target `tiles` away from the attacker. Used by the
+    /// Battle Master Pushing Attack maneuver. No condition apply —
+    /// the displacement IS the effect.
+    Push { tiles: u32 },
+}
+
 /// Build the caster-side on-hit rider table. Returned by value rather
 /// than declared `const` because `Dice::new` isn't a const fn — but the
 /// runtime cost is one stack-allocated array of plain data, so the
 /// indirection is free.
-fn on_hit_riders() -> [OnHitRider; 20] {
+fn on_hit_riders() -> [OnHitRider; 23] {
     [
         OnHitRider {
             condition: Condition::CrusadersMantled,
@@ -601,8 +621,10 @@ fn on_hit_riders() -> [OnHitRider; 20] {
                 // roll in `apply_smite_follow_up`.
                 save_ability: None,
                 dc_ability: AbilityScoreType::Charisma,
-                apply: Condition::Burning,
-                timer: ConditionTimer::Rounds(3),
+                effect: FollowUpEffect::Condition {
+                    condition: Condition::Burning,
+                    timer: ConditionTimer::Rounds(3),
+                },
                 label: "searing smite ignite",
                 hp_threshold: None,
             }),
@@ -621,8 +643,10 @@ fn on_hit_riders() -> [OnHitRider; 20] {
             follow_up: Some(SmiteFollowUp {
                 save_ability: Some(AbilityScoreType::Wisdom),
                 dc_ability: AbilityScoreType::Charisma,
-                apply: Condition::Frightened,
-                timer: ConditionTimer::Rounds(10),
+                effect: FollowUpEffect::Condition {
+                    condition: Condition::Frightened,
+                    timer: ConditionTimer::Rounds(10),
+                },
                 label: "wrathful smite fear",
                 hp_threshold: None,
             }),
@@ -643,8 +667,10 @@ fn on_hit_riders() -> [OnHitRider; 20] {
                 // `save_ability: None` skips the save roll.
                 save_ability: None,
                 dc_ability: AbilityScoreType::Charisma,
-                apply: Condition::Outlined,
-                timer: ConditionTimer::Rounds(10),
+                effect: FollowUpEffect::Condition {
+                    condition: Condition::Outlined,
+                    timer: ConditionTimer::Rounds(10),
+                },
                 label: "branding smite brand",
                 hp_threshold: None,
             }),
@@ -662,8 +688,10 @@ fn on_hit_riders() -> [OnHitRider; 20] {
             follow_up: Some(SmiteFollowUp {
                 save_ability: Some(AbilityScoreType::Constitution),
                 dc_ability: AbilityScoreType::Charisma,
-                apply: Condition::Blinded,
-                timer: ConditionTimer::Rounds(10),
+                effect: FollowUpEffect::Condition {
+                    condition: Condition::Blinded,
+                    timer: ConditionTimer::Rounds(10),
+                },
                 label: "blinding smite blind",
                 hp_threshold: None,
             }),
@@ -684,8 +712,10 @@ fn on_hit_riders() -> [OnHitRider; 20] {
             follow_up: Some(SmiteFollowUp {
                 save_ability: Some(AbilityScoreType::Constitution),
                 dc_ability: AbilityScoreType::Wisdom,
-                apply: Condition::Stunned,
-                timer: ConditionTimer::Rounds(1),
+                effect: FollowUpEffect::Condition {
+                    condition: Condition::Stunned,
+                    timer: ConditionTimer::Rounds(1),
+                },
                 label: "stunning strike stun",
                 hp_threshold: None,
             }),
@@ -721,8 +751,10 @@ fn on_hit_riders() -> [OnHitRider; 20] {
             follow_up: Some(SmiteFollowUp {
                 save_ability: Some(AbilityScoreType::Strength),
                 dc_ability: AbilityScoreType::Strength,
-                apply: Condition::Prone,
-                timer: ConditionTimer::Permanent,
+                effect: FollowUpEffect::Condition {
+                    condition: Condition::Prone,
+                    timer: ConditionTimer::Permanent,
+                },
                 label: "trip attack prone",
                 hp_threshold: None,
             }),
@@ -742,8 +774,10 @@ fn on_hit_riders() -> [OnHitRider; 20] {
             follow_up: Some(SmiteFollowUp {
                 save_ability: Some(AbilityScoreType::Wisdom),
                 dc_ability: AbilityScoreType::Charisma,
-                apply: Condition::Stunned,
-                timer: ConditionTimer::Rounds(1),
+                effect: FollowUpEffect::Condition {
+                    condition: Condition::Stunned,
+                    timer: ConditionTimer::Rounds(1),
+                },
                 label: "staggering smite stun",
                 hp_threshold: None,
             }),
@@ -768,8 +802,10 @@ fn on_hit_riders() -> [OnHitRider; 20] {
                 // No save — RAW: the banish is auto-apply if HP ≤ 50.
                 save_ability: None,
                 dc_ability: AbilityScoreType::Charisma,
-                apply: Condition::Mazed,
-                timer: ConditionTimer::Rounds(10),
+                effect: FollowUpEffect::Condition {
+                    condition: Condition::Mazed,
+                    timer: ConditionTimer::Rounds(10),
+                },
                 label: "banishing smite banish",
                 // RAW: only banished "if this damage reduces the target
                 // to 50 hp or fewer." We honor the gate by predicting
@@ -813,8 +849,10 @@ fn on_hit_riders() -> [OnHitRider; 20] {
             follow_up: Some(SmiteFollowUp {
                 save_ability: Some(AbilityScoreType::Strength),
                 dc_ability: AbilityScoreType::Charisma,
-                apply: Condition::Prone,
-                timer: ConditionTimer::Permanent,
+                effect: FollowUpEffect::Condition {
+                    condition: Condition::Prone,
+                    timer: ConditionTimer::Permanent,
+                },
                 label: "thunderous smite prone",
                 hp_threshold: None,
             }),
@@ -890,6 +928,81 @@ fn on_hit_riders() -> [OnHitRider; 20] {
             consume_on_trigger: true,
             follow_up: None,
         },
+        // 5e Battle Master Menacing Attack maneuver. Zero rider damage
+        // (RAW: +1 superiority die; we collapse the die since the engine
+        // has no per-class scaling pool). On the consuming melee hit the
+        // target makes a WIS save vs the fighter's STR-based maneuver DC
+        // (8 + prof + STR); on fail, they're Frightened until the end of
+        // the fighter's next turn (we model as 1 round). Mirrors Stunning
+        // Strike's "no rider damage, save-or-condition" shape.
+        OnHitRider {
+            condition: Condition::MenacingAttacking,
+            dice: Dice::new(0, 1),
+            label: "menacing attack",
+            damage_type: DamageType::Bludgeoning,
+            melee_only: true,
+            ranged_only: false,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: Some(AbilityScoreType::Wisdom),
+                dc_ability: AbilityScoreType::Strength,
+                effect: FollowUpEffect::Condition {
+                    condition: Condition::Frightened,
+                    timer: ConditionTimer::Rounds(1),
+                },
+                label: "menacing attack fear",
+                hp_threshold: None,
+            }),
+        },
+        // 5e Battle Master Disarming Attack maneuver. Zero rider damage
+        // (same caveat as Menacing / Trip). On the consuming melee hit the
+        // target makes a STR save vs the fighter's STR-based maneuver DC;
+        // on fail, they're Disarmed — attack rolls have disadvantage
+        // until the start of their next turn (`UntilStartOfNextTurn`
+        // mirrors how Mocked / Dodging clear). One-shot.
+        OnHitRider {
+            condition: Condition::DisarmingAttacking,
+            dice: Dice::new(0, 1),
+            label: "disarming attack",
+            damage_type: DamageType::Bludgeoning,
+            melee_only: true,
+            ranged_only: false,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: Some(AbilityScoreType::Strength),
+                dc_ability: AbilityScoreType::Strength,
+                effect: FollowUpEffect::Condition {
+                    condition: Condition::Disarmed,
+                    timer: ConditionTimer::UntilStartOfNextTurn,
+                },
+                label: "disarming attack disarm",
+                hp_threshold: None,
+            }),
+        },
+        // 5e Battle Master Pushing Attack maneuver. Zero rider damage
+        // (same caveat as Menacing / Disarming). On the consuming melee
+        // hit the target makes a STR save vs the fighter's STR-based
+        // maneuver DC; on fail, they're shoved 15 ft (4 tiles in our
+        // 2.5ft grid — round 15ft/2.5 = 6, but we cap at the engine's
+        // PushActor maximum behavior of 4 tiles, matching Thunderwave's
+        // 10ft push). The first follow-up to use the `Push` variant of
+        // `FollowUpEffect` — no condition apply, just forced movement.
+        OnHitRider {
+            condition: Condition::PushingAttacking,
+            dice: Dice::new(0, 1),
+            label: "pushing attack",
+            damage_type: DamageType::Bludgeoning,
+            melee_only: true,
+            ranged_only: false,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: Some(AbilityScoreType::Strength),
+                dc_ability: AbilityScoreType::Strength,
+                effect: FollowUpEffect::Push { tiles: 4 },
+                label: "pushing attack shove",
+                hp_threshold: None,
+            }),
+        },
     ]
 }
 
@@ -928,11 +1041,7 @@ fn apply_smite_follow_up(
     }
     let Some(save_ability) = follow.save_ability else {
         encounter.log(format!("  {}: auto-apply on hit", follow.label));
-        effects.push(Box::new(ApplyCondition {
-            actor_id: target_id,
-            condition: follow.apply,
-            timer: follow.timer,
-        }));
+        push_follow_up_effect(encounter, effects, caster_id, target_id, follow.effect);
         return;
     };
     let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -945,9 +1054,38 @@ fn apply_smite_follow_up(
         return;
     }
     encounter.log(format!("  {}: target fails save", follow.label));
-    effects.push(Box::new(ApplyCondition {
-        actor_id: target_id,
-        condition: follow.apply,
-        timer: follow.timer,
-    }));
+    push_follow_up_effect(encounter, effects, caster_id, target_id, follow.effect);
+}
+
+/// Materialize a `FollowUpEffect` into the side-effect queue. Splits the
+/// "what does the rider actually do?" decision from the save / threshold
+/// gates above so a future variant (e.g. forced grapple, dispel) plugs
+/// in here without re-walking the gates. `caster_id` is the attacker —
+/// used by `Push` to anchor the shove on the attacker's tile.
+fn push_follow_up_effect(
+    encounter: &EncounterInstance,
+    effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    caster_id: usize,
+    target_id: usize,
+    effect: FollowUpEffect,
+) {
+    match effect {
+        FollowUpEffect::Condition { condition, timer } => {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition,
+                timer,
+            }));
+        }
+        FollowUpEffect::Push { tiles } => {
+            let Some(caster) = encounter.actors.get(&caster_id) else {
+                return;
+            };
+            effects.push(Box::new(PushActor {
+                actor_id: target_id,
+                from: caster.location(),
+                max_tiles: tiles,
+            }));
+        }
+    }
 }

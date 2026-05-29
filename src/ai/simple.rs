@@ -337,6 +337,36 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3p'. Menacing Attack — fighter bonus-action prime (Battle
+        //      Master). Same engagement gate as Trip Attack; the
+        //      WIS-save-vs-frighten rider sticks even on tough STR
+        //      monsters that would resist the trip. Lower priority
+        //      than Trip Attack because prone enables follow-up
+        //      melee-advantage swings, whereas Frightened only
+        //      disadvantages the target's own attacks.
+        if let Some(aei) = try_menacing_attack(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3p''. Disarming Attack — fighter bonus-action prime (Battle
+        //       Master). STR save vs disarm; the one-round attacker
+        //       disadvantage hits especially hard against ranged or
+        //       multi-attack threats. Slotted after Menacing because
+        //       Frightened lasts longer than Disarmed in our model.
+        if let Some(aei) = try_disarming_attack(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3p'''. Pushing Attack — fighter bonus-action prime (Battle
+        //        Master). STR save vs forced 4-tile shove. Last of the
+        //        maneuver lane because pure displacement (no attack /
+        //        save penalty rider) is the weakest tactically against
+        //        a target already in melee; it's a finisher when none
+        //        of the debuff-rider maneuvers are available.
+        if let Some(aei) = try_pushing_attack(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3q. Shillelagh — druid bonus-action cantrip prime that adds
         //     +1d8 force damage to the next melee weapon hit. Fire when
         //     an enemy is footprint-adjacent so the prime is consumed
@@ -927,6 +957,48 @@ fn try_trip_attack(
         return None;
     }
     try_self_action(encounter, actor_id, "trip attack")
+}
+
+/// Fighter Battle Master Menacing Attack — bonus-action prime that lays a
+/// WIS save vs frighten on the next melee hit. Same engagement gate as
+/// Trip Attack (enemy must be in reach so the swing connects this turn).
+/// Validation handles the feature-available + already-primed gate.
+fn try_menacing_attack(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    if !any_enemy_within(encounter, actor_id, 0) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "menacing attack")
+}
+
+/// Fighter Battle Master Disarming Attack — bonus-action prime that lays
+/// a STR save vs disarm on the next melee hit. Same engagement gate as
+/// Trip Attack. Disarmed (one-round attacker disadvantage) layers nicely
+/// with a follow-up swing from the Extra Attack lane.
+fn try_disarming_attack(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    if !any_enemy_within(encounter, actor_id, 0) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "disarming attack")
+}
+
+/// Fighter Battle Master Pushing Attack — bonus-action prime that lays a
+/// STR save vs shove on the next melee hit. Same engagement gate as Trip
+/// Attack. The shove makes most tactical sense when an adjacent enemy
+/// threatens an ally — pushing them clear of the squishy backline.
+fn try_pushing_attack(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    if !any_enemy_within(encounter, actor_id, 0) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "pushing attack")
 }
 
 /// Druid Shillelagh — bonus-action cantrip prime that adds +1d8 force
