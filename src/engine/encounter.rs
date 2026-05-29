@@ -3103,7 +3103,12 @@ impl EncounterInstance {
     /// the d20 result and outcome. Returns true if the actor is gone after
     /// this save (dead and removed).
     fn resolve_death_save(&mut self, id: usize) -> bool {
-        let raw = self.roller.roll(&Dice::new(1, 20));
+        // 5e Lucky: a Halfling / Lucky-feat character at 0 HP can re-roll
+        // a nat-1 on a death save. RAW explicitly lists death saves as a
+        // saving throw — they get the same reroll lane as a normal save.
+        // Death saves don't have advantage/disadvantage in RAW so we pass
+        // `RollMode::Normal` directly.
+        let raw = self.roll_d20_lucky(id, RollMode::Normal);
         let Some(actor) = self.actors.get_mut(&id) else {
             return false;
         };
