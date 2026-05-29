@@ -1022,7 +1022,11 @@ impl EncounterInstance {
                 .get_mut(&actor_id)
                 .is_some_and(|a| a.consume_indomitable())
         {
-            let reroll = self.roll_d20_with_mode(mode);
+            // Indomitable + Lucky: the reroll is itself a fresh d20 roll,
+            // so a nat-1 on the reroll should still trigger Lucky for a
+            // Halfling fighter. Routes through `roll_d20_lucky` for the
+            // same reason the initial save does.
+            let reroll = self.roll_d20_lucky(actor_id, mode);
             let reroll_total = reroll as i32 + modifier + extra;
             let reroll_outcome = if reroll_total >= dc {
                 SaveOutcome::Pass

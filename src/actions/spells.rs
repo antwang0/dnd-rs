@@ -19981,14 +19981,19 @@ impl Action for RayOfEnfeeblement {
         ]);
         let mode = encounter.compute_attack_mode(caster_id, target_id, false);
         encounter.clear_attack_advantage_riders(caster_id, target_id);
-        let raw = encounter.roll_d20_with_mode(mode) as i32;
+        // Route the d20 through `roll_d20_lucky` so a Halfling / Lucky-
+        // feat caster's nat-1 reroll fires here too. Crit threshold reads
+        // off the engine helper so a Champion-fighter spell attack keeps
+        // the lower 19-face crit window.
+        let raw = encounter.roll_d20_lucky(caster_id, mode) as i32;
         let target_ac = encounter
             .actors
             .get(&target_id)
             .map(|a| a.armor_class() as i32)
             .unwrap_or(10);
         let total = raw + attack_mod;
-        let hit = raw == 20 || (raw != 1 && total >= target_ac);
+        let hit =
+            raw >= encounter.crit_threshold(caster_id) || (raw != 1 && total >= target_ac);
         encounter.log(format!(
             "  ray of enfeeblement: 1d20({}){:+} = {} vs AC {}{} — {}",
             raw,
