@@ -123,8 +123,20 @@ pub fn resolve_attack_outcome(
     // were just read into `cond_attack_bonus` immediately above. Both
     // are safe to clear here without losing this swing's modifiers.
     encounter.clear_attack_advantage_riders(p.caster_id, p.target_id);
-    let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
-    let nat_crit = raw_attack == 20;
+    // 5e Lucky: if the holder rolls a nat-1, they may re-roll once. The
+    // helper folds the reroll into the same seedable RNG so determinism
+    // by seed holds — and falls back to the raw roll for actors without
+    // the trait.
+    let raw_attack = encounter.roll_d20_lucky(p.caster_id, mode) as i32;
+    // 5e Improved Critical: the d20 face that promotes to a crit is
+    // template-driven (Champion fighter: 19+; Superior Critical: 18+).
+    // Default `crit_threshold` is 20 so every other build behaves as RAW.
+    let crit_threshold = encounter
+        .actors
+        .get(&p.caster_id)
+        .map(|a| a.crit_threshold())
+        .unwrap_or(20) as i32;
+    let nat_crit = raw_attack >= crit_threshold;
     let attack_total = raw_attack + p.attack_bonus + buff + cond_attack_bonus + bless_die;
     let is_nat_one = raw_attack == 1;
     let hit = !is_nat_one && (nat_crit || attack_total >= target_ac);
@@ -174,7 +186,32 @@ pub fn resolve_attack_outcome(
     } else {
         0
     };
-    let mut damage = (raw_damage + crit_extra + p.damage_bonus).max(0) as u32;
+    // 5e Brutal Critical (Barbarian level 9 / 13 / 17): on a critical
+    // melee weapon hit, roll N additional damage dice (matching the
+    // weapon's dice shape). Spell attacks don't qualify — gated on
+    // `is_melee`. The dice count is template-driven so a level-17
+    // barbarian rolls 3 extra dice without touching this site.
+    let brutal_extra = if is_crit && p.is_melee {
+        let dice_count = encounter
+            .actors
+            .get(&p.caster_id)
+            .map(|a| a.brutal_critical_dice())
+            .unwrap_or(0);
+        if dice_count > 0 {
+            let brutal_dice = Dice::new(dice_count, p.damage_dice.faces);
+            let rolled = encounter.roll(&brutal_dice) as i32;
+            encounter.log(format!(
+                "  brutal critical: +{}({}) = +{} {:?}",
+                brutal_dice, rolled, rolled, p.damage_type
+            ));
+            rolled
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+    let mut damage = (raw_damage + crit_extra + brutal_extra + p.damage_bonus).max(0) as u32;
     if is_crit {
         encounter.log(format!(
             "  {}: {}({})+{}({}){:+} = {} {:?} damage (crit)",

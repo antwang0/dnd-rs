@@ -202,6 +202,26 @@ pub struct CreatureTemplate {
     /// Multiattack. Unlike class features, this is permanent and never
     /// consumed.
     pub has_extra_attack: bool,
+    /// 5e Brutal Critical (Barbarian level 9+): on a critical hit with a
+    /// melee weapon, roll one additional damage die of the weapon's type.
+    /// Scales to 2 extra at level 13 and 3 at level 17. Read at the crit
+    /// damage site in `engine::attack` — 0 disables the rider entirely
+    /// (the default for non-barbarians).
+    pub brutal_critical_dice: u32,
+    /// 5e Improved Critical (Champion Fighter level 3): critical hits
+    /// trigger on a d20 result of 19 or 20 instead of just 20. Superior
+    /// Critical (level 15) drops the threshold to 18. Stored as the
+    /// minimum d20 face that crits — `20` (the default) matches RAW for
+    /// every other build. Read at the attack-resolution site so weapon
+    /// AND spell-attack swings honor the lower threshold.
+    pub crit_threshold: u32,
+    /// 5e Lucky trait (Halfling racial) / Lucky feat: when the holder
+    /// rolls a natural 1 on an attack roll, ability check, or saving
+    /// throw, they can reroll the die and must use the new roll. We
+    /// model the attack-roll and save-roll halves at the d20 sites in
+    /// `resolve_attack_outcome` / `roll_save`. Ability checks share the
+    /// same roll path so they pick up the reroll automatically.
+    pub has_lucky: bool,
 }
 
 #[derive(Clone, PartialEq)]
@@ -401,6 +421,13 @@ pub struct ActorInstance {
     legendary_actions_per_round: u32,
     /// 5e Extra Attack. See `CreatureTemplate` docs.
     has_extra_attack: bool,
+    /// 5e Brutal Critical. See `CreatureTemplate` docs.
+    brutal_critical_dice: u32,
+    /// 5e Improved Critical: minimum d20 face that crits. See
+    /// `CreatureTemplate` docs.
+    crit_threshold: u32,
+    /// 5e Lucky trait / feat. See `CreatureTemplate` docs.
+    has_lucky: bool,
 }
 
 impl ActorInstance {
@@ -492,6 +519,9 @@ impl ActorInstance {
                 .collect(),
             legendary_actions_per_round: ct.legendary_actions_per_round,
             has_extra_attack: ct.has_extra_attack,
+            brutal_critical_dice: ct.brutal_critical_dice,
+            crit_threshold: ct.crit_threshold.max(1),
+            has_lucky: ct.has_lucky,
         })
     }
 
@@ -587,6 +617,32 @@ impl ActorInstance {
 
     pub fn has_extra_attack(&self) -> bool {
         self.has_extra_attack
+    }
+
+    /// Number of bonus damage dice the actor adds to a critical melee
+    /// hit (5e Barbarian Brutal Critical). 0 = no rider.
+    pub fn brutal_critical_dice(&self) -> u32 {
+        self.brutal_critical_dice
+    }
+
+    /// Minimum d20 face that promotes the swing to a critical hit
+    /// (5e Champion Improved / Superior Critical: 19 or 18). Defaults to
+    /// 20 for every other build. Read at every attack-roll site.
+    pub fn crit_threshold(&self) -> u32 {
+        self.crit_threshold
+    }
+
+    /// True if the actor has the Lucky trait / feat. The d20 reroll
+    /// fires on a natural 1 at the attack-roll / save-roll site.
+    pub fn has_lucky(&self) -> bool {
+        self.has_lucky
+    }
+
+    /// Test-only setter for brutal critical dice. Lets tests dial the
+    /// rider on without needing a dedicated level-13 template.
+    #[cfg(test)]
+    pub fn set_brutal_critical_dice(&mut self, dice: u32) {
+        self.brutal_critical_dice = dice;
     }
 
     /// Check if a recharge ability is currently available.

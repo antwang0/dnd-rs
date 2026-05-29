@@ -14,10 +14,15 @@ use std::sync::LazyLock;
 /// - **Reckless Attack** (bonus action): grants advantage on the next
 ///   melee swing this turn at the cost of attackers having advantage
 ///   against the barbarian until their next turn.
+/// - **Brutal Critical** (level 9): on a critical melee weapon hit, roll
+///   one additional damage die of the weapon's type. Scales to 2 dice
+///   at level 13 and 3 at level 17 — we model the level-9 baseline here.
 /// - Greataxe (1d12 slashing) as the signature damage weapon.
 ///
-/// Stats target a level-3 barbarian: 32 HP (3d12+9), AC 13 (unarmored
-/// defense baseline ≈ 10 + DEX(+1) + CON(+2)), STR 16, CON 14.
+/// Stats target a level-9 barbarian: 76 HP (9d12+18), AC 15 (unarmored
+/// defense ≈ 10 + DEX(+1) + CON(+4) at CON 18), STR 18, CON 18 — the
+/// classic "rage tank" loadout. Bumped from the prior level-3 build to
+/// surface the Brutal Critical rider at the lowest level that grants it.
 pub static BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*GREATAXE);
@@ -26,20 +31,20 @@ pub static BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     CreatureTemplate {
         name: "Barbarian",
         glyph: 'B',
-        ac: 13,
-        hitpoints: "3d12+9".parse().unwrap(),
+        ac: 15,
+        hitpoints: "9d12+18".parse().unwrap(),
         speed: 30.,
-        strength: 16,
+        strength: 18,
         intelligence: 8,
         dexterity: 12,
         wisdom: 12,
-        constitution: 14,
+        constitution: 18,
         charisma: 10,
         skills: HashSet::new(),
         items: Vec::new(),
         senses: HashSet::new(),
         languages: HashSet::from([Language::Common]),
-        cr: 1.0,
+        cr: 4.0,
         size: Size::Medium,
         creature_type: CreatureType::Humanoid,
         actions,
@@ -62,5 +67,9 @@ pub static BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         recharge_abilities: Vec::new(),
         legendary_actions_per_round: 0,
         has_extra_attack: true,
+        // Level 9 Brutal Critical: +1 weapon die on melee crits.
+        brutal_critical_dice: 1,
+        crit_threshold: 20,
+        has_lucky: false,
     }
 });

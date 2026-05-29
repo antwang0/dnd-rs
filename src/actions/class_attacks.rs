@@ -71,8 +71,13 @@ impl Action for RogueShortsword {
         // roll inside; instead we use the engine's mode-with-riders
         // helper and roll inline so we keep the mode visible.
         let mode = encounter.attack_mode_with_riders(caster_id, target_id, true, true);
-        let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
-        let nat_crit = raw_attack == 20;
+        let raw_attack = encounter.roll_d20_lucky(caster_id, mode) as i32;
+        let crit_threshold = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.crit_threshold())
+            .unwrap_or(20) as i32;
+        let nat_crit = raw_attack >= crit_threshold;
         let total = raw_attack + attack_bonus;
         let hit = nat_crit || total >= target_ac;
         // 5e Paralyzed / Unconscious: any melee hit within 5ft is a crit.

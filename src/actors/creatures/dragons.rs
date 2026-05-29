@@ -87,6 +87,9 @@ pub static ADULT_RED_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         recharge_abilities: vec![("breath_weapon", 5)],
         legendary_actions_per_round: 3,
         has_extra_attack: false,
+        brutal_critical_dice: 0,
+        crit_threshold: 20,
+        has_lucky: false,
     }
 });
 
@@ -152,6 +155,9 @@ pub static YOUNG_WHITE_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
         // Young dragons have NO legendary actions.
         legendary_actions_per_round: 0,
         has_extra_attack: true,
+        brutal_critical_dice: 0,
+        crit_threshold: 20,
+        has_lucky: false,
     }
 });
 
@@ -218,5 +224,8 @@ pub static ANCIENT_BLUE_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
         recharge_abilities: vec![("breath_weapon", 5)],
         legendary_actions_per_round: 3,
         has_extra_attack: true,
+        brutal_critical_dice: 0,
+        crit_threshold: 20,
+        has_lucky: false,
     }
 });

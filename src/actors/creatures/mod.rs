@@ -42,6 +42,7 @@ pub mod ghosts;
 pub mod giant_scorpions;
 pub mod gricks;
 pub mod ghouls;
+pub mod halflings;
 pub mod glabrezus;
 pub mod gnoll_pack_lords;
 pub mod gnolls;

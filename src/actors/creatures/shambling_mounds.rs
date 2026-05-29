@@ -74,6 +74,9 @@ pub static SHAMBLING_MOUND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         recharge_abilities: Vec::new(),
         legendary_actions_per_round: 0,
         has_extra_attack: false,
+        brutal_critical_dice: 0,
+        crit_threshold: 20,
+        has_lucky: false,
     }
 });
 

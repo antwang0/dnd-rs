@@ -144,9 +144,19 @@ fn spell_attack_outcome(
     // Bolt consumes their help-grant exactly like a Helped fighter
     // swinging a longsword.
     encounter.clear_attack_advantage_riders(caster_id, target_id);
-    let raw = encounter.roll_d20_with_mode(mode) as i32;
+    // 5e Lucky: reroll a nat-1 if the caster has the trait. Mirrors the
+    // identical hook on the weapon-attack path.
+    let raw = encounter.roll_d20_lucky(caster_id, mode) as i32;
     let total = raw + attack_bonus + buff + cond_attack_bonus + bless_die;
-    let nat_crit = raw == 20;
+    // 5e Improved Critical: template-driven crit threshold. Spell attacks
+    // honor the lower threshold too — a Champion fighter multiclassed
+    // into Eldritch Knight crits Fire Bolt on 19s.
+    let crit_threshold = encounter
+        .actors
+        .get(&caster_id)
+        .map(|a| a.crit_threshold())
+        .unwrap_or(20) as i32;
+    let nat_crit = raw >= crit_threshold;
     let hit = nat_crit || total >= target_ac;
     // 5e Paralyzed / Unconscious clause — touch spell attacks honor the
     // "any hit within 5ft becomes a crit" rider too. Mirrors the gate in

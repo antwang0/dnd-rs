@@ -54,5 +54,8 @@ pub static HOBGOBLIN_WARLORD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         recharge_abilities: Vec::new(),
         legendary_actions_per_round: 0,
         has_extra_attack: true,
+        brutal_critical_dice: 0,
+        crit_threshold: 20,
+        has_lucky: false,
     }
 });

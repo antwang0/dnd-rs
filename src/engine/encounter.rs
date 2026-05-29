@@ -504,6 +504,42 @@ impl EncounterInstance {
         }
     }
 
+    /// Roll a d20 with mode, then apply the 5e Lucky trait reroll if the
+    /// actor has it and rolled a natural 1. RAW: Lucky lets the holder
+    /// reroll the die and "must use the new roll" — the second result is
+    /// taken even if it's worse. Used by every attack / save / check
+    /// rolled by an actor with `has_lucky`. Missing actor falls back to
+    /// the un-modified roll.
+    pub fn roll_d20_lucky(&mut self, actor_id: usize, mode: RollMode) -> u32 {
+        let raw = self.roll_d20_with_mode(mode);
+        if raw != 1 {
+            return raw;
+        }
+        let lucky = self
+            .actors
+            .get(&actor_id)
+            .is_some_and(|a| a.has_lucky());
+        if !lucky {
+            return raw;
+        }
+        // 5e Lucky: reroll the *single* die, not the advantage/disadvantage
+        // pair. We follow that by re-rolling the same mode — the holder's
+        // advantage state still applies on the second roll, which is the
+        // common-table interpretation. Either way the reroll happens
+        // through the same seedable roller so determinism by seed holds.
+        let reroll = self.roll_d20_with_mode(mode);
+        let name = self
+            .actors
+            .get(&actor_id)
+            .map(|a| a.name().to_string())
+            .unwrap_or_default();
+        self.log(format!(
+            "  lucky: {} re-rolls nat-1 → {}",
+            name, reroll
+        ));
+        reroll
+    }
+
     /// Compute the attack mode with all per-attack riders folded in:
     /// condition state, Dodge, Help (consumed if applicable), Bless.
     /// Used by every weapon / spell attack so the rider stack stays in
@@ -893,7 +929,9 @@ impl EncounterInstance {
         }
 
         let mode = self.compute_save_mode(actor_id, ability);
-        let raw = self.roll_d20_with_mode(mode);
+        // 5e Lucky: same nat-1 reroll hook as on attack rolls. RAW
+        // explicitly lists "saving throw" as one of the trigger contexts.
+        let raw = self.roll_d20_lucky(actor_id, mode);
         // Bless / Bane rider — add or subtract 1d4 to the save total
         // (cancel out if both). Roll early so we can include the
         // breakdown in the log.
@@ -6803,6 +6841,206 @@ mod tests {
         assert!(!e.actors[&id].can_consume_resource(Resource::BonusAction));
         assert!(!e.actors[&id].can_consume_resource(Resource::Reaction));
         assert_eq!(e.actors[&id].remaining_movement(), 0.0);
+    }
+
+    /// 5e Champion Improved Critical: a fighter built around the
+    /// Champion subclass crits on 19 or 20 instead of just 20. The
+    /// `crit_threshold` field on `CreatureTemplate` carries the value;
+    /// the attack-resolution sites read it via `actor.crit_threshold()`.
+    #[test]
+    fn champion_crit_threshold_is_nineteen() {
+        use crate::actors::creatures::fighters::{CHAMPION_TEMPLATE, FIGHTER_TEMPLATE};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let champ = e
+            .instantiate_creature(&CHAMPION_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        assert_eq!(e.actors[&champ].crit_threshold(), 19);
+        assert_eq!(e.actors[&fighter].crit_threshold(), 20);
+    }
+
+    /// 5e Champion crits on a d20 of 19 land as criticals at the attack
+    /// site too — not just on the field-default 20. Statistical check:
+    /// over many seeds, the Champion fires noticeably more crits than a
+    /// baseline fighter (whose only crit path is a literal 20).
+    #[test]
+    fn champion_crits_on_nineteen() {
+        use crate::actors::creatures::fighters::{CHAMPION_TEMPLATE, FIGHTER_TEMPLATE};
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+
+        let trials = 400u64;
+        let mut champ_dmg: u32 = 0;
+        let mut base_dmg: u32 = 0;
+        for seed in 0..trials {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let attacker = e
+                .instantiate_creature(&CHAMPION_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let (_, dealt) = resolve_attack_outcome(
+                &mut e,
+                AttackParams {
+                    caster_id: attacker,
+                    target_id: target,
+                    action_name: "longsword",
+                    attack_bonus: 5,
+                    damage_dice: Dice::new(1, 8),
+                    damage_bonus: 3,
+                    damage_type: DamageType::Slashing,
+                    is_melee: true,
+                    long_range: None,
+                },
+            );
+            champ_dmg = champ_dmg.saturating_add(dealt);
+        }
+        for seed in 0..trials {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let attacker = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let (_, dealt) = resolve_attack_outcome(
+                &mut e,
+                AttackParams {
+                    caster_id: attacker,
+                    target_id: target,
+                    action_name: "longsword",
+                    attack_bonus: 5,
+                    damage_dice: Dice::new(1, 8),
+                    damage_bonus: 3,
+                    damage_type: DamageType::Slashing,
+                    is_melee: true,
+                    long_range: None,
+                },
+            );
+            base_dmg = base_dmg.saturating_add(dealt);
+        }
+        assert!(
+            champ_dmg > base_dmg,
+            "champion crits should add damage over baseline (champ {} vs base {})",
+            champ_dmg,
+            base_dmg
+        );
+    }
+
+    /// 5e Brutal Critical: on a critical melee hit, the barbarian rolls
+    /// one additional weapon die (level 9). We force a crit by attacking
+    /// a Paralyzed target — the auto-crit rider lets us isolate the
+    /// crit-damage path without relying on natural 20s.
+    #[test]
+    fn brutal_critical_adds_die_on_melee_crit() {
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+
+        let trials = 200u64;
+        let total = |brutal: u32| -> u32 {
+            let mut sum: u32 = 0;
+            for seed in 0..trials {
+                let mut e = ei_with_terrain(15, 15, &[]);
+                e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+                let attacker = e
+                    .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                    .unwrap();
+                let target = e
+                    .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                    .unwrap();
+                // Force the auto-crit path so every hit lands as a crit.
+                e.actors
+                    .get_mut(&target)
+                    .unwrap()
+                    .add_condition(Condition::Paralyzed, ConditionTimer::Rounds(2));
+                // Override the brutal critical dice for the trial.
+                e.actors
+                    .get_mut(&attacker)
+                    .unwrap()
+                    .set_brutal_critical_dice(brutal);
+                let (_, dealt) = resolve_attack_outcome(
+                    &mut e,
+                    AttackParams {
+                        caster_id: attacker,
+                        target_id: target,
+                        action_name: "greataxe",
+                        attack_bonus: 5,
+                        damage_dice: Dice::new(1, 12),
+                        damage_bonus: 4,
+                        damage_type: DamageType::Slashing,
+                        is_melee: true,
+                        long_range: None,
+                    },
+                );
+                sum = sum.saturating_add(dealt);
+            }
+            sum
+        };
+        let with_brutal = total(1);
+        let baseline = total(0);
+        // The level-9 +1d12 brutal die adds ~6.5 damage per crit. Over
+        // 200 paralyzed-target swings (all hits crit), the expected
+        // jump is ~1300 damage. Generous gate keeps the assertion
+        // robust to RNG variance.
+        assert!(
+            with_brutal > baseline.saturating_add(500),
+            "brutal critical should add a clear damage delta (brutal {} vs base {})",
+            with_brutal,
+            baseline
+        );
+    }
+
+    /// 5e Halfling Lucky: nat-1 d20 rolls are re-rolled. End-to-end
+    /// check at the save site — a Halfling Scout rolling against a
+    /// DC-15 save lands more saves than a fixed-roll baseline.
+    #[test]
+    fn halfling_lucky_rerolls_nat_one_on_save() {
+        use crate::actors::creatures::halflings::HALFLING_SCOUT_TEMPLATE;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+
+        let trials = 1000u64;
+        let count_passes = |lucky: bool| -> u32 {
+            let mut passes = 0;
+            for seed in 0..trials {
+                let mut e = ei_with_terrain(15, 15, &[]);
+                e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+                let id = if lucky {
+                    e.instantiate_creature(
+                        &HALFLING_SCOUT_TEMPLATE,
+                        Coordinate::new(2, 2),
+                        0,
+                        0,
+                    )
+                    .unwrap()
+                } else {
+                    e.instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                        .unwrap()
+                };
+                let result = e.roll_save(id, AbilityScoreType::Dexterity, 15);
+                if result.passed() {
+                    passes += 1;
+                }
+            }
+            passes
+        };
+        let lucky_passes = count_passes(true);
+        let baseline_passes = count_passes(false);
+        // The reroll converts ~5% of the d20 distribution (nat-1) into a
+        // fresh roll. Lucky should land more saves than the baseline.
+        assert!(
+            lucky_passes > baseline_passes,
+            "lucky should beat baseline on saves (lucky {} vs baseline {})",
+            lucky_passes,
+            baseline_passes
+        );
     }
 
     /// 5e Paralyzed clause: "any attack that hits the creature is a
