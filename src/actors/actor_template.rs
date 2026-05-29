@@ -393,6 +393,14 @@ pub struct ActorInstance {
     /// than this id are at disadvantage. Cleared when the Dueled
     /// condition lifts.
     dueled_by: Option<usize>,
+    /// Identity of the fighter that has goaded this actor (5e Battle
+    /// Master Goading Attack). Paired with the `Goaded` condition:
+    /// attacks against anyone *other* than this id are at disadvantage.
+    /// Cleared when the Goaded condition lifts. Mirrors `dueled_by` —
+    /// same mechanical envelope, distinct field so a creature can
+    /// simultaneously be dueled by a paladin and goaded by a fighter
+    /// without the two getting confused.
+    goaded_by: Option<usize>,
     /// 5e Legendary Resistance — remaining auto-pass charges on failed
     /// saves this long rest. Refreshed to `legendary_resistance_max` on
     /// long rest. See `EncounterInstance::roll_save` for the trigger site.
@@ -505,6 +513,7 @@ impl ActorInstance {
             charmed_by: None,
             indomitable_pending: false,
             dueled_by: None,
+            goaded_by: None,
             legendary_resistance_remaining: ct.legendary_resistances,
             legendary_resistance_max: ct.legendary_resistances,
             warding_partner: None,
@@ -574,6 +583,17 @@ impl ActorInstance {
 
     pub fn set_dueled_by(&mut self, id: Option<usize>) {
         self.dueled_by = id;
+    }
+
+    /// Identity of the fighter that has goaded this actor (Goading
+    /// Attack maneuver). Read by `compute_attack_mode` to apply the
+    /// "disadvantage on attacks vs anyone other than the goader" rider.
+    pub fn goaded_by(&self) -> Option<usize> {
+        self.goaded_by
+    }
+
+    pub fn set_goaded_by(&mut self, id: Option<usize>) {
+        self.goaded_by = id;
     }
 
     /// Caster id this actor is currently Warding-Bonded to (5e
@@ -1047,6 +1067,7 @@ impl ActorInstance {
                 Condition::Charmed => self.charmed_by = None,
                 Condition::MirroredImages => self.mirror_images = 0,
                 Condition::Dueled => self.dueled_by = None,
+                Condition::Goaded => self.goaded_by = None,
                 Condition::WardingBonded => self.warding_partner = None,
                 _ => {}
             }

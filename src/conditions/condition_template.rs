@@ -755,6 +755,23 @@ pub enum Condition {
     /// holder's next turn — RAW: lasts until the target picks the
     /// weapon back up, which any creature can do as part of a move.
     Disarmed,
+    /// Goading Attack primed (5e Fighter Battle Master maneuver, once
+    /// per long rest in our model). Bonus action prime; the next melee
+    /// weapon hit forces the target to make a WIS save vs the fighter's
+    /// STR-based maneuver DC; on fail, they're Goaded — attacks against
+    /// anyone other than the fighter are at disadvantage. One-shot —
+    /// the OnHitRider table strips this flag the moment a melee swing
+    /// lands.
+    GoadingAttacking,
+    /// Goaded (5e Battle Master Goading Attack rider). The target was
+    /// goaded into focusing on the fighter who hit them: attack rolls
+    /// against anyone *other* than the goading fighter are at disadvantage.
+    /// Engine reads the `goaded_by` link on the holder to identify the
+    /// fighter (mirrors how `Dueled` + `dueled_by` route through
+    /// `compute_attack_mode`). Short timer
+    /// (`UntilStartOfNextTurn`) — RAW: lasts until the end of the
+    /// fighter's next turn.
+    Goaded,
 }
 
 impl Condition {
@@ -872,6 +889,8 @@ impl Condition {
             Condition::DisarmingAttacking => "primed to disarm",
             Condition::PushingAttacking => "primed to push",
             Condition::Disarmed => "disarmed",
+            Condition::GoadingAttacking => "primed to goad",
+            Condition::Goaded => "goaded",
         }
     }
 
@@ -956,6 +975,7 @@ impl Condition {
                 | Condition::MenacingAttacking
                 | Condition::DisarmingAttacking
                 | Condition::PushingAttacking
+                | Condition::GoadingAttacking
         )
     }
 

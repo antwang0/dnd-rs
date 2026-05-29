@@ -810,6 +810,27 @@ impl ApplicableSideEffect for SetDueledBy {
     }
 }
 
+/// Record which fighter has tagged the target with Goading Attack.
+/// Pairs with ApplyCondition (Goaded): `compute_attack_mode` reads this
+/// to apply disadvantage on attacks against anyone *other* than the
+/// goader. `set_goaded_by(None)` clears the link explicitly; the
+/// engine also clears it automatically when the Goaded condition is
+/// removed via `remove_condition`. Mirrors `SetDueledBy` — same shape,
+/// distinct field on `ActorInstance`.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct SetGoadedBy {
+    pub target_id: usize,
+    pub goader: Option<usize>,
+}
+
+impl ApplicableSideEffect for SetGoadedBy {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        if let Some(actor) = ei.get_actor(self.target_id) {
+            actor.set_goaded_by(self.goader);
+        }
+    }
+}
+
 /// Record the partner of a Warding Bond (5e level-2 abjuration). Paired
 /// with ApplyCondition (WardingBonded) on the same target: the condition
 /// flag carries the AC / save / resistance buff, while the `warding_partner`

@@ -674,6 +674,19 @@ impl EncounterInstance {
             {
                 mode = mode.combine(RollMode::Disadvantage);
             }
+            // 5e Battle Master Goading Attack: a goaded creature has
+            // disadvantage on attacks against anyone other than the
+            // goading fighter. Symmetric with the Dueled clause above —
+            // separate condition / link so they stack cleanly (a
+            // paladin's compelled duel and a fighter's goading attack
+            // on the same creature both bite at once).
+            if attacker.has_condition(Condition::Goaded)
+                && attacker
+                    .goaded_by()
+                    .is_some_and(|goader| goader != target_id)
+            {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
         }
 
         // Target-side modifiers.
@@ -21543,7 +21556,8 @@ mod tests {
     #[test]
     fn battle_master_maneuvers_refresh_on_short_rest() {
         use crate::actions::class_features::{
-            DISARMING_ATTACK_TAG, MENACING_ATTACK_TAG, PUSHING_ATTACK_TAG, TRIP_ATTACK_TAG,
+            DISARMING_ATTACK_TAG, GOADING_ATTACK_TAG, MENACING_ATTACK_TAG, PUSHING_ATTACK_TAG,
+            TRIP_ATTACK_TAG,
         };
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
         use crate::engine::dice::FastRandRoller;
@@ -21558,6 +21572,7 @@ mod tests {
             MENACING_ATTACK_TAG,
             DISARMING_ATTACK_TAG,
             PUSHING_ATTACK_TAG,
+            GOADING_ATTACK_TAG,
         ] {
             actor.spend_feature(tag);
             assert!(!actor.feature_available(tag), "{} should be spent", tag);
@@ -21571,6 +21586,7 @@ mod tests {
             MENACING_ATTACK_TAG,
             DISARMING_ATTACK_TAG,
             PUSHING_ATTACK_TAG,
+            GOADING_ATTACK_TAG,
         ] {
             assert!(
                 actor.feature_available(tag),
@@ -21578,6 +21594,72 @@ mod tests {
                 tag
             );
         }
+    }
+
+    /// Goading Attack primes GoadingAttacking and consumes the once-
+    /// per-rest feature. Mirrors the Trip Attack / Menacing Attack tests.
+    #[test]
+    fn goading_attack_primes_caster_and_consumes_feature() {
+        use crate::actions::class_features::{GOADING_ATTACK, GOADING_ATTACK_TAG};
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&f].feature_available(GOADING_ATTACK_TAG));
+        let effects = GOADING_ATTACK.side_effects(&mut e, f, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&f].has_condition(Condition::GoadingAttacking));
+        assert!(!e.actors[&f].feature_available(GOADING_ATTACK_TAG));
+    }
+
+    /// Goaded condition + goaded_by link force disadvantage on attacks
+    /// against anyone other than the goader. Verifies the
+    /// `compute_attack_mode` clause and the link auto-clear when the
+    /// condition is removed.
+    #[test]
+    fn goaded_attack_mode_imposes_disadvantage_on_off_target() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let other_ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        // Wire the goblin as Goaded by the fighter.
+        {
+            let g = e.actors.get_mut(&goblin).unwrap();
+            g.add_condition(Condition::Goaded, ConditionTimer::UntilStartOfNextTurn);
+            g.set_goaded_by(Some(fighter));
+        }
+        // Attacking the goader (fighter): no disadvantage from the goad.
+        let mode_vs_goader = e.compute_attack_mode(goblin, fighter, true);
+        assert_ne!(
+            mode_vs_goader,
+            RollMode::Disadvantage,
+            "attacks against the goader bypass the goad rider"
+        );
+        // Attacking anyone else: goad clause applies disadvantage.
+        let mode_vs_ally = e.compute_attack_mode(goblin, other_ally, true);
+        assert_eq!(
+            mode_vs_ally,
+            RollMode::Disadvantage,
+            "attacks vs off-target eat goad disadvantage"
+        );
+        // Removing the condition clears the link automatically.
+        e.actors
+            .get_mut(&goblin)
+            .unwrap()
+            .remove_condition(Condition::Goaded);
+        assert!(e.actors[&goblin].goaded_by().is_none());
     }
 
     /// Bullette template: high-HP CR-5 monstrosity with bite + multi +

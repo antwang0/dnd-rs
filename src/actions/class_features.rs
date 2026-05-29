@@ -41,6 +41,7 @@ pub const BATTLE_MASTER_MANEUVERS: &[&str] = &[
     MENACING_ATTACK_TAG,
     DISARMING_ATTACK_TAG,
     PUSHING_ATTACK_TAG,
+    GOADING_ATTACK_TAG,
 ];
 
 /// Tags used by `ActorInstance::feature_available` / `spend_feature` to
@@ -1687,6 +1688,83 @@ impl Action for PushingAttack {
 }
 
 pub static PUSHING_ATTACK: LazyLock<PushingAttack> = LazyLock::new(|| PushingAttack {});
+
+/// Class-feature tag for the Fighter's Goading Attack Battle Master
+/// maneuver (once per long rest in our model). Refreshes on a short
+/// rest via the `BATTLE_MASTER_MANEUVERS` registry above.
+pub const GOADING_ATTACK_TAG: &str = "fighter.goading_attack";
+
+/// Goading Attack — Fighter Battle Master maneuver. Bonus action;
+/// primes the next melee weapon hit: on connect, the target makes a
+/// WIS save vs the fighter's STR-based maneuver DC; on fail, they're
+/// Goaded — attack rolls against anyone other than the fighter are at
+/// disadvantage until the start of their next turn. RAW's +1d8
+/// superiority-die damage is skipped (same caveat as the other
+/// maneuvers); the goad debuff IS the load-bearing tactical effect.
+/// Mirrors Compelled Duel's tank-anchor envelope but is per-rest
+/// rather than concentration-bound.
+pub struct GoadingAttack {}
+
+impl Action for GoadingAttack {
+    fn name(&self) -> &str {
+        "goading attack"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["goad", "ga"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.is_combat_active()
+                && a.feature_available(GOADING_ATTACK_TAG)
+                && !a.has_condition(Condition::GoadingAttacking)
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        prime_self_condition(
+            encounter,
+            caster_id,
+            GOADING_ATTACK_TAG,
+            Condition::GoadingAttacking,
+            ConditionTimer::Rounds(2),
+            "  goading attack: fighter's next hit forces a WIS save vs goad.",
+        )
+    }
+}
+
+pub static GOADING_ATTACK: LazyLock<GoadingAttack> = LazyLock::new(|| GoadingAttack {});
 
 /// Class-feature tag for the Wizard's Arcane Recovery — once per long
 /// rest, refreshes on long rest. RAW: once per day during a short rest,

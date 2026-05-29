@@ -1,7 +1,9 @@
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::Dice;
 use crate::engine::encounter::EncounterInstance;
-use crate::engine::side_effects::{ApplicableSideEffect, ApplyCondition, DealDamage, PushActor};
+use crate::engine::side_effects::{
+    ApplicableSideEffect, ApplyCondition, DealDamage, PushActor, SetGoadedBy,
+};
 use crate::engine::types::{AbilityScoreType, DamageType};
 
 /// Inputs to a single attack roll. Lets callers describe attacks without
@@ -542,7 +544,7 @@ pub enum FollowUpEffect {
 /// than declared `const` because `Dice::new` isn't a const fn — but the
 /// runtime cost is one stack-allocated array of plain data, so the
 /// indirection is free.
-fn on_hit_riders() -> [OnHitRider; 23] {
+fn on_hit_riders() -> [OnHitRider; 24] {
     [
         OnHitRider {
             condition: Condition::CrusadersMantled,
@@ -1003,6 +1005,34 @@ fn on_hit_riders() -> [OnHitRider; 23] {
                 hp_threshold: None,
             }),
         },
+        // 5e Battle Master Goading Attack maneuver. Zero rider damage
+        // (same caveat as Menacing / Disarming / Pushing). On the
+        // consuming melee hit the target makes a WIS save vs the
+        // fighter's STR-based maneuver DC; on fail, they're Goaded —
+        // attack rolls against anyone *other* than the goading fighter
+        // are at disadvantage. The follow-up handler also wires the
+        // `goaded_by` link via the auto-chained SetGoadedBy emission in
+        // `push_follow_up_effect`. Mirrors Compelled Duel's mechanical
+        // envelope, but is per-rest rather than concentration-bound.
+        OnHitRider {
+            condition: Condition::GoadingAttacking,
+            dice: Dice::new(0, 1),
+            label: "goading attack",
+            damage_type: DamageType::Bludgeoning,
+            melee_only: true,
+            ranged_only: false,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: Some(AbilityScoreType::Wisdom),
+                dc_ability: AbilityScoreType::Strength,
+                effect: FollowUpEffect::Condition {
+                    condition: Condition::Goaded,
+                    timer: ConditionTimer::UntilStartOfNextTurn,
+                },
+                label: "goading attack goad",
+                hp_threshold: None,
+            }),
+        },
     ]
 }
 
@@ -1076,6 +1106,19 @@ fn push_follow_up_effect(
                 condition,
                 timer,
             }));
+            // Conditions that carry a back-reference to the attacker:
+            // chain the link-update side-effect alongside the apply so a
+            // re-cast / re-trigger never leaves a stale link in place.
+            // Mirrors how Compelled Duel's action pairs ApplyCondition
+            // (Dueled) with SetDueledBy at the spell site; here we hide
+            // the pairing inside the rider's follow-up so every "goading
+            // attack hit" path lands it without re-stating the chain.
+            if condition == Condition::Goaded {
+                effects.push(Box::new(SetGoadedBy {
+                    target_id,
+                    goader: Some(caster_id),
+                }));
+            }
         }
         FollowUpEffect::Push { tiles } => {
             let Some(caster) = encounter.actors.get(&caster_id) else {

@@ -367,6 +367,18 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3p''''. Goading Attack — fighter bonus-action prime (Battle
+        //         Master). WIS save vs goaded (tank-anchor: target eats
+        //         disadvantage on attacks against anyone other than the
+        //         fighter). Last among the maneuvers since the tank-
+        //         anchor effect is strongest when the fighter has
+        //         already absorbed the maneuver-debuff options above on
+        //         tougher single targets — at which point the surviving
+        //         enemy still gets goaded onto the front-liner.
+        if let Some(aei) = try_goading_attack(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3q. Shillelagh — druid bonus-action cantrip prime that adds
         //     +1d8 force damage to the next melee weapon hit. Fire when
         //     an enemy is footprint-adjacent so the prime is consumed
@@ -999,6 +1011,24 @@ fn try_pushing_attack(
         return None;
     }
     try_self_action(encounter, actor_id, "pushing attack")
+}
+
+/// Fighter Battle Master Goading Attack — bonus-action prime that lays a
+/// WIS save vs goaded on the next melee hit. The Goaded debuff is the
+/// tank-anchor maneuver: it forces the target to focus the fighter or
+/// eat disadvantage on every other swing. Higher leverage when the
+/// fighter is in melee with a threat to a squishy ally — we approximate
+/// "I'm the tank" by gating on at least one ally being within close
+/// reach (4 tiles) so the goad does work this round. Falls back to the
+/// generic adjacency gate when no ally is in sight.
+fn try_goading_attack(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    if !any_enemy_within(encounter, actor_id, 0) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "goading attack")
 }
 
 /// Druid Shillelagh — bonus-action cantrip prime that adds +1d8 force

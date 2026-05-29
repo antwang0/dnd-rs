@@ -1,7 +1,7 @@
 use crate::actions::class_features::{
-    ACTION_SURGE, ACTION_SURGE_TAG, DISARMING_ATTACK, DISARMING_ATTACK_TAG, INDOMITABLE,
-    INDOMITABLE_TAG, MENACING_ATTACK, MENACING_ATTACK_TAG, PUSHING_ATTACK, PUSHING_ATTACK_TAG,
-    SECOND_WIND, SECOND_WIND_TAG, TRIP_ATTACK, TRIP_ATTACK_TAG,
+    ACTION_SURGE, ACTION_SURGE_TAG, DISARMING_ATTACK, DISARMING_ATTACK_TAG, GOADING_ATTACK,
+    GOADING_ATTACK_TAG, INDOMITABLE, INDOMITABLE_TAG, MENACING_ATTACK, MENACING_ATTACK_TAG,
+    PUSHING_ATTACK, PUSHING_ATTACK_TAG, SECOND_WIND, SECOND_WIND_TAG, TRIP_ATTACK, TRIP_ATTACK_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGSWORD, SCIMITAR};
@@ -94,6 +94,9 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //   - Menacing Attack: WIS save vs frighten (one-round disadv).
     //   - Disarming Attack: STR save vs disarmed (one-round disadv).
     //   - Pushing Attack: STR save vs forced shove (4-tile push).
+    //   - Goading Attack: WIS save vs goaded (the tank-anchor maneuver:
+    //     target eats disadvantage on attacks against anyone other than
+    //     the fighter, mirroring Compelled Duel without concentration).
     // Each maneuver is its own per-rest charge so the AI can pick the
     // right tool per fight (frighten a caster, shove a melee threat
     // away from the squishy ally, etc.).
@@ -101,6 +104,7 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*MENACING_ATTACK);
     actions.push(&*DISARMING_ATTACK);
     actions.push(&*PUSHING_ATTACK);
+    actions.push(&*GOADING_ATTACK);
     CreatureTemplate {
         name: "Fighter",
         glyph: 'F',
@@ -135,6 +139,7 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             MENACING_ATTACK_TAG,
             DISARMING_ATTACK_TAG,
             PUSHING_ATTACK_TAG,
+            GOADING_ATTACK_TAG,
         ]),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),
