@@ -150,13 +150,9 @@ fn spell_attack_outcome(
     let total = raw + attack_bonus + buff + cond_attack_bonus + bless_die;
     // 5e Improved Critical: template-driven crit threshold. Spell attacks
     // honor the lower threshold too — a Champion fighter multiclassed
-    // into Eldritch Knight crits Fire Bolt on 19s.
-    let crit_threshold = encounter
-        .actors
-        .get(&caster_id)
-        .map(|a| a.crit_threshold())
-        .unwrap_or(20) as i32;
-    let nat_crit = raw >= crit_threshold;
+    // into Eldritch Knight crits Fire Bolt on 19s. Read via the engine
+    // helper so the default (20) folds in for non-Champion casters.
+    let nat_crit = raw >= encounter.crit_threshold(caster_id);
     let hit = nat_crit || total >= target_ac;
     // 5e Paralyzed / Unconscious clause — touch spell attacks honor the
     // "any hit within 5ft becomes a crit" rider too. Mirrors the gate in

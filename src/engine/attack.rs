@@ -130,13 +130,9 @@ pub fn resolve_attack_outcome(
     let raw_attack = encounter.roll_d20_lucky(p.caster_id, mode) as i32;
     // 5e Improved Critical: the d20 face that promotes to a crit is
     // template-driven (Champion fighter: 19+; Superior Critical: 18+).
-    // Default `crit_threshold` is 20 so every other build behaves as RAW.
-    let crit_threshold = encounter
-        .actors
-        .get(&p.caster_id)
-        .map(|a| a.crit_threshold())
-        .unwrap_or(20) as i32;
-    let nat_crit = raw_attack >= crit_threshold;
+    // The engine-level `crit_threshold` accessor folds in the default of
+    // 20 for missing actors / non-Champion builds.
+    let nat_crit = raw_attack >= encounter.crit_threshold(p.caster_id);
     let attack_total = raw_attack + p.attack_bonus + buff + cond_attack_bonus + bless_die;
     let is_nat_one = raw_attack == 1;
     let hit = !is_nat_one && (nat_crit || attack_total >= target_ac);

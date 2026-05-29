@@ -100,6 +100,17 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3c'. Reckless Attack — barbarian / berserker bonus action.
+        //      Self-applies the `Helped` rider for advantage on this
+        //      turn's melee swing, trading inbound attacker advantage
+        //      for the trade-off. Fires only when an enemy is in
+        //      melee reach so the next swing consumes the rider.
+        //      Pairs with Brutal Critical (more crits per turn → more
+        //      extra weapon dice on the lethal swing).
+        if let Some(aei) = try_reckless_attack(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3d. Divine Smite — paladin bonus action that primes the next
         //     melee hit with +2d8 radiant. Fire when an enemy is in
         //     melee reach so the prime is consumed this turn (the
@@ -1319,6 +1330,38 @@ fn try_rage(
         return None;
     }
     try_self_action(encounter, actor_id, "rage")
+}
+
+/// 5e Reckless Attack (barbarian / berserker): bonus action that grants
+/// advantage on this turn's melee swings at the cost of attackers
+/// having advantage against the barbarian until their next turn. The
+/// AI fires it on the same trigger as Rage — an enemy is footprint-
+/// adjacent so the barbarian will swing this turn. Skipped when the
+/// barbarian already has the rider (the action self-applies the
+/// `Helped` condition; re-casting wastes a bonus action). The
+/// trade-off (eat extra incoming damage) is implicit: the barbarian's
+/// physical resistance from Rage and high HP pool make the deal
+/// strictly profitable when an enemy is already in reach and a swing
+/// is queued.
+///
+/// Pairs cleanly with Brutal Critical: more nat-20s land per turn,
+/// each crit rolls extra weapon dice. The two riders together push the
+/// barbarian's per-turn damage well above the baseline fighter.
+fn try_reckless_attack(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    // Already self-buffed for this swing — bonus action would no-op.
+    if actor.has_condition(Condition::Helped) {
+        return None;
+    }
+    // Only fire when an enemy is footprint-adjacent so the advantage
+    // is consumed this turn (Helped clears on the next attack).
+    if !any_enemy_within(encounter, actor_id, 0) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "reckless attack")
 }
 
 /// Paladin Divine Smite — bonus-action prime that lays a +2d8 radiant
@@ -2815,6 +2858,22 @@ mod tests {
                 Coordinate::new(26, 18),
                 1,
                 42,
+            );
+            // Newest additions: Champion Fighter (Improved Critical: crits
+            // on 19+) and Halfling Scout (racial Lucky: re-rolls nat-1s).
+            // Exercises the new template fields end-to-end through the
+            // AI's attack picker — the Champion's lowered crit threshold
+            // surfaces during sustained swing trials, and the Halfling's
+            // Lucky reroll fires whenever a d20 lands on 1 on attacks or
+            // saves.
+            use crate::actors::creatures::fighters::CHAMPION_TEMPLATE;
+            use crate::actors::creatures::halflings::HALFLING_SCOUT_TEMPLATE;
+            let _ = e.instantiate_creature(&CHAMPION_TEMPLATE, Coordinate::new(20, 2), 0, 13);
+            let _ = e.instantiate_creature(
+                &HALFLING_SCOUT_TEMPLATE,
+                Coordinate::new(22, 2),
+                0,
+                14,
             );
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.

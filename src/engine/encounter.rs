@@ -504,6 +504,20 @@ impl EncounterInstance {
         }
     }
 
+    /// 5e Improved Critical: minimum d20 face that promotes a swing to
+    /// a critical hit for `actor_id`. Defaults to 20 (RAW). Champion
+    /// fighters drop to 19; Superior Critical (level 15) drops to 18.
+    /// Single source of truth for the attack-resolution sites that
+    /// previously each carried an `.actors.get(...).map(...).unwrap_or(20)`
+    /// chain — fewer chains means one less place to forget the default
+    /// when adding a new attack-roll path.
+    pub fn crit_threshold(&self, actor_id: usize) -> i32 {
+        self.actors
+            .get(&actor_id)
+            .map(|a| a.crit_threshold() as i32)
+            .unwrap_or(20)
+    }
+
     /// Roll a d20 with mode, then apply the 5e Lucky trait reroll if the
     /// actor has it and rolled a natural 1. RAW: Lucky lets the holder
     /// reroll the die and "must use the new roll" — the second result is
