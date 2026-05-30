@@ -73,5 +73,7 @@ pub static BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         has_lucky: false,
         has_aura_of_protection: false,
         has_aura_of_courage: false,
+        has_savage_attacks: false,
+        has_dwarven_resilience: false,
     }
 });

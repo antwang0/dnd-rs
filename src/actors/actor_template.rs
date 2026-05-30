@@ -240,6 +240,20 @@ pub struct CreatureTemplate {
     /// reads via `EncounterInstance::is_in_aura_of_courage` which the
     /// `Frightened` apply path consults to suppress installs.
     pub has_aura_of_courage: bool,
+    /// 5e Half-Orc Savage Attacks: on a critical melee weapon hit, roll
+    /// one additional weapon damage die. Mechanically identical to
+    /// `brutal_critical_dice = 1` but exposed as a separate flag so the
+    /// half-orc racial doesn't get conflated with the barbarian class
+    /// feature in templates that combine both (e.g. a half-orc barbarian
+    /// stacks the dice). Read at the same crit-damage site in
+    /// `engine::attack` next to `brutal_critical_dice`.
+    pub has_savage_attacks: bool,
+    /// 5e Dwarven Resilience: advantage on saving throws against poison
+    /// AND resistance to poison damage. Read by `compute_save_mode`
+    /// (advantage clause) and `effective_damage` (resistance clause).
+    /// A single flag drives both halves because RAW: both clauses share
+    /// the same trait gate.
+    pub has_dwarven_resilience: bool,
 }
 
 #[derive(Clone, PartialEq)]
@@ -458,6 +472,10 @@ pub struct ActorInstance {
     has_aura_of_protection: bool,
     /// 5e Paladin Aura of Courage. See `CreatureTemplate` docs.
     has_aura_of_courage: bool,
+    /// 5e Half-Orc Savage Attacks. See `CreatureTemplate` docs.
+    has_savage_attacks: bool,
+    /// 5e Dwarven Resilience. See `CreatureTemplate` docs.
+    has_dwarven_resilience: bool,
 }
 
 impl ActorInstance {
@@ -555,6 +573,8 @@ impl ActorInstance {
             has_lucky: ct.has_lucky,
             has_aura_of_protection: ct.has_aura_of_protection,
             has_aura_of_courage: ct.has_aura_of_courage,
+            has_savage_attacks: ct.has_savage_attacks,
+            has_dwarven_resilience: ct.has_dwarven_resilience,
         })
     }
 
@@ -667,6 +687,36 @@ impl ActorInstance {
     /// apply path can suppress installs on allies inside the bubble.
     pub fn has_aura_of_courage(&self) -> bool {
         self.has_aura_of_courage
+    }
+
+    /// 5e Half-Orc Savage Attacks — adds one extra weapon damage die on a
+    /// critical melee hit. Read at the crit-damage site alongside
+    /// `brutal_critical_dice`; the two stack additively on a half-orc
+    /// barbarian.
+    pub fn has_savage_attacks(&self) -> bool {
+        self.has_savage_attacks
+    }
+
+    /// 5e Dwarven Resilience — advantage on saves vs poison AND resistance
+    /// to poison damage. Read by `compute_save_mode` (advantage clause) and
+    /// `effective_damage` (resistance clause).
+    pub fn has_dwarven_resilience(&self) -> bool {
+        self.has_dwarven_resilience
+    }
+
+    /// Test-only setter for the Savage Attacks flag. Lets tests dial it
+    /// on without needing a Half-Orc template — mirrors
+    /// `set_brutal_critical_dice` so the crit-damage lane can be
+    /// exercised on any chassis.
+    #[cfg(test)]
+    pub fn set_savage_attacks(&mut self, value: bool) {
+        self.has_savage_attacks = value;
+    }
+
+    /// Test-only setter for the Dwarven Resilience flag.
+    #[cfg(test)]
+    pub fn set_dwarven_resilience(&mut self, value: bool) {
+        self.has_dwarven_resilience = value;
     }
 
     pub fn legendary_actions_per_round(&self) -> u32 {
@@ -886,17 +936,24 @@ impl ActorInstance {
         if dt == DamageType::Psychic && self.has_condition(Condition::MindBlanked) {
             return 0;
         }
+        // 5e Dwarven Resilience: resistance to poison damage. Folds into
+        // the same template-resistance lane below so the 5e "only one
+        // halving" rule still holds when a creature has resilience AND
+        // a condition-based halver active (e.g. a dwarf barbarian raging
+        // wouldn't get double resistance to poison — only one /2).
+        let template_resisted = matches!(modifier, Some(DamageModifier::Resistance))
+            || (dt == DamageType::Poison && self.has_dwarven_resilience);
         // Start with raw and apply vulnerability / template resistance.
         let mut amt = match modifier {
             Some(DamageModifier::Vulnerability) => raw.saturating_mul(2),
             Some(DamageModifier::Resistance) => raw / 2,
+            _ if template_resisted => raw / 2,
             _ => raw,
         };
         // Collect condition-based resistance sources. Per 5e stacking
         // rules, only one halving applies regardless of how many sources
-        // grant resistance. If the template already provided Resistance
-        // above, we skip condition-based halving too.
-        let template_resisted = matches!(modifier, Some(DamageModifier::Resistance));
+        // grant resistance. If the template (or dwarven resilience) has
+        // already halved, condition-based halving is skipped.
         let condition_resistance = !template_resisted
             && (self.has_condition(Condition::DamageResistant)
                 || self.has_condition(Condition::Globed)

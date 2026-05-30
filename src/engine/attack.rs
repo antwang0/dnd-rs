@@ -184,28 +184,39 @@ pub fn resolve_attack_outcome(
     } else {
         0
     };
-    // 5e Brutal Critical (Barbarian level 9 / 13 / 17): on a critical
-    // melee weapon hit, roll N additional damage dice (matching the
-    // weapon's dice shape). Spell attacks don't qualify — gated on
-    // `is_melee`. The dice count is template-driven so a level-17
-    // barbarian rolls 3 extra dice without touching this site.
+    // 5e Brutal Critical (Barbarian level 9 / 13 / 17) + Half-Orc Savage
+    // Attacks: both add extra weapon damage dice on a critical melee hit.
+    // Spell attacks don't qualify — gated on `is_melee`. The dice counts
+    // are template-driven so a level-17 half-orc barbarian rolls
+    // 3 (Brutal Critical) + 1 (Savage Attacks) = 4 extra dice without
+    // touching this site. Each rider logs separately so the source of
+    // the extra dice is legible in the combat log.
     let brutal_extra = if is_crit && p.is_melee {
-        let dice_count = encounter
+        let mut total = 0;
+        let (brutal_dice_count, savage) = encounter
             .actors
             .get(&p.caster_id)
-            .map(|a| a.brutal_critical_dice())
-            .unwrap_or(0);
-        if dice_count > 0 {
-            let brutal_dice = Dice::new(dice_count, p.damage_dice.faces);
+            .map(|a| (a.brutal_critical_dice(), a.has_savage_attacks()))
+            .unwrap_or((0, false));
+        if brutal_dice_count > 0 {
+            let brutal_dice = Dice::new(brutal_dice_count, p.damage_dice.faces);
             let rolled = encounter.roll(&brutal_dice) as i32;
             encounter.log(format!(
                 "  brutal critical: +{}({}) = +{} {:?}",
                 brutal_dice, rolled, rolled, p.damage_type
             ));
-            rolled
-        } else {
-            0
+            total += rolled;
         }
+        if savage {
+            let savage_dice = Dice::new(1, p.damage_dice.faces);
+            let rolled = encounter.roll(&savage_dice) as i32;
+            encounter.log(format!(
+                "  savage attacks: +{}({}) = +{} {:?}",
+                savage_dice, rolled, rolled, p.damage_type
+            ));
+            total += rolled;
+        }
+        total
     } else {
         0
     };

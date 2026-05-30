@@ -868,6 +868,17 @@ impl EncounterInstance {
         if actor.has_magic_resistance() {
             mode = mode.combine(RollMode::Advantage);
         }
+        // 5e Dwarven Resilience: advantage on saving throws against poison.
+        // We don't tag saves by damage / effect type in this engine, so we
+        // approximate by granting the advantage on every CON save — RAW's
+        // poison-save trigger is CON-based, and the false-positive surface
+        // (CON saves vs non-poison effects) is small. Pairs with the
+        // poison-resistance half in `effective_damage`.
+        if matches!(ability, AbilityScoreType::Constitution)
+            && actor.has_dwarven_resilience()
+        {
+            mode = mode.combine(RollMode::Advantage);
+        }
         mode
     }
 
@@ -7132,6 +7143,213 @@ mod tests {
             with_brutal,
             baseline
         );
+    }
+
+    /// 5e Half-Orc Savage Attacks: a critical melee hit rolls one extra
+    /// weapon damage die. Forces a crit via the Paralyzed auto-crit path
+    /// (same setup as the brutal-critical test) and verifies the savage-
+    /// attacks dice land separately from the base crit + brutal stack.
+    #[test]
+    fn savage_attacks_adds_die_on_melee_crit() {
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+
+        let trials = 200u64;
+        let total = |savage: bool| -> u32 {
+            let mut sum: u32 = 0;
+            for seed in 0..trials {
+                let mut e = ei_with_terrain(15, 15, &[]);
+                e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+                let attacker = e
+                    .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                    .unwrap();
+                let target = e
+                    .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                    .unwrap();
+                e.actors
+                    .get_mut(&target)
+                    .unwrap()
+                    .add_condition(Condition::Paralyzed, ConditionTimer::Rounds(2));
+                e.actors
+                    .get_mut(&attacker)
+                    .unwrap()
+                    .set_savage_attacks(savage);
+                let (_, dealt) = resolve_attack_outcome(
+                    &mut e,
+                    AttackParams {
+                        caster_id: attacker,
+                        target_id: target,
+                        action_name: "greataxe",
+                        attack_bonus: 5,
+                        damage_dice: Dice::new(1, 12),
+                        damage_bonus: 4,
+                        damage_type: DamageType::Slashing,
+                        is_melee: true,
+                        long_range: None,
+                    },
+                );
+                sum = sum.saturating_add(dealt);
+            }
+            sum
+        };
+        let with_savage = total(true);
+        let baseline = total(false);
+        // +1d12 averages 6.5 damage per crit. Across 200 forced-crit
+        // swings the expected jump is ~1300. Generous gate keeps the
+        // assertion robust to RNG variance.
+        assert!(
+            with_savage > baseline.saturating_add(500),
+            "savage attacks should add a clear damage delta (savage {} vs base {})",
+            with_savage,
+            baseline
+        );
+    }
+
+    /// 5e Half-Orc Savage Attacks doesn't fire on ranged attacks — the
+    /// rider is gated on the `is_melee` flag in `engine::attack`, same
+    /// as Brutal Critical. Force the crit via Paralyzed and verify the
+    /// damage doesn't deviate from the no-savage baseline.
+    #[test]
+    fn savage_attacks_skips_ranged_crit() {
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+
+        let trials = 200u64;
+        let total = |savage: bool| -> u32 {
+            let mut sum: u32 = 0;
+            for seed in 0..trials {
+                let mut e = ei_with_terrain(15, 15, &[]);
+                e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+                let attacker = e
+                    .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                    .unwrap();
+                let target = e
+                    .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                    .unwrap();
+                // Paralyzed auto-crit only applies on melee, so for a
+                // ranged crit we'd need a different driver. Instead we
+                // force is_melee=false and rely on a small fraction of
+                // natural 20s to materialize crit deltas — but we
+                // really only need to verify the savage-attacks rider
+                // doesn't fire on ranged hits. The most reliable check
+                // is to confirm with_savage equals baseline on ranged.
+                e.actors
+                    .get_mut(&target)
+                    .unwrap()
+                    .add_condition(Condition::Paralyzed, ConditionTimer::Rounds(2));
+                e.actors
+                    .get_mut(&attacker)
+                    .unwrap()
+                    .set_savage_attacks(savage);
+                let (_, dealt) = resolve_attack_outcome(
+                    &mut e,
+                    AttackParams {
+                        caster_id: attacker,
+                        target_id: target,
+                        action_name: "longbow",
+                        attack_bonus: 5,
+                        damage_dice: Dice::new(1, 8),
+                        damage_bonus: 3,
+                        damage_type: DamageType::Piercing,
+                        is_melee: false,
+                        long_range: None,
+                    },
+                );
+                sum = sum.saturating_add(dealt);
+            }
+            sum
+        };
+        let with_savage = total(true);
+        let baseline = total(false);
+        // Identical roller seeds and same number of damage-dice rolls
+        // means the two paths consume RNG identically when savage doesn't
+        // fire, so totals match exactly.
+        assert_eq!(
+            with_savage, baseline,
+            "savage attacks must NOT fire on ranged hits"
+        );
+    }
+
+    /// 5e Dwarven Resilience — poison-damage resistance halves the
+    /// incoming damage. Drives the check via `effective_damage` directly
+    /// so the resistance lane is exercised without routing through a
+    /// full attack pipeline. Mirrors the template-resistance test for
+    /// zombies' necrotic resistance.
+    #[test]
+    fn dwarven_resilience_halves_poison_damage() {
+        use crate::actors::creatures::dwarves::DWARF_TEMPLATE;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&DWARF_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get(&id).unwrap();
+        // 20 poison → 10 (halved by resilience).
+        assert_eq!(actor.effective_damage(20, DamageType::Poison), 10);
+        // Non-poison types are unaffected.
+        assert_eq!(actor.effective_damage(20, DamageType::Slashing), 20);
+        assert_eq!(actor.effective_damage(20, DamageType::Fire), 20);
+    }
+
+    /// 5e Dwarven Resilience — advantage on CON saves (the engine's
+    /// poison-save proxy since saves aren't tagged by source type).
+    /// Compare against a non-dwarf to confirm the advantage flows
+    /// through `compute_save_mode`.
+    #[test]
+    fn dwarven_resilience_grants_con_save_advantage() {
+        use crate::actors::creatures::dwarves::DWARF_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::dice::RollMode;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let dwarf = e
+            .instantiate_creature(&DWARF_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        assert_eq!(
+            e.compute_save_mode(dwarf, AbilityScoreType::Constitution),
+            RollMode::Advantage,
+            "dwarf gets advantage on CON saves"
+        );
+        assert_eq!(
+            e.compute_save_mode(fighter, AbilityScoreType::Constitution),
+            RollMode::Normal,
+            "non-dwarf rolls CON saves at normal"
+        );
+        // The advantage is CON-scoped — other abilities stay at normal.
+        assert_eq!(
+            e.compute_save_mode(dwarf, AbilityScoreType::Dexterity),
+            RollMode::Normal,
+        );
+    }
+
+    /// Half-Orc PC template smoke test — verifies the racial features
+    /// are wired correctly (Relentless Endurance flag present, Savage
+    /// Attacks active, Darkvision).
+    #[test]
+    fn half_orc_pc_template_wires_racial_traits() {
+        use crate::actions::class_features::RELENTLESS_ENDURANCE_TAG;
+        use crate::actors::creatures::half_orcs::HALF_ORC_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&HALF_ORC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get(&id).unwrap();
+        assert!(actor.has_savage_attacks(), "savage attacks active");
+        assert!(
+            actor.feature_available(RELENTLESS_ENDURANCE_TAG),
+            "relentless endurance available"
+        );
+        assert!(actor.rolls_death_saves(), "half-orc PC rolls death saves");
     }
 
     /// `roll_d20_lucky` re-rolls a nat-1 *only* if the actor has the

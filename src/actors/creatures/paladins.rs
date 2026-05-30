@@ -139,5 +139,7 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // site so Cause Fear / Wrathful Smite / dragon-fear all bounce
         // off the aura bubble.
         has_aura_of_courage: true,
+        has_savage_attacks: false,
+        has_dwarven_resilience: false,
     }
 });

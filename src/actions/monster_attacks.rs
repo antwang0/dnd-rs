@@ -281,6 +281,26 @@ pub static GREATCLUB: SimpleWeapon = SimpleWeapon {
     normal_range: None,
 };
 
+/// Warhammer — STR-based 1d8 bludgeoning martial weapon. The classic
+/// dwarven sidearm; in our engine the versatile-2H clause collapses to
+/// the simpler 1d8 base (the 2H 1d10 alternative would need a per-action
+/// grip toggle the picker doesn't surface). Slots between scimitar (1d6)
+/// and greataxe (1d12) for STR-build martials who want a bludgeoning
+/// option (some creatures resist slashing / piercing).
+pub static WARHAMMER: SimpleWeapon = SimpleWeapon {
+    display_name: "warhammer",
+    aliases: &["wh", "hammer"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
 /// Generic STR-based bite attack — 1d6+STR piercing, no rider. Use this
 /// for creatures whose bite is pure damage (Troll, most beasts). Creatures
 /// that also trip or grapple on a bite should use WolfBite or a dedicated

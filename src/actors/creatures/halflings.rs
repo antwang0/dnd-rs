@@ -73,5 +73,7 @@ pub static HALFLING_SCOUT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         has_lucky: true,
         has_aura_of_protection: false,
         has_aura_of_courage: false,
+        has_savage_attacks: false,
+        has_dwarven_resilience: false,
     }
 });
