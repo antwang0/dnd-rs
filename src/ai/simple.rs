@@ -111,6 +111,16 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3c''. Lunging Attack — Fighter Battle Master bonus-action
+        //       prime. Extends melee reach by one tile for the next
+        //       swing. Fires only when an enemy sits at the precise
+        //       gap the lunge opens up (gap 2 — one tile past default
+        //       melee reach), so the prime isn't wasted on adjacents
+        //       and isn't burned at out-of-reach distances.
+        if let Some(aei) = try_lunging_attack(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3d. Divine Smite — paladin bonus action that primes the next
         //     melee hit with +2d8 radiant. Fire when an enemy is in
         //     melee reach so the prime is consumed this turn (the
@@ -1590,6 +1600,36 @@ fn try_reckless_attack(
         return None;
     }
     try_self_action(encounter, actor_id, "reckless attack")
+}
+
+/// Battle Master Lunging Attack — bonus-action prime that extends the
+/// fighter's melee reach by one tile for the next swing. Fire only when
+/// an enemy sits at the precise distance the lunge opens up (gap 2,
+/// i.e. one tile outside the default melee reach of 1) — at gap 0 / 1
+/// the prime is wasted, since the fighter can already strike without it.
+/// At gap 3+ the lunge alone still doesn't close the distance, so a
+/// move-then-swing is cheaper than burning the once-per-rest prime.
+fn try_lunging_attack(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.has_condition(Condition::LungingAttacking) {
+        return None;
+    }
+    // Need an enemy at exactly the gap the lunge opens up — gap 2 is the
+    // sweet spot for default melee weapons (reach 1 + lunge 1).
+    let my_team = actor.team();
+    let in_lunge_window = encounter.actors.iter().any(|(id, e)| {
+        *id != actor_id
+            && e.team() != my_team
+            && e.is_combat_active()
+            && encounter.footprint_distance(actor_id, *id).is_some_and(|d| d == 2)
+    });
+    if !in_lunge_window {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "lunging attack")
 }
 
 /// Paladin Divine Smite — bonus-action prime that lays a +2d8 radiant
@@ -3539,6 +3579,54 @@ mod tests {
             panic!("expected an action");
         };
         assert_eq!(aei.action().name(), "second wind");
+    }
+
+    /// Fighter at full HP, enemy at gap 2 (one tile past melee reach,
+    /// inside lunge window): the AI should prime Lunging Attack to close
+    /// the gap rather than just stepping forward.
+    #[test]
+    fn ai_primes_lunge_at_gap_two() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = empty_arena();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        // Goblin at gap-2 distance from the fighter footprint (Medium
+        // creatures occupy a 2x2 footprint; placing the goblin 4 tiles
+        // away gives a 2-tile gap after subtracting the footprints).
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 3), 1, 0)
+            .unwrap();
+        let ai = SimpleAi;
+        let decision = ai.decide(&e, fighter);
+        let ControllerDecision::Act(aei) = decision else {
+            panic!("expected an action");
+        };
+        assert_eq!(aei.action().name(), "lunging attack");
+    }
+
+    /// Adjacent-enemy (gap 0): no lunge needed — the scimitar already
+    /// reaches. AI should pick the attack rather than burn the prime.
+    #[test]
+    fn ai_skips_lunge_when_adjacent() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = empty_arena();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 3), 1, 0)
+            .unwrap();
+        let ai = SimpleAi;
+        let decision = ai.decide(&e, fighter);
+        let ControllerDecision::Act(aei) = decision else {
+            panic!("expected an action");
+        };
+        assert_ne!(
+            aei.action().name(),
+            "lunging attack",
+            "lunge should not fire when target is already in melee reach"
+        );
     }
 
     #[test]

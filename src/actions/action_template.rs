@@ -311,18 +311,15 @@ pub trait Action {
                 let Some(dist) = encounter.footprint_distance(caster_id, target_id) else {
                     return false;
                 };
-                // 5e Battle Master Lunging Attack: the next melee weapon
-                // attack gains +5 ft of reach (one tile in this grid).
-                // Apply only to melee-envelope actions (reach <= 2) so
-                // a ranged spell-attack from a primed fighter doesn't get
-                // a spurious bonus.
-                let effective_reach = reach
-                    + encounter
-                        .actors
-                        .get(&caster_id)
-                        .map(|a| a.extra_melee_reach(reach))
-                        .unwrap_or(0);
-                if dist > effective_reach {
+                // Lunging Attack and similar reach-extending primes add
+                // tiles via `extra_melee_reach`, which itself gates the
+                // bonus to melee envelopes so ranged actions are unaffected.
+                let bonus = encounter
+                    .actors
+                    .get(&caster_id)
+                    .map(|a| a.extra_melee_reach(reach))
+                    .unwrap_or(0);
+                if dist > reach + bonus {
                     return false;
                 }
             }
