@@ -6594,7 +6594,10 @@ impl Action for Disintegrate {
         if save.passed() {
             return Vec::new();
         }
-        let dmg = encounter.roll(&Dice::new(10, 6)) + 40;
+        // Empowered Spell metamagic routes through the same chokepoint
+        // as the AoE blasters — Disintegrate is the sorcerer's apex
+        // single-target nuke and benefits most from rerolled 1s/2s.
+        let dmg = encounter.roll_empowered_sum(caster_id, 10, 6) + 40;
         encounter.log(format!(
             "  disintegrate: 10d6+40({}) = {} force",
             dmg, dmg
@@ -7314,7 +7317,9 @@ impl Action for Sunburst {
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
         const RADIUS: isize = 12;
-        let full = encounter.roll(&Dice::new(12, 6));
+        // Empowered Spell metamagic — sorcerer can reroll low dice on
+        // the shared sunburst pool. Same hook as Fireball / Cone of Cold.
+        let full = encounter.roll_empowered_sum(caster_id, 12, 6);
         encounter.log(format!(
             "  sunburst: 12d6({}) = {} radiant (each)",
             full, full
@@ -7599,7 +7604,13 @@ impl Action for MeteorSwarm {
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
         const RADIUS: isize = 4;
-        let fire = encounter.roll(&Dice::new(20, 6));
+        // Empowered Spell metamagic — RAW says "When you roll damage for
+        // a spell, you can reroll a number of the damage dice." Meteor
+        // Swarm rolls fire then bludgeoning; our `roll_empowered`
+        // consumes the prime on the first call, so the fire pool gets
+        // the rerolls and the bludgeoning rolls fall through normally.
+        // Consistent with the "once per spell" cap RAW imposes.
+        let fire = encounter.roll_empowered_sum(caster_id, 20, 6);
         let bludge = encounter.roll(&Dice::new(20, 6));
         encounter.log(format!(
             "  meteor swarm: 20d6({}) fire + 20d6({}) bludgeoning (each)",

@@ -3211,6 +3211,16 @@ mod tests {
             use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
             let _ = e.instantiate_creature(&AASIMAR_TEMPLATE, Coordinate::new(24, 2), 0, 15);
             let _ = e.instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(26, 2), 0, 16);
+            // Latest racial additions: Half-Orc Marauder (Savage Attacks +
+            // Relentless Endurance racials on a fighter chassis) and
+            // Mountain Dwarf Defender (Dwarven Resilience CON-tank).
+            // Exercises the new racial flags through the AI picker so
+            // any wiring regression in the crit-damage or save-mode
+            // lanes surfaces here.
+            use crate::actors::creatures::dwarves::DWARF_TEMPLATE;
+            use crate::actors::creatures::half_orcs::HALF_ORC_TEMPLATE;
+            let _ = e.instantiate_creature(&HALF_ORC_TEMPLATE, Coordinate::new(28, 2), 0, 17);
+            let _ = e.instantiate_creature(&DWARF_TEMPLATE, Coordinate::new(28, 4), 0, 18);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;
