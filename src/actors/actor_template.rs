@@ -224,6 +224,22 @@ pub struct CreatureTemplate {
     /// `resolve_attack_outcome` / `roll_save`. Ability checks share the
     /// same roll path so they pick up the reroll automatically.
     pub has_lucky: bool,
+    /// 5e Paladin Aura of Protection (level 6+): the paladin and every
+    /// ally within 10 ft (4 tile gap in this 2.5ft grid) adds the
+    /// paladin's CHA modifier (minimum +1) to all saving throws.
+    /// Stored as a flag here; the aura radius and bonus formula live
+    /// in `EncounterInstance::aura_of_protection_bonus`, the chokepoint
+    /// `roll_save` reads. Stacks additively if multiple paladins are in
+    /// range — we keep the simple "best bonus wins" rule (the largest
+    /// CHA mod of any aura-bearer in range) to avoid degenerate stacks
+    /// where two CHA-20 paladins double-buff every save.
+    pub has_aura_of_protection: bool,
+    /// 5e Paladin Aura of Courage (level 10+): the paladin and every
+    /// ally within 10 ft is immune to the Frightened condition. Companion
+    /// to Aura of Protection; both auras share the 10ft radius. Engine
+    /// reads via `EncounterInstance::is_in_aura_of_courage` which the
+    /// `Frightened` apply path consults to suppress installs.
+    pub has_aura_of_courage: bool,
 }
 
 #[derive(Clone, PartialEq)]
@@ -438,6 +454,10 @@ pub struct ActorInstance {
     crit_threshold: u32,
     /// 5e Lucky trait / feat. See `CreatureTemplate` docs.
     has_lucky: bool,
+    /// 5e Paladin Aura of Protection. See `CreatureTemplate` docs.
+    has_aura_of_protection: bool,
+    /// 5e Paladin Aura of Courage. See `CreatureTemplate` docs.
+    has_aura_of_courage: bool,
 }
 
 impl ActorInstance {
@@ -533,6 +553,8 @@ impl ActorInstance {
             brutal_critical_dice: ct.brutal_critical_dice,
             crit_threshold: ct.crit_threshold.max(1),
             has_lucky: ct.has_lucky,
+            has_aura_of_protection: ct.has_aura_of_protection,
+            has_aura_of_courage: ct.has_aura_of_courage,
         })
     }
 
@@ -631,6 +653,20 @@ impl ActorInstance {
 
     pub fn has_magic_resistance(&self) -> bool {
         self.has_magic_resistance
+    }
+
+    /// True if this actor emits the Paladin's Aura of Protection
+    /// (level 6+). Read by `EncounterInstance::aura_of_protection_bonus`
+    /// to fold the aura's CHA bonus into every nearby ally's save total.
+    pub fn has_aura_of_protection(&self) -> bool {
+        self.has_aura_of_protection
+    }
+
+    /// True if this actor emits the Paladin's Aura of Courage (level 10+).
+    /// Read by `EncounterInstance::is_in_aura_of_courage` so the Frightened
+    /// apply path can suppress installs on allies inside the bubble.
+    pub fn has_aura_of_courage(&self) -> bool {
+        self.has_aura_of_courage
     }
 
     pub fn legendary_actions_per_round(&self) -> u32 {
@@ -1148,8 +1184,30 @@ impl ActorInstance {
 
     /// True if any active condition's `blocks_action_economy` clause
     /// (Stunned / Incapacitated / Paralyzed / Unconscious) is set.
-    fn is_incapacitated(&self) -> bool {
+    pub fn is_incapacitated(&self) -> bool {
         self.conditions.keys().any(|c| c.blocks_action_economy())
+    }
+
+    /// Bonus tile-gap reach added by active conditions to the action's
+    /// declared `reach_tiles()`. 5e Battle Master Lunging Attack is the
+    /// canonical case (+5ft / +1 tile to the next melee swing). Read by
+    /// `Action::validate_input` after the base reach lookup. The
+    /// `base_reach` argument lets the helper gate the bonus to melee
+    /// envelopes (<= 2 tile gap) so a ranged spell-attack from a primed
+    /// fighter doesn't inherit the reach extension. Returns 0 when no
+    /// rider is active.
+    pub fn extra_melee_reach(&self, base_reach: isize) -> isize {
+        // Only melee / touch / polearm-reach actions benefit. Ranged
+        // spell-attacks have base_reach >> 2 (e.g. Fire Bolt = 48 tiles)
+        // so the gate cuts them out cleanly.
+        if base_reach > 2 {
+            return 0;
+        }
+        let mut bonus = 0;
+        if self.has_condition(Condition::LungingAttacking) {
+            bonus += 1;
+        }
+        bonus
     }
 
     pub fn can_consume_resource(&self, resource: Resource) -> bool {

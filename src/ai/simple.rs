@@ -2070,8 +2070,14 @@ fn has_ranged_attack(encounter: &EncounterInstance, actor_id: usize) -> bool {
     let Some(actor) = encounter.actors.get(&actor_id) else {
         return false;
     };
+    // Restrict to *harmful* SingleActor actions — kiting / disengaging
+    // is about ranged offense, not about long-range buff dispensers like
+    // Rally (12-tile reach) or Commander's Strike (24-tile reach). Pre-
+    // restriction this lane caught the support actions and steered every
+    // Fighter into kite-mode the moment they had Rally on their sheet.
     actor.actions.iter().any(|a| {
-        matches!(a.targeting_schema(), TargetingSchema::SingleActor)
+        a.is_harmful()
+            && matches!(a.targeting_schema(), TargetingSchema::SingleActor)
             && a.reach_tiles().is_some_and(|r| r > MELEE_REACH)
     })
 }

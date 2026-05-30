@@ -1,8 +1,9 @@
 use crate::actions::class_features::{
-    ACTION_SURGE, ACTION_SURGE_TAG, DISARMING_ATTACK, DISARMING_ATTACK_TAG, FEINTING_ATTACK,
-    FEINTING_ATTACK_TAG, GOADING_ATTACK, GOADING_ATTACK_TAG, INDOMITABLE, INDOMITABLE_TAG,
-    MENACING_ATTACK, MENACING_ATTACK_TAG, PRECISION_ATTACK, PRECISION_ATTACK_TAG, PUSHING_ATTACK,
-    PUSHING_ATTACK_TAG, SECOND_WIND, SECOND_WIND_TAG, SWEEPING_ATTACK, SWEEPING_ATTACK_TAG,
+    ACTION_SURGE, ACTION_SURGE_TAG, COMMANDERS_STRIKE, COMMANDERS_STRIKE_TAG, DISARMING_ATTACK,
+    DISARMING_ATTACK_TAG, FEINTING_ATTACK, FEINTING_ATTACK_TAG, GOADING_ATTACK, GOADING_ATTACK_TAG,
+    INDOMITABLE, INDOMITABLE_TAG, LUNGING_ATTACK, LUNGING_ATTACK_TAG, MENACING_ATTACK,
+    MENACING_ATTACK_TAG, PRECISION_ATTACK, PRECISION_ATTACK_TAG, PUSHING_ATTACK, PUSHING_ATTACK_TAG,
+    RALLY, RALLY_TAG, SECOND_WIND, SECOND_WIND_TAG, SWEEPING_ATTACK, SWEEPING_ATTACK_TAG,
     TRIP_ATTACK, TRIP_ATTACK_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
@@ -72,6 +73,8 @@ pub static CHAMPION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // via `actor.crit_threshold()`.
         crit_threshold: 19,
         has_lucky: false,
+        has_aura_of_protection: false,
+        has_aura_of_courage: false,
     }
 });
 
@@ -120,6 +123,22 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*PRECISION_ATTACK);
     actions.push(&*SWEEPING_ATTACK);
     actions.push(&*FEINTING_ATTACK);
+    //   - Lunging Attack: +5ft reach prime (one extra tile in this grid)
+    //     for the next melee swing. The skirmisher's gap-closer —
+    //     stretches the threat zone so the fighter can lash adjacent-1
+    //     enemies (Burning Hands range without committing the move).
+    //   - Rally: bonus-action ally-buff dispenser. Hands a chosen
+    //     friendly creature `1d10 + CHA` temp HP — a flat absorb
+    //     buffer that doesn't compete with healing spells (temp HP
+    //     stacks-and-replaces rather than topping off the HP bar).
+    //   - Commander's Strike: long-range buff/reaction grant. The
+    //     fighter spends a bonus action ordering an ally to attack
+    //     with advantage (engine consumes the ally's reaction slot
+    //     for the swing). The "team buff" maneuver — pairs cleanly
+    //     with a high-damage rogue or paladin teammate.
+    actions.push(&*LUNGING_ATTACK);
+    actions.push(&*RALLY);
+    actions.push(&*COMMANDERS_STRIKE);
     CreatureTemplate {
         name: "Fighter",
         glyph: 'F',
@@ -158,6 +177,9 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             PRECISION_ATTACK_TAG,
             SWEEPING_ATTACK_TAG,
             FEINTING_ATTACK_TAG,
+            LUNGING_ATTACK_TAG,
+            RALLY_TAG,
+            COMMANDERS_STRIKE_TAG,
         ]),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),
@@ -174,5 +196,7 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         brutal_critical_dice: 0,
         crit_threshold: 20,
         has_lucky: false,
+        has_aura_of_protection: false,
+        has_aura_of_courage: false,
     }
 });

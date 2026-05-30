@@ -90,6 +90,8 @@ pub static ADULT_RED_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         brutal_critical_dice: 0,
         crit_threshold: 20,
         has_lucky: false,
+        has_aura_of_protection: false,
+        has_aura_of_courage: false,
     }
 });
 
@@ -158,6 +160,8 @@ pub static YOUNG_WHITE_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
         brutal_critical_dice: 0,
         crit_threshold: 20,
         has_lucky: false,
+        has_aura_of_protection: false,
+        has_aura_of_courage: false,
     }
 });
 
@@ -227,5 +231,7 @@ pub static ANCIENT_BLUE_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
         brutal_critical_dice: 0,
         crit_threshold: 20,
         has_lucky: false,
+        has_aura_of_protection: false,
+        has_aura_of_courage: false,
     }
 });

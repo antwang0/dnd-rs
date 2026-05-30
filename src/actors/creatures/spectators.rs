@@ -60,5 +60,7 @@ pub static SPECTATOR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         brutal_critical_dice: 0,
         crit_threshold: 20,
         has_lucky: false,
+        has_aura_of_protection: false,
+        has_aura_of_courage: false,
     }
 });

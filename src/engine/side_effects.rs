@@ -464,6 +464,21 @@ pub struct ApplyCondition {
 
 impl ApplicableSideEffect for ApplyCondition {
     fn apply(&self, ei: &mut EncounterInstance) {
+        // 5e Paladin Aura of Courage (level 10+): allies inside the 10ft
+        // aura are immune to Frightened. The check lives here rather than
+        // in `ActorInstance::add_condition` because the helper needs
+        // encounter context (the location of every aura-bearer). Mirrors
+        // how the save-side Aura of Protection bonus is computed by the
+        // engine rather than the actor.
+        if self.condition == Condition::Frightened
+            && ei.is_in_aura_of_courage(self.actor_id)
+        {
+            if let Some(actor) = ei.get_actor(self.actor_id) {
+                let name = actor.name().to_string();
+                ei.log(format!("{} resists fear (aura of courage).", name));
+            }
+            return;
+        }
         let Some(actor) = ei.get_actor(self.actor_id) else {
             return;
         };

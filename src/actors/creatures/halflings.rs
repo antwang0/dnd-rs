@@ -71,5 +71,7 @@ pub static HALFLING_SCOUT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         // 5e Halfling racial: Lucky. Reroll nat 1s on attack rolls,
         // ability checks, and saving throws.
         has_lucky: true,
+        has_aura_of_protection: false,
+        has_aura_of_courage: false,
     }
 });

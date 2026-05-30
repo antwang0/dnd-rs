@@ -128,5 +128,16 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         brutal_critical_dice: 0,
         crit_threshold: 20,
         has_lucky: false,
+        // Aura of Protection (level 6+): allies within 10ft add the
+        // paladin's CHA mod (min +1) to all saves. The headline late-
+        // game paladin feature — turns the squishy wizard adjacent to
+        // the paladin into a save-throwing tank. Engine reads via
+        // `EncounterInstance::aura_of_protection_bonus`.
+        has_aura_of_protection: true,
+        // Aura of Courage (level 10+): allies within 10ft are immune to
+        // Frightened. Suppresses installs at the `ApplyCondition::apply`
+        // site so Cause Fear / Wrathful Smite / dragon-fear all bounce
+        // off the aura bubble.
+        has_aura_of_courage: true,
     }
 });

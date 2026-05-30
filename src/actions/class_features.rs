@@ -10,7 +10,9 @@ use crate::{
         action_overrides::ActionOverride,
         dice::Dice,
         encounter::EncounterInstance,
-        side_effects::{ApplicableSideEffect, ApplyCondition, GiveResource, Heal, Resource},
+        side_effects::{
+            ApplicableSideEffect, ApplyCondition, GainTempHp, GiveResource, Heal, Resource,
+        },
         types::Coordinate,
     },
 };
@@ -45,6 +47,9 @@ pub const BATTLE_MASTER_MANEUVERS: &[&str] = &[
     PRECISION_ATTACK_TAG,
     SWEEPING_ATTACK_TAG,
     FEINTING_ATTACK_TAG,
+    LUNGING_ATTACK_TAG,
+    RALLY_TAG,
+    COMMANDERS_STRIKE_TAG,
 ];
 
 /// Tags used by `ActorInstance::feature_available` / `spend_feature` to
@@ -2411,3 +2416,349 @@ impl Action for FeintingAttack {
 }
 
 pub static FEINTING_ATTACK: LazyLock<FeintingAttack> = LazyLock::new(|| FeintingAttack {});
+
+/// Class-feature tag for the Fighter's Lunging Attack Battle Master
+/// maneuver (once per long rest in our model). Listed in
+/// `SHORT_REST_FEATURES` so a short rest refreshes the charge.
+pub const LUNGING_ATTACK_TAG: &str = "fighter.lunging_attack";
+
+/// Lunging Attack — Fighter Battle Master maneuver. Bonus action prime;
+/// the next melee weapon attack gains +5 ft of reach (one tile in this
+/// engine's 2.5ft grid). Drives the `LungingAttacking` condition, which
+/// `Action::validate_input` consults via `ActorInstance::extra_melee_reach`
+/// to extend the action's reach check. The prime is consumed by
+/// `CONSUMED_ON_ATTACK` on the next attack the fighter makes.
+///
+/// One-shot — mirrors the Trip / Menacing / Sweeping shape but with the
+/// reach extension as the load-bearing effect instead of a save-or-debuff.
+pub struct LungingAttack {}
+
+impl Action for LungingAttack {
+    fn name(&self) -> &str {
+        "lunging attack"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["lunge", "la"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.is_combat_active()
+                && a.feature_available(LUNGING_ATTACK_TAG)
+                && !a.has_condition(Condition::LungingAttacking)
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        prime_self_condition(
+            encounter,
+            caster_id,
+            LUNGING_ATTACK_TAG,
+            Condition::LungingAttacking,
+            // Short timer caps the prime so an idle fighter doesn't carry
+            // the reach extension across rests. CONSUMED_ON_ATTACK clears
+            // it on the next swing; the timer is just a safety net.
+            ConditionTimer::Rounds(2),
+            "  lunging attack: fighter's next melee swing gains +5 ft of reach.",
+        )
+    }
+}
+
+pub static LUNGING_ATTACK: LazyLock<LungingAttack> = LazyLock::new(|| LungingAttack {});
+
+/// Class-feature tag for the Fighter's Rally Battle Master maneuver
+/// (once per long rest in our model). Listed in `SHORT_REST_FEATURES`
+/// so a short rest refreshes the charge.
+pub const RALLY_TAG: &str = "fighter.rally";
+
+/// Rally — Fighter Battle Master maneuver. Bonus action targeting one
+/// ally within 30 ft (12 tiles). The chosen ally gains
+/// `1d10 + CHA modifier` temp HP. RAW: superiority die scaling
+/// (d8 → d12 by level); we use a flat 1d10 since the engine's per-class
+/// scaling pool doesn't carry into this lane. Minimum +0 on the CHA
+/// floor — a CHA-dump fighter still hands out d10 worth of buffer.
+///
+/// Non-priming maneuver — the effect is the immediate temp HP grant
+/// rather than an OnHitRider prime. Distinct from Second Wind / Lay on
+/// Hands because the target is an *ally* and the buffer is temp HP
+/// rather than healing.
+pub struct Rally {}
+
+impl Action for Rally {
+    fn name(&self) -> &str {
+        "rally"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["rl"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft = 12 tiles. Matches Bardic Inspiration / Healing Word's
+        // medium-range buff envelope.
+        Some(12)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        // Temp HP is the rally's buffer — slot it into the AI's support
+        // pipeline alongside other healing taps so the fighter rallies
+        // a low-HP ally rather than handing the buff to a full-HP one.
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        if !actor.is_combat_active() || !actor.feature_available(RALLY_TAG) {
+            return false;
+        }
+        // Ally-only — RAW: "you can choose a friendly creature who can
+        // see or hear you". The AI's support pipeline picks live allies
+        // already; we just enforce the team-match gate here so a
+        // misqueued enemy-target invocation doesn't slip through.
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return false;
+        };
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return false;
+        };
+        target.team() == actor.team() && target.is_combat_active()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::types::AbilityScoreType;
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let raw = encounter.roll(&Dice::new(1, 10));
+        let cha_mod = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.ability_modifier(AbilityScoreType::Charisma))
+            .unwrap_or(0);
+        // RAW: temp HP can't drop below the roll itself, so floor the
+        // CHA contribution at 0 (a -1 CHA fighter still hands out d10).
+        let amount = (raw as i32 + cha_mod).max(raw as i32) as u32;
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(RALLY_TAG);
+        }
+        encounter.log(format!(
+            "  rally: 1d10({}){:+} = {} temp HP",
+            raw, cha_mod, amount
+        ));
+        vec![Box::new(GainTempHp {
+            actor_id: target_id,
+            amount,
+        })]
+    }
+}
+
+pub static RALLY: LazyLock<Rally> = LazyLock::new(|| Rally {});
+
+/// Class-feature tag for the Fighter's Commander's Strike Battle Master
+/// maneuver (once per long rest in our model). Listed in
+/// `SHORT_REST_FEATURES` so a short rest refreshes the charge.
+pub const COMMANDERS_STRIKE_TAG: &str = "fighter.commanders_strike";
+
+/// Commander's Strike — Fighter Battle Master maneuver. Bonus action
+/// targeting one ally within 60 ft (24 tiles). The fighter directs the
+/// ally to make one weapon attack with advantage as a reaction. We model
+/// this by granting the ally a self-help-grant against the fighter's
+/// nearest visible enemy — `attack_mode_with_riders` folds in advantage
+/// on their next attack roll vs that target. RAW also gives the ally a
+/// fresh Reaction; we mirror via a `GiveResource(Reaction)` so the ally
+/// can immediately spend it on an opportunity-style attack out of turn.
+///
+/// Conceptually closer to Feinting Attack (advantage on next swing
+/// against a specific target) than the prime-style maneuvers — the
+/// effect is the pre-roll advantage + the bonus reaction, both of which
+/// land through existing engine lanes without a new OnHitRider entry.
+pub struct CommandersStrike {}
+
+impl Action for CommandersStrike {
+    fn name(&self) -> &str {
+        "commander's strike"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["command", "cs"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft RAW = 24 tiles. The fighter shouts orders across the
+        // battlefield; LOS isn't required by RAW so we skip the LOS
+        // check (`requires_los` defaults to false).
+        Some(24)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        // The ally's swing deals damage, but the command itself doesn't.
+        // Mirrors how Feinting / Help register in the support pipeline.
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        if !actor.is_combat_active() || !actor.feature_available(COMMANDERS_STRIKE_TAG) {
+            return false;
+        }
+        // Ally-only — the target must be on the fighter's team and live.
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return false;
+        };
+        let Some(ally) = encounter.actors.get(&target_id) else {
+            return false;
+        };
+        if ally.team() != actor.team() || !ally.is_combat_active() || target_id == caster_id {
+            return false;
+        }
+        // Also need a hostile enemy on the map for the ally to attack —
+        // otherwise the order has no recipient. We find one inside the
+        // side_effects body so the validation here just checks the ally
+        // is in a position to act.
+        true
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actors::actor_template::HelpGrant;
+        let Some(ally_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        // Pick the closest visible enemy of the ally as the strike target.
+        // The fighter doesn't get to pick — RAW: "the creature uses its
+        // reaction to make one weapon attack" against a target the
+        // commander chooses, but the engine has no per-action target
+        // picker for ally-driven reactions, so we auto-target the nearest
+        // enemy to the ally.
+        let ally_team = match encounter.actors.get(&ally_id) {
+            Some(a) => a.team(),
+            None => return Vec::new(),
+        };
+        let strike_target = encounter
+            .actors
+            .iter()
+            .filter(|(_, a)| a.team() != ally_team && a.is_combat_active())
+            .min_by_key(|(id, _)| {
+                encounter
+                    .footprint_distance(ally_id, **id)
+                    .unwrap_or(isize::MAX)
+            })
+            .map(|(id, _)| *id);
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(COMMANDERS_STRIKE_TAG);
+        }
+        encounter.log(format!(
+            "  commander's strike: fighter directs ally for a reaction attack{}.",
+            if strike_target.is_some() {
+                ""
+            } else {
+                " (no visible enemy; reaction granted but advantage idle)"
+            }
+        ));
+        // Install the help-grant on the ally — advantage on next swing
+        // against the chosen enemy (if any).
+        if let Some(target_id) = strike_target
+            && let Some(ally) = encounter.actors.get_mut(&ally_id)
+        {
+            ally.set_help_grant(Some(HelpGrant {
+                helper_id: caster_id,
+                against: target_id,
+            }));
+        }
+        // Give the ally a fresh Reaction so they can spend it on an
+        // attack of opportunity / reaction-attack lane immediately.
+        vec![Box::new(GiveResource {
+            actor_id: ally_id,
+            resource: Resource::Reaction,
+        })]
+    }
+}
+
+pub static COMMANDERS_STRIKE: LazyLock<CommandersStrike> = LazyLock::new(|| CommandersStrike {});

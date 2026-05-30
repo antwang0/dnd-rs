@@ -100,7 +100,7 @@ use crate::engine::prompt::Prompt;
 use crate::engine::terrain::{TerrainInfo, TerrainType};
 use crate::engine::terrain_gen::{TerrainGenParams, generate_terrain};
 use crate::engine::triggers::TriggerEvent;
-use crate::engine::types::{Coordinate, DamageType, Size};
+use crate::engine::types::{AbilityScoreType, Coordinate, DamageType, Size};
 use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 use fastrand::Rng;
 use std::cmp::Ordering;
@@ -239,6 +239,11 @@ const CONSUMED_ON_ATTACK: &[Condition] = &[
     Condition::Hidden,
     Condition::Inspired,
     Condition::PrecisionAttacking,
+    // 5e Battle Master Lunging Attack — the prime extends reach for the
+    // *next* swing. RAW gates the bonus to a melee weapon attack; we
+    // accept the minor "ranged swing wastes the prime" deviation in
+    // exchange for uniformity with the other one-shot primes here.
+    Condition::LungingAttacking,
 ];
 
 pub enum StackElementEntry {
@@ -943,6 +948,80 @@ impl EncounterInstance {
             || actor.has_condition(Condition::Asleep)
     }
 
+    /// Footprint-gap radius of the Paladin's auras (Aura of Protection
+    /// at level 6, Aura of Courage at level 10). 10 ft in 5e RAW; this
+    /// engine's 2.5ft-tile grid puts that at a 4-tile gap from the
+    /// paladin's footprint. Shared by the save-bonus and Frightened-
+    /// immunity helpers so the radius lives in one place.
+    pub const PALADIN_AURA_RADIUS: isize = 4;
+
+    /// Iterate over `actor_id`'s allied aura emitters whose aura is
+    /// currently projecting and whose footprint sits within
+    /// `PALADIN_AURA_RADIUS` of `actor_id`'s footprint. `predicate` selects
+    /// the aura flag of interest (`has_aura_of_protection` /
+    /// `has_aura_of_courage`). Shared body for the two aura helpers — the
+    /// per-aura check (return CHA mod / return any-hit) is folded in by
+    /// the caller. The aura emitter must be combat-active and not
+    /// incapacitated per RAW ("you must be conscious to grant this bonus").
+    fn paladin_aura_emitters(
+        &self,
+        actor_id: usize,
+        predicate: fn(&ActorInstance) -> bool,
+    ) -> impl Iterator<Item = &ActorInstance> {
+        let target = self.actors.get(&actor_id);
+        let target_team = target.map(|t| t.team());
+        let target_loc = target.map(|t| t.location());
+        let target_size = target.map(|t| get_tiles_from_size(t.size())).unwrap_or(1);
+        self.actors.values().filter(move |paladin| {
+            let Some(team) = target_team else {
+                return false;
+            };
+            let Some(loc) = target_loc else {
+                return false;
+            };
+            predicate(paladin)
+                && paladin.team() == team
+                && paladin.is_combat_active()
+                && !paladin.is_incapacitated()
+                && footprint_chebyshev(
+                    paladin.location(),
+                    get_tiles_from_size(paladin.size()),
+                    loc,
+                    target_size,
+                ) <= Self::PALADIN_AURA_RADIUS
+        })
+    }
+
+    /// 5e Paladin Aura of Protection bonus for `actor_id`'s saves.
+    /// Returns the best CHA modifier (min +1, max +6 in 5e RAW —
+    /// uncapped here since we don't track stat caps) of any aura-bearing
+    /// ally within `PALADIN_AURA_RADIUS` tiles of the actor's footprint
+    /// (including the actor themselves if they emit the aura). 0 if no
+    /// aura-bearer is in range, the actor is unknown, or the aura-bearer
+    /// is incapacitated (unconscious / dead — RAW: the aura requires the
+    /// paladin to be conscious). Multiple paladins don't stack — the
+    /// largest bonus wins.
+    pub fn aura_of_protection_bonus(&self, actor_id: usize) -> i32 {
+        self.paladin_aura_emitters(actor_id, ActorInstance::has_aura_of_protection)
+            // 5e RAW: minimum +1 even with low CHA. Tracks how the SRD
+            // writes the feature ("add your Charisma modifier (minimum
+            // of +1)").
+            .map(|p| p.ability_modifier(AbilityScoreType::Charisma).max(1))
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// True if `actor_id` is inside the 10 ft Aura of Courage of any
+    /// allied paladin (level 10+). Read by `add_condition` to suppress
+    /// the Frightened install on allies inside the bubble. The aura goes
+    /// down with the paladin — combat-active filter mirrors the
+    /// Aura of Protection helper.
+    pub fn is_in_aura_of_courage(&self, actor_id: usize) -> bool {
+        self.paladin_aura_emitters(actor_id, ActorInstance::has_aura_of_courage)
+            .next()
+            .is_some()
+    }
+
     /// Roll a saving throw for `actor_id` against `dc` using `ability`.
     /// Auto-applies advantage / disadvantage based on the actor's
     /// conditions (see `compute_save_mode`). Missing actor auto-fails.
@@ -1007,11 +1086,18 @@ impl EncounterInstance {
         } else {
             0
         };
+        // 5e Paladin Aura of Protection: every ally (and the paladin) within
+        // 10ft adds the paladin's CHA mod (min +1) to all saves. Computed
+        // outside the immutable borrow chain — we re-immut-borrow inside the
+        // helper. Stacks via "best bonus wins" rather than summing so two
+        // paladins don't double-pump every save.
+        let aura_bonus = self.aura_of_protection_bonus(actor_id);
         let modifier = actor.ability_modifier(ability)
             + item_bonus
             + buff
             + cond_save_bonus
-            + prof_bonus;
+            + prof_bonus
+            + aura_bonus;
         let total = raw as i32 + modifier + extra;
         let outcome = if total >= dc {
             SaveOutcome::Pass
@@ -27284,6 +27370,334 @@ mod tests {
             "hide DC should be harder with a high-WIS enemy (successes with={} vs without={})",
             successes_with_enemy,
             successes_no_enemy
+        );
+    }
+
+    #[test]
+    fn aura_of_protection_buffs_ally_save_when_in_range() {
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        // Paladin's CHA is 14 → +2 modifier; min +1 floor doesn't kick in.
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Ally 2 tiles away (5ft gap) — inside the 10ft aura (4-tile gap).
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let cha = e.actors[&pal].ability_modifier(AbilityScoreType::Charisma);
+        assert!(
+            cha >= 2,
+            "test assumes paladin CHA mod ≥ 2 (got {})",
+            cha
+        );
+        let bonus = e.aura_of_protection_bonus(f);
+        assert_eq!(bonus, cha, "ally inside aura should get +CHA");
+        // Caster themselves benefit from their own aura.
+        assert_eq!(e.aura_of_protection_bonus(pal), cha);
+    }
+
+    #[test]
+    fn aura_of_protection_excludes_out_of_range_allies() {
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let _pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // 15 tiles away — way outside 4-tile aura.
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(20, 20), 0, 0)
+            .unwrap();
+        assert_eq!(e.aura_of_protection_bonus(f), 0);
+    }
+
+    #[test]
+    fn aura_of_protection_excludes_enemies() {
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let _pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Different team — aura should not extend to opponents.
+        let enemy_fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+            .unwrap();
+        assert_eq!(e.aura_of_protection_bonus(enemy_fighter), 0);
+    }
+
+    #[test]
+    fn aura_of_protection_suppressed_when_paladin_down() {
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        assert!(e.aura_of_protection_bonus(f) > 0);
+        // KO the paladin — aura should drop.
+        e.actors
+            .get_mut(&pal)
+            .unwrap()
+            .add_condition(Condition::Unconscious, crate::conditions::ConditionTimer::Permanent);
+        assert_eq!(
+            e.aura_of_protection_bonus(f),
+            0,
+            "downed paladin emits no aura"
+        );
+    }
+
+    #[test]
+    fn aura_of_courage_suppresses_frightened_install() {
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::side_effects::ApplyCondition;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let _pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        assert!(e.is_in_aura_of_courage(f));
+        let eff = ApplyCondition {
+            actor_id: f,
+            condition: Condition::Frightened,
+            timer: crate::conditions::ConditionTimer::Rounds(10),
+        };
+        eff.apply(&mut e);
+        assert!(
+            !e.actors[&f].has_condition(Condition::Frightened),
+            "aura of courage should block frightened install"
+        );
+    }
+
+    /// Rally (Fighter Battle Master): bonus-action ally-buff handing out
+    /// 1d10 + CHA temp HP. Spends the once-per-rest feature.
+    #[test]
+    fn rally_grants_ally_temp_hp_and_consumes_feature() {
+        use crate::actions::class_features::{RALLY, RALLY_TAG};
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 1)
+            .unwrap();
+        assert!(e.actors[&f].feature_available(RALLY_TAG));
+        assert_eq!(e.actors[&ally].temp_hp(), 0);
+        let effects = RALLY.execute(&mut e, f, Some(&vec![ally]), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&ally].temp_hp() > 0, "ally should gain temp HP");
+        assert!(!e.actors[&f].feature_available(RALLY_TAG), "feature consumed");
+    }
+
+    /// Rally must reject an enemy as the target — RAW: friendly only.
+    #[test]
+    fn rally_rejects_enemy_target() {
+        use crate::actions::class_features::RALLY;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let tv = vec![g];
+        assert!(
+            !RALLY.custom_validate_input(&e, f, Some(&tv), None, None),
+            "rally should reject an enemy target"
+        );
+    }
+
+    /// Lunging Attack (Fighter Battle Master): bonus-action prime applies
+    /// the LungingAttacking condition; the fighter's next melee swing
+    /// gains +5 ft (one tile) of reach via `extra_melee_reach`.
+    #[test]
+    fn lunging_attack_extends_melee_reach_by_one_tile() {
+        use crate::actions::class_features::{LUNGING_ATTACK, LUNGING_ATTACK_TAG};
+        use crate::actions::monster_attacks::SCIMITAR;
+        use crate::actions::action_template::Action;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        // Goblin placed at distance 2 (one tile gap of two — outside default
+        // melee reach but inside the lunging reach of 2).
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 3), 1, 0)
+            .unwrap();
+        let tv = vec![g];
+        // Without the lunge, the scimitar swing is out of reach.
+        assert!(
+            !SCIMITAR.validate_input(&e, f, Some(&tv), None, None),
+            "scimitar should not reach 2-tile-gap target by default"
+        );
+        // Prime the lunge.
+        let effects = LUNGING_ATTACK.side_effects(&mut e, f, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&f].has_condition(Condition::LungingAttacking));
+        assert!(!e.actors[&f].feature_available(LUNGING_ATTACK_TAG));
+        // Now the swing should reach.
+        assert!(
+            SCIMITAR.validate_input(&e, f, Some(&tv), None, None),
+            "lunge should extend scimitar reach to 2-tile-gap target"
+        );
+    }
+
+    /// Lunging Attack does not extend ranged spell-attack reach — the
+    /// `extra_melee_reach` helper gates the bonus to melee envelopes
+    /// (base reach <= 2).
+    #[test]
+    fn lunging_attack_does_not_extend_ranged_reach() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .add_condition(Condition::LungingAttacking, crate::conditions::ConditionTimer::Rounds(2));
+        // base reach 1 (melee weapon) → +1 bonus
+        assert_eq!(e.actors[&f].extra_melee_reach(1), 1);
+        // base reach 2 (reach weapon / polearm) → +1 bonus
+        assert_eq!(e.actors[&f].extra_melee_reach(2), 1);
+        // base reach 24 (longbow / spell-attack range) → no bonus
+        assert_eq!(e.actors[&f].extra_melee_reach(24), 0);
+    }
+
+    /// Commander's Strike (Fighter Battle Master): bonus-action ally-buff
+    /// that hands a target ally a fresh reaction and queues a help-grant
+    /// for advantage on their next swing against the nearest enemy.
+    #[test]
+    fn commanders_strike_grants_ally_reaction_and_help() {
+        use crate::actions::class_features::{COMMANDERS_STRIKE, COMMANDERS_STRIKE_TAG};
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 1)
+            .unwrap();
+        let _enemy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 7), 1, 0)
+            .unwrap();
+        // Spend the ally's reaction so the grant is observable.
+        let _ = e
+            .actors
+            .get_mut(&ally)
+            .unwrap()
+            .consume_resource(crate::engine::side_effects::Resource::Reaction);
+        assert!(e.actors[&f].feature_available(COMMANDERS_STRIKE_TAG));
+        let effects = COMMANDERS_STRIKE.execute(&mut e, f, Some(&vec![ally]), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(!e.actors[&f].feature_available(COMMANDERS_STRIKE_TAG));
+        // Ally should have a fresh reaction.
+        assert!(
+            e.actors[&ally].can_consume_resource(crate::engine::side_effects::Resource::Reaction),
+            "ally should get a fresh reaction"
+        );
+        // Ally should have a help-grant against the goblin (the nearest
+        // enemy to the ally).
+        let goblin_id = e
+            .actors
+            .iter()
+            .find(|(_, a)| a.team() == 1)
+            .map(|(id, _)| *id)
+            .unwrap();
+        assert!(
+            e.actors[&ally].help_grant(goblin_id),
+            "ally should have a help-grant vs the nearest enemy"
+        );
+    }
+
+    /// `roll_save` should fold the Aura of Protection bonus into the
+    /// save total. Verify by comparing a save under the aura's umbrella
+    /// to one without — the latter should produce a strictly worse
+    /// outcome on the same d20 face.
+    #[test]
+    fn aura_of_protection_lifts_save_pass_rate() {
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let trials: u64 = 100;
+        let mut with_aura_passes = 0u32;
+        let mut without_aura_passes = 0u32;
+        for seed in 0..trials {
+            // With aura: paladin and fighter together.
+            let mut e1 = ei_with_terrain(20, 20, &[]);
+            e1.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let _pal = e1
+                .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let f1 = e1
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            // A DC that the fighter has a coin-flip chance to pass with
+            // INT saves — INT mod is 0 for the Fighter template, so DC 11
+            // is roughly 50/50 without the aura.
+            let save = e1.roll_save(f1, AbilityScoreType::Intelligence, 11);
+            if save.passed() {
+                with_aura_passes += 1;
+            }
+            // Without aura: just the fighter.
+            let mut e2 = ei_with_terrain(20, 20, &[]);
+            e2.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let f2 = e2
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let save = e2.roll_save(f2, AbilityScoreType::Intelligence, 11);
+            if save.passed() {
+                without_aura_passes += 1;
+            }
+        }
+        assert!(
+            with_aura_passes > without_aura_passes,
+            "aura of protection should raise save pass rate (with={} vs without={})",
+            with_aura_passes,
+            without_aura_passes
+        );
+    }
+
+    #[test]
+    fn aura_of_courage_allows_other_conditions_through() {
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::side_effects::ApplyCondition;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let _pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let eff = ApplyCondition {
+            actor_id: f,
+            condition: Condition::Poisoned,
+            timer: crate::conditions::ConditionTimer::Rounds(5),
+        };
+        eff.apply(&mut e);
+        assert!(
+            e.actors[&f].has_condition(Condition::Poisoned),
+            "aura of courage only blocks frightened, not other conditions"
         );
     }
 }

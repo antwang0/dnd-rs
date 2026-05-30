@@ -793,6 +793,16 @@ pub enum Condition {
     /// — the rider table strips this flag the moment a melee swing
     /// lands.
     SweepingAttacking,
+    /// Lunging Attack primed (5e Fighter Battle Master maneuver, once per
+    /// long rest in our model). The fighter's next melee weapon attack
+    /// gains +5 ft of reach (one extra tile in our 2.5ft grid, doubling
+    /// melee reach from 1 to 2). Engine reads via
+    /// `ActorInstance::extra_melee_reach()` which the action_template's
+    /// reach check folds into the effective range. One-shot — consumed
+    /// by `clear_attack_advantage_riders` on the next melee swing.
+    /// Tick-down timer (`UntilStartOfNextTurn`) caps an unused prime so
+    /// it doesn't sit across rounds.
+    LungingAttacking,
 }
 
 impl Condition {
@@ -914,6 +924,7 @@ impl Condition {
             Condition::Goaded => "goaded",
             Condition::PrecisionAttacking => "primed for a precision strike",
             Condition::SweepingAttacking => "primed for a sweeping strike",
+            Condition::LungingAttacking => "primed to lunge",
         }
     }
 
@@ -1001,6 +1012,7 @@ impl Condition {
                 | Condition::GoadingAttacking
                 | Condition::PrecisionAttacking
                 | Condition::SweepingAttacking
+                | Condition::LungingAttacking
         )
     }
 
