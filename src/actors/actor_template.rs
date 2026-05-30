@@ -254,6 +254,14 @@ pub struct CreatureTemplate {
     /// A single flag drives both halves because RAW: both clauses share
     /// the same trait gate.
     pub has_dwarven_resilience: bool,
+    /// 5e Sorcerer Sorcery Points: the resource pool spent on Metamagic
+    /// (Empowered Spell, Quickened Spell, Twinned Spell, etc.). The
+    /// sorcerer's pool refreshes on a long rest. RAW: 2 + level points
+    /// at L2, scaling to 20 by L20. We expose the cap directly so
+    /// templates can pin the value to a level-appropriate count
+    /// (e.g. 4 for a CR-4 sorcerer ≈ level 4). 0 = no sorcery points
+    /// (the default for non-sorcerer creatures).
+    pub sorcery_points: u32,
 }
 
 #[derive(Clone, PartialEq)]
@@ -476,6 +484,13 @@ pub struct ActorInstance {
     has_savage_attacks: bool,
     /// 5e Dwarven Resilience. See `CreatureTemplate` docs.
     has_dwarven_resilience: bool,
+    /// Remaining 5e Sorcery Points for Metamagic. Decremented when the
+    /// caster spends a point on a metamagic prime; refreshed to
+    /// `sorcery_points_max` on long rest.
+    sorcery_points: u32,
+    /// Long-rest cap on the sorcery-points pool. Copied from the template
+    /// at instantiation; never mutated thereafter.
+    sorcery_points_max: u32,
 }
 
 impl ActorInstance {
@@ -575,6 +590,8 @@ impl ActorInstance {
             has_aura_of_courage: ct.has_aura_of_courage,
             has_savage_attacks: ct.has_savage_attacks,
             has_dwarven_resilience: ct.has_dwarven_resilience,
+            sorcery_points: ct.sorcery_points,
+            sorcery_points_max: ct.sorcery_points,
         })
     }
 
@@ -717,6 +734,37 @@ impl ActorInstance {
     #[cfg(test)]
     pub fn set_dwarven_resilience(&mut self, value: bool) {
         self.has_dwarven_resilience = value;
+    }
+
+    /// 5e Sorcery Points remaining (Sorcerer Metamagic pool). 0 for
+    /// non-sorcerers. Read by metamagic action validators to gate
+    /// activation; spent via `spend_sorcery_point`.
+    pub fn sorcery_points(&self) -> u32 {
+        self.sorcery_points
+    }
+
+    /// Long-rest cap on the sorcery-points pool. Surfaced for UI /
+    /// debugging — gameplay reads `sorcery_points` for affordability
+    /// checks and `restore_sorcery_points` for long-rest refill.
+    pub fn sorcery_points_max(&self) -> u32 {
+        self.sorcery_points_max
+    }
+
+    /// Spend one sorcery point. Returns true on success, false if the
+    /// pool is empty. Used by Metamagic prime actions (Empowered Spell,
+    /// future Quickened Spell, Twinned Spell, etc.).
+    pub fn spend_sorcery_point(&mut self) -> bool {
+        if self.sorcery_points == 0 {
+            return false;
+        }
+        self.sorcery_points -= 1;
+        true
+    }
+
+    /// Restore the sorcery-points pool to the long-rest cap. Called from
+    /// `long_rest` alongside spell slot / feature refresh.
+    pub fn restore_sorcery_points(&mut self) {
+        self.sorcery_points = self.sorcery_points_max;
     }
 
     pub fn legendary_actions_per_round(&self) -> u32 {
@@ -877,6 +925,7 @@ impl ActorInstance {
             entry.2 = true;
         }
         self.legendary_action_slots = self.legendary_actions_per_round;
+        self.sorcery_points = self.sorcery_points_max;
     }
 
     /// 5e Short Rest — 1 hour of downtime. Restores: Hit Dice-based

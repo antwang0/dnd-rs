@@ -14,12 +14,17 @@ use std::sync::LazyLock;
 
 /// Sorcerer PC template. CHA-primary full-caster — uses the same spell
 /// roster as the wizard but anchors on Charisma rather than Intelligence.
-/// The defining mechanical difference (RAW): Sorcery Points + Metamagic.
-/// We don't model the per-cast metamagic toggle yet (would need an
-/// ActionOverride wired through every spell's resolution); the template
-/// instead leans on a tighter "blaster" spell list and higher CHA-anchored
-/// DCs — sorcerers in this engine play as the wizard's evocation-first
-/// cousin with extra CON / CHA save resilience.
+/// The defining mechanical differences (RAW): Sorcery Points + Metamagic.
+///
+/// **Metamagic** is modeled via the `EmpoweredSpell` bonus-action prime:
+/// spend 1 sorcery point to install the `EmpoweredSpelling` condition,
+/// which lets the next damaging spell (Fireball, Lightning Bolt,
+/// Burning Hands, Magic Missile, Cone of Cold) reroll up to CHA-mod
+/// dice that came up at 1 or 2. The reroll resolves through
+/// `EncounterInstance::roll_empowered` at the damage chokepoint, so
+/// future spells plug in by calling that helper instead of `roll`.
+/// Other metamagic variants (Quickened Spell, Twinned Spell, Heightened
+/// Spell) reserve the slot in `ActionOverride` but aren't wired yet.
 ///
 /// Loadout: Fire Bolt / Ray of Frost / Chill Touch / Acid Splash / Shocking
 /// Grasp cantrips for at-will, Burning Hands / Magic Missile / Shield as
@@ -197,6 +202,12 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::PROTECTION_FROM_ENERGY);
     actions.push(&*WITCH_BOLT);
     actions.push(&*CLOUD_OF_DAGGERS);
+    // 5e Sorcerer Metamagic — Empowered Spell. Bonus-action prime that
+    // burns 1 sorcery point to reroll dice that came up at 1 or 2 on
+    // the next spell-damage roll (up to CHA-mod of them per RAW). The
+    // engine reads the EmpoweredSpelling condition at the damage-roll
+    // chokepoint (`EncounterInstance::roll_empowered`).
+    actions.push(&*crate::actions::metamagic::EMPOWERED_SPELL);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.
@@ -253,5 +264,10 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         has_aura_of_courage: false,
         has_savage_attacks: false,
         has_dwarven_resilience: false,
+        // 5e Sorcerer Sorcery Points: 2 + level points RAW. We size to
+        // 6 here (rough level-6 cap; the CR-4 template sits a bit above
+        // strictly RAW levels). Enough to fuel several Empowered Spells
+        // across an encounter without trivializing the resource budget.
+        sorcery_points: 6,
     }
 });

@@ -94,6 +94,7 @@ pub static ADULT_RED_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         has_aura_of_courage: false,
         has_savage_attacks: false,
         has_dwarven_resilience: false,
+        sorcery_points: 0,
     }
 });
 
@@ -166,6 +167,7 @@ pub static YOUNG_WHITE_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
         has_aura_of_courage: false,
         has_savage_attacks: false,
         has_dwarven_resilience: false,
+        sorcery_points: 0,
     }
 });
 
@@ -239,5 +241,6 @@ pub static ANCIENT_BLUE_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
         has_aura_of_courage: false,
         has_savage_attacks: false,
         has_dwarven_resilience: false,
+        sorcery_points: 0,
     }
 });

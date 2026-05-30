@@ -1199,7 +1199,9 @@ impl Action for BurningHands {
             _ => return Vec::new(),
         };
 
-        let raw = encounter.roll(&Dice::new(3, 6));
+        // Empowered Spell metamagic — sorcerer can reroll low dice on
+        // the burning-hands pool. Same hook as Fireball / Lightning Bolt.
+        let raw = encounter.roll_empowered_sum(caster_id, 3, 6);
         encounter.log(format!("  burning hands: 3d6({}) = {} fire area", raw, raw));
         crate::actions::action_template::resolve_burst_save_damage(
             encounter,
@@ -1257,7 +1259,7 @@ impl Action for MagicMissile {
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
-        _caster_id: usize,
+        caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         overrides: Option<&HashSet<ActionOverride>>,
@@ -1267,11 +1269,16 @@ impl Action for MagicMissile {
         };
         // 5e upcasting: 3 darts at level 1, +1 dart per level above 1.
         let lvl = crate::engine::action_overrides::cast_level(overrides, 1);
-        let n_darts = (3 + (lvl - 1)) as usize;
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::with_capacity(n_darts);
-        let mut dart_values: Vec<u32> = Vec::with_capacity(n_darts);
-        for _ in 0..n_darts {
-            let raw = encounter.roll(&Dice::new(1, 4));
+        let n_darts = (3 + (lvl - 1)) as u32;
+        // Roll all dart dice in one call so Empowered Spell metamagic
+        // can reroll across the whole spell's pool (RAW: the spell is
+        // the unit, not each dart). Non-empowered casters get an
+        // identical roll sequence to per-dart `roll(&Dice::new(1, 4))`.
+        let dart_rolls = encounter.roll_empowered(caster_id, n_darts, 4);
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> =
+            Vec::with_capacity(n_darts as usize);
+        let mut dart_values: Vec<u32> = Vec::with_capacity(n_darts as usize);
+        for raw in dart_rolls {
             let dmg = raw + 1;
             dart_values.push(dmg);
             effects.push(Box::new(DealDamage {
@@ -3971,7 +3978,11 @@ impl Action for Fireball {
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
         let lvl = crate::engine::action_overrides::cast_level(overrides, 3);
         let dice = 8 + (lvl - 3);
-        let raw = encounter.roll(&Dice::new(dice, 6));
+        // Route through `roll_empowered_sum` so Empowered Spell metamagic
+        // primes (Sorcerer) reroll low dice on the shared Fireball roll.
+        // For non-empowered casters the helper falls through to plain
+        // rolls — identical RNG consumption to a flat `roll(&Dice::new(...))`.
+        let raw = encounter.roll_empowered_sum(caster_id, dice, 6);
         encounter.log(format!("  fireball: {}d6({}) = {} fire area", dice, raw, raw));
         crate::actions::action_template::resolve_burst_save_damage(
             encounter,
@@ -4195,7 +4206,9 @@ impl Action for LightningBolt {
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
         let lvl = crate::engine::action_overrides::cast_level(overrides, 3);
         let dice = 8 + (lvl - 3);
-        let raw = encounter.roll(&Dice::new(dice, 6));
+        // Route through `roll_empowered_sum` — Sorcerer Empowered Spell
+        // primes apply to the lightning bolt's shared damage pool.
+        let raw = encounter.roll_empowered_sum(caster_id, dice, 6);
         encounter.log(format!(
             "  lightning bolt: {}d6({}) = {} lightning area",
             dice, raw, raw
@@ -5212,7 +5225,10 @@ impl Action for ConeOfCold {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-        let raw = encounter.roll(&Dice::new(8, 8));
+        // Empowered Spell metamagic routes through the same chokepoint
+        // as Fireball / Lightning Bolt — the 8d8 cone is the single
+        // pool the sorcerer's CHA-mod reroll applies to.
+        let raw = encounter.roll_empowered_sum(caster_id, 8, 8);
         encounter.log(format!(
             "  cone of cold: 8d8({}) = {} cold area",
             raw, raw

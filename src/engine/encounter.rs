@@ -503,6 +503,77 @@ impl EncounterInstance {
         self.roller.roll(dice)
     }
 
+    /// Roll `count` individual dice of `faces` faces, applying the
+    /// 5e Sorcerer **Empowered Spell** metamagic if the caster has the
+    /// `EmpoweredSpelling` condition primed. Returns the rolled values
+    /// (caller sums / logs / per-die-applies as needed).
+    ///
+    /// Empowered Spell RAW: when the caster rolls damage for a spell,
+    /// they may reroll up to CHA-mod of the damage dice and must take
+    /// the new rolls. We approximate the "should I reroll?" tactic with
+    /// the obvious answer — reroll any die that came up at 1 or 2
+    /// (the reroll's expected value is `(faces+1)/2`, which beats 2 for
+    /// every die face count we use, d4 through d12). The condition is
+    /// consumed on any non-trivial spell-damage roll path the caster
+    /// takes through this helper, so a single prime fuels exactly one
+    /// damage roll.
+    ///
+    /// Call this from the spell `side_effects` lane in place of
+    /// `roll(&Dice::new(count, faces))` whenever the spell's damage roll
+    /// should honor Empowered Spell. Non-empowered casters pay no extra
+    /// cost (a single dice roll path falls through to the same total).
+    pub fn roll_empowered(&mut self, caster_id: usize, count: u32, faces: u32) -> Vec<u32> {
+        use crate::engine::types::AbilityScoreType;
+        let mut values: Vec<u32> = (0..count)
+            .map(|_| self.roll(&Dice::new(1, faces)))
+            .collect();
+        let empowered = self
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_condition(Condition::EmpoweredSpelling));
+        if !empowered {
+            return values;
+        }
+        // Reroll up to CHA-mod (min 1) dice that came up at 1 or 2.
+        // Tied low rolls break by index — deterministic ordering keeps
+        // seed reproducibility intact.
+        let cha_mod = self
+            .actors
+            .get(&caster_id)
+            .map(|a| a.ability_modifier(AbilityScoreType::Charisma).max(1))
+            .unwrap_or(1) as usize;
+        let mut candidates: Vec<usize> = (0..values.len())
+            .filter(|&i| values[i] <= 2)
+            .collect();
+        candidates.sort_by_key(|&i| (values[i], i));
+        candidates.truncate(cha_mod);
+        let reroll_count = candidates.len();
+        for i in candidates {
+            values[i] = self.roll(&Dice::new(1, faces));
+        }
+        if reroll_count > 0 {
+            self.log(format!(
+                "  empowered spell: rerolled {} low {}-dice",
+                reroll_count,
+                Dice::new(1, faces)
+            ));
+        }
+        // Consume the prime so the metamagic is one-shot per spell-damage
+        // roll. RAW: "you can reroll a number of the damage dice" — the
+        // spell is the unit, so a multi-roll spell still consumes once.
+        if let Some(caster) = self.actors.get_mut(&caster_id) {
+            caster.remove_condition(Condition::EmpoweredSpelling);
+        }
+        values
+    }
+
+    /// Sum variant of `roll_empowered`. Most callers just want the total
+    /// damage and don't need the per-die breakdown — this saves the
+    /// `.iter().sum()` boilerplate at every call site.
+    pub fn roll_empowered_sum(&mut self, caster_id: usize, count: u32, faces: u32) -> u32 {
+        self.roll_empowered(caster_id, count, faces).iter().sum()
+    }
+
     /// Roll a single d20 with advantage / disadvantage applied. `Advantage`
     /// rolls two d20s and takes the higher; `Disadvantage` takes the lower;
     /// `Normal` rolls once. All rolls advance the same seedable roller, so
@@ -7329,6 +7400,127 @@ mod tests {
             e.compute_save_mode(dwarf, AbilityScoreType::Dexterity),
             RollMode::Normal,
         );
+    }
+
+    /// 5e Sorcerer Empowered Spell metamagic: priming the condition then
+    /// calling `roll_empowered` rerolls dice that came up at 1 or 2 and
+    /// consumes the prime. Drive with a deterministic seed sweep to
+    /// confirm the empowered-roll path produces a higher average than
+    /// the unmodified roll.
+    #[test]
+    fn empowered_spell_rerolls_low_dice_and_consumes_prime() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::FastRandRoller;
+
+        let trials = 200u64;
+        let mut empowered_total: u64 = 0;
+        let mut plain_total: u64 = 0;
+        for seed in 0..trials {
+            // Empowered path.
+            let mut e = ei_with_terrain(15, 15, &[]);
+            e.roller = FastRandRoller::with_seed(seed);
+            let sorcerer = e
+                .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&sorcerer)
+                .unwrap()
+                .add_condition(Condition::EmpoweredSpelling, ConditionTimer::Rounds(2));
+            let sum = e.roll_empowered_sum(sorcerer, 8, 6);
+            empowered_total += sum as u64;
+            // Condition should be consumed.
+            assert!(
+                !e.actors[&sorcerer].has_condition(Condition::EmpoweredSpelling),
+                "empowered prime consumed after roll"
+            );
+
+            // Plain (no prime) baseline.
+            let mut e2 = ei_with_terrain(15, 15, &[]);
+            e2.roller = FastRandRoller::with_seed(seed);
+            let sorcerer2 = e2
+                .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let sum2 = e2.roll_empowered_sum(sorcerer2, 8, 6);
+            plain_total += sum2 as u64;
+        }
+        // Each die's expected value: 3.5. Each die <= 2 (33% chance) gets
+        // rerolled to expected value 3.5, replacing an average of 1.5
+        // with 3.5 (+2 per rerolled die). Across 200 trials × 8 dice ×
+        // CHA-mod cap (4 for the sorcerer template), expect ~+1600 total.
+        // Generous gate keeps the assertion robust to RNG variance.
+        assert!(
+            empowered_total > plain_total + 600,
+            "empowered spell should add measurable damage \
+             (empowered {} vs plain {})",
+            empowered_total,
+            plain_total
+        );
+    }
+
+    /// Empowered Spell prime is gated on sorcery points; activation
+    /// decrements the pool and the next damage roll consumes the prime.
+    /// End-to-end check that the action plumbing matches the engine
+    /// helper.
+    #[test]
+    fn empowered_spell_action_spends_sorcery_point_and_primes() {
+        use crate::actions::metamagic::EMPOWERED_SPELL;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Give the sorcerer a bonus action so the cost check passes.
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.give_resource(crate::engine::side_effects::Resource::BonusAction);
+        let sp_before = actor.sorcery_points();
+        assert!(sp_before > 0, "sorcerer template ships sorcery points");
+
+        // Cast Empowered Spell.
+        let effects = EMPOWERED_SPELL.execute(&mut e, sorcerer, None, None, None);
+        assert!(!effects.is_empty(), "empowered spell should queue an effect");
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let after = e.actors.get(&sorcerer).unwrap();
+        assert_eq!(after.sorcery_points(), sp_before - 1, "1 SP spent");
+        assert!(
+            after.has_condition(Condition::EmpoweredSpelling),
+            "empowered prime is installed"
+        );
+
+        // Running a damage roll consumes the prime.
+        let _ = e.roll_empowered_sum(sorcerer, 4, 6);
+        assert!(
+            !e.actors[&sorcerer].has_condition(Condition::EmpoweredSpelling),
+            "damage roll consumed the prime"
+        );
+    }
+
+    /// Long rest refreshes the sorcery-points pool back to its cap.
+    /// Mirrors the slot / feature / legendary-resistance refresh test
+    /// shape — exercises the long_rest hook on the Sorcerer template
+    /// after burning a point.
+    #[test]
+    fn long_rest_restores_sorcery_points() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        let cap = actor.sorcery_points_max();
+        assert!(cap > 0);
+        // Burn the pool to zero.
+        for _ in 0..cap {
+            assert!(actor.spend_sorcery_point());
+        }
+        assert_eq!(actor.sorcery_points(), 0);
+        actor.long_rest();
+        assert_eq!(actor.sorcery_points(), cap, "long rest refills the pool");
     }
 
     /// Half-Orc PC template smoke test — verifies the racial features

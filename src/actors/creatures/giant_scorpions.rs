@@ -59,5 +59,6 @@ pub static GIANT_SCORPION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         has_aura_of_courage: false,
         has_savage_attacks: false,
         has_dwarven_resilience: false,
+        sorcery_points: 0,
     }
 });

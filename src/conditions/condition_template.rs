@@ -803,6 +803,17 @@ pub enum Condition {
     /// Tick-down timer (`UntilStartOfNextTurn`) caps an unused prime so
     /// it doesn't sit across rounds.
     LungingAttacking,
+    /// Empowered Spell primed (5e Sorcerer Metamagic). The sorcerer has
+    /// spent a sorcery point via the Empowered Spell bonus-action prime;
+    /// the next spell damage roll they make can reroll up to CHA-mod
+    /// dice whose face came up at 1 or 2. We approximate the "reroll?"
+    /// choice with the obvious tactical answer: always reroll dice <= 2
+    /// since the expected reroll average is `(faces+1)/2` (>= 2.5 for
+    /// any d4+ die — the spell-damage dice we care about).
+    /// One-shot — consumed the moment a spell damage roll lands via
+    /// `EncounterInstance::roll_empowered`. Tick-down timer
+    /// (`UntilStartOfNextTurn`) caps an unused prime so it doesn't dangle.
+    EmpoweredSpelling,
 }
 
 impl Condition {
@@ -925,6 +936,7 @@ impl Condition {
             Condition::PrecisionAttacking => "primed for a precision strike",
             Condition::SweepingAttacking => "primed for a sweeping strike",
             Condition::LungingAttacking => "primed to lunge",
+            Condition::EmpoweredSpelling => "primed with empowered spell",
         }
     }
 
@@ -1013,6 +1025,7 @@ impl Condition {
                 | Condition::PrecisionAttacking
                 | Condition::SweepingAttacking
                 | Condition::LungingAttacking
+                | Condition::EmpoweredSpelling
         )
     }
 

@@ -87,5 +87,6 @@ pub static HALF_ORC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // critical melee hit.
         has_savage_attacks: true,
         has_dwarven_resilience: false,
+        sorcery_points: 0,
     }
 });
