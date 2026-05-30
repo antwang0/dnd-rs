@@ -254,6 +254,20 @@ pub struct CreatureTemplate {
     /// A single flag drives both halves because RAW: both clauses share
     /// the same trait gate.
     pub has_dwarven_resilience: bool,
+    /// 5e Gnome Cunning (Rock / Forest / Deep Gnome racial): advantage on
+    /// Intelligence, Wisdom, and Charisma saving throws against magic.
+    /// We don't tag saves by "magic vs mundane" in this engine, so we
+    /// approximate by granting blanket advantage on INT / WIS / CHA
+    /// saves. The false-positive surface is small — most non-magical
+    /// effects targeting those abilities (skill checks, social mods)
+    /// don't route through `roll_save`. Read by `compute_save_mode`.
+    pub has_gnome_cunning: bool,
+    /// 5e Dragonborn Draconic Ancestry: damage type matching the chosen
+    /// ancestor (Red / Gold = Fire, Blue / Bronze = Lightning, etc.).
+    /// Read by `BreathWeapon` to type its 5-tile cone and consumed by
+    /// `damage_modifiers` to give the dragonborn matching resistance.
+    /// `None` for non-dragonborn templates (the default).
+    pub draconic_ancestry: Option<DamageType>,
     /// 5e Sorcerer Sorcery Points: the resource pool spent on Metamagic
     /// (Empowered Spell, Quickened Spell, Twinned Spell, etc.). The
     /// sorcerer's pool refreshes on a long rest. RAW: 2 + level points
@@ -484,6 +498,11 @@ pub struct ActorInstance {
     has_savage_attacks: bool,
     /// 5e Dwarven Resilience. See `CreatureTemplate` docs.
     has_dwarven_resilience: bool,
+    /// 5e Gnome Cunning. See `CreatureTemplate` docs.
+    has_gnome_cunning: bool,
+    /// 5e Dragonborn Draconic Ancestry damage type, if any. Drives the
+    /// breath weapon's typing and the matching damage resistance.
+    draconic_ancestry: Option<DamageType>,
     /// Remaining 5e Sorcery Points for Metamagic. Decremented when the
     /// caster spends a point on a metamagic prime; refreshed to
     /// `sorcery_points_max` on long rest.
@@ -590,6 +609,8 @@ impl ActorInstance {
             has_aura_of_courage: ct.has_aura_of_courage,
             has_savage_attacks: ct.has_savage_attacks,
             has_dwarven_resilience: ct.has_dwarven_resilience,
+            has_gnome_cunning: ct.has_gnome_cunning,
+            draconic_ancestry: ct.draconic_ancestry,
             sorcery_points: ct.sorcery_points,
             sorcery_points_max: ct.sorcery_points,
         })
@@ -721,6 +742,19 @@ impl ActorInstance {
         self.has_dwarven_resilience
     }
 
+    /// 5e Gnome Cunning — advantage on INT / WIS / CHA saves vs magic.
+    /// Approximated as advantage on every INT / WIS / CHA save (saves
+    /// rarely originate from non-magical sources in this engine).
+    pub fn has_gnome_cunning(&self) -> bool {
+        self.has_gnome_cunning
+    }
+
+    /// 5e Dragonborn Draconic Ancestry — damage type of the breath weapon
+    /// and the matching template-resistance lane. `None` for non-dragonborn.
+    pub fn draconic_ancestry(&self) -> Option<DamageType> {
+        self.draconic_ancestry
+    }
+
     /// Test-only setter for the Savage Attacks flag. Lets tests dial it
     /// on without needing a Half-Orc template — mirrors
     /// `set_brutal_critical_dice` so the crit-damage lane can be
@@ -734,6 +768,12 @@ impl ActorInstance {
     #[cfg(test)]
     pub fn set_dwarven_resilience(&mut self, value: bool) {
         self.has_dwarven_resilience = value;
+    }
+
+    /// Test-only setter for the Gnome Cunning flag.
+    #[cfg(test)]
+    pub fn set_gnome_cunning(&mut self, value: bool) {
+        self.has_gnome_cunning = value;
     }
 
     /// 5e Sorcery Points remaining (Sorcerer Metamagic pool). 0 for

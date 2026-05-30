@@ -950,6 +950,19 @@ impl EncounterInstance {
         {
             mode = mode.combine(RollMode::Advantage);
         }
+        // 5e Gnome Cunning: advantage on INT / WIS / CHA saves against
+        // magic. We approximate by granting blanket advantage on those
+        // three saves — most saves in this engine originate from spells,
+        // so the magical-source qualifier rarely matters in practice.
+        if matches!(
+            ability,
+            AbilityScoreType::Intelligence
+                | AbilityScoreType::Wisdom
+                | AbilityScoreType::Charisma
+        ) && actor.has_gnome_cunning()
+        {
+            mode = mode.combine(RollMode::Advantage);
+        }
         mode
     }
 
@@ -996,7 +1009,10 @@ impl EncounterInstance {
 
     /// True if the actor auto-fails saves of the given ability. Paralyzed
     /// and Stunned auto-fail STR/DEX saves in 5e. Used by `roll_save` to
-    /// short-circuit before the d20 roll.
+    /// short-circuit before the d20 roll. The "physical lock" cohort
+    /// (Paralyzed / Stunned / Petrified / Unconscious / Asleep) lives on
+    /// `Condition::auto_fails_str_dex_saves` so adding a new locked-out
+    /// condition is a one-line change to the helper.
     pub fn auto_fail_save(
         &self,
         actor_id: usize,
@@ -1016,18 +1032,14 @@ impl EncounterInstance {
         // Dancing actors auto-fail DEX saves only — RAW: Otto's
         // Irresistible Dance is explicit about the DEX-save clause and
         // keeps STR / mental saves intact (mind is willing, body won't
-        // cooperate). We check ability outside the broader matches!
-        // to keep the STR-fail cohort distinct.
+        // cooperate). Handled outside the cohort so the STR-fail cohort
+        // stays distinct.
         if actor.has_condition(Condition::Dancing)
             && matches!(ability, AbilityScoreType::Dexterity)
         {
             return true;
         }
-        actor.has_condition(Condition::Paralyzed)
-            || actor.has_condition(Condition::Stunned)
-            || actor.has_condition(Condition::Petrified)
-            || actor.has_condition(Condition::Unconscious)
-            || actor.has_condition(Condition::Asleep)
+        actor.conditions().keys().any(|c| c.auto_fails_str_dex_saves())
     }
 
     /// Footprint-gap radius of the Paladin's auras (Aura of Protection
@@ -7563,6 +7575,183 @@ mod tests {
         assert_eq!(actor.sorcery_points(), 0);
         actor.long_rest();
         assert_eq!(actor.sorcery_points(), cap, "long rest refills the pool");
+    }
+
+    /// 5e Gnome Cunning: advantage on INT, WIS, CHA saves vs magic. We
+    /// approximate by granting blanket advantage on those three saves.
+    /// STR / DEX / CON are unaffected.
+    #[test]
+    fn gnome_cunning_grants_mental_save_advantage() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::gnomes::GNOME_TEMPLATE;
+        use crate::engine::dice::RollMode;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let gnome = e
+            .instantiate_creature(&GNOME_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        for ab in [
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ] {
+            assert_eq!(
+                e.compute_save_mode(gnome, ab),
+                RollMode::Advantage,
+                "gnome gets advantage on {:?} saves",
+                ab
+            );
+            assert_eq!(
+                e.compute_save_mode(fighter, ab),
+                RollMode::Normal,
+                "non-gnome rolls {:?} at normal",
+                ab
+            );
+        }
+        // Physical saves stay at normal — the cunning is mental-only.
+        for ab in [
+            AbilityScoreType::Strength,
+            AbilityScoreType::Dexterity,
+            AbilityScoreType::Constitution,
+        ] {
+            assert_eq!(
+                e.compute_save_mode(gnome, ab),
+                RollMode::Normal,
+                "gnome rolls {:?} at normal",
+                ab
+            );
+        }
+    }
+
+    /// 5e Tiefling: Hellish Resistance halves fire damage; Infernal
+    /// Legacy is gated on a once-per-rest feature flag.
+    #[test]
+    fn tiefling_pc_template_wires_racial_traits() {
+        use crate::actions::class_features::INFERNAL_LEGACY_REBUKE_TAG;
+        use crate::actors::creatures::tieflings::TIEFLING_TEMPLATE;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&TIEFLING_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get(&id).unwrap();
+        // Hellish Resistance: fire halves.
+        assert_eq!(actor.effective_damage(20, DamageType::Fire), 10);
+        // Non-fire damage flows through normally.
+        assert_eq!(actor.effective_damage(20, DamageType::Slashing), 20);
+        // Infernal Legacy flag is fresh on instantiation.
+        assert!(
+            actor.feature_available(INFERNAL_LEGACY_REBUKE_TAG),
+            "infernal legacy is available"
+        );
+        assert!(actor.rolls_death_saves(), "tiefling PC rolls death saves");
+    }
+
+    /// 5e Dragonborn: Draconic Ancestry confers a damage-type
+    /// resistance and drives the breath weapon's typing. The breath
+    /// weapon is gated on a short-rest feature charge.
+    #[test]
+    fn dragonborn_pc_template_wires_racial_traits() {
+        use crate::actions::class_features::BREATH_WEAPON_TAG;
+        use crate::actors::creatures::dragonborn::DRAGONBORN_TEMPLATE;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&DRAGONBORN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get(&id).unwrap();
+        assert_eq!(actor.draconic_ancestry(), Some(DamageType::Fire));
+        // Fire resistance halves fire damage.
+        assert_eq!(actor.effective_damage(20, DamageType::Fire), 10);
+        assert_eq!(actor.effective_damage(20, DamageType::Cold), 20);
+        // Breath weapon is fresh on instantiation.
+        assert!(
+            actor.feature_available(BREATH_WEAPON_TAG),
+            "breath weapon is available"
+        );
+        // Champion crit threshold (Improved Critical) is wired.
+        assert_eq!(actor.crit_threshold(), 19);
+    }
+
+    /// Breath Weapon: once-per-short-rest feature; spending it removes
+    /// the feature flag from `features_remaining`. Short rest refreshes
+    /// the charge via the `SHORT_REST_FEATURES` registry.
+    #[test]
+    fn breath_weapon_consumes_feature_and_short_rest_refreshes() {
+        use crate::actions::class_features::BREATH_WEAPON_TAG;
+        use crate::actors::creatures::dragonborn::DRAGONBORN_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&DRAGONBORN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        assert!(actor.spend_feature(BREATH_WEAPON_TAG));
+        assert!(!actor.feature_available(BREATH_WEAPON_TAG));
+        // Short rest refreshes the breath weapon (registered in
+        // SHORT_REST_FEATURES).
+        let mut roller = crate::engine::dice::FastRandRoller::with_seed(0);
+        actor.short_rest(&mut roller);
+        assert!(actor.feature_available(BREATH_WEAPON_TAG));
+    }
+
+    /// Quickened Spell metamagic: costs 2 SP + a Bonus Action and
+    /// grants the sorcerer an extra Action this turn.
+    #[test]
+    fn quickened_spell_spends_two_sp_and_grants_action() {
+        use crate::actions::metamagic::QUICKENED_SPELL;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.give_resource(crate::engine::side_effects::Resource::BonusAction);
+        let sp_before = actor.sorcery_points();
+        let actions_before = actor.action_slots();
+        assert!(sp_before >= 2);
+
+        let effects = QUICKENED_SPELL.execute(&mut e, sorcerer, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let after = e.actors.get(&sorcerer).unwrap();
+        assert_eq!(after.sorcery_points(), sp_before - 2, "2 SP spent");
+        assert_eq!(
+            after.action_slots(),
+            actions_before + 1,
+            "quickened grants an extra Action this turn"
+        );
+    }
+
+    /// Quickened Spell is gated on the sorcery-points pool: a sorcerer
+    /// with fewer than 2 SP can't fire the metamagic.
+    #[test]
+    fn quickened_spell_blocked_without_two_sp() {
+        use crate::actions::metamagic::QUICKENED_SPELL;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.give_resource(crate::engine::side_effects::Resource::BonusAction);
+        // Burn the SP pool down to 1.
+        while actor.sorcery_points() > 1 {
+            actor.spend_sorcery_point();
+        }
+        assert!(
+            !QUICKENED_SPELL.validate_input(&e, sorcerer, None, None, None),
+            "quickened gated below 2 SP"
+        );
     }
 
     /// Half-Orc PC template smoke test — verifies the racial features

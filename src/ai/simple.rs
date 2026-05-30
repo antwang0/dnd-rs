@@ -3221,6 +3221,22 @@ mod tests {
             use crate::actors::creatures::half_orcs::HALF_ORC_TEMPLATE;
             let _ = e.instantiate_creature(&HALF_ORC_TEMPLATE, Coordinate::new(28, 2), 0, 17);
             let _ = e.instantiate_creature(&DWARF_TEMPLATE, Coordinate::new(28, 4), 0, 18);
+            // Newest racial additions: Tiefling (Hellish Resistance + the
+            // Infernal Legacy Hellish Rebuke racial), Rock Gnome
+            // (Gnome Cunning: advantage on INT/WIS/CHA saves vs magic),
+            // and Red Dragonborn (Draconic Ancestry: fire resistance +
+            // short-rest Breath Weapon). Exercises the new
+            // `has_gnome_cunning` save-mode hook, the dragonborn
+            // breath weapon's AoE path through `try_attack_aoe`, and
+            // the tiefling's once-per-rest racial action gating. The
+            // sorcerer's new Quickened Spell metamagic also rides this
+            // smoke test through the existing SORCERER_TEMPLATE.
+            use crate::actors::creatures::dragonborn::DRAGONBORN_TEMPLATE;
+            use crate::actors::creatures::gnomes::GNOME_TEMPLATE;
+            use crate::actors::creatures::tieflings::TIEFLING_TEMPLATE;
+            let _ = e.instantiate_creature(&TIEFLING_TEMPLATE, Coordinate::new(28, 6), 0, 19);
+            let _ = e.instantiate_creature(&GNOME_TEMPLATE, Coordinate::new(28, 8), 0, 20);
+            let _ = e.instantiate_creature(&DRAGONBORN_TEMPLATE, Coordinate::new(28, 10), 0, 21);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

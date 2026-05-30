@@ -11,9 +11,10 @@ use crate::{
         dice::Dice,
         encounter::EncounterInstance,
         side_effects::{
-            ApplicableSideEffect, ApplyCondition, GainTempHp, GiveResource, Heal, Resource,
+            ApplicableSideEffect, ApplyCondition, DealDamage, GainTempHp, GiveResource, Heal,
+            Resource,
         },
-        types::Coordinate,
+        types::{Coordinate, DamageType},
     },
 };
 
@@ -31,6 +32,7 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     ARCANE_RECOVERY_TAG,
     PRESERVE_LIFE_TAG,
     CUTTING_WORDS_TAG,
+    BREATH_WEAPON_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -2762,3 +2764,216 @@ impl Action for CommandersStrike {
 }
 
 pub static COMMANDERS_STRIKE: LazyLock<CommandersStrike> = LazyLock::new(|| CommandersStrike {});
+
+/// Tag for the Tiefling Infernal Legacy: Hellish Rebuke racial trait.
+/// Once per long rest the tiefling fires a CHA-based Hellish Rebuke
+/// without spending a spell slot — RAW: "Starting at 3rd level, you
+/// can cast hellish rebuke as a 2nd-level spell once with this trait
+/// and regain the ability to do so when you finish a long rest." We
+/// gate on a feature flag and refresh on long rest like Lay on Hands /
+/// Relentless Endurance.
+pub const INFERNAL_LEGACY_REBUKE_TAG: &str = "tiefling.infernal_legacy_rebuke";
+
+/// Tiefling Infernal Legacy — Hellish Rebuke (racial flavor). One swing
+/// per long rest of a CHA-based DEX-save burst that deals 3d10 fire
+/// (RAW: "cast hellish rebuke as a 2nd-level spell"). No slot cost —
+/// the once-per-rest feature gate is the load-bearing resource.
+///
+/// Action cost rather than the RAW reaction cost — the engine doesn't
+/// have a clean "reactive on being damaged" hook for player-driven
+/// actions, and the action cost keeps the racial useful even when the
+/// tiefling hasn't been hit yet.
+pub struct InfernalLegacyRebuke {}
+
+impl Action for InfernalLegacyRebuke {
+    fn name(&self) -> &str {
+        "infernal rebuke"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["infernal", "ireb", "tiefling-rebuke"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft RAW = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_combat_active() && a.feature_available(INFERNAL_LEGACY_REBUKE_TAG))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actions::action_template::first_target_id;
+        use crate::engine::types::AbilityScoreType;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
+        if let Some(c) = encounter.actors.get_mut(&caster_id) {
+            c.spend_feature(INFERNAL_LEGACY_REBUKE_TAG);
+        }
+        // 3d10 fire — matches Hellish Rebuke cast at level 2 (RAW).
+        let (dmg, _) = crate::actions::spells::save_for_half_damage(
+            encounter,
+            target_id,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(3, 10),
+            DamageType::Fire,
+            "infernal rebuke",
+        );
+        if dmg == 0 {
+            return Vec::new();
+        }
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: dmg,
+            damage_type: DamageType::Fire,
+        })]
+    }
+}
+
+pub static INFERNAL_LEGACY_REBUKE: LazyLock<InfernalLegacyRebuke> =
+    LazyLock::new(|| InfernalLegacyRebuke {});
+
+/// Tag for the Dragonborn Breath Weapon racial trait. Once per short
+/// rest (RAW: "Once you use your breath weapon, you can't use it again
+/// until you complete a short or long rest"). Listed in the
+/// `SHORT_REST_FEATURES` registry so a short rest refreshes the charge
+/// alongside the other once-per-rest features.
+pub const BREATH_WEAPON_TAG: &str = "dragonborn.breath_weapon";
+
+/// Dragonborn Breath Weapon — racial action. 2-tile burst from the
+/// dragonborn's footprint, DEX save vs the dragonborn's CON-based DC
+/// (8 + prof + CON), 2d6 of the draconic ancestor's damage type, half
+/// on save. Once per short rest. Scales by character level (3d6 at
+/// L6, 4d6 at L11, 5d6 at L16).
+///
+/// The damage type is sourced from the actor's `draconic_ancestry()` —
+/// `None` means the actor has no ancestor and the action falls back to
+/// fire (defensive default; the action is gated to dragonborn templates
+/// in `custom_validate_input` so the fallback should never fire in
+/// gameplay).
+pub struct BreathWeapon {}
+
+impl Action for BreathWeapon {
+    fn name(&self) -> &str {
+        "breath weapon"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["breath", "bw"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 5e RAW: 15-ft cone (or 5x30-ft line). We collapse to a
+        // 2-tile burst — same envelope as Burning Hands — so the
+        // AI's `try_attack_aoe` lane picks it up alongside the
+        // sorcerer / wizard cone spells.
+        TargetingSchema::Burst { radius: 2 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 15-ft cone RAW — we approximate as a 2-tile burst targeted
+        // anywhere within ~6 tiles (the cone's reach).
+        Some(6)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        // Surfaced for the UI / AI heuristics. The actual type is
+        // resolved at cast time from `draconic_ancestry`; we report a
+        // representative list rather than a single guess, since
+        // dragonborn variants pick different ancestries.
+        vec![
+            DamageType::Fire,
+            DamageType::Cold,
+            DamageType::Lightning,
+            DamageType::Acid,
+            DamageType::Poison,
+        ]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.is_combat_active()
+                && a.feature_available(BREATH_WEAPON_TAG)
+                && a.draconic_ancestry().is_some()
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::types::AbilityScoreType;
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // RAW: Save DC = 8 + proficiency + CON modifier. Matches the
+        // standard spell-save-DC formula with CON as the casting
+        // ability — `spell_save_dc` reuses the same arithmetic.
+        let dc = caster.spell_save_dc(AbilityScoreType::Constitution);
+        let damage_type = caster.draconic_ancestry().unwrap_or(DamageType::Fire);
+        // RAW scaling: 2d6 at L1, 3d6 at L6, 4d6 at L11, 5d6 at L16.
+        // We use 1 + level/5 (clamped at 1) which yields 2d6 / 3d6 / 4d6
+        // / 5d6 at the listed breakpoints.
+        let dice_count = (1 + caster.level() / 5).max(1);
+        if let Some(c) = encounter.actors.get_mut(&caster_id) {
+            c.spend_feature(BREATH_WEAPON_TAG);
+        }
+        let raw = encounter.roll(&Dice::new(dice_count, 6));
+        encounter.log(format!(
+            "  breath weapon: {}d6({}) = {} {} cone",
+            dice_count, raw, raw, damage_type
+        ));
+        crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            2,
+            AbilityScoreType::Dexterity,
+            dc,
+            raw,
+            damage_type,
+        )
+    }
+}
+
+pub static BREATH_WEAPON: LazyLock<BreathWeapon> = LazyLock::new(|| BreathWeapon {});

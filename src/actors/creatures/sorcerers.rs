@@ -208,6 +208,11 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // engine reads the EmpoweredSpelling condition at the damage-roll
     // chokepoint (`EncounterInstance::roll_empowered`).
     actions.push(&*crate::actions::metamagic::EMPOWERED_SPELL);
+    // 5e Sorcerer Metamagic — Quickened Spell. Burns 2 sorcery points
+    // + a Bonus Action to gain an extra Action this turn (modeling the
+    // RAW "cast a 1-action spell as a bonus action" transform via the
+    // simpler action-economy trade).
+    actions.push(&*crate::actions::metamagic::QUICKENED_SPELL);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.
@@ -264,6 +269,8 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         has_aura_of_courage: false,
         has_savage_attacks: false,
         has_dwarven_resilience: false,
+        has_gnome_cunning: false,
+        draconic_ancestry: None,
         // 5e Sorcerer Sorcery Points: 2 + level points RAW. We size to
         // 6 here (rough level-6 cap; the CR-4 template sits a bit above
         // strictly RAW levels). Enough to fuel several Empowered Spells

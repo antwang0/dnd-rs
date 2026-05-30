@@ -471,7 +471,7 @@ fn neutral_burst_save_only(
 /// save.passed() { raw / 2 } else { raw };` shape used by ~6 single-
 /// target save-or-half spells (Hellish Rebuke, Mind Whip, Hellfire
 /// Orb, the Smite spells, etc.) into one chokepoint.
-fn save_for_half_damage(
+pub(crate) fn save_for_half_damage(
     encounter: &mut EncounterInstance,
     target_id: usize,
     save_ability: AbilityScoreType,

@@ -76,6 +76,8 @@ pub static GELATINOUS_CUBE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         has_aura_of_courage: false,
         has_savage_attacks: false,
         has_dwarven_resilience: false,
+        has_gnome_cunning: false,
+        draconic_ancestry: None,
         sorcery_points: 0,
     }
 });

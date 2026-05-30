@@ -93,6 +93,8 @@ pub static DWARF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 5e Dwarven Resilience: advantage on saves vs poison AND
         // resistance to poison damage. The single flag drives both halves.
         has_dwarven_resilience: true,
+        has_gnome_cunning: false,
+        draconic_ancestry: None,
         sorcery_points: 0,
     }
 });

@@ -1,4 +1,7 @@
 pub mod aboleths;
+pub mod dragonborn;
+pub mod gnomes;
+pub mod tieflings;
 pub mod air_elementals;
 pub mod ankhegs;
 pub mod animated_armors;

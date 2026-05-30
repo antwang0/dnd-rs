@@ -1170,6 +1170,24 @@ impl Condition {
                 | Condition::Dominated
         )
     }
+
+    /// True if the holder auto-fails STR and DEX saving throws.
+    /// 5e Paralyzed / Stunned / Petrified / Unconscious / Asleep all
+    /// share this clause: a creature physically locked out of the
+    /// reflexive / strength response auto-fails the saves that test
+    /// those abilities. Centralized so new "physically locked"
+    /// conditions can opt in with a one-line change rather than a
+    /// re-edit of `EncounterInstance::auto_fail_save`.
+    pub fn auto_fails_str_dex_saves(&self) -> bool {
+        matches!(
+            self,
+            Condition::Paralyzed
+                | Condition::Stunned
+                | Condition::Petrified
+                | Condition::Unconscious
+                | Condition::Asleep
+        )
+    }
 }
 
 impl std::fmt::Display for Condition {
