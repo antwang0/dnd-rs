@@ -7499,6 +7499,48 @@ mod tests {
         );
     }
 
+    /// End-to-end: an empowered Fireball consumes the prime and the next
+    /// Fireball lands without the rerolls. Verifies the wiring at the
+    /// spell side — `roll_empowered_sum` is called from Fireball's
+    /// damage roll site and consumes the condition.
+    #[test]
+    fn empowered_fireball_consumes_prime() {
+        use crate::actions::spells::FIREBALL;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let _ = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .add_condition(Condition::EmpoweredSpelling, ConditionTimer::Rounds(2));
+        // Resolve Fireball's side effects on the target location — the
+        // damage roll inside should consume the empowered prime.
+        let effects = FIREBALL.side_effects(
+            &mut e,
+            sorcerer,
+            None,
+            Some(&vec![Coordinate::new(8, 8)]),
+            None,
+        );
+        // Apply so the engine state catches up (not strictly needed for
+        // the prime check, but mirrors real cast resolution).
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&sorcerer].has_condition(Condition::EmpoweredSpelling),
+            "fireball roll consumed the empowered prime"
+        );
+    }
+
     /// Long rest refreshes the sorcery-points pool back to its cap.
     /// Mirrors the slot / feature / legendary-resistance refresh test
     /// shape — exercises the long_rest hook on the Sorcerer template

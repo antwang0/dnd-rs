@@ -432,6 +432,17 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3q'. Empowered Spell — sorcerer bonus-action metamagic prime.
+        //      Burns 1 sorcery point to reroll low dice on the next
+        //      spell damage roll. Fire when an enemy sits in spell
+        //      range (a generous 24 tiles — covers Fireball at 60 ft,
+        //      Cone of Cold at 60 ft, Magic Missile at 120 ft) so the
+        //      prime feeds an actual blast this turn. Skipped if the
+        //      sorcerer is already primed.
+        if let Some(aei) = try_empowered_spell(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3r. Telekinetic — wizard / sorcerer / warlock bonus-action
         //     cantrip shove. Pulls an enemy 5 ft closer on a failed STR
         //     save; no slot. Fire when an enemy is just out of reach for
@@ -1182,6 +1193,34 @@ fn try_shillelagh(
         return None;
     }
     try_self_action(encounter, actor_id, "shillelagh")
+}
+
+/// Empowered Spell — sorcerer bonus-action metamagic prime. Fires when
+/// the caster has sorcery points available AND a combat-active enemy
+/// sits within typical spell-attack / AoE range (24 tiles, 60 ft). Gate
+/// matches the action's own validator — the action no-ops if the prime
+/// is already up, so the AI check just keeps us off the action search
+/// path when nothing's there to blast. Bonus action; non-conflicting
+/// with the sorcerer's main-action damage spell on the same turn.
+fn try_empowered_spell(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.sorcery_points() == 0 {
+        return None;
+    }
+    if actor.has_condition(Condition::EmpoweredSpelling) {
+        return None;
+    }
+    // Range matches the longest sorcerer blaster spell — Magic Missile
+    // is 120 ft (48 tiles), Fireball is 150 ft (60 tiles). We pick 24
+    // as the engagement gate (Fireball / Cone of Cold's typical pin
+    // distance) so the metamagic doesn't burn in an empty room.
+    if !any_enemy_within(encounter, actor_id, 24) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "empowered spell")
 }
 
 /// Telekinetic — bonus-action cantrip shove. Pulls a single enemy 5 ft

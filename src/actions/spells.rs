@@ -1269,7 +1269,7 @@ impl Action for MagicMissile {
         };
         // 5e upcasting: 3 darts at level 1, +1 dart per level above 1.
         let lvl = crate::engine::action_overrides::cast_level(overrides, 1);
-        let n_darts = (3 + (lvl - 1)) as u32;
+        let n_darts = 3 + (lvl - 1);
         // Roll all dart dice in one call so Empowered Spell metamagic
         // can reroll across the whole spell's pool (RAW: the spell is
         // the unit, not each dart). Non-empowered casters get an
