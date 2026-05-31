@@ -29,11 +29,18 @@ pub fn resolve_burst_save_damage(
     damage_type: DamageType,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
     let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+    // 5e Sorcerer Careful Spell metamagic: protected allies in the burst
+    // auto-pass the save AND take 0 damage. Resolved up-front so the loop
+    // below can skip them cleanly; the prime is consumed inside the helper.
+    let shielded = encounter.careful_spell_shielded(caster_id, center, radius);
     // `neutral_burst_targets` shares the "caster-excluded, combat-active,
     // footprint in radius" filter with the rest of the engine — folding
     // it here keeps the caster-exclusion / footprint-Chebyshev / sorted-
     // ids invariant in one place instead of re-inlining the loop.
     for target_id in encounter.neutral_burst_targets(caster_id, center, radius) {
+        if shielded.contains(&target_id) {
+            continue;
+        }
         // Route through the caster-aware save helper so the 5e Sorcerer
         // Heightened Spell metamagic forces disadvantage on the *first*
         // save in the burst (RAW). Subsequent targets in the same cast
@@ -318,11 +325,13 @@ pub trait Action {
                 };
                 // Lunging Attack and similar reach-extending primes add
                 // tiles via `extra_melee_reach`, which itself gates the
-                // bonus to melee envelopes so ranged actions are unaffected.
+                // bonus to melee envelopes so ranged actions are
+                // unaffected. Distant Spell (sorcerer metamagic) doubles
+                // the reach of ranged-only actions via `extra_spell_reach`.
                 let bonus = encounter
                     .actors
                     .get(&caster_id)
-                    .map(|a| a.extra_melee_reach(reach))
+                    .map(|a| a.extra_melee_reach(reach) + a.extra_spell_reach(reach))
                     .unwrap_or(0);
                 if dist > reach + bonus {
                     return false;
@@ -351,7 +360,14 @@ pub trait Action {
                 let Some(dist) = encounter.footprint_distance_to_point(caster_id, point) else {
                     return false;
                 };
-                if dist > reach {
+                // Distant Spell prime extends the range for ranged-only
+                // actions (point-target AoEs like Fireball, Sleet Storm).
+                let bonus = encounter
+                    .actors
+                    .get(&caster_id)
+                    .map(|a| a.extra_spell_reach(reach))
+                    .unwrap_or(0);
+                if dist > reach + bonus {
                     return false;
                 }
             }
@@ -418,6 +434,17 @@ pub trait Action {
             // The action became invalid between enqueue and execute (e.g. target died,
             // resource was consumed elsewhere). Skip silently; the engine logs context.
             return Vec::new();
+        }
+        // 5e Sorcerer Distant Spell metamagic: a ranged action burns the
+        // prime as it fires. Gated on reach > 2 so a melee swing or
+        // polearm-reach attack can't consume the prime — matches the
+        // `extra_spell_reach` gate. Consumed here (before side_effects)
+        // so the prime can't double-fire on a multi-target spell or be
+        // observed by the spell's own logic in any surprising way.
+        if let Some(reach) = self.reach_tiles()
+            && reach > 2
+        {
+            encounter.consume_distant_spell(caster_id);
         }
         let mut side_effects = self.side_effects(
             encounter,

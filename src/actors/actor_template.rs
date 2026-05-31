@@ -1369,6 +1369,25 @@ impl ActorInstance {
         bonus
     }
 
+    /// Bonus tile-gap reach added by active conditions to the action's
+    /// declared `reach_tiles()` for *ranged* actions (5e Sorcerer Distant
+    /// Spell metamagic). RAW: "When you cast a spell that has a range of
+    /// 5 feet or greater, you can spend 1 sorcery point to double the
+    /// range of the spell." We model this by returning `base_reach` as
+    /// the bonus — adding the base to itself doubles it. Gated to ranged
+    /// envelopes (base_reach > 2) so a melee weapon swing or polearm
+    /// reach attack can't burn the prime — the LungingAttacking branch
+    /// in `extra_melee_reach` covers those.
+    pub fn extra_spell_reach(&self, base_reach: isize) -> isize {
+        if !self.has_condition(Condition::DistantSpelling) {
+            return 0;
+        }
+        if base_reach <= 2 {
+            return 0;
+        }
+        base_reach
+    }
+
     pub fn can_consume_resource(&self, resource: Resource) -> bool {
         let action_blocked = self.is_incapacitated();
         match resource {

@@ -23,11 +23,13 @@ use std::sync::LazyLock;
 /// dice that came up at 1 or 2. The reroll resolves through
 /// `EncounterInstance::roll_empowered` at the damage chokepoint, so
 /// future spells plug in by calling that helper instead of `roll`.
-/// **Quickened Spell** (bonus action + 2 SP → extra Action this turn)
-/// and **Heightened Spell** (bonus action + 3 SP → next save-or-suck
-/// spell forces disadvantage on the first save) extend the metamagic
-/// lane; Twinned Spell remains reserved in `ActionOverride` but isn't
-/// wired yet.
+/// **Quickened Spell** (bonus action + 2 SP → extra Action this turn),
+/// **Heightened Spell** (bonus action + 3 SP → next save-or-suck spell
+/// forces disadvantage on the first save), **Careful Spell** (bonus
+/// action + 1 SP → next AoE shields up to CHA-mod allies from the blast),
+/// and **Distant Spell** (bonus action + 1 SP → next ranged spell has
+/// its reach doubled) extend the metamagic lane; Twinned Spell remains
+/// reserved in `ActionOverride` but isn't wired yet.
 ///
 /// Loadout: Fire Bolt / Ray of Frost / Chill Touch / Acid Splash / Shocking
 /// Grasp cantrips for at-will, Burning Hands / Magic Missile / Shield as
@@ -221,6 +223,18 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // on the first creature that rolls a save against it. Engine reads
     // the prime via `EncounterInstance::roll_save_against_caster`.
     actions.push(&*crate::actions::metamagic::HEIGHTENED_SPELL);
+    // 5e Sorcerer Metamagic — Careful Spell. Burns 1 sorcery point
+    // + a Bonus Action; the next AoE auto-passes saves AND zeroes
+    // damage on up to CHA-mod allies caught in the blast. Engine reads
+    // the prime via `EncounterInstance::careful_spell_shielded`, which
+    // the burst-save chokepoints consult to find protected ids.
+    actions.push(&*crate::actions::metamagic::CAREFUL_SPELL);
+    // 5e Sorcerer Metamagic — Distant Spell. Burns 1 sorcery point
+    // + a Bonus Action; the next ranged spell has its reach doubled.
+    // Engine reads the prime via `ActorInstance::extra_spell_reach()`
+    // which `Action::validate_input` folds into the effective range;
+    // consumed in `Action::execute` on the first ranged action that fires.
+    actions.push(&*crate::actions::metamagic::DISTANT_SPELL);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

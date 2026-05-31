@@ -825,6 +825,28 @@ pub enum Condition {
     /// Tick-down timer (`UntilStartOfNextTurn`) caps an unused prime so
     /// it doesn't dangle across rounds.
     HeightenedSpelling,
+    /// Careful Spell primed (5e Sorcerer Metamagic). The sorcerer has
+    /// spent one sorcery point via the Careful Spell bonus-action prime;
+    /// the next AoE the sorcerer casts spares allies caught in the
+    /// blast — up to CHA-mod of them auto-pass their save AND take no
+    /// damage (RAW: "A chosen creature automatically succeeds on its
+    /// saving throw against the spell, and it takes no damage if it
+    /// would normally take half damage on a successful save"). Read at
+    /// the burst-resolver chokepoints (`burst_save_damage` in spells.rs
+    /// and `resolve_burst_save_damage` in action_template.rs); consumed
+    /// the first time a burst lands. Tick-down timer
+    /// (`UntilStartOfNextTurn`) caps an unused prime.
+    CarefulSpelling,
+    /// Distant Spell primed (5e Sorcerer Metamagic). The sorcerer has
+    /// spent one sorcery point via the Distant Spell bonus-action prime;
+    /// the next ranged spell they cast has its range doubled (or, for a
+    /// touch-range spell, jumps to 30 ft / 12 tiles per RAW; we collapse
+    /// to "doubled reach with a floor of 12 if the base reach is 1").
+    /// Engine reads via `ActorInstance::extra_spell_reach()` which the
+    /// action_template's reach check folds into the effective range.
+    /// Consumed in `Action::execute` after a ranged action validates and
+    /// fires (gated to reach > 1 so a melee swing can't burn the prime).
+    DistantSpelling,
 }
 
 impl Condition {
@@ -949,6 +971,8 @@ impl Condition {
             Condition::LungingAttacking => "primed to lunge",
             Condition::EmpoweredSpelling => "primed with empowered spell",
             Condition::HeightenedSpelling => "primed with heightened spell",
+            Condition::CarefulSpelling => "primed with careful spell",
+            Condition::DistantSpelling => "primed with distant spell",
         }
     }
 
@@ -1039,6 +1063,8 @@ impl Condition {
                 | Condition::LungingAttacking
                 | Condition::EmpoweredSpelling
                 | Condition::HeightenedSpelling
+                | Condition::CarefulSpelling
+                | Condition::DistantSpelling
         )
     }
 

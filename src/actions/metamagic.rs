@@ -94,11 +94,7 @@ impl Action for EmpoweredSpell {
         // Gate on combat-active + non-zero sorcery pool. The condition
         // itself doesn't stack (re-priming would just re-install with
         // the same timer), but blocking re-cast saves the SP.
-        encounter.actors.get(&caster_id).is_some_and(|a| {
-            a.is_combat_active()
-                && a.sorcery_points() >= 1
-                && !a.has_condition(Condition::EmpoweredSpelling)
-        })
+        validate_metamagic_prime(encounter, caster_id, 1, Some(Condition::EmpoweredSpelling))
     }
 
     fn side_effects(
@@ -191,11 +187,10 @@ impl Action for QuickenedSpell {
     ) -> bool {
         // 2 SP cost for Quickened per RAW. We check the SP pool here
         // because Resource doesn't have a `SorceryPoint` variant —
-        // mirrors the Empowered Spell gating pattern.
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_combat_active() && a.sorcery_points() >= 2)
+        // mirrors the Empowered Spell gating pattern. No condition gate:
+        // a sorcerer can re-cast Quickened freely each turn (the 2 SP
+        // cost is the rate limit).
+        validate_metamagic_prime(encounter, caster_id, 2, None)
     }
 
     fn side_effects(
@@ -279,11 +274,7 @@ impl Action for HeightenedSpell {
     ) -> bool {
         // 3 SP cost per RAW; gated on combat-active + non-stacking prime.
         // Mirrors the Empowered / Quickened pattern of eager validation.
-        encounter.actors.get(&caster_id).is_some_and(|a| {
-            a.is_combat_active()
-                && a.sorcery_points() >= 3
-                && !a.has_condition(Condition::HeightenedSpelling)
-        })
+        validate_metamagic_prime(encounter, caster_id, 3, Some(Condition::HeightenedSpelling))
     }
 
     fn side_effects(
@@ -306,3 +297,180 @@ impl Action for HeightenedSpell {
 }
 
 pub static HEIGHTENED_SPELL: LazyLock<HeightenedSpell> = LazyLock::new(|| HeightenedSpell {});
+
+/// 5e Sorcerer **Careful Spell** metamagic. Bonus action — spend one
+/// sorcery point to prime the next AoE: up to CHA-mod allies caught in
+/// the blast auto-pass their save AND take no damage (RAW). Engine reads
+/// the prime via `EncounterInstance::careful_spell_shielded`, which the
+/// burst-save chokepoints (`resolve_burst_save_damage` and
+/// `burst_save_damage`) consult to find the ids to skip; the prime is
+/// consumed the first time the shield list is non-empty (RAW: "you
+/// spend 1 sorcery point and choose a number of those creatures up to
+/// your Charisma modifier" — so the prime fires the moment allies are
+/// shielded). Self-target prime mirroring Empowered / Heightened in
+/// every other respect.
+pub struct CarefulSpell {}
+
+impl Action for CarefulSpell {
+    fn name(&self) -> &str {
+        "careful spell"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["careful", "cs", "cspell"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        validate_metamagic_prime(encounter, caster_id, 1, Some(Condition::CarefulSpelling))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        spend_and_log(
+            encounter,
+            caster_id,
+            1,
+            "weaves the next AoE to spare allies",
+        );
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::CarefulSpelling,
+            timer: ConditionTimer::UntilStartOfNextTurn,
+        })]
+    }
+}
+
+pub static CAREFUL_SPELL: LazyLock<CarefulSpell> = LazyLock::new(|| CarefulSpell {});
+
+/// 5e Sorcerer **Distant Spell** metamagic. Bonus action — spend one
+/// sorcery point to prime the next ranged spell: its reach doubles
+/// (RAW: "When you cast a spell that has a range of 5 feet or greater,
+/// you can spend 1 sorcery point to double the range of the spell").
+/// Engine reads the prime via `ActorInstance::extra_spell_reach()`
+/// which the action_template's reach check folds into the effective
+/// range; the prime is consumed inside `Action::execute` on the first
+/// ranged action that fires (reach > 2 gate, so a melee swing can't
+/// burn the prime).
+pub struct DistantSpell {}
+
+impl Action for DistantSpell {
+    fn name(&self) -> &str {
+        "distant spell"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["distant", "ds", "dspell"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        validate_metamagic_prime(encounter, caster_id, 1, Some(Condition::DistantSpelling))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        spend_and_log(
+            encounter,
+            caster_id,
+            1,
+            "stretches the next spell's range with metamagic",
+        );
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::DistantSpelling,
+            timer: ConditionTimer::UntilStartOfNextTurn,
+        })]
+    }
+}
+
+pub static DISTANT_SPELL: LazyLock<DistantSpell> = LazyLock::new(|| DistantSpell {});
+
+/// Shared validator for sorcerer metamagic primes: every prime gates on
+/// combat-active + sufficient sorcery points + (optionally) the prime
+/// condition not already being installed (to avoid re-priming + double-
+/// spending SP). The condition gate is `None` for primes that can be
+/// re-cast freely each turn (e.g. Quickened, where re-paying 2 SP for
+/// another extra Action is RAW-valid).
+fn validate_metamagic_prime(
+    encounter: &EncounterInstance,
+    caster_id: usize,
+    sp_cost: u32,
+    no_stack_condition: Option<Condition>,
+) -> bool {
+    encounter.actors.get(&caster_id).is_some_and(|a| {
+        a.is_combat_active()
+            && a.sorcery_points() >= sp_cost
+            && !no_stack_condition.is_some_and(|c| a.has_condition(c))
+    })
+}

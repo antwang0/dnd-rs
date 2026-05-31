@@ -327,10 +327,33 @@ fn burst_save_damage(
         "  {}: {}({}) shared {:?}",
         action_name, dice, raw, damage_type
     ));
+    // 5e Sorcerer Careful Spell — pre-compute the shielded ally set so
+    // we can skip protected ids in the per-target loop below. Only
+    // meaningful for Neutral bursts (Enemy bursts already exclude
+    // allies); the helper returns empty when no prime is up.
+    let shielded = match targets {
+        BurstTargets::Enemy => std::collections::HashSet::new(),
+        BurstTargets::Neutral => encounter.careful_spell_shielded(caster_id, point, radius),
+    };
     let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
     let mut saves: Vec<(usize, bool)> = Vec::new();
     for tid in targets.ids(encounter, caster_id, point, radius) {
-        let save = encounter.roll_save(tid, save_ability, dc);
+        if shielded.contains(&tid) {
+            // Protected allies auto-pass with 0 damage; record the save
+            // so callers that key per-target riders off the saves vec
+            // (Tidal Wave Prone, Earth Tremor Prone, etc.) see the ally
+            // as "passed" and skip their rider too.
+            saves.push((tid, true));
+            continue;
+        }
+        // Route through the caster-aware save helper so the 5e Sorcerer
+        // Heightened Spell metamagic forces disadvantage on the first
+        // save in the burst (RAW). Subsequent targets fall through to
+        // the normal save path — the helper consumes the prime on its
+        // first call. Previously this site used `roll_save` directly,
+        // which meant Heightened Spell silently bypassed ~15 burst
+        // spells that route through `burst_save_damage`.
+        let save = encounter.roll_save_against_caster(tid, save_ability, dc, caster_id);
         let passed = save.passed();
         let has_evasion = save_ability == AbilityScoreType::Dexterity
             && encounter

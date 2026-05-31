@@ -2581,6 +2581,76 @@ impl EncounterInstance {
         }
     }
 
+    /// 5e Sorcerer Distant Spell metamagic — consume the prime on the
+    /// caster (if present) and log it. Called from `Action::execute` for
+    /// any ranged action (reach > 2) right after validation. Idempotent
+    /// when no prime is up — returns silently. Mirrors the consume-on-
+    /// trigger pattern used by Empowered / Heightened Spell at the
+    /// roll-site chokepoints (`roll_empowered`, `roll_save_against_caster`).
+    pub fn consume_distant_spell(&mut self, caster_id: usize) {
+        let Some(caster) = self.actors.get_mut(&caster_id) else {
+            return;
+        };
+        if !caster.has_condition(Condition::DistantSpelling) {
+            return;
+        }
+        let name = caster.name().to_string();
+        caster.remove_condition(Condition::DistantSpelling);
+        self.log(format!(
+            "  distant spell: {} unfurls the range bonus", name
+        ));
+    }
+
+    /// 5e Sorcerer Careful Spell metamagic — if the caster has the prime
+    /// up, return the set of ally ids inside `(point, radius)` that should
+    /// be spared from the burst (up to CHA-mod allies, chosen by ascending
+    /// id for determinism). The prime is consumed iff any ally is actually
+    /// shielded — RAW: "you choose a number of those creatures up to your
+    /// Charisma modifier (minimum of one creature)." On an empty shield
+    /// list we leave the prime up so the sorcerer's next AoE still
+    /// benefits (mirrors the Empowered "consume on damage roll, not on
+    /// every spell cast" pattern).
+    ///
+    /// Called from the burst-save chokepoints to determine which ids to
+    /// skip; protected allies don't roll a save and don't take damage.
+    pub fn careful_spell_shielded(
+        &mut self,
+        caster_id: usize,
+        point: Coordinate,
+        radius: isize,
+    ) -> std::collections::HashSet<usize> {
+        use std::collections::HashSet;
+        let primed = self
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_condition(Condition::CarefulSpelling));
+        if !primed {
+            return HashSet::new();
+        }
+        let (cha_mod, caster_name) = match self.actors.get(&caster_id) {
+            Some(a) => (
+                a.ability_modifier(crate::engine::types::AbilityScoreType::Charisma)
+                    .max(1) as usize,
+                a.name().to_string(),
+            ),
+            None => return HashSet::new(),
+        };
+        let allies = self.ally_burst_targets(caster_id, point, radius);
+        if allies.is_empty() {
+            return HashSet::new();
+        }
+        let shielded: HashSet<usize> = allies.into_iter().take(cha_mod).collect();
+        if let Some(caster) = self.actors.get_mut(&caster_id) {
+            caster.remove_condition(Condition::CarefulSpelling);
+        }
+        self.log(format!(
+            "  careful spell: {} shields {} ally/-ies from the blast",
+            caster_name,
+            shielded.len()
+        ));
+        shielded
+    }
+
     /// 5e Sanctuary: if `target_id` carries the Sanctuary condition, the
     /// attacker (`attacker_id`) makes a one-shot WIS save. On fail, the
     /// attack is blocked entirely (caller short-circuits the attack roll
@@ -7932,6 +8002,281 @@ mod tests {
         assert!(
             !e.actors[&sorcerer].has_condition(Condition::HeightenedSpelling),
             "hold person save consumed the heightened prime"
+        );
+    }
+
+    /// End-to-end regression: a Fireball cast by a sorcerer with
+    /// Heightened Spell primed routes the *first* save through the
+    /// caster-aware helper and consumes the prime. Previously
+    /// `burst_save_damage` in spells.rs used `roll_save` directly,
+    /// silently bypassing the prime for ~15 burst spells. The fix
+    /// promoted the call to `roll_save_against_caster`.
+    #[test]
+    fn heightened_fireball_consumes_prime_via_burst_save() {
+        use crate::actions::spells::FIREBALL;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let _ = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .add_condition(Condition::HeightenedSpelling, ConditionTimer::Rounds(2));
+        let effects = FIREBALL.side_effects(
+            &mut e,
+            sorcerer,
+            None,
+            Some(&vec![Coordinate::new(8, 8)]),
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&sorcerer].has_condition(Condition::HeightenedSpelling),
+            "fireball save consumed the heightened prime"
+        );
+    }
+
+    /// Careful Spell metamagic: costs 1 SP + a Bonus Action and installs
+    /// the `CarefulSpelling` prime on the caster. The first AoE that
+    /// catches an ally consumes the prime and shields up to CHA-mod
+    /// allies from the blast.
+    #[test]
+    fn careful_spell_spends_one_sp_and_primes() {
+        use crate::actions::metamagic::CAREFUL_SPELL;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.give_resource(crate::engine::side_effects::Resource::BonusAction);
+        let sp_before = actor.sorcery_points();
+        assert!(sp_before >= 1);
+
+        let effects = CAREFUL_SPELL.execute(&mut e, sorcerer, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let after = e.actors.get(&sorcerer).unwrap();
+        assert_eq!(after.sorcery_points(), sp_before - 1, "1 SP spent");
+        assert!(
+            after.has_condition(Condition::CarefulSpelling),
+            "careful spell prime is installed"
+        );
+    }
+
+    /// `careful_spell_shielded` consumes the prime and returns ally ids
+    /// in the burst when the caster has Careful Spell up. Without the
+    /// prime it returns empty. The shield cap is the caster's CHA mod.
+    #[test]
+    fn careful_spell_shields_allies_in_burst() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Three allies clustered near a point so the burst catches them all.
+        let a1 = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 8), 0, 0)
+            .unwrap();
+        let a2 = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(9, 9), 0, 1)
+            .unwrap();
+        let _a3 = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 10), 0, 2)
+            .unwrap();
+        // No prime → empty shield list.
+        let none = e.careful_spell_shielded(sorcerer, Coordinate::new(9, 9), 3);
+        assert!(none.is_empty(), "no prime → no shield");
+        assert!(
+            !e.actors[&sorcerer].has_condition(Condition::CarefulSpelling),
+            "no prime to consume"
+        );
+
+        // Install prime + reverify shield list is non-empty.
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .add_condition(Condition::CarefulSpelling, ConditionTimer::Rounds(2));
+        let shielded = e.careful_spell_shielded(sorcerer, Coordinate::new(9, 9), 3);
+        assert!(
+            !shielded.is_empty(),
+            "primed careful spell shields at least one ally in the burst"
+        );
+        // Sorcerer template ships CHA 18 (mod +4); CHA-mod cap easily
+        // covers all three allies.
+        assert!(shielded.contains(&a1));
+        assert!(shielded.contains(&a2));
+        // Prime consumed by the shield resolution.
+        assert!(
+            !e.actors[&sorcerer].has_condition(Condition::CarefulSpelling),
+            "shielding consumed the prime"
+        );
+    }
+
+    /// End-to-end: a Careful Spell + Fireball cast spares the ally caught
+    /// in the burst — the ally takes zero damage while the enemy still
+    /// rolls a save and takes the blast. The prime is consumed by the
+    /// cast.
+    #[test]
+    fn careful_fireball_spares_allies() {
+        use crate::actions::spells::FIREBALL;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 8), 0, 0)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(9, 9), 1, 0)
+            .unwrap();
+        let ally_hp_before = e.actors[&ally].hitpoints();
+        let enemy_hp_before = e.actors[&enemy].hitpoints();
+
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .add_condition(Condition::CarefulSpelling, ConditionTimer::Rounds(2));
+        let effects = FIREBALL.side_effects(
+            &mut e,
+            sorcerer,
+            None,
+            Some(&vec![Coordinate::new(8, 8)]),
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let ally_hp_after = e.actors[&ally].hitpoints();
+        let enemy_hp_after = e.actors[&enemy].hitpoints();
+
+        // Ally completely shielded; enemy still takes damage.
+        assert_eq!(
+            ally_hp_after, ally_hp_before,
+            "careful spell zeros ally damage"
+        );
+        assert!(
+            enemy_hp_after < enemy_hp_before,
+            "enemy still takes the blast"
+        );
+        // Prime consumed by the Fireball cast.
+        assert!(
+            !e.actors[&sorcerer].has_condition(Condition::CarefulSpelling),
+            "fireball consumed the careful spell prime"
+        );
+    }
+
+    /// Distant Spell metamagic: costs 1 SP + a Bonus Action and installs
+    /// the `DistantSpelling` prime on the caster. The first ranged action
+    /// (reach > 2) consumes the prime and benefits from doubled reach.
+    #[test]
+    fn distant_spell_spends_one_sp_and_primes() {
+        use crate::actions::metamagic::DISTANT_SPELL;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.give_resource(crate::engine::side_effects::Resource::BonusAction);
+        let sp_before = actor.sorcery_points();
+        assert!(sp_before >= 1);
+
+        let effects = DISTANT_SPELL.execute(&mut e, sorcerer, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let after = e.actors.get(&sorcerer).unwrap();
+        assert_eq!(after.sorcery_points(), sp_before - 1, "1 SP spent");
+        assert!(
+            after.has_condition(Condition::DistantSpelling),
+            "distant spell prime is installed"
+        );
+    }
+
+    /// `extra_spell_reach` returns the base reach as a bonus (doubling
+    /// the effective range) when DistantSpelling is up and base reach is
+    /// > 2 (ranged); melee / touch reach (<= 2) gets no bonus.
+    #[test]
+    fn extra_spell_reach_doubles_only_ranged() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // No prime → no bonus.
+        let actor = e.actors.get(&sorcerer).unwrap();
+        assert_eq!(actor.extra_spell_reach(48), 0, "no prime → no bonus");
+        assert_eq!(actor.extra_spell_reach(1), 0, "no prime → no bonus on melee");
+
+        // Install prime.
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .add_condition(Condition::DistantSpelling, ConditionTimer::Rounds(2));
+        let primed = e.actors.get(&sorcerer).unwrap();
+        // Melee weapons (reach 1) get nothing.
+        assert_eq!(primed.extra_spell_reach(1), 0, "melee gets no bonus");
+        // Polearm reach (2) gets nothing — extra_melee_reach handles those.
+        assert_eq!(primed.extra_spell_reach(2), 0, "polearm reach unchanged");
+        // Ranged spells double via the bonus.
+        assert_eq!(primed.extra_spell_reach(24), 24, "60 ft → 120 ft");
+        assert_eq!(primed.extra_spell_reach(48), 48, "120 ft → 240 ft");
+    }
+
+    /// `consume_distant_spell` is a no-op when no prime is up, removes
+    /// the condition when one is, and emits a log line in the latter
+    /// case. Mirrors the consume-on-trigger pattern used by Empowered /
+    /// Heightened Spell.
+    #[test]
+    fn consume_distant_spell_clears_prime_and_logs() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // No-op when no prime is up.
+        let log_len_before = e.messages().len();
+        e.consume_distant_spell(sorcerer);
+        assert_eq!(
+            e.messages().len(),
+            log_len_before,
+            "no log line when nothing to consume"
+        );
+
+        // Install + consume.
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .add_condition(Condition::DistantSpelling, ConditionTimer::Rounds(2));
+        e.consume_distant_spell(sorcerer);
+        assert!(
+            !e.actors[&sorcerer].has_condition(Condition::DistantSpelling),
+            "prime consumed"
         );
     }
 

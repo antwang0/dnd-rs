@@ -455,6 +455,26 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3q'''. Careful Spell — sorcerer bonus-action metamagic prime.
+        //        Burns 1 sorcery point so the next AoE can spare up to
+        //        CHA-mod allies caught in the blast. Fires only when an
+        //        ally is sitting close enough to a live enemy that a
+        //        typical AoE between them would catch the ally too —
+        //        without that overlap the prime never pays off.
+        if let Some(aei) = try_careful_spell(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3q''''. Distant Spell — sorcerer bonus-action metamagic prime.
+        //         Burns 1 sorcery point to double the range of the next
+        //         ranged spell. Fires only when the nearest enemy sits
+        //         in the 13–24 tile band where doubled reach actually
+        //         flips a "can't hit" into a hit; closer enemies don't
+        //         need the bump and farther ones stay unreachable.
+        if let Some(aei) = try_distant_spell(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3r. Telekinetic — wizard / sorcerer / warlock bonus-action
         //     cantrip shove. Pulls an enemy 5 ft closer on a failed STR
         //     save; no slot. Fire when an enemy is just out of reach for
@@ -1294,6 +1314,115 @@ fn try_heightened_spell(
         return None;
     }
     try_self_action(encounter, actor_id, "heightened spell")
+}
+
+/// Careful Spell — sorcerer bonus-action metamagic prime. Burns 1
+/// sorcery point to let up to CHA-mod allies auto-pass + take 0 damage
+/// on the next AoE. Fire when:
+/// - The sorcerer has SP available and the prime isn't already up.
+/// - The sorcerer has a Burst-targeting harmful action in their kit (a
+///   prime that never feeds a blast is wasted SP).
+/// - At least one ally (the sorcerer themselves counts) sits within
+///   ~5 tiles of a combat-active enemy — close enough that a typical
+///   AoE between caster and target would catch both. Tighter than the
+///   Heightened Spell gate (24 tiles) because Careful Spell only
+///   pays off when an AoE would otherwise eat a teammate.
+fn try_careful_spell(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.sorcery_points() == 0 {
+        return None;
+    }
+    if actor.has_condition(Condition::CarefulSpelling) {
+        return None;
+    }
+    // Only fire when the caster owns at least one burst-targeting AoE
+    // — otherwise the prime never engages and the SP is wasted.
+    let has_aoe = actor.actions.iter().any(|a| {
+        a.is_harmful() && matches!(a.targeting_schema(), TargetingSchema::Burst { .. })
+    });
+    if !has_aoe {
+        return None;
+    }
+    let my_team = actor.team();
+    // Check for an ally close to a live enemy — the only situation where
+    // Careful Spell pays off. 5 tiles ≈ Fireball's 4-tile radius + slop.
+    let actors: Vec<_> = encounter.actors.iter().collect();
+    let mut close_pair = false;
+    for (ally_id, ally) in &actors {
+        if !ally.is_combat_active() || ally.team() != my_team {
+            continue;
+        }
+        for (enemy_id, enemy) in &actors {
+            if !enemy.is_combat_active() || enemy.team() == my_team {
+                continue;
+            }
+            if ally_id == enemy_id {
+                continue;
+            }
+            let dist = footprint_chebyshev(
+                ally.location(),
+                get_tiles_from_size(ally.size()),
+                enemy.location(),
+                get_tiles_from_size(enemy.size()),
+            );
+            if dist <= 5 {
+                close_pair = true;
+                break;
+            }
+        }
+        if close_pair {
+            break;
+        }
+    }
+    if !close_pair {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "careful spell")
+}
+
+/// Distant Spell — sorcerer bonus-action metamagic prime. Burns 1
+/// sorcery point to double the range of the next ranged spell. Fire
+/// when:
+/// - The sorcerer has SP available and the prime isn't already up.
+/// - The closest visible enemy sits *beyond* the typical reach of the
+///   sorcerer's mid-range arsenal (≈ 12 tiles / 30 ft) but inside the
+///   doubled-reach envelope (≈ 24 tiles). Closer enemies don't need
+///   the bonus — the SP would be wasted; enemies farther than 24
+///   tiles aren't reachable even with the prime.
+fn try_distant_spell(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.sorcery_points() == 0 {
+        return None;
+    }
+    if actor.has_condition(Condition::DistantSpelling) {
+        return None;
+    }
+    let my_team = actor.team();
+    let my_loc = actor.location();
+    let my_size = get_tiles_from_size(actor.size());
+    let mut nearest: Option<isize> = None;
+    for (id, a) in encounter.actors.iter() {
+        if *id == actor_id || a.team() == my_team || !a.is_combat_active() {
+            continue;
+        }
+        let dist = footprint_chebyshev(my_loc, my_size, a.location(), get_tiles_from_size(a.size()));
+        if nearest.is_none_or(|d| dist < d) {
+            nearest = Some(dist);
+        }
+    }
+    // Only fire if the nearest enemy is in the 13..=24 tile band where
+    // the prime actually flips a reach decision (closer enemies don't
+    // need it; farther are unreachable even doubled).
+    if !nearest.is_some_and(|d| (13..=24).contains(&d)) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "distant spell")
 }
 
 /// Telekinetic — bonus-action cantrip shove. Pulls a single enemy 5 ft
@@ -2572,8 +2701,24 @@ fn try_attack_aoe(
             // Count combat-active actors in the radius. Friendly fire
             // disqualifies the candidate entirely — we don't damage our
             // own side. Self also counts as an ally.
+            //
+            // 5e Sorcerer Careful Spell exception: if the caster has the
+            // CarefulSpelling prime up, allies inside the radius can be
+            // shielded — up to CHA-mod of them (the caster themselves
+            // included). When the ally count fits the shield cap, we
+            // tolerate the "friendly fire" and let the burst chokepoint
+            // consume the prime + skip those ids.
+            let careful_capacity = if actor.has_condition(Condition::CarefulSpelling) {
+                Some(
+                    actor
+                        .ability_modifier(crate::engine::types::AbilityScoreType::Charisma)
+                        .max(1) as usize,
+                )
+            } else {
+                None
+            };
             let mut enemy_hits = 0usize;
-            let mut friendly_fire = false;
+            let mut ally_hits = 0usize;
             for (id, a) in encounter.actors.iter() {
                 if !a.is_combat_active() {
                     continue;
@@ -2588,12 +2733,16 @@ fn try_attack_aoe(
                     continue;
                 }
                 if *id == actor_id || a.team() == my_team {
-                    friendly_fire = true;
-                    break;
+                    ally_hits += 1;
+                } else {
+                    enemy_hits += 1;
                 }
-                enemy_hits += 1;
             }
-            if friendly_fire || enemy_hits < 2 {
+            let friendly_fire_blocked = match careful_capacity {
+                Some(cap) => ally_hits > cap,
+                None => ally_hits > 0,
+            };
+            if friendly_fire_blocked || enemy_hits < 2 {
                 continue;
             }
             let pick = match &best {
@@ -3073,6 +3222,133 @@ mod tests {
         assert!(
             try_heightened_spell(&e, sorcerer).is_none(),
             "SP below 3 → skip"
+        );
+    }
+
+    /// `try_distant_spell` fires only when the closest enemy sits in the
+    /// 13–24 tile band — too close (≤12 tiles) means the bonus is wasted,
+    /// too far (>24 tiles) means unreachable even doubled. SP gate and
+    /// already-primed gate also fire.
+    #[test]
+    fn distant_spell_ai_gates_on_enemy_range() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::encounter::EncounterInstance;
+        use crate::engine::terrain_gen::TerrainGenParams;
+        use crate::engine::types::Coordinate;
+
+        let tp = TerrainGenParams {
+            width: 40,
+            height: 40,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(11)).unwrap();
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .give_resource(Resource::BonusAction);
+
+        // No enemies → skip.
+        assert!(try_distant_spell(&e, sorcerer).is_none(), "no enemies → skip");
+
+        // Enemy at gap 10 (too close — Fire Bolt already reaches it).
+        let close = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(16, 5), 1, 0)
+            .unwrap();
+        assert!(
+            try_distant_spell(&e, sorcerer).is_none(),
+            "enemy already in range → skip"
+        );
+
+        // Move enemy out to gap 15 (in the 13–24 sweet spot).
+        e.actors
+            .get_mut(&close)
+            .unwrap()
+            .set_location(Coordinate::new(21, 5));
+        assert!(
+            try_distant_spell(&e, sorcerer).is_some(),
+            "enemy in 13-24 tile band → prime fires"
+        );
+
+        // Already primed → skip.
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .add_condition(Condition::DistantSpelling, ConditionTimer::Rounds(2));
+        assert!(
+            try_distant_spell(&e, sorcerer).is_none(),
+            "prime already up → skip"
+        );
+    }
+
+    /// `try_careful_spell` fires when the sorcerer has SP, hasn't primed
+    /// it, owns a Burst-targeting AoE, and has at least one ally close
+    /// to an enemy. Skipped when no ally-near-enemy pair exists.
+    #[test]
+    fn careful_spell_ai_gates_on_ally_proximity_to_enemy() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::engine::encounter::EncounterInstance;
+        use crate::engine::terrain_gen::TerrainGenParams;
+        use crate::engine::types::Coordinate;
+
+        let tp = TerrainGenParams {
+            width: 30,
+            height: 30,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(11)).unwrap();
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .give_resource(Resource::BonusAction);
+
+        // Sorcerer alone — no ally + no enemy → skip.
+        assert!(try_careful_spell(&e, sorcerer).is_none(), "no enemies → skip");
+
+        // Add a distant enemy and a distant ally — no ally-near-enemy
+        // pair, so Careful Spell wouldn't pay off.
+        let _ = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(20, 20), 1, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            try_careful_spell(&e, sorcerer).is_none(),
+            "no ally near enemy → skip"
+        );
+
+        // Move ally adjacent to the enemy — pair now within 5 tiles.
+        e.actors
+            .get_mut(&ally)
+            .unwrap()
+            .set_location(Coordinate::new(19, 19));
+        assert!(
+            try_careful_spell(&e, sorcerer).is_some(),
+            "ally close to enemy → prime fires"
         );
     }
 
