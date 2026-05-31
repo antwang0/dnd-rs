@@ -5,7 +5,12 @@
 #[derive(Clone, PartialEq, Hash, Eq)]
 pub enum ActionOverride {
     /// Bumps the action's target cap by `n`. Reserved for sorcerer
-    /// metamagic (Twinned). Today no action checks for this.
+    /// metamagic (Twinned) and other future "extra-target" hooks. Today
+    /// no action checks for this directly — Twinned Spell is wired
+    /// through `EncounterInstance::consume_twinned_spell` instead so the
+    /// metamagic works on every SingleActor action without per-spell
+    /// opt-in. This variant stays reserved for spells that want explicit
+    /// per-cast target-count control.
     IncreaseTargets(usize),
     /// Cast a leveled spell at a higher slot level than its base. The
     /// spell's `cost()` returns `SpellSlot(cast_level)` and its

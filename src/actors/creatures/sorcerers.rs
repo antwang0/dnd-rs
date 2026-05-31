@@ -27,9 +27,10 @@ use std::sync::LazyLock;
 /// **Heightened Spell** (bonus action + 3 SP → next save-or-suck spell
 /// forces disadvantage on the first save), **Careful Spell** (bonus
 /// action + 1 SP → next AoE shields up to CHA-mod allies from the blast),
-/// and **Distant Spell** (bonus action + 1 SP → next ranged spell has
-/// its reach doubled) extend the metamagic lane; Twinned Spell remains
-/// reserved in `ActionOverride` but isn't wired yet.
+/// **Distant Spell** (bonus action + 1 SP → next ranged spell has its
+/// reach doubled), and **Twinned Spell** (bonus action + max(1, spell_lvl)
+/// SP → next single-target spell re-fires against a second valid target)
+/// extend the metamagic lane.
 ///
 /// Loadout: Fire Bolt / Ray of Frost / Chill Touch / Acid Splash / Shocking
 /// Grasp cantrips for at-will, Burning Hands / Magic Missile / Shield as
@@ -235,6 +236,14 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // which `Action::validate_input` folds into the effective range;
     // consumed in `Action::execute` on the first ranged action that fires.
     actions.push(&*crate::actions::metamagic::DISTANT_SPELL);
+    // 5e Sorcerer Metamagic — Twinned Spell. Burns max(1, spell_level) SP
+    // (paid at the consume site, RAW timing) + a Bonus Action; the next
+    // single-target spell fires a second time against a different valid
+    // target. Engine reads the prime via
+    // `EncounterInstance::consume_twinned_spell` in `Action::execute`,
+    // which picks the second target (nearest enemy / lowest-HP ally) and
+    // re-runs the action's `side_effects` against it.
+    actions.push(&*crate::actions::metamagic::TWINNED_SPELL);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

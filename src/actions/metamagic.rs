@@ -456,6 +456,121 @@ impl Action for DistantSpell {
 
 pub static DISTANT_SPELL: LazyLock<DistantSpell> = LazyLock::new(|| DistantSpell {});
 
+/// 5e Sorcerer **Twinned Spell** metamagic. Bonus action — prime the next
+/// single-target spell to re-fire against a second creature in range.
+///
+/// RAW: cost is `max(1, spell_level)` sorcery points, paid at the moment
+/// the twinned spell fires (not at the prime). Modeled as a self-target
+/// prime that installs the `TwinnedSpelling` condition; the SP debit
+/// lives at the consume site (`EncounterInstance::consume_twinned_spell`)
+/// in `Action::execute`, which sniffs the spell's level off its cost and
+/// pays the SP at fire time. Cantrips cost 1 SP — the default when no
+/// `SpellSlot` cost is present.
+///
+/// The prime itself doesn't debit SP up front (RAW timing) but the
+/// validator does check the pool is non-empty so the prime never opens
+/// with no path to a payoff. If the pool runs short when the spell
+/// fires, the twin quietly fails and the original single-target cast
+/// lands as normal — no SP is wasted on a no-op twin.
+///
+/// Modeled as a self-target prime mirroring the other metamagics; the
+/// consume site lives in `EncounterInstance` so every single-target
+/// action benefits automatically without per-spell wiring.
+///
+/// **Limitation — concentration spells.** Twinning a single-target
+/// concentration spell (Hold Person, Witch Bolt, Hex, Hunter's Mark,
+/// etc.) lands the damage and the immediate condition on both targets,
+/// but only the *original* target keeps the concentration-bound
+/// condition long-term. The twin target's persistent condition gets
+/// scrubbed when the engine resolves the second `StartConcentration`
+/// side-effect, which drops the prior concentration data per RAW
+/// "you can only concentrate on one spell at a time." A faithful merge
+/// would require side-effect downcasting and is out of scope; the
+/// damaging cantrips that dominate Twinned Spell's canonical use
+/// (Fire Bolt, Ray of Frost, Chill Touch, Chromatic Orb, Inflict
+/// Wounds, etc.) are unaffected by this gap.
+pub struct TwinnedSpell {}
+
+impl Action for TwinnedSpell {
+    fn name(&self) -> &str {
+        "twinned spell"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["twin", "ts", "tspell"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // 1 SP floor cost — the prime gate just checks the pool is non-empty
+        // so the sorcerer can't open a Twinned prime with no SP to spend
+        // when the spell fires. Higher-level spells pay the extra SP at
+        // consume time. No-stack on the prime condition: re-priming would
+        // be a no-op and would risk a double-debit at the next consume.
+        validate_metamagic_prime(encounter, caster_id, 1, Some(Condition::TwinnedSpelling))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // Don't spend SP up front for Twinned — RAW pays at the consume
+        // site, where the spell's level is known. The prime install is
+        // cheap (just a condition tag) so a wasted prime only costs a
+        // bonus action, not SP. This deviates from Empowered / Heightened
+        // / Careful / Distant (all of which eagerly debit) but matches
+        // RAW's "pay at cast" timing for Twinned specifically.
+        encounter.log(format!(
+            "{} primes the next spell with twinned metamagic.",
+            encounter
+                .actors
+                .get(&caster_id)
+                .map(|a| a.name().to_string())
+                .unwrap_or_default(),
+        ));
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::TwinnedSpelling,
+            timer: ConditionTimer::UntilStartOfNextTurn,
+        })]
+    }
+}
+
+pub static TWINNED_SPELL: LazyLock<TwinnedSpell> = LazyLock::new(|| TwinnedSpell {});
+
 /// Shared validator for sorcerer metamagic primes: every prime gates on
 /// combat-active + sufficient sorcery points + (optionally) the prime
 /// condition not already being installed (to avoid re-priming + double-

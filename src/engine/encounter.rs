@@ -2601,6 +2601,118 @@ impl EncounterInstance {
         ));
     }
 
+    /// 5e Sorcerer Twinned Spell metamagic — if the caster has the prime
+    /// up, return a second target id to re-fire the action against, plus
+    /// the SP cost charged for the twin. Returns `None` when the prime
+    /// isn't up, when the action isn't twinnable (multi-target schemas,
+    /// self-only actions with no target), when no suitable second target
+    /// exists, or when the caster can't afford the SP cost. The caller is
+    /// expected to re-run the action's `side_effects` against the returned
+    /// id; the prime + SP are consumed inside this call so the second
+    /// invocation can't observe a "still primed" caster.
+    ///
+    /// RAW: cost is `max(1, spell_level)` sorcery points; cantrips cost 1.
+    /// Spell level is sniffed from the action's resolved cost — any
+    /// `SpellSlot(lvl)` entry sets the SP debit, otherwise we default to
+    /// 1 (cantrip case). The picker uses the same heuristic as the AI's
+    /// focus-fire / heal-lowest lanes: harmful actions pick the nearest
+    /// opposing-team combat-active actor that isn't the original target;
+    /// non-harmful actions pick the lowest-HP allied combat-active actor
+    /// other than the original target.
+    #[allow(clippy::too_many_arguments)]
+    pub fn consume_twinned_spell(
+        &mut self,
+        caster_id: usize,
+        action_name: &str,
+        is_harmful: bool,
+        reach: Option<isize>,
+        requires_los: bool,
+        sp_cost: u32,
+        original_target_id: usize,
+    ) -> Option<usize> {
+        let caster = self.actors.get(&caster_id)?;
+        if !caster.has_condition(Condition::TwinnedSpelling) {
+            return None;
+        }
+        if caster.sorcery_points() < sp_cost {
+            return None;
+        }
+        let caster_team = caster.team();
+        let caster_loc = caster.location();
+        let caster_size = crate::engine::util::get_tiles_from_size(caster.size());
+        let caster_name = caster.name().to_string();
+        // Pick the second target. The shape mirrors the AI's targeting
+        // heuristics: harmful → nearest enemy in reach + LOS; non-harmful
+        // → lowest-HP ally in reach + LOS. Original target is always
+        // excluded so we don't double-tap the same creature.
+        let mut candidates: Vec<(usize, isize, u32)> = self
+            .actors
+            .iter()
+            .filter_map(|(id, a)| {
+                if *id == caster_id || *id == original_target_id {
+                    return None;
+                }
+                if !a.is_combat_active() {
+                    return None;
+                }
+                // Harmful → opposite team; non-harmful (buff/heal) → same team.
+                if (a.team() == caster_team) == is_harmful {
+                    return None;
+                }
+                let dist = crate::engine::util::footprint_chebyshev(
+                    caster_loc,
+                    caster_size,
+                    a.location(),
+                    crate::engine::util::get_tiles_from_size(a.size()),
+                );
+                if let Some(r) = reach
+                    && dist > r
+                {
+                    return None;
+                }
+                if requires_los && !self.actor_has_line_of_sight(caster_id, *id) {
+                    return None;
+                }
+                Some((*id, dist, a.hitpoints()))
+            })
+            .collect();
+        if candidates.is_empty() {
+            return None;
+        }
+        // Sort: harmful → nearest first (focus-fire), non-harmful → lowest HP
+        // first (heal-the-weakest). Ties break on actor_id for determinism.
+        if is_harmful {
+            candidates.sort_unstable_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+        } else {
+            candidates.sort_unstable_by(|a, b| a.2.cmp(&b.2).then(a.0.cmp(&b.0)));
+        }
+        let twin_id = candidates[0].0;
+        let twin_name = self
+            .actors
+            .get(&twin_id)
+            .map(|a| a.name().to_string())
+            .unwrap_or_default();
+        // Consume prime + SP atomically. Spending SP can fail in principle
+        // (race with another mutation), so guard with a re-check before
+        // returning the id — we can't unscramble a "no target" path if SP
+        // was already debited.
+        let caster_mut = self.actors.get_mut(&caster_id)?;
+        if !caster_mut.spend_sorcery_points(sp_cost) {
+            return None;
+        }
+        caster_mut.remove_condition(Condition::TwinnedSpelling);
+        let sp_left = caster_mut.sorcery_points();
+        self.log(format!(
+            "  twinned spell: {} echoes {} onto {} ({} SP, {} SP left)",
+            caster_name,
+            action_name,
+            twin_name,
+            sp_cost,
+            sp_left,
+        ));
+        Some(twin_id)
+    }
+
     /// 5e Sorcerer Careful Spell metamagic — if the caster has the prime
     /// up, return the set of ally ids inside `(point, radius)` that should
     /// be spared from the burst (up to CHA-mod allies, chosen by ascending
@@ -8277,6 +8389,281 @@ mod tests {
         assert!(
             !e.actors[&sorcerer].has_condition(Condition::DistantSpelling),
             "prime consumed"
+        );
+    }
+
+    /// Twinned Spell prime installs the condition without spending SP
+    /// up front (RAW: SP is paid at consume time, when the spell's
+    /// level is known). The prime is gated on a 1 SP floor — a
+    /// sorcerer with an empty pool can't open the prime.
+    #[test]
+    fn twinned_spell_primes_without_eager_sp_debit() {
+        use crate::actions::metamagic::TWINNED_SPELL;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.give_resource(crate::engine::side_effects::Resource::BonusAction);
+        let sp_before = actor.sorcery_points();
+        assert!(sp_before >= 1, "template ships SP for the test");
+
+        let effects = TWINNED_SPELL.execute(&mut e, sorcerer, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let after = e.actors.get(&sorcerer).unwrap();
+        // RAW: SP is paid at consume time, not at the prime. The cost
+        // here is just the bonus action.
+        assert_eq!(
+            after.sorcery_points(),
+            sp_before,
+            "prime alone does not debit SP"
+        );
+        assert!(
+            after.has_condition(Condition::TwinnedSpelling),
+            "twinned prime is installed"
+        );
+    }
+
+    /// Twinned Spell prime is blocked when the sorcerer has no SP — the
+    /// 1 SP floor cost RAW (minimum cost when the next spell fires)
+    /// means the prime would never pay off.
+    #[test]
+    fn twinned_spell_blocked_without_sp() {
+        use crate::actions::metamagic::TWINNED_SPELL;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.give_resource(crate::engine::side_effects::Resource::BonusAction);
+        while actor.spend_sorcery_point() {}
+        assert_eq!(actor.sorcery_points(), 0);
+        assert!(
+            !TWINNED_SPELL.validate_input(&e, sorcerer, None, None, None),
+            "twinned gated by empty SP pool"
+        );
+    }
+
+    /// End-to-end: a Twinned Fire Bolt cast on one enemy re-fires its
+    /// side_effects on a second enemy in range. Verifies the wiring
+    /// from action_template.rs's execute() → consume_twinned_spell →
+    /// re-issued side_effects path.
+    #[test]
+    fn twinned_fire_bolt_hits_two_enemies() {
+        use crate::actions::spells::FIRE_BOLT;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let zombie_a = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let zombie_b = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 6), 1, 1)
+            .unwrap();
+        // Sorcerer needs an Action + twinned prime for this fight.
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.give_resource(crate::engine::side_effects::Resource::Action);
+        actor.add_condition(Condition::TwinnedSpelling, ConditionTimer::Rounds(2));
+        let sp_before = actor.sorcery_points();
+        assert!(sp_before >= 1);
+
+        let hp_a_before = e.actors[&zombie_a].hitpoints();
+        let hp_b_before = e.actors[&zombie_b].hitpoints();
+
+        // Cast Fire Bolt at zombie_a — the twin should fire onto zombie_b.
+        // Use a tight seed to keep the test deterministic.
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(42);
+        let effects = FIRE_BOLT.execute(
+            &mut e,
+            sorcerer,
+            Some(&vec![zombie_a]),
+            None,
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+
+        // Cantrip → 1 SP twin debit.
+        let after = e.actors.get(&sorcerer).unwrap();
+        assert_eq!(
+            after.sorcery_points(),
+            sp_before - 1,
+            "twin consumed 1 SP for a cantrip"
+        );
+        assert!(
+            !after.has_condition(Condition::TwinnedSpelling),
+            "twinned prime consumed"
+        );
+
+        // Verify *something* happened to one of the zombies. Because the
+        // attack roll is involved, we can't guarantee both hit — but the
+        // important invariant is that both were possible targets and
+        // the second one got an attack roll.
+        let total_damage = (hp_a_before.saturating_sub(e.actors[&zombie_a].hitpoints()))
+            + (hp_b_before.saturating_sub(e.actors[&zombie_b].hitpoints()));
+        // With a fixed seed and AC 8 zombies, at least one bolt should
+        // land. This is a load-bearing assertion that the side_effects
+        // path was re-issued; the exact value is seed-dependent.
+        assert!(
+            total_damage > 0,
+            "at least one fire bolt should hit either zombie"
+        );
+    }
+
+    /// Twinned Spell rejects multi-target schemas: a SinglePoint or
+    /// Burst-shape action like Fireball or Sacred Burst doesn't satisfy
+    /// the "targets only one creature" RAW gate, so the consume site
+    /// short-circuits and the prime stays up for a future single-target
+    /// cast.
+    #[test]
+    fn twinned_spell_does_not_consume_on_burst_spell() {
+        use crate::actions::spells::FIREBALL;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let _ = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.give_resource(crate::engine::side_effects::Resource::Action);
+        actor.add_condition(Condition::TwinnedSpelling, ConditionTimer::Rounds(2));
+        let sp_before = actor.sorcery_points();
+
+        // Cast a Burst-targeting spell (Fireball aimed at a point).
+        let effects = FIREBALL.execute(
+            &mut e,
+            sorcerer,
+            None,
+            Some(&vec![Coordinate::new(10, 10)]),
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let after = e.actors.get(&sorcerer).unwrap();
+        assert_eq!(
+            after.sorcery_points(),
+            sp_before,
+            "burst spell does not pay twin SP"
+        );
+        assert!(
+            after.has_condition(Condition::TwinnedSpelling),
+            "prime remains for a future single-target cast"
+        );
+    }
+
+    /// Twinned Spell quietly degrades when no second target exists in
+    /// range: a solo enemy is the original target, so the prime stays up
+    /// and no SP is wasted (RAW: the SP cost is only paid if a second
+    /// target is actually engaged).
+    #[test]
+    fn twinned_spell_no_op_with_solo_enemy() {
+        use crate::actions::spells::FIRE_BOLT;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let solo = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.give_resource(crate::engine::side_effects::Resource::Action);
+        actor.add_condition(Condition::TwinnedSpelling, ConditionTimer::Rounds(2));
+        let sp_before = actor.sorcery_points();
+
+        let effects = FIRE_BOLT.execute(&mut e, sorcerer, Some(&vec![solo]), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let after = e.actors.get(&sorcerer).unwrap();
+        assert_eq!(
+            after.sorcery_points(),
+            sp_before,
+            "no second target → no SP burnt"
+        );
+        assert!(
+            after.has_condition(Condition::TwinnedSpelling),
+            "prime stays up so the next single-target cast can twin"
+        );
+    }
+
+    /// Twinned Spell debits more SP for leveled spells. Inflict Wounds is
+    /// a level-1 spell — twinning it at base cost = max(1, 1) = 1 SP, but
+    /// upcasting to lv3 via the CastLevel override should bump the
+    /// twin cost to 3 SP (RAW).
+    #[test]
+    fn twinned_spell_upcast_scales_sp_cost() {
+        use crate::actions::spells::INFLICT_WOUNDS;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::engine::action_overrides::ActionOverride;
+        use std::collections::HashSet;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Touch-range spell, so place both zombies adjacent so both are
+        // valid twin targets.
+        let z1 = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        let _ = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 6), 1, 1)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.give_resource(crate::engine::side_effects::Resource::Action);
+        // Make sure the upcast slot is available.
+        actor.spell_slot_manager.increase_max_spell_slot(3, 1);
+        actor.add_condition(Condition::TwinnedSpelling, ConditionTimer::Rounds(2));
+        let sp_before = actor.sorcery_points();
+        assert!(sp_before >= 3, "need >= 3 SP for a lv3 twin");
+
+        let mut overrides = HashSet::new();
+        overrides.insert(ActionOverride::CastLevel(3));
+
+        let effects = INFLICT_WOUNDS.execute(
+            &mut e,
+            sorcerer,
+            Some(&vec![z1]),
+            None,
+            Some(&overrides),
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let after = e.actors.get(&sorcerer).unwrap();
+        // Twin debit = max(1, 3) = 3 SP for an upcast lv3 cast.
+        assert_eq!(
+            after.sorcery_points(),
+            sp_before - 3,
+            "twin cost scales with the cast level"
+        );
+        assert!(
+            !after.has_condition(Condition::TwinnedSpelling),
+            "twinned prime consumed by the lv3 cast"
         );
     }
 

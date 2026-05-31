@@ -847,6 +847,21 @@ pub enum Condition {
     /// Consumed in `Action::execute` after a ranged action validates and
     /// fires (gated to reach > 1 so a melee swing can't burn the prime).
     DistantSpelling,
+    /// Twinned Spell primed (5e Sorcerer Metamagic). The sorcerer has set
+    /// up the Twinned Spell bonus-action prime; the next single-target
+    /// spell they cast will fire a second time against a different valid
+    /// target in the same range. RAW: SP cost equals the spell's level
+    /// (cantrip = 1 SP), and the spell must target only one creature
+    /// (range != self). Engine reads via
+    /// `EncounterInstance::consume_twinned_spell` in `Action::execute`,
+    /// which scans the action's cost for a `SpellSlot(lvl)` to size the
+    /// SP debit, picks a sensible second target (nearest opposing-team
+    /// creature for harmful spells, lowest-HP ally for buffs / heals),
+    /// and re-fires the action's `side_effects` against it. The prime is
+    /// consumed only when a second target is actually engaged so a
+    /// twinned cast on a solo enemy isn't wasted. Tick-down timer
+    /// (`UntilStartOfNextTurn`) caps an unused prime.
+    TwinnedSpelling,
 }
 
 impl Condition {
@@ -973,6 +988,7 @@ impl Condition {
             Condition::HeightenedSpelling => "primed with heightened spell",
             Condition::CarefulSpelling => "primed with careful spell",
             Condition::DistantSpelling => "primed with distant spell",
+            Condition::TwinnedSpelling => "primed with twinned spell",
         }
     }
 
@@ -1065,6 +1081,7 @@ impl Condition {
                 | Condition::HeightenedSpelling
                 | Condition::CarefulSpelling
                 | Condition::DistantSpelling
+                | Condition::TwinnedSpelling
         )
     }
 

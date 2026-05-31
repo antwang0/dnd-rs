@@ -475,6 +475,17 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3q'''''. Twinned Spell — sorcerer bonus-action metamagic prime.
+        //          Burns max(1, spell_level) SP at consume time to re-fire
+        //          the next single-target spell on a second target. Fires
+        //          only when at least two combat-active enemies sit in
+        //          range AND the kit owns a known-twinnable single-target
+        //          damage spell — without those, the prime would dangle
+        //          and the SP would be wasted.
+        if let Some(aei) = try_twinned_spell(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3r. Telekinetic — wizard / sorcerer / warlock bonus-action
         //     cantrip shove. Pulls an enemy 5 ft closer on a failed STR
         //     save; no slot. Fire when an enemy is just out of reach for
@@ -1423,6 +1434,52 @@ fn try_distant_spell(
         return None;
     }
     try_self_action(encounter, actor_id, "distant spell")
+}
+
+/// Twinned Spell — sorcerer bonus-action metamagic prime. Burns
+/// max(1, spell_level) SP to fire the next single-target spell against
+/// a second valid target. Fires when:
+/// - The sorcerer has SP available (RAW floor is 1 SP) and the prime
+///   isn't already up.
+/// - At least two combat-active enemies sit within 24 tiles — Twinned
+///   only pays off if there's a second target to hit. We don't try to
+///   match the LOS / reach gate of the *next* spell here (the consume
+///   site does that); the proximity guard just keeps us off the search
+///   path when there's nothing to twin onto.
+/// - The sorcerer owns a known-twinnable single-target damage spell
+///   (Fire Bolt / Ray of Frost / Chill Touch / Chromatic Orb / Witch
+///   Bolt / etc.) — otherwise the prime would dangle and the SP would
+///   be wasted on an AoE-only kit.
+fn try_twinned_spell(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.sorcery_points() == 0 {
+        return None;
+    }
+    if actor.has_condition(Condition::TwinnedSpelling) {
+        return None;
+    }
+    // Need ≥ 2 enemies within range so the prime can actually re-fire.
+    if n_actors_within(encounter, actor_id, 24, false, 2) < 2 {
+        return None;
+    }
+    // Only fire when the kit owns a twinnable single-target damage spell.
+    // We derive the gate from the action trait — any action with a
+    // SingleActor schema, is_harmful, and deals_damage is a viable twin
+    // target. This keeps the heuristic future-proof: new single-target
+    // damage spells added to the kit get picked up automatically without
+    // a hardcoded name list to maintain.
+    let has_twinnable = actor.actions.iter().any(|a| {
+        a.is_harmful()
+            && a.deals_damage()
+            && matches!(a.targeting_schema(), TargetingSchema::SingleActor)
+    });
+    if !has_twinnable {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "twinned spell")
 }
 
 /// Telekinetic — bonus-action cantrip shove. Pulls a single enemy 5 ft
@@ -4512,6 +4569,89 @@ mod tests {
         assert!(
             try_arcane_recovery(&e, wiz).is_some(),
             "spent slot + enemy → fire"
+        );
+    }
+
+    /// `try_twinned_spell` gates on: SP available, prime not already up,
+    /// ≥ 2 enemies in range, AND a known-twinnable single-target damage
+    /// spell in the kit. The sorcerer template ships Fire Bolt / Ray of
+    /// Frost / Chill Touch as cantrips so the kit gate passes; we drive
+    /// the enemy-count and prime gates explicitly.
+    #[test]
+    fn twinned_spell_ai_gates_on_sp_and_two_enemies() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::encounter::EncounterInstance;
+        use crate::engine::terrain_gen::TerrainGenParams;
+        use crate::engine::types::Coordinate;
+
+        let tp = TerrainGenParams {
+            width: 30,
+            height: 30,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(11)).unwrap();
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .give_resource(Resource::BonusAction);
+
+        // 0 enemies → skip.
+        assert!(
+            try_twinned_spell(&e, sorcerer).is_none(),
+            "no enemies → skip"
+        );
+
+        // 1 enemy → skip (no twin target).
+        let _z1 = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+            .unwrap();
+        assert!(
+            try_twinned_spell(&e, sorcerer).is_none(),
+            "single enemy → skip"
+        );
+
+        // 2 enemies → prime fires.
+        let _z2 = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(11, 6), 1, 1)
+            .unwrap();
+        assert!(
+            try_twinned_spell(&e, sorcerer).is_some(),
+            "two enemies + SP + twinnable kit → prime fires"
+        );
+
+        // Already primed → skip.
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .add_condition(Condition::TwinnedSpelling, ConditionTimer::Rounds(2));
+        assert!(
+            try_twinned_spell(&e, sorcerer).is_none(),
+            "prime already up → skip"
+        );
+
+        // Drop prime, burn SP to 0 → skip.
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .remove_condition(Condition::TwinnedSpelling);
+        while e.actors[&sorcerer].sorcery_points() > 0 {
+            e.actors.get_mut(&sorcerer).unwrap().spend_sorcery_point();
+        }
+        assert!(
+            try_twinned_spell(&e, sorcerer).is_none(),
+            "no SP → skip"
         );
     }
 }

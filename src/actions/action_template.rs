@@ -453,6 +453,56 @@ pub trait Action {
             target_locations,
             overrides,
         );
+        // 5e Sorcerer Twinned Spell metamagic: re-fire the action's
+        // side_effects against a second target if the prime is up and the
+        // caster can afford the SP cost (max(1, spell_level)). Gated to
+        // SingleActor + exactly-one-target shape; the action's cost lane
+        // is paid once total — the metamagic doesn't burn a second spell
+        // slot, only sorcery points (debited inside the helper). We sniff
+        // the spell level off the resolved cost (`SpellSlot(lvl)` entry;
+        // cantrips have no SlotCost and default to 1 SP). Multi-target
+        // calls (e.g. spells that pass a vec of ids) skip the gate
+        // because "twinning" them is ill-defined.
+        if matches!(self.targeting_schema(), TargetingSchema::SingleActor)
+            && let Some(ids) = target_ids
+            && ids.len() == 1
+        {
+            let original_target_id = ids[0];
+            let costs = self.cost(
+                encounter,
+                caster_id,
+                target_ids,
+                target_locations,
+                overrides,
+            );
+            let sp_cost = costs
+                .iter()
+                .find_map(|c| match c {
+                    Resource::SpellSlot(lvl) => Some(*lvl),
+                    _ => None,
+                })
+                .unwrap_or(1)
+                .max(1);
+            if let Some(twin_id) = encounter.consume_twinned_spell(
+                caster_id,
+                self.name(),
+                self.is_harmful(),
+                self.reach_tiles(),
+                self.requires_los(),
+                sp_cost,
+                original_target_id,
+            ) {
+                let twin_targets = vec![twin_id];
+                let mut twin_effects = self.side_effects(
+                    encounter,
+                    caster_id,
+                    Some(&twin_targets),
+                    target_locations,
+                    overrides,
+                );
+                side_effects.append(&mut twin_effects);
+            }
+        }
         for cost in self.cost(
             encounter,
             caster_id,
