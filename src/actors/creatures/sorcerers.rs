@@ -23,8 +23,11 @@ use std::sync::LazyLock;
 /// dice that came up at 1 or 2. The reroll resolves through
 /// `EncounterInstance::roll_empowered` at the damage chokepoint, so
 /// future spells plug in by calling that helper instead of `roll`.
-/// Other metamagic variants (Quickened Spell, Twinned Spell, Heightened
-/// Spell) reserve the slot in `ActionOverride` but aren't wired yet.
+/// **Quickened Spell** (bonus action + 2 SP → extra Action this turn)
+/// and **Heightened Spell** (bonus action + 3 SP → next save-or-suck
+/// spell forces disadvantage on the first save) extend the metamagic
+/// lane; Twinned Spell remains reserved in `ActionOverride` but isn't
+/// wired yet.
 ///
 /// Loadout: Fire Bolt / Ray of Frost / Chill Touch / Acid Splash / Shocking
 /// Grasp cantrips for at-will, Burning Hands / Magic Missile / Shield as
@@ -213,6 +216,11 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // RAW "cast a 1-action spell as a bonus action" transform via the
     // simpler action-economy trade).
     actions.push(&*crate::actions::metamagic::QUICKENED_SPELL);
+    // 5e Sorcerer Metamagic — Heightened Spell. Burns 3 sorcery points
+    // + a Bonus Action; the next save-or-suck spell forces disadvantage
+    // on the first creature that rolls a save against it. Engine reads
+    // the prime via `EncounterInstance::roll_save_against_caster`.
+    actions.push(&*crate::actions::metamagic::HEIGHTENED_SPELL);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

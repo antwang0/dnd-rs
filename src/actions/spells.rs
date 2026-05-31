@@ -828,7 +828,12 @@ impl Action for HoldPerson {
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
 
-        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        // Route through the caster-aware save helper so Heightened Spell
+        // metamagic (sorcerer) can force disadvantage on this single
+        // save-or-suck roll. Plain `roll_save` would silently bypass the
+        // prime since it has no caster context.
+        let save =
+            encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -3551,7 +3556,9 @@ impl Action for CharmPerson {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        // Caster-aware save so Heightened Spell can force disadvantage.
+        let save =
+            encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -4704,7 +4711,10 @@ impl Action for HoldMonster {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        // Caster-aware save so the sorcerer Heightened Spell prime can
+        // force disadvantage on this single save-or-suck roll.
+        let save =
+            encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -6349,7 +6359,9 @@ impl Action for Banishment {
         let int_dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
         let wis_dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
         let dc = int_dc.max(wis_dc);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Charisma, dc);
+        // Caster-aware save so Heightened Spell can force disadvantage.
+        let save =
+            encounter.roll_save_against_caster(target_id, AbilityScoreType::Charisma, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -9094,7 +9106,14 @@ impl Action for Polymorph {
         // Enemies get a WIS save; willing allies auto-fail (5e RAW).
         if target_team != caster_team {
             let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-            let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+            // Caster-aware save so the sorcerer Heightened Spell prime
+            // can force disadvantage on this single save-or-suck roll.
+            let save = encounter.roll_save_against_caster(
+                target_id,
+                AbilityScoreType::Wisdom,
+                dc,
+                caster_id,
+            );
             if save.passed() {
                 return Vec::new();
             }
@@ -11924,7 +11943,9 @@ impl Action for DominatePerson {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        // Caster-aware save so Heightened Spell can force disadvantage.
+        let save =
+            encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -20775,7 +20796,9 @@ impl Action for DominateMonster {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        // Caster-aware save so Heightened Spell can force disadvantage.
+        let save =
+            encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }

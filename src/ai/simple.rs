@@ -443,6 +443,18 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3q''. Heightened Spell — sorcerer bonus-action metamagic prime.
+        //       Burns 3 sorcery points to force the first save against
+        //       the next save-or-suck cast (Hold Person / Polymorph /
+        //       Banishment / Dominate Monster) at disadvantage. The
+        //       tactic gates on the sorcerer having a heightenable
+        //       control spell in the kit AND not already concentrating
+        //       (otherwise the follow-up control spell would lose its
+        //       slot to concentration loss).
+        if let Some(aei) = try_heightened_spell(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3r. Telekinetic — wizard / sorcerer / warlock bonus-action
         //     cantrip shove. Pulls an enemy 5 ft closer on a failed STR
         //     save; no slot. Fire when an enemy is just out of reach for
@@ -1221,6 +1233,67 @@ fn try_empowered_spell(
         return None;
     }
     try_self_action(encounter, actor_id, "empowered spell")
+}
+
+/// Heightened Spell — sorcerer bonus-action metamagic prime. Burns
+/// 3 sorcery points to force disadvantage on the first save against
+/// the next save-or-suck or burst-damage cast. Pricier than Empowered
+/// (3 SP vs 1) so we gate on the SP being available AND at least one
+/// "heightenable" spell present in the kit — either a concentration
+/// lockdown spell (Hold Person / Hold Monster / Polymorph / Banishment
+/// / Dominate Monster) or a save-for-half burst (Fireball / Cone of
+/// Cold / Sunburst / Sleet Storm). Skipped if Heightened or Empowered
+/// is already primed (the empowered damage burst is usually the better
+/// play if a blaster spell is the next cast).
+fn try_heightened_spell(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.sorcery_points() < 3 {
+        return None;
+    }
+    if actor.has_condition(Condition::HeightenedSpelling)
+        || actor.has_condition(Condition::EmpoweredSpelling)
+    {
+        return None;
+    }
+    // Only fire when a heightenable spell is actually in the kit — either
+    // a concentration lockdown or a save-for-half burst. Without one of
+    // these the prime would dangle and the SP would be wasted. The
+    // lockdown half is gated on `!is_concentrating` since casting a new
+    // concentration spell would drop the old one; the burst half doesn't
+    // care about concentration.
+    const HEIGHTENED_LOCKDOWN: &[&str] = &[
+        "hold person",
+        "hold monster",
+        "polymorph",
+        "banishment",
+        "dominate person",
+        "dominate monster",
+    ];
+    const HEIGHTENED_BURST: &[&str] = &[
+        "fireball",
+        "cone of cold",
+        "sunburst",
+        "burning hands",
+        "thunderwave",
+        "shatter",
+    ];
+    let has_lockdown = !actor.is_concentrating()
+        && HEIGHTENED_LOCKDOWN
+            .iter()
+            .any(|name| actor.find_action(name).is_some());
+    let has_burst = HEIGHTENED_BURST
+        .iter()
+        .any(|name| actor.find_action(name).is_some());
+    if !has_lockdown && !has_burst {
+        return None;
+    }
+    if !any_enemy_within(encounter, actor_id, 36) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "heightened spell")
 }
 
 /// Telekinetic — bonus-action cantrip shove. Pulls a single enemy 5 ft
@@ -2939,6 +3012,68 @@ mod tests {
         for seed in [1u64, 7, 42, 99, 12345] {
             let _ = run_to_completion(seed);
         }
+    }
+
+    /// `try_heightened_spell` picks the heightened metamagic when the
+    /// sorcerer has the SP, isn't already primed, and has at least one
+    /// heightenable spell in the kit AND an enemy in range. Skipped when
+    /// SP is too low or no enemy is nearby.
+    #[test]
+    fn heightened_spell_ai_gates_on_sp_and_enemy_range() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::engine::encounter::EncounterInstance;
+        use crate::engine::terrain_gen::TerrainGenParams;
+        use crate::engine::types::Coordinate;
+
+        let tp = TerrainGenParams {
+            width: 30,
+            height: 20,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(11)).unwrap();
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Sorcerer needs the bonus action available for the metamagic to fire.
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .give_resource(Resource::BonusAction);
+
+        // No enemies on the map — the heuristic skips even though the
+        // sorcerer has SP and a heightenable spell in the kit.
+        assert!(
+            try_heightened_spell(&e, sorcerer).is_none(),
+            "no enemies in range → skip"
+        );
+
+        // Plant a zombie within heightened-spell range (36 tiles) and
+        // re-check — heuristic should now offer the prime.
+        let _ = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+            .unwrap();
+        assert!(
+            try_heightened_spell(&e, sorcerer).is_some(),
+            "enemy in range + SP + heightenable spell → prime fires"
+        );
+
+        // Burn the SP pool to 2 and re-check — heuristic should skip
+        // even though the enemy is still there.
+        while e.actors[&sorcerer].sorcery_points() > 2 {
+            e.actors.get_mut(&sorcerer).unwrap().spend_sorcery_point();
+        }
+        assert!(
+            try_heightened_spell(&e, sorcerer).is_none(),
+            "SP below 3 → skip"
+        );
     }
 
     /// Exercise the new spells / creatures in an AI-driven encounter so the

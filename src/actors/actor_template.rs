@@ -801,6 +801,19 @@ impl ActorInstance {
         true
     }
 
+    /// Spend `n` sorcery points atomically — either all `n` points come
+    /// out of the pool or none do. Returns true on success. Used by
+    /// multi-point metamagic (Quickened: 2, Heightened: 3, future
+    /// Twinned: slot-level) so the cost lives in one debit rather than
+    /// a loop at every call site that could be interrupted mid-spend.
+    pub fn spend_sorcery_points(&mut self, n: u32) -> bool {
+        if self.sorcery_points < n {
+            return false;
+        }
+        self.sorcery_points -= n;
+        true
+    }
+
     /// Restore the sorcery-points pool to the long-rest cap. Called from
     /// `long_rest` alongside spell slot / feature refresh.
     pub fn restore_sorcery_points(&mut self) {

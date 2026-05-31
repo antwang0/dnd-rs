@@ -814,6 +814,17 @@ pub enum Condition {
     /// `EncounterInstance::roll_empowered`. Tick-down timer
     /// (`UntilStartOfNextTurn`) caps an unused prime so it doesn't dangle.
     EmpoweredSpelling,
+    /// Heightened Spell primed (5e Sorcerer Metamagic). The sorcerer has
+    /// spent three sorcery points via the Heightened Spell bonus-action
+    /// prime; the first creature that makes a saving throw against the
+    /// sorcerer's next spell rolls that save at disadvantage. RAW
+    /// applies only to the first save (single target or first burst
+    /// victim in initiative order) — we honor that by consuming the
+    /// prime on the first save resolved through
+    /// `EncounterInstance::roll_save_against_caster`.
+    /// Tick-down timer (`UntilStartOfNextTurn`) caps an unused prime so
+    /// it doesn't dangle across rounds.
+    HeightenedSpelling,
 }
 
 impl Condition {
@@ -937,6 +948,7 @@ impl Condition {
             Condition::SweepingAttacking => "primed for a sweeping strike",
             Condition::LungingAttacking => "primed to lunge",
             Condition::EmpoweredSpelling => "primed with empowered spell",
+            Condition::HeightenedSpelling => "primed with heightened spell",
         }
     }
 
@@ -1026,6 +1038,7 @@ impl Condition {
                 | Condition::SweepingAttacking
                 | Condition::LungingAttacking
                 | Condition::EmpoweredSpelling
+                | Condition::HeightenedSpelling
         )
     }
 

@@ -34,7 +34,12 @@ pub fn resolve_burst_save_damage(
     // it here keeps the caster-exclusion / footprint-Chebyshev / sorted-
     // ids invariant in one place instead of re-inlining the loop.
     for target_id in encounter.neutral_burst_targets(caster_id, center, radius) {
-        let save = encounter.roll_save(target_id, save_ability, dc);
+        // Route through the caster-aware save helper so the 5e Sorcerer
+        // Heightened Spell metamagic forces disadvantage on the *first*
+        // save in the burst (RAW). Subsequent targets in the same cast
+        // fall through to the normal save path — `roll_save_against_caster`
+        // consumes the prime on its first call.
+        let save = encounter.roll_save_against_caster(target_id, save_ability, dc, caster_id);
         let has_evasion = save_ability == AbilityScoreType::Dexterity
             && encounter
                 .actors

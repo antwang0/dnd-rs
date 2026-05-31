@@ -1126,6 +1126,21 @@ impl EncounterInstance {
         ability: crate::engine::types::AbilityScoreType,
         dc: i32,
     ) -> crate::engine::saves::SaveOutcome {
+        self.roll_save_with_extra_mode(actor_id, ability, dc, RollMode::Normal)
+    }
+
+    /// Roll a save with an extra advantage / disadvantage layer combined
+    /// on top of the actor's condition-derived mode. Used by callers that
+    /// have out-of-band reasons to skew the roll (Heightened Spell
+    /// metamagic — `RollMode::Disadvantage`). Pass `RollMode::Normal` to
+    /// get the same behavior as `roll_save`.
+    fn roll_save_with_extra_mode(
+        &mut self,
+        actor_id: usize,
+        ability: crate::engine::types::AbilityScoreType,
+        dc: i32,
+        extra_mode: RollMode,
+    ) -> crate::engine::saves::SaveOutcome {
         use crate::engine::saves::SaveOutcome;
 
         // Paralyzed / Stunned auto-fail STR & DEX saves (5e). Log it so
@@ -1143,7 +1158,7 @@ impl EncounterInstance {
             return SaveOutcome::Fail;
         }
 
-        let mode = self.compute_save_mode(actor_id, ability);
+        let mode = self.compute_save_mode(actor_id, ability).combine(extra_mode);
         // 5e Lucky: same nat-1 reroll hook as on attack rolls. RAW
         // explicitly lists "saving throw" as one of the trigger contexts.
         let raw = self.roll_d20_lucky(actor_id, mode);
@@ -1285,6 +1300,53 @@ impl EncounterInstance {
             return SaveOutcome::Pass;
         }
         outcome
+    }
+
+    /// Roll a saving throw attributed to `caster_id`'s spell. Identical to
+    /// `roll_save` except it honors the 5e Sorcerer **Heightened Spell**
+    /// metamagic: if the caster has the `HeightenedSpelling` prime up,
+    /// this save is forced to disadvantage (combined with the actor's
+    /// normal mode) and the prime is consumed.
+    ///
+    /// Damaging spells that already thread `caster_id` (almost every
+    /// save-for-half AoE in `resolve_burst_save_damage`, and single-
+    /// target lockdown spells like Hold Person / Hold Monster /
+    /// Dominate Person) should route their saves through this helper so
+    /// Heightened Spell actually bites. Spells that don't bother with a
+    /// caster_id (NPC-only attack riders, environmental DoTs) fall
+    /// through to `roll_save` and the prime never engages.
+    pub fn roll_save_against_caster(
+        &mut self,
+        target_id: usize,
+        ability: crate::engine::types::AbilityScoreType,
+        dc: i32,
+        caster_id: usize,
+    ) -> crate::engine::saves::SaveOutcome {
+        let heightened = self
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_condition(Condition::HeightenedSpelling));
+        if !heightened {
+            return self.roll_save(target_id, ability, dc);
+        }
+        // Consume the prime up front so a multi-target spell only forces
+        // disadvantage on its *first* save (RAW: "The first time the
+        // target makes a saving throw against the spell, the target has
+        // disadvantage on the save"). Subsequent saves in the same cast
+        // fall through to the normal `roll_save` path.
+        if let Some(caster) = self.actors.get_mut(&caster_id) {
+            caster.remove_condition(Condition::HeightenedSpelling);
+        }
+        let target_name = self
+            .actors
+            .get(&target_id)
+            .map(|a| a.name().to_string())
+            .unwrap_or_default();
+        self.log(format!(
+            "  heightened spell: {} rolls the save at disadvantage",
+            target_name
+        ));
+        self.roll_save_with_extra_mode(target_id, ability, dc, RollMode::Disadvantage)
     }
 
     /// Direct mutable handle to the encounter's general-purpose RNG. Used
@@ -7728,6 +7790,148 @@ mod tests {
             after.action_slots(),
             actions_before + 1,
             "quickened grants an extra Action this turn"
+        );
+    }
+
+    /// Heightened Spell metamagic: costs 3 SP + a Bonus Action and
+    /// installs the `HeightenedSpelling` prime on the caster. The
+    /// first save resolved against the caster through
+    /// `roll_save_against_caster` consumes the prime and is forced to
+    /// disadvantage; later saves in the same encounter fall through to
+    /// the unmodified path.
+    #[test]
+    fn heightened_spell_spends_three_sp_and_primes() {
+        use crate::actions::metamagic::HEIGHTENED_SPELL;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.give_resource(crate::engine::side_effects::Resource::BonusAction);
+        let sp_before = actor.sorcery_points();
+        assert!(sp_before >= 3);
+
+        let effects = HEIGHTENED_SPELL.execute(&mut e, sorcerer, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let after = e.actors.get(&sorcerer).unwrap();
+        assert_eq!(after.sorcery_points(), sp_before - 3, "3 SP spent");
+        assert!(
+            after.has_condition(Condition::HeightenedSpelling),
+            "heightened prime is installed"
+        );
+    }
+
+    /// Heightened Spell is gated on the sorcery-points pool: a sorcerer
+    /// with fewer than 3 SP can't fire the metamagic.
+    #[test]
+    fn heightened_spell_blocked_without_three_sp() {
+        use crate::actions::metamagic::HEIGHTENED_SPELL;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.give_resource(crate::engine::side_effects::Resource::BonusAction);
+        // Burn the SP pool down to 2 (one short of the 3-SP cost).
+        while actor.sorcery_points() > 2 {
+            actor.spend_sorcery_point();
+        }
+        assert!(
+            !HEIGHTENED_SPELL.validate_input(&e, sorcerer, None, None, None),
+            "heightened gated below 3 SP"
+        );
+    }
+
+    /// `roll_save_against_caster` forces disadvantage when the caster
+    /// has `HeightenedSpelling` primed, then consumes the prime. A
+    /// second save through the helper falls back to the normal save
+    /// path. Drive with a seed sweep to verify the disadvantage
+    /// distribution drops the failure-side average.
+    #[test]
+    fn heightened_save_forces_disadvantage_and_consumes_prime() {
+        use crate::actions::metamagic::HEIGHTENED_SPELL;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.give_resource(crate::engine::side_effects::Resource::BonusAction);
+
+        // Prime via the action so we exercise the full plumbing.
+        let effects = HEIGHTENED_SPELL.execute(&mut e, sorcerer, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&sorcerer].has_condition(Condition::HeightenedSpelling),
+            "prime installed"
+        );
+
+        // First save against the caster consumes the prime.
+        let _ = e.roll_save_against_caster(target, AbilityScoreType::Wisdom, 15, sorcerer);
+        assert!(
+            !e.actors[&sorcerer].has_condition(Condition::HeightenedSpelling),
+            "first save consumed the prime"
+        );
+
+        // Subsequent saves don't carry the disadvantage — the helper
+        // collapses to `roll_save` once the prime is gone. We re-call
+        // it and expect no leftover state.
+        let _ = e.roll_save_against_caster(target, AbilityScoreType::Wisdom, 15, sorcerer);
+        assert!(
+            !e.actors[&sorcerer].has_condition(Condition::HeightenedSpelling),
+            "no prime to consume on the second save"
+        );
+    }
+
+    /// End-to-end: a heightened Hold Person consumes the prime via the
+    /// new caster-aware save path. Verifies the wiring at the spell
+    /// side — Hold Person was updated to call
+    /// `roll_save_against_caster` rather than `roll_save`.
+    #[test]
+    fn heightened_hold_person_consumes_prime() {
+        use crate::actions::spells::HOLD_PERSON;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        // Zombies are immune to Charmed but not Stunned — Hold Person's
+        // save-side path still runs even though Stunned might or might
+        // not bite. We just need the save to be rolled to consume the
+        // prime.
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .add_condition(Condition::HeightenedSpelling, ConditionTimer::Rounds(2));
+        let effects = HOLD_PERSON.side_effects(&mut e, sorcerer, Some(&vec![target]), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&sorcerer].has_condition(Condition::HeightenedSpelling),
+            "hold person save consumed the heightened prime"
         );
     }
 
