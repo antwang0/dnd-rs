@@ -9129,6 +9129,52 @@ mod tests {
             .has_condition(Condition::Frightened));
     }
 
+    /// 5e Drow Fey Ancestry: advantage on saves vs Charmed AND magic
+    /// can't put a drow to sleep. Engine approximates both as install
+    /// immunity at `add_condition`. End-to-end check that a force-applied
+    /// Charmed / Asleep install no-ops on a drow but lands on a non-fey
+    /// baseline (Goblin).
+    #[test]
+    fn drow_fey_ancestry_blocks_charm_and_sleep() {
+        use crate::actors::creatures::drow::DROW_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let drow = e
+            .instantiate_creature(&DROW_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+            .unwrap();
+        // Drow blocks Charmed; goblin picks it up.
+        assert!(!e
+            .actors
+            .get_mut(&drow)
+            .unwrap()
+            .add_condition(Condition::Charmed, ConditionTimer::Rounds(10)));
+        assert!(e
+            .actors
+            .get_mut(&goblin)
+            .unwrap()
+            .add_condition(Condition::Charmed, ConditionTimer::Rounds(10)));
+        assert!(!e.actors[&drow].has_condition(Condition::Charmed));
+        assert!(e.actors[&goblin].has_condition(Condition::Charmed));
+        // Drow blocks Asleep; goblin picks it up.
+        assert!(!e
+            .actors
+            .get_mut(&drow)
+            .unwrap()
+            .add_condition(Condition::Asleep, ConditionTimer::Rounds(5)));
+        assert!(e
+            .actors
+            .get_mut(&goblin)
+            .unwrap()
+            .add_condition(Condition::Asleep, ConditionTimer::Rounds(5)));
+        assert!(!e.actors[&drow].has_condition(Condition::Asleep));
+        assert!(e.actors[&goblin].has_condition(Condition::Asleep));
+    }
+
     /// 5e Paralyzed clause: "any attack that hits the creature is a
     /// critical hit if the attacker is within 5 feet of the creature."
     /// `target_grants_melee_auto_crit` is the central gate the attack-

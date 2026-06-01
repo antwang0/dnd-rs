@@ -229,12 +229,26 @@ pub struct CreatureTemplate {
     /// they protect against, so we approximate by treating Brave as full
     /// immunity to Frightened — checked dynamically at
     /// `ActorInstance::add_condition` alongside the Heroism / MindBlank
-    /// immunity gates. The over-tuning (advantage → immunity) is small in
-    /// practice: every fear effect in the engine still has to roll the
-    /// underlying save, and Brave only kicks in if that save fails AND
-    /// the source resolves to Frightened. Aura of Courage covers the
-    /// in-aura paladin case via the same chokepoint.
+    /// immunity gates (see `dynamic_immunity_to`). The over-tuning
+    /// (advantage → immunity) is small in practice: every fear effect in
+    /// the engine still has to roll the underlying save, and Brave only
+    /// kicks in if that save fails AND the source resolves to
+    /// Frightened. The Paladin's Aura of Courage covers the in-aura ally
+    /// case at a different chokepoint (`ApplyCondition::apply`) because
+    /// that gate needs encounter geometry to find the aura emitter.
     pub has_brave: bool,
+    /// 5e Elf / Half-Elf / Drow Fey Ancestry racial trait: advantage on
+    /// saving throws against being Charmed, and magic can't put the
+    /// holder to sleep. Approximated as full immunity to both Charmed
+    /// and Asleep at the `dynamic_immunity_to` chokepoint — same shape
+    /// as the Halfling Brave gate. The "magic can't put you to sleep"
+    /// clause RAW only blocks magical sleep (e.g. the Sleep spell);
+    /// natural unconsciousness (HP 0) still applies, and the engine
+    /// keeps `Unconscious` separate from `Asleep` so the half-elf still
+    /// drops normally when their HP runs out. The Charmed-advantage
+    /// over-tuning matches Brave's; the Sleep block is RAW since Asleep
+    /// is only ever installed by magical sources in this engine.
+    pub has_fey_ancestry: bool,
     /// 5e Paladin Aura of Protection (level 6+): the paladin and every
     /// ally within 10 ft (4 tile gap in this 2.5ft grid) adds the
     /// paladin's CHA modifier (minimum +1) to all saving throws.
@@ -503,6 +517,9 @@ pub struct ActorInstance {
     has_lucky: bool,
     /// 5e Halfling Brave trait. See `CreatureTemplate` docs.
     has_brave: bool,
+    /// 5e Fey Ancestry trait (Elf / Half-Elf / Drow). See
+    /// `CreatureTemplate` docs.
+    has_fey_ancestry: bool,
     /// 5e Paladin Aura of Protection. See `CreatureTemplate` docs.
     has_aura_of_protection: bool,
     /// 5e Paladin Aura of Courage. See `CreatureTemplate` docs.
@@ -619,6 +636,7 @@ impl ActorInstance {
             crit_threshold: ct.crit_threshold.max(1),
             has_lucky: ct.has_lucky,
             has_brave: ct.has_brave,
+            has_fey_ancestry: ct.has_fey_ancestry,
             has_aura_of_protection: ct.has_aura_of_protection,
             has_aura_of_courage: ct.has_aura_of_courage,
             has_savage_attacks: ct.has_savage_attacks,
@@ -740,6 +758,15 @@ impl ActorInstance {
     /// `add_condition` catches it alongside Heroism / MindBlank.
     pub fn has_brave(&self) -> bool {
         self.has_brave
+    }
+
+    /// 5e Fey Ancestry (Elf / Half-Elf / Drow) — advantage on saves vs
+    /// Charmed and immune to magical Sleep. Read by `dynamic_immunity_to`
+    /// for both the Charmed (over-tuned approximation) and Asleep (RAW
+    /// match — Asleep is only installed by magical sources here) install
+    /// chokepoints.
+    pub fn has_fey_ancestry(&self) -> bool {
+        self.has_fey_ancestry
     }
 
     /// True if this actor emits the Paladin's Aura of Courage (level 10+).
@@ -1228,6 +1255,10 @@ impl ActorInstance {
     ///   - Mind Blank (`MindBlanked`) → immune to Charmed
     ///   - Halfling Brave racial → immune to Frightened (approximated
     ///     from RAW's "advantage on saves vs Frightened")
+    ///   - Fey Ancestry racial → immune to Charmed (approximation) AND
+    ///     Asleep (RAW: "magic can't put you to sleep"; the only Asleep
+    ///     installer in this engine is the Sleep spell, so this matches
+    ///     RAW exactly)
     ///
     /// Distinct from `condition_immunities` (template-level immunities
     /// pinned at creature creation): this lane reads live state so an
@@ -1238,7 +1269,10 @@ impl ActorInstance {
             Condition::Frightened => {
                 self.has_condition(Condition::Heroic) || self.has_brave
             }
-            Condition::Charmed => self.has_condition(Condition::MindBlanked),
+            Condition::Charmed => {
+                self.has_condition(Condition::MindBlanked) || self.has_fey_ancestry
+            }
+            Condition::Asleep => self.has_fey_ancestry,
             _ => false,
         }
     }

@@ -56,6 +56,12 @@ pub static DROW_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         crit_threshold: 20,
         has_lucky: false,
         has_brave: false,
+        // 5e Drow Fey Ancestry: advantage on saves vs Charmed; magic
+        // can't put a drow to sleep. Approximated as Charmed + Asleep
+        // install immunity via `dynamic_immunity_to`. Stacks with the
+        // drow's existing Magic Resistance (drow are notoriously
+        // anti-enchantment in the SRD).
+        has_fey_ancestry: true,
         has_aura_of_protection: false,
         has_aura_of_courage: false,
         has_savage_attacks: false,

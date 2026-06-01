@@ -129,6 +129,7 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         crit_threshold: 20,
         has_lucky: false,
         has_brave: false,
+        has_fey_ancestry: false,
         // Aura of Protection (level 6+): allies within 10ft add the
         // paladin's CHA mod (min +1) to all saves. The headline late-
         // game paladin feature — turns the squishy wizard adjacent to
