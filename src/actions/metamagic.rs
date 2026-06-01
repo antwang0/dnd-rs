@@ -571,6 +571,91 @@ impl Action for TwinnedSpell {
 
 pub static TWINNED_SPELL: LazyLock<TwinnedSpell> = LazyLock::new(|| TwinnedSpell {});
 
+/// 5e Sorcerer **Extended Spell** metamagic. Bonus action — spend one
+/// sorcery point to prime the next spell with a duration of 1 minute or
+/// longer; its duration doubles (RAW caps at 24 hours).
+///
+/// Modeled as a self-target prime mirroring Empowered / Heightened /
+/// Careful / Distant. The action installs the `ExtendedSpelling`
+/// condition on the caster (UntilStartOfNextTurn timer) and decrements
+/// `sorcery_points` by 1. The side-effect-assembly chokepoint in
+/// `Action::execute` calls `EncounterInstance::consume_extended_spell`,
+/// which walks the action's side_effects and doubles any
+/// `ApplyCondition` whose timer is `Rounds(n)` with n >= 10 (= 1 minute
+/// in our 6-second rounds). The prime is consumed the first time at
+/// least one eligible timer is doubled; short-duration spells
+/// (`UntilStartOfNextTurn`) and pure-damage spells don't burn it, so a
+/// sorcerer who primes Extended Spell and then casts Magic Missile
+/// keeps the prime up for the next buff / debuff cast.
+pub struct ExtendedSpell {}
+
+impl Action for ExtendedSpell {
+    fn name(&self) -> &str {
+        "extended spell"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["extend", "es", "espell"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        validate_metamagic_prime(encounter, caster_id, 1, Some(Condition::ExtendedSpelling))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        spend_and_log(
+            encounter,
+            caster_id,
+            1,
+            "stretches the next spell's duration with metamagic",
+        );
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::ExtendedSpelling,
+            timer: ConditionTimer::UntilStartOfNextTurn,
+        })]
+    }
+}
+
+pub static EXTENDED_SPELL: LazyLock<ExtendedSpell> = LazyLock::new(|| ExtendedSpell {});
+
 /// Shared validator for sorcerer metamagic primes: every prime gates on
 /// combat-active + sufficient sorcery points + (optionally) the prime
 /// condition not already being installed (to avoid re-priming + double-

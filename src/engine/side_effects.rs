@@ -6,7 +6,34 @@ use crate::engine::types::{Coordinate, DamageType};
 
 pub trait ApplicableSideEffect {
     fn apply(&self, ei: &mut EncounterInstance);
+
+    /// 5e Sorcerer Extended Spell metamagic hook. If this side-effect
+    /// installs a long-duration condition (RAW: 1 minute or longer; we
+    /// gate on `Rounds(n)` with `n >= EXTENDED_SPELL_MIN_ROUNDS`),
+    /// double the timer in place (saturating at
+    /// `EXTENDED_SPELL_MAX_ROUNDS` to keep timers from running away on
+    /// re-extension) and return true. Default: no-op (returns false).
+    /// Called once per side-effect in `Action::execute` when the caster
+    /// has the `ExtendedSpelling` prime up; the first `true` return
+    /// consumes the prime.
+    fn extend_duration(&mut self) -> bool {
+        false
+    }
 }
+
+/// 5e Sorcerer Extended Spell: minimum `Rounds(n)` timer that qualifies
+/// for the doubling. RAW gates on "1 minute or longer" — we use 1 round
+/// ≈ 6 seconds, so 10 rounds ≈ 1 minute is the natural threshold.
+pub const EXTENDED_SPELL_MIN_ROUNDS: u32 = 10;
+
+/// 5e Sorcerer Extended Spell: maximum `Rounds(n)` timer after doubling.
+/// RAW caps the extension at 24 hours (~14,400 combat rounds, which
+/// dwarfs any encounter span). We pick 200 here because the longest
+/// canonical install in this engine is `Rounds(100)` (Mage Armor / Mind
+/// Blank's "effectively permanent for the encounter" sentinel), so 200
+/// is the smallest cap that lets every base timer double cleanly without
+/// risking a runaway value on a future install that nudges past 100.
+pub const EXTENDED_SPELL_MAX_ROUNDS: u32 = 200;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Resource {
@@ -463,6 +490,18 @@ pub struct ApplyCondition {
 }
 
 impl ApplicableSideEffect for ApplyCondition {
+    fn extend_duration(&mut self) -> bool {
+        match self.timer {
+            ConditionTimer::Rounds(n) if n >= EXTENDED_SPELL_MIN_ROUNDS => {
+                self.timer = ConditionTimer::Rounds(
+                    n.saturating_mul(2).min(EXTENDED_SPELL_MAX_ROUNDS),
+                );
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn apply(&self, ei: &mut EncounterInstance) {
         // 5e Paladin Aura of Courage (level 10+): allies inside the 10ft
         // aura are immune to Frightened. The check lives here rather than

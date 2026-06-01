@@ -244,6 +244,17 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // which picks the second target (nearest enemy / lowest-HP ally) and
     // re-runs the action's `side_effects` against it.
     actions.push(&*crate::actions::metamagic::TWINNED_SPELL);
+    // 5e Sorcerer Metamagic — Extended Spell. Burns 1 sorcery point
+    // + a Bonus Action; the next spell that installs a long-duration
+    // condition (RAW: 1 minute or longer; we gate on Rounds(n) with
+    // n >= 10) has its timer doubled. Engine reads the prime via
+    // `EncounterInstance::consume_extended_spell` in `Action::execute`,
+    // which walks the side_effects vec and doubles any eligible
+    // `ApplyCondition` timer in place — consuming the prime only when
+    // at least one timer was actually extended (short-duration buffs
+    // and pure-damage spells leave the prime dangling for the next
+    // eligible cast).
+    actions.push(&*crate::actions::metamagic::EXTENDED_SPELL);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

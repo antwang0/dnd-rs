@@ -2763,6 +2763,46 @@ impl EncounterInstance {
         shielded
     }
 
+    /// 5e Sorcerer Extended Spell metamagic — if the caster has the prime
+    /// up, walk `side_effects` and call `extend_duration` on each. Any
+    /// `true` return doubled an eligible `Rounds(n)` timer (RAW: 1 minute
+    /// or longer); the prime is consumed the first time at least one
+    /// timer was extended on this cast. Idempotent when no prime is up
+    /// or when no side-effect carried an eligible long timer — returns
+    /// silently so spells whose only effects are short-duration buffs
+    /// (`UntilStartOfNextTurn`) or instantaneous damage don't burn the
+    /// prime. Mirrors the consume-on-trigger pattern used by Empowered /
+    /// Heightened / Careful / Distant Spell at the other roll-site
+    /// chokepoints.
+    pub fn consume_extended_spell(
+        &mut self,
+        caster_id: usize,
+        side_effects: &mut [Box<dyn crate::engine::side_effects::ApplicableSideEffect>],
+    ) {
+        let primed = self
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_condition(Condition::ExtendedSpelling));
+        if !primed {
+            return;
+        }
+        let mut extended = false;
+        for se in side_effects.iter_mut() {
+            if se.extend_duration() {
+                extended = true;
+            }
+        }
+        if !extended {
+            return;
+        }
+        let Some(caster) = self.actors.get_mut(&caster_id) else {
+            return;
+        };
+        let name = caster.name().to_string();
+        caster.remove_condition(Condition::ExtendedSpelling);
+        self.log(format!("  extended spell: {} doubles the duration", name));
+    }
+
     /// 5e Sanctuary: if `target_id` carries the Sanctuary condition, the
     /// attacker (`attacker_id`) makes a one-shot WIS save. On fail, the
     /// attack is blocked entirely (caller short-circuits the attack roll
@@ -8664,6 +8704,149 @@ mod tests {
         assert!(
             !after.has_condition(Condition::TwinnedSpelling),
             "twinned prime consumed by the lv3 cast"
+        );
+    }
+
+    /// Extended Spell prime installs the condition, debits 1 SP eagerly
+    /// (mirroring Empowered / Heightened / Careful / Distant), and gates
+    /// on a non-empty pool. Re-priming while already extended is a no-op
+    /// per the shared metamagic validator.
+    #[test]
+    fn extended_spell_action_spends_one_sp_and_primes() {
+        use crate::actions::metamagic::EXTENDED_SPELL;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.give_resource(crate::engine::side_effects::Resource::BonusAction);
+        let sp_before = actor.sorcery_points();
+        assert!(sp_before >= 1, "template ships SP for the test");
+
+        let effects = EXTENDED_SPELL.execute(&mut e, sorcerer, None, None, None);
+        assert!(!effects.is_empty(), "extended spell should queue an effect");
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let after = e.actors.get(&sorcerer).unwrap();
+        assert_eq!(after.sorcery_points(), sp_before - 1, "1 SP spent eagerly");
+        assert!(
+            after.has_condition(Condition::ExtendedSpelling),
+            "extended prime installed"
+        );
+
+        // Re-prime is blocked while the prime is up.
+        assert!(
+            !EXTENDED_SPELL.validate_input(&e, sorcerer, None, None, None),
+            "no-stack while ExtendedSpelling is already installed"
+        );
+    }
+
+    /// End-to-end: casting Mage Armor (`Rounds(100)`) while extended
+    /// produces a `Rounds(200)` install (RAW: doubled, capped at the
+    /// engine's `EXTENDED_SPELL_MAX_ROUNDS`). The prime is consumed.
+    #[test]
+    fn extended_mage_armor_doubles_timer_and_consumes_prime() {
+        use crate::actions::spells::MAGE_ARMOR;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.add_condition(Condition::ExtendedSpelling, ConditionTimer::Rounds(2));
+        let effects = MAGE_ARMOR.execute(&mut e, sorcerer, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let after = e.actors.get(&sorcerer).unwrap();
+        assert!(
+            !after.has_condition(Condition::ExtendedSpelling),
+            "extended prime consumed"
+        );
+        let timer = after
+            .conditions()
+            .get(&Condition::MageArmored)
+            .copied()
+            .expect("mage armor installed");
+        assert_eq!(
+            timer,
+            ConditionTimer::Rounds(200),
+            "mage armor's base 100-round timer doubled to 200 (engine cap)"
+        );
+    }
+
+    /// Casting a short-duration buff (`UntilStartOfNextTurn`) like Shield
+    /// while extended does NOT consume the prime — RAW: Extended Spell
+    /// only affects spells with a duration of 1 minute or longer.
+    #[test]
+    fn extended_spell_skips_short_duration_buff() {
+        use crate::actions::spells::SHIELD;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.give_resource(crate::engine::side_effects::Resource::Reaction);
+        actor.add_condition(Condition::ExtendedSpelling, ConditionTimer::Rounds(2));
+        let effects = SHIELD.execute(&mut e, sorcerer, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let after = e.actors.get(&sorcerer).unwrap();
+        assert!(
+            after.has_condition(Condition::ExtendedSpelling),
+            "short-duration buff doesn't burn the extended prime"
+        );
+        // Shield is still installed — it's not blocked, just not extended.
+        assert!(
+            after.has_condition(Condition::Shielded),
+            "shield still applied at base timer"
+        );
+        let timer = after
+            .conditions()
+            .get(&Condition::Shielded)
+            .copied()
+            .expect("shield installed");
+        assert_eq!(
+            timer,
+            ConditionTimer::UntilStartOfNextTurn,
+            "short-duration timer untouched"
+        );
+    }
+
+    /// `consume_extended_spell` is a no-op when no prime is up — it
+    /// neither logs nor mutates side_effects. Mirrors the
+    /// `consume_distant_spell_clears_prime_and_logs` smoke test.
+    #[test]
+    fn consume_extended_spell_no_op_without_prime() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::engine::side_effects::{ApplicableSideEffect, ApplyCondition};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Build a side-effect that *would* be extended if the prime were up.
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(ApplyCondition {
+            actor_id: sorcerer,
+            condition: Condition::MageArmored,
+            timer: ConditionTimer::Rounds(60),
+        })];
+        let log_len_before = e.messages().len();
+        e.consume_extended_spell(sorcerer, &mut effects);
+        assert_eq!(
+            e.messages().len(),
+            log_len_before,
+            "no log line when nothing to consume"
         );
     }
 

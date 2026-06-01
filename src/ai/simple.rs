@@ -486,6 +486,16 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3q''''''. Extended Spell — sorcerer bonus-action metamagic
+        //           prime. Burns 1 sorcery point to double the next
+        //           long-duration condition install. Fires only when the
+        //           kit owns an extendable spell and an enemy is in
+        //           engagement range — otherwise the prime would dangle
+        //           and the SP would be wasted.
+        if let Some(aei) = try_extended_spell(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3r. Telekinetic — wizard / sorcerer / warlock bonus-action
         //     cantrip shove. Pulls an enemy 5 ft closer on a failed STR
         //     save; no slot. Fire when an enemy is just out of reach for
@@ -1480,6 +1490,87 @@ fn try_twinned_spell(
         return None;
     }
     try_self_action(encounter, actor_id, "twinned spell")
+}
+
+/// Extended Spell — sorcerer bonus-action metamagic prime. Burns 1
+/// sorcery point so the next spell with a 1-minute-or-longer duration
+/// (Rounds(n) with n >= 10) has its timer doubled. Fires when:
+/// - The sorcerer has SP available and the prime isn't already up.
+/// - The kit owns a spell that installs a Rounds-style buff/debuff
+///   (Mage Armor, Hunter's Mark, Bless, Hold Person, Polymorph, ...) —
+///   without one, the prime would dangle and the SP would be wasted.
+/// - At least one combat-active enemy is within typical engagement range
+///   (24 tiles) so the sorcerer is actually casting this round.
+///
+/// Cheaper than Empowered (same 1 SP) but only pays off on the long-
+/// duration cast. Skipped if Heightened / Empowered are already up so
+/// the higher-leverage primes can fire first; Extended is the cheapest
+/// of the long-prime family so it's the fallback rather than the lead.
+fn try_extended_spell(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.sorcery_points() == 0 {
+        return None;
+    }
+    if actor.has_condition(Condition::ExtendedSpelling)
+        || actor.has_condition(Condition::EmpoweredSpelling)
+        || actor.has_condition(Condition::HeightenedSpelling)
+    {
+        return None;
+    }
+    // Spells whose canonical cast installs a Rounds(n) condition with
+    // n >= 10 (1 minute or longer in our 6-second rounds). The list is
+    // intentionally narrow: extending an instantaneous-damage spell
+    // doesn't burn the prime, so the gate only matters for cleanly
+    // signaling "this kit has at least one extendable cast." Keep in
+    // sync with the canonical long-buff / lockdown spells the sorcerer
+    // ships with.
+    const EXTENDABLE: &[&str] = &[
+        "mage armor",
+        "hunter's mark",
+        "bless",
+        "hold person",
+        "hold monster",
+        "polymorph",
+        "fly",
+        "haste",
+        "invisibility",
+        "greater invisibility",
+        "stoneskin",
+        "mirror image",
+        "shield of faith",
+        "false life",
+        "heroism",
+        "blur",
+        "barkskin",
+        "pass without trace",
+        "spirit guardians",
+        "spirit shroud",
+        "crusader's mantle",
+        "holy weapon",
+        "wind wall",
+        "globe of invulnerability",
+        "fire shield",
+        "mind blank",
+        "warding bond",
+        "death ward",
+        "magic weapon",
+        "protection from energy",
+        "enlarge / reduce",
+        "shadow blade",
+    ];
+    let has_extendable = EXTENDABLE
+        .iter()
+        .any(|name| actor.find_action(name).is_some());
+    if !has_extendable {
+        return None;
+    }
+    if !any_enemy_within(encounter, actor_id, 24) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "extended spell")
 }
 
 /// Telekinetic — bonus-action cantrip shove. Pulls a single enemy 5 ft
@@ -3346,6 +3437,93 @@ mod tests {
         assert!(
             try_distant_spell(&e, sorcerer).is_none(),
             "prime already up → skip"
+        );
+    }
+
+    /// `try_extended_spell` fires when the sorcerer has SP, hasn't
+    /// primed Extended / Empowered / Heightened, owns at least one
+    /// long-duration spell, and an enemy is within engagement range.
+    /// Skipped on every gate violation.
+    #[test]
+    fn extended_spell_ai_gates() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::encounter::EncounterInstance;
+        use crate::engine::terrain_gen::TerrainGenParams;
+        use crate::engine::types::Coordinate;
+
+        let tp = TerrainGenParams {
+            width: 30,
+            height: 30,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(7)).unwrap();
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .give_resource(Resource::BonusAction);
+
+        // No enemy → skip.
+        assert!(
+            try_extended_spell(&e, sorcerer).is_none(),
+            "no enemy → skip"
+        );
+
+        // Enemy in range → fires (sorcerer template has Mage Armor /
+        // Hunter's Mark / Haste / etc. — extendable spells in the kit).
+        let _ = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(15, 5), 1, 0)
+            .unwrap();
+        assert!(
+            try_extended_spell(&e, sorcerer).is_some(),
+            "enemy in range + extendable kit → prime fires"
+        );
+
+        // Already primed → skip.
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .add_condition(Condition::ExtendedSpelling, ConditionTimer::Rounds(2));
+        assert!(
+            try_extended_spell(&e, sorcerer).is_none(),
+            "already extended → skip"
+        );
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .remove_condition(Condition::ExtendedSpelling);
+
+        // Empowered prime up → skip (higher-leverage prime preferred).
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .add_condition(Condition::EmpoweredSpelling, ConditionTimer::Rounds(2));
+        assert!(
+            try_extended_spell(&e, sorcerer).is_none(),
+            "empowered already up → skip"
+        );
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .remove_condition(Condition::EmpoweredSpelling);
+
+        // No SP → skip.
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        while actor.spend_sorcery_point() {}
+        assert!(
+            try_extended_spell(&e, sorcerer).is_none(),
+            "no SP → skip"
         );
     }
 

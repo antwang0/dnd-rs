@@ -862,6 +862,19 @@ pub enum Condition {
     /// twinned cast on a solo enemy isn't wasted. Tick-down timer
     /// (`UntilStartOfNextTurn`) caps an unused prime.
     TwinnedSpelling,
+    /// Extended Spell primed (5e Sorcerer Metamagic). The sorcerer has
+    /// spent one sorcery point via the Extended Spell bonus-action prime;
+    /// the next spell they cast that installs a long-duration condition
+    /// (RAW: 1 minute or longer; we gate on `Rounds(n)` with n >= 10)
+    /// has its timer doubled. Read at the side-effect-assembly chokepoint
+    /// in `Action::execute`: any `ApplyCondition` whose `extend_duration`
+    /// returns true (i.e. an eligible long timer was doubled) consumes
+    /// the prime. Spells whose only effects are short-duration buffs or
+    /// instantaneous damage don't burn the prime — it dangles until the
+    /// next eligible cast or the tick-down expires. Tick-down timer
+    /// (`UntilStartOfNextTurn`) caps an unused prime so it doesn't sit
+    /// across rounds.
+    ExtendedSpelling,
 }
 
 impl Condition {
@@ -989,6 +1002,7 @@ impl Condition {
             Condition::CarefulSpelling => "primed with careful spell",
             Condition::DistantSpelling => "primed with distant spell",
             Condition::TwinnedSpelling => "primed with twinned spell",
+            Condition::ExtendedSpelling => "primed with extended spell",
         }
     }
 
@@ -1082,6 +1096,7 @@ impl Condition {
                 | Condition::CarefulSpelling
                 | Condition::DistantSpelling
                 | Condition::TwinnedSpelling
+                | Condition::ExtendedSpelling
         )
     }
 
