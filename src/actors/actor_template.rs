@@ -224,6 +224,17 @@ pub struct CreatureTemplate {
     /// `resolve_attack_outcome` / `roll_save`. Ability checks share the
     /// same roll path so they pick up the reroll automatically.
     pub has_lucky: bool,
+    /// 5e Halfling Brave racial trait: advantage on saving throws against
+    /// being Frightened. The engine doesn't tag saves by what condition
+    /// they protect against, so we approximate by treating Brave as full
+    /// immunity to Frightened — checked dynamically at
+    /// `ActorInstance::add_condition` alongside the Heroism / MindBlank
+    /// immunity gates. The over-tuning (advantage → immunity) is small in
+    /// practice: every fear effect in the engine still has to roll the
+    /// underlying save, and Brave only kicks in if that save fails AND
+    /// the source resolves to Frightened. Aura of Courage covers the
+    /// in-aura paladin case via the same chokepoint.
+    pub has_brave: bool,
     /// 5e Paladin Aura of Protection (level 6+): the paladin and every
     /// ally within 10 ft (4 tile gap in this 2.5ft grid) adds the
     /// paladin's CHA modifier (minimum +1) to all saving throws.
@@ -490,6 +501,8 @@ pub struct ActorInstance {
     crit_threshold: u32,
     /// 5e Lucky trait / feat. See `CreatureTemplate` docs.
     has_lucky: bool,
+    /// 5e Halfling Brave trait. See `CreatureTemplate` docs.
+    has_brave: bool,
     /// 5e Paladin Aura of Protection. See `CreatureTemplate` docs.
     has_aura_of_protection: bool,
     /// 5e Paladin Aura of Courage. See `CreatureTemplate` docs.
@@ -605,6 +618,7 @@ impl ActorInstance {
             brutal_critical_dice: ct.brutal_critical_dice,
             crit_threshold: ct.crit_threshold.max(1),
             has_lucky: ct.has_lucky,
+            has_brave: ct.has_brave,
             has_aura_of_protection: ct.has_aura_of_protection,
             has_aura_of_courage: ct.has_aura_of_courage,
             has_savage_attacks: ct.has_savage_attacks,
@@ -718,6 +732,14 @@ impl ActorInstance {
     /// to fold the aura's CHA bonus into every nearby ally's save total.
     pub fn has_aura_of_protection(&self) -> bool {
         self.has_aura_of_protection
+    }
+
+    /// 5e Halfling Brave — advantage on saves vs Frightened, approximated
+    /// as full immunity to the Frightened condition install. Read by
+    /// `Condition::dynamic_immunity_holder` so the chokepoint in
+    /// `add_condition` catches it alongside Heroism / MindBlank.
+    pub fn has_brave(&self) -> bool {
+        self.has_brave
     }
 
     /// True if this actor emits the Paladin's Aura of Courage (level 10+).
@@ -1200,31 +1222,37 @@ impl ActorInstance {
         self.conditions.contains_key(&c)
     }
 
+    /// True if the actor is dynamically immune to condition `c` from a
+    /// non-template source — currently:
+    ///   - Heroism (`Heroic`) → immune to Frightened
+    ///   - Mind Blank (`MindBlanked`) → immune to Charmed
+    ///   - Halfling Brave racial → immune to Frightened (approximated
+    ///     from RAW's "advantage on saves vs Frightened")
+    ///
+    /// Distinct from `condition_immunities` (template-level immunities
+    /// pinned at creature creation): this lane reads live state so an
+    /// effect that drops can drop its rider immunity along with it. Read
+    /// by `add_condition` as part of the install gate.
+    pub fn dynamic_immunity_to(&self, c: Condition) -> bool {
+        match c {
+            Condition::Frightened => {
+                self.has_condition(Condition::Heroic) || self.has_brave
+            }
+            Condition::Charmed => self.has_condition(Condition::MindBlanked),
+            _ => false,
+        }
+    }
+
     /// Add a condition with the given timer. If the actor is immune to
-    /// the condition (via `condition_immunities`), no-op and return false.
-    /// Heroism also confers immunity to Frightened — checked here so the
-    /// gate is symmetric with the template-driven immunity list.
+    /// the condition (template-level via `condition_immunities`, or
+    /// dynamic via `dynamic_immunity_to`), no-op and return false.
     ///
     /// 5e: re-applying a condition with a *longer* timer extends the
     /// effect; a shorter timer is ignored. Permanent beats any rounds
     /// timer; `UntilStartOfNextTurn` is treated as the shortest possible
     /// duration. Returns true if the condition was newly added.
     pub fn add_condition(&mut self, c: Condition, timer: ConditionTimer) -> bool {
-        if self.condition_immunities.contains(&c) {
-            return false;
-        }
-        // 5e Heroism: target is immune to the Frightened condition while
-        // the spell is up. We honor that as a dynamic immunity here so
-        // any source (monster fear aura, Cause Fear spell) gets blocked.
-        if c == Condition::Frightened && self.has_condition(Condition::Heroic) {
-            return false;
-        }
-        // 5e Mind Blank: target is immune to charm while the spell is up
-        // (RAW also blocks divination and psychic damage; psychic damage
-        // is handled in `effective_damage`). Dynamic immunity so any
-        // source — Charm Person, Charm Monster, Dominate Person, Suggestion
-        // — gets blocked, not just the spells we know about today.
-        if c == Condition::Charmed && self.has_condition(Condition::MindBlanked) {
+        if self.condition_immunities.contains(&c) || self.dynamic_immunity_to(c) {
             return false;
         }
         let is_new = !self.conditions.contains_key(&c);

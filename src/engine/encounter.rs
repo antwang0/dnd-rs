@@ -9055,6 +9055,50 @@ mod tests {
         );
     }
 
+    /// 5e Halfling Brave: advantage on saves vs Frightened. The engine
+    /// approximates this as full Frightened immunity at the
+    /// `add_condition` chokepoint (mirroring Heroism / MindBlank).
+    /// End-to-end: a Halfling Scout never lands Frightened from Cause
+    /// Fear even on a failed save; a baseline Rogue does.
+    #[test]
+    fn halfling_brave_blocks_frightened_install() {
+        use crate::actors::creatures::halflings::HALFLING_SCOUT_TEMPLATE;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let halfling = e
+            .instantiate_creature(&HALFLING_SCOUT_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        // Force-apply Frightened with a long timer. The brave halfling
+        // silently drops the install; the rogue picks it up.
+        let added_halfling = e
+            .actors
+            .get_mut(&halfling)
+            .unwrap()
+            .add_condition(Condition::Frightened, ConditionTimer::Rounds(3));
+        let added_rogue = e
+            .actors
+            .get_mut(&rogue)
+            .unwrap()
+            .add_condition(Condition::Frightened, ConditionTimer::Rounds(3));
+        assert!(!added_halfling, "Halfling Brave should block Frightened");
+        assert!(added_rogue, "baseline rogue should pick up Frightened");
+        assert!(!e
+            .actors
+            .get(&halfling)
+            .unwrap()
+            .has_condition(Condition::Frightened));
+        assert!(e
+            .actors
+            .get(&rogue)
+            .unwrap()
+            .has_condition(Condition::Frightened));
+    }
+
     /// 5e Paralyzed clause: "any attack that hits the creature is a
     /// critical hit if the attacker is within 5 feet of the creature."
     /// `target_grants_melee_auto_crit` is the central gate the attack-
