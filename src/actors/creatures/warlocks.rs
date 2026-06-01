@@ -134,7 +134,6 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::GREEN_FLAME_BLADE);
     actions.push(&*crate::actions::spells::THUNDER_STEP);
     actions.push(&*crate::actions::spells::SHADOW_BLADE);
-    actions.push(&*crate::actions::spells::WITCH_BOLT);
     actions.push(&*crate::actions::spells::CLOUD_OF_DAGGERS);
     CreatureTemplate {
         name: "Warlock",

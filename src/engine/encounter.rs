@@ -1106,10 +1106,14 @@ impl EncounterInstance {
     }
 
     /// True if `actor_id` is inside the 10 ft Aura of Courage of any
-    /// allied paladin (level 10+). Read by `add_condition` to suppress
-    /// the Frightened install on allies inside the bubble. The aura goes
-    /// down with the paladin — combat-active filter mirrors the
-    /// Aura of Protection helper.
+    /// allied paladin (level 10+). Read by `ApplyCondition::apply` (the
+    /// engine-aware install path that needs encounter geometry) to
+    /// suppress the Frightened install on allies inside the bubble.
+    /// Distinct from the actor-local `dynamic_immunity_to` check, which
+    /// handles self-contained immunities (Heroism, Mind Blank, Halfling
+    /// Brave) that don't need encounter context. The aura goes down with
+    /// the paladin — combat-active filter mirrors the Aura of Protection
+    /// helper.
     pub fn is_in_aura_of_courage(&self, actor_id: usize) -> bool {
         self.paladin_aura_emitters(actor_id, ActorInstance::has_aura_of_courage)
             .next()
