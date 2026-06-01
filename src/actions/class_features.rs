@@ -2977,3 +2977,23 @@ impl Action for BreathWeapon {
 }
 
 pub static BREATH_WEAPON: LazyLock<BreathWeapon> = LazyLock::new(|| BreathWeapon {});
+
+/// Warlock Eldritch Invocation — **Agonizing Blast**. Passive feature:
+/// when the holder casts Eldritch Blast, they add their Charisma
+/// modifier to the damage of each beam (RAW: "When you cast Eldritch
+/// Blast, add your Charisma modifier to the damage it deals on a hit").
+/// Read at the EldritchBlast cast site via `feature_available` (the
+/// invocation never gets spent — it's permanent, but the same gate is
+/// the cleanest hook). Add this tag to a warlock template's `features`
+/// set to install it.
+pub const AGONIZING_BLAST_TAG: &str = "warlock.agonizing_blast";
+
+/// Warlock Eldritch Invocation — **Repelling Blast**. Passive feature:
+/// when the holder hits a Large or smaller creature with Eldritch Blast,
+/// they can push the creature up to 10 feet (4 tiles in our 2.5ft grid)
+/// away in a straight line (RAW). We approximate the size gate as
+/// "Large or smaller" by skipping the push on Huge / Gargantuan
+/// targets — those creatures are too massive for the cantrip's force.
+/// Read at the EldritchBlast cast site via `feature_available`. Add this
+/// tag to a warlock template's `features` set to install it.
+pub const REPELLING_BLAST_TAG: &str = "warlock.repelling_blast";

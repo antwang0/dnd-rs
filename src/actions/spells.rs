@@ -3693,6 +3693,8 @@ impl Action for EldritchBlast {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actions::class_features::{AGONIZING_BLAST_TAG, REPELLING_BLAST_TAG};
+        use crate::engine::side_effects::PushActor;
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
@@ -3701,6 +3703,30 @@ impl Action for EldritchBlast {
         };
         let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Charisma);
         let beam_count = crate::engine::util::cantrip_dice_count(caster.level());
+        // 5e Warlock Eldritch Invocations: read both invocations up front
+        // from the caster's permanent feature tags. Agonizing Blast adds
+        // CHA modifier to each beam's damage; Repelling Blast appends a
+        // PushActor on hit (4-tile push, gated to non-Huge/non-Gargantuan
+        // targets per RAW's "Large or smaller" clause).
+        let agonizing = caster.feature_available(AGONIZING_BLAST_TAG);
+        let repelling = caster.feature_available(REPELLING_BLAST_TAG);
+        let damage_bonus = if agonizing {
+            // RAW: add CHA mod, floor at 0 — a negative CHA modifier
+            // doesn't reduce beam damage (the invocation only buffs).
+            caster.ability_modifier(AbilityScoreType::Charisma).max(0)
+        } else {
+            0
+        };
+        let caster_loc = caster.location();
+        // RAW "Large or smaller" gate: skip the push on Huge / Gargantuan
+        // targets — they're too massive for the cantrip's recoil. Snapshot
+        // the gate result up front so the per-beam loop doesn't re-query
+        // the actor map (the target can change HP / die but not size).
+        let push_target = repelling
+            && encounter
+                .actors
+                .get(&target_id)
+                .is_some_and(|t| t.size().ordinal() <= crate::engine::types::Size::Large.ordinal());
         // Fire each beam as an independent attack roll (1d10 force each).
         // This matches 5e RAW: each beam can hit or miss individually and
         // triggers on-hit riders (Hex, Hunter's Mark, etc.) per beam.
@@ -3711,16 +3737,31 @@ impl Action for EldritchBlast {
             } else {
                 "eldritch blast".to_string()
             };
-            effects.extend(spell_attack(
+            let (beam_effects, damage) = spell_attack_outcome(
                 encounter,
                 caster_id,
                 target_id,
                 &label,
                 attack_bonus,
                 Dice::new(1, 10),
+                damage_bonus,
                 DamageType::Force,
                 false,
-            ));
+            );
+            effects.extend(beam_effects);
+            // Repelling Blast: push on every beam that landed (damage > 0).
+            // 5e RAW lets the warlock choose which beam(s) push; in our
+            // model the AI doesn't make that choice so we apply per-beam
+            // unconditionally — the worst case is the target gets shoved
+            // farther than necessary, which still matches the cantrip's
+            // intent.
+            if push_target && damage > 0 {
+                effects.push(Box::new(PushActor {
+                    actor_id: target_id,
+                    from: caster_loc,
+                    max_tiles: 4,
+                }));
+            }
         }
         effects
     }
