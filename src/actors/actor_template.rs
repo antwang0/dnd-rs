@@ -1661,6 +1661,23 @@ impl ActorInstance {
         self.location
     }
 
+    /// Footprint-Chebyshev gap (in tiles) to another actor, accounting
+    /// for both creatures' size categories. 0 means touching/adjacent.
+    /// Free-standing analogue of `EncounterInstance::footprint_distance`
+    /// for callers (AI heuristics, condition aura sweeps) that already
+    /// hold both actor references and want to skip the id-lookup round-
+    /// trip. Mirrors the same gap formula via the shared
+    /// `engine::util::footprint_chebyshev` helper.
+    pub fn footprint_gap_to(&self, other: &ActorInstance) -> isize {
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+        footprint_chebyshev(
+            self.location,
+            get_tiles_from_size(self.size),
+            other.location,
+            get_tiles_from_size(other.size),
+        )
+    }
+
     pub fn initiative(&self) -> Option<i32> {
         self.initiative
     }

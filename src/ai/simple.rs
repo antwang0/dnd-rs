@@ -1638,8 +1638,6 @@ fn try_preserve_life(
         return None;
     }
     let my_team = actor.team();
-    let my_loc = actor.location();
-    let my_size = get_tiles_from_size(actor.size());
     let wounded_nearby = encounter.actors.iter().any(|(_id, a)| {
         if a.team() != my_team || !a.is_combat_active() {
             return false;
@@ -1648,12 +1646,7 @@ fn try_preserve_life(
         if a.hitpoints() >= cap / 2 + (cap % 2) {
             return false;
         }
-        footprint_chebyshev(
-            my_loc,
-            my_size,
-            a.location(),
-            get_tiles_from_size(a.size()),
-        ) <= 12
+        actor.footprint_gap_to(a) <= 12
     });
     if !wounded_nearby {
         return None;
@@ -1758,8 +1751,6 @@ fn try_warding_bond(
         return None;
     }
     let my_team = actor.team();
-    let my_loc = actor.location();
-    let my_size = get_tiles_from_size(actor.size());
     // Most fragile ally in touch range (gap 1) that isn't already
     // bonded. Tie-break by lower HP ratio (more wounded wins).
     let mut best: Option<(u32, ActionExecutionInfo)> = None;
@@ -1773,13 +1764,7 @@ fn try_warding_bond(
         if t.has_condition(Condition::WardingBonded) {
             continue;
         }
-        let gap = footprint_chebyshev(
-            my_loc,
-            my_size,
-            t.location(),
-            get_tiles_from_size(t.size()),
-        );
-        if gap > 1 {
+        if actor.footprint_gap_to(t) > 1 {
             continue;
         }
         let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![tid]), None, None);
@@ -2125,18 +2110,15 @@ fn try_turn_undead(
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
     use crate::engine::types::DamageType;
-    use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
     let actor = encounter.actors.get(&actor_id)?;
     let team = actor.team();
-    let loc = actor.location();
-    let size = get_tiles_from_size(actor.size());
     let undead_nearby = encounter.actors.iter().any(|(id, a)| {
         *id != actor_id
             && a.team() != team
             && a.is_combat_active()
             && a.is_immune_to(DamageType::Poison)
-            && footprint_chebyshev(loc, size, a.location(), get_tiles_from_size(a.size())) <= 12
+            && actor.footprint_gap_to(a) <= 12
     });
     if !undead_nearby {
         return None;
@@ -2153,12 +2135,8 @@ fn try_fear_aura(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
-
     let actor = encounter.actors.get(&actor_id)?;
     let team = actor.team();
-    let loc = actor.location();
-    let size = get_tiles_from_size(actor.size());
     let nearby = encounter
         .actors
         .iter()
@@ -2168,7 +2146,7 @@ fn try_fear_aura(
                 && a.is_combat_active()
                 && !a.is_immune_to_condition(Condition::Frightened)
                 && !a.has_condition(Condition::Frightened)
-                && footprint_chebyshev(loc, size, a.location(), get_tiles_from_size(a.size())) <= 8
+                && actor.footprint_gap_to(a) <= 8
         })
         .count();
     if nearby < 2 {
@@ -2371,8 +2349,6 @@ fn try_shove(
     let actor = encounter.actors.get(&actor_id)?;
     let action = actor.find_action("shove")?;
     let my_team = actor.team();
-    let my_loc = actor.location();
-    let my_size = get_tiles_from_size(actor.size());
 
     // Candidate targets: adjacent hostile, not already prone.
     let mut best: Option<(u32, ActionExecutionInfo)> = None;
@@ -2387,27 +2363,18 @@ fn try_shove(
             continue;
         }
         // Must be in melee reach.
-        let dist = footprint_chebyshev(
-            my_loc,
-            my_size,
-            t.location(),
-            get_tiles_from_size(t.size()),
-        );
-        if dist > MELEE_REACH {
+        if actor.footprint_gap_to(t) > MELEE_REACH {
             continue;
         }
         // Only shove when at least one friendly melee ally is also adjacent
         // to the target — otherwise prone just halves the target's speed
         // and doesn't give us advantage on our own attack (we already used
         // our Action on the shove).
-        let t_loc = t.location();
-        let t_size = get_tiles_from_size(t.size());
         let ally_adjacent = encounter.actors.iter().any(|(aid, ally)| {
             *aid != actor_id
                 && ally.team() == my_team
                 && ally.is_combat_active()
-                && footprint_chebyshev(ally.location(), get_tiles_from_size(ally.size()), t_loc, t_size)
-                    <= MELEE_REACH
+                && ally.footprint_gap_to(t) <= MELEE_REACH
         });
         if !ally_adjacent {
             continue;
