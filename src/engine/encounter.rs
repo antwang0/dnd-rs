@@ -2767,40 +2767,38 @@ impl EncounterInstance {
     /// up, walk `side_effects` and call `extend_duration` on each. Any
     /// `true` return doubled an eligible `Rounds(n)` timer (RAW: 1 minute
     /// or longer); the prime is consumed the first time at least one
-    /// timer was extended on this cast. Idempotent when no prime is up
-    /// or when no side-effect carried an eligible long timer — returns
-    /// silently so spells whose only effects are short-duration buffs
-    /// (`UntilStartOfNextTurn`) or instantaneous damage don't burn the
-    /// prime. Mirrors the consume-on-trigger pattern used by Empowered /
-    /// Heightened / Careful / Distant Spell at the other roll-site
-    /// chokepoints.
+    /// timer was extended on this cast. Returns true iff the prime was
+    /// consumed — callers (e.g. the Twinned Spell re-issue path) use the
+    /// flag to extend the twin's separately-built side_effects vec under
+    /// the same cast so both targets see the doubled duration RAW.
+    /// Idempotent when no prime is up or when no side-effect carried an
+    /// eligible long timer: returns false silently so spells whose only
+    /// effects are short-duration buffs (`UntilStartOfNextTurn`) or
+    /// instantaneous damage don't burn the prime. Mirrors the
+    /// consume-on-trigger pattern used by Empowered / Heightened /
+    /// Careful / Distant Spell at the other roll-site chokepoints.
     pub fn consume_extended_spell(
         &mut self,
         caster_id: usize,
         side_effects: &mut [Box<dyn crate::engine::side_effects::ApplicableSideEffect>],
-    ) {
+    ) -> bool {
         let primed = self
             .actors
             .get(&caster_id)
             .is_some_and(|a| a.has_condition(Condition::ExtendedSpelling));
         if !primed {
-            return;
+            return false;
         }
-        let mut extended = false;
-        for se in side_effects.iter_mut() {
-            if se.extend_duration() {
-                extended = true;
-            }
-        }
-        if !extended {
-            return;
+        if !crate::engine::side_effects::extend_side_effect_timers(side_effects) {
+            return false;
         }
         let Some(caster) = self.actors.get_mut(&caster_id) else {
-            return;
+            return false;
         };
         let name = caster.name().to_string();
         caster.remove_condition(Condition::ExtendedSpelling);
         self.log(format!("  extended spell: {} doubles the duration", name));
+        true
     }
 
     /// 5e Sanctuary: if `target_id` carries the Sanctuary condition, the
@@ -8820,6 +8818,78 @@ mod tests {
             ConditionTimer::UntilStartOfNextTurn,
             "short-duration timer untouched"
         );
+    }
+
+    /// Twinned + Extended interaction: Extended Spell affects the
+    /// *spell*, so both the primary and twinned target see the doubled
+    /// duration RAW. Direct test on the helper rather than through a
+    /// real spell — Twinning a concentration spell has a separately
+    /// documented limitation (the second `StartConcentration` scrubs
+    /// the first target's bound condition), and isolating the timer
+    /// path keeps this assertion focused on the extend-propagation
+    /// invariant rather than the concentration semantics.
+    #[test]
+    fn extended_plus_twinned_applies_doubled_timer_to_both_targets() {
+        use crate::conditions::ConditionTimer;
+        use crate::engine::side_effects::{
+            ApplicableSideEffect, ApplyCondition, extend_side_effect_timers,
+        };
+
+        // Simulate two separately-built side_effects vecs (the original
+        // cast's effects and the twin's re-issued effects).
+        let mut original: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(ApplyCondition {
+            actor_id: 1,
+            condition: Condition::HuntersMarked,
+            timer: ConditionTimer::Rounds(10),
+        })];
+        let mut twin: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(ApplyCondition {
+            actor_id: 2,
+            condition: Condition::HuntersMarked,
+            timer: ConditionTimer::Rounds(10),
+        })];
+
+        // Extend the original — returns true.
+        assert!(extend_side_effect_timers(&mut original));
+        // Propagate to the twin — returns true.
+        assert!(extend_side_effect_timers(&mut twin));
+
+        // Apply both and verify the doubled timer landed on each target.
+        let mut e = ei_with_terrain(15, 15, &[]);
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        let zombie_a = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let zombie_b = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 1)
+            .unwrap();
+        // Re-assign the targets to live ids and re-build.
+        let mut original: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(ApplyCondition {
+            actor_id: zombie_a,
+            condition: Condition::HuntersMarked,
+            timer: ConditionTimer::Rounds(10),
+        })];
+        let mut twin: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(ApplyCondition {
+            actor_id: zombie_b,
+            condition: Condition::HuntersMarked,
+            timer: ConditionTimer::Rounds(10),
+        })];
+        assert!(extend_side_effect_timers(&mut original));
+        assert!(extend_side_effect_timers(&mut twin));
+        for ef in original.into_iter().chain(twin) {
+            ef.apply(&mut e);
+        }
+        for zid in [zombie_a, zombie_b] {
+            let timer = e.actors[&zid]
+                .conditions()
+                .get(&Condition::HuntersMarked)
+                .copied()
+                .unwrap_or_else(|| panic!("zombie {} should be HuntersMarked", zid));
+            assert_eq!(
+                timer,
+                ConditionTimer::Rounds(20),
+                "twin target also gets the extended duration"
+            );
+        }
     }
 
     /// `consume_extended_spell` is a no-op when no prime is up — it
@@ -20727,7 +20797,7 @@ mod tests {
         let total = e.roll_ability_check(g, AbilityScoreType::Strength, None);
         let mod_str = e.actors[&g].ability_modifier(AbilityScoreType::Strength);
         assert!(
-            total >= mod_str + 1 && total <= mod_str + 20,
+            total > mod_str && total <= mod_str + 20,
             "roll out of expected band: {} (mod {})",
             total,
             mod_str

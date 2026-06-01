@@ -35,6 +35,24 @@ pub const EXTENDED_SPELL_MIN_ROUNDS: u32 = 10;
 /// risking a runaway value on a future install that nudges past 100.
 pub const EXTENDED_SPELL_MAX_ROUNDS: u32 = 200;
 
+/// Walk `side_effects` and call `extend_duration` on each entry. Returns
+/// true if at least one entry doubled its timer (i.e. the cast carried
+/// an eligible long-duration install). Used by both the original
+/// Extended Spell consume path and the Twinned Spell re-issue path so a
+/// Twinned + Extended cast sees the doubled timer applied to both the
+/// primary and twin targets RAW.
+pub fn extend_side_effect_timers(
+    side_effects: &mut [Box<dyn ApplicableSideEffect>],
+) -> bool {
+    let mut extended = false;
+    for se in side_effects.iter_mut() {
+        if se.extend_duration() {
+            extended = true;
+        }
+    }
+    extended
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Resource {
     Movement(f32),

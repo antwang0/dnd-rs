@@ -457,13 +457,14 @@ pub trait Action {
         // prime up and the action installs at least one long-duration
         // condition (Rounds(n) with n >= 10), double the timer in place
         // on every eligible side-effect and burn the prime. Run before
-        // Twinned Spell so the twin's re-issued side_effects can pick up
-        // the original (already-doubled) timer values when the caller
-        // builds them — we re-issue the side_effects vec on twin, so the
-        // doubling has to live on each cast separately. Done here rather
-        // than per-spell to spare each spell impl from carrying the
-        // metamagic branch through its side_effects builder.
-        encounter.consume_extended_spell(caster_id, &mut side_effects);
+        // Twinned Spell — the `extended_for_twin` flag we capture here
+        // propagates into the twin's separately-built side_effects so a
+        // Twinned + Extended cast lands the doubled duration on both
+        // targets RAW (the prime affects the *spell*, not just the
+        // primary target). Done here rather than per-spell to spare each
+        // spell impl from carrying the metamagic branch through its
+        // side_effects builder.
+        let extended_for_twin = encounter.consume_extended_spell(caster_id, &mut side_effects);
         // 5e Sorcerer Twinned Spell metamagic: re-fire the action's
         // side_effects against a second target if the prime is up and the
         // caster can afford the SP cost (max(1, spell_level)). Gated to
@@ -511,9 +512,14 @@ pub trait Action {
                     target_locations,
                     overrides,
                 );
-                // Extended Spell already consumed on the original cast,
-                // so the twin's side_effects pass through at base timers
-                // — no second debit, no double-extension.
+                // Propagate the Extended Spell doubling to the twin's
+                // side_effects: the prime was consumed on the original
+                // cast (so we don't re-check it here), but Extended
+                // affects the *spell* — both twin targets get the
+                // doubled duration RAW.
+                if extended_for_twin {
+                    crate::engine::side_effects::extend_side_effect_timers(&mut twin_effects);
+                }
                 side_effects.append(&mut twin_effects);
             }
         }
