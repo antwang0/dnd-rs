@@ -73,7 +73,7 @@ pub static HALFLING_SCOUT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         has_lucky: true,
         // 5e Halfling racial: Brave. Advantage on saves vs Frightened —
         // we approximate as immunity to the Frightened install (the
-        // `Condition::dynamic_immunity_holder` lane).
+        // `dynamic_immunity_to` lane in actor_template).
         has_brave: true,
         has_fey_ancestry: false,
         has_aura_of_protection: false,

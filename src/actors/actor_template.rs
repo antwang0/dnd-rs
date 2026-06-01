@@ -754,8 +754,8 @@ impl ActorInstance {
 
     /// 5e Halfling Brave — advantage on saves vs Frightened, approximated
     /// as full immunity to the Frightened condition install. Read by
-    /// `Condition::dynamic_immunity_holder` so the chokepoint in
-    /// `add_condition` catches it alongside Heroism / MindBlank.
+    /// `dynamic_immunity_to` so the chokepoint in `add_condition` catches
+    /// it alongside Heroism / MindBlank.
     pub fn has_brave(&self) -> bool {
         self.has_brave
     }
