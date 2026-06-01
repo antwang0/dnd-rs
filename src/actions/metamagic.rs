@@ -37,6 +37,28 @@ fn spend_and_log(encounter: &mut EncounterInstance, caster_id: usize, sp_cost: u
     }
 }
 
+/// Shared "eager-debit + install prime condition" body used by every
+/// vanilla metamagic prime (Empowered / Heightened / Careful / Distant /
+/// Extended — the five primes whose entire side-effect is "spend N SP
+/// and tag the caster with the prime condition until their next turn").
+/// Quickened (no condition install — grants an extra Action instead)
+/// and Twinned (no eager SP debit — paid at consume time) don't fit
+/// this shape and stay bespoke.
+fn install_prime(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    sp_cost: u32,
+    condition: Condition,
+    log_verb: &str,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    spend_and_log(encounter, caster_id, sp_cost, log_verb);
+    vec![Box::new(ApplyCondition {
+        actor_id: caster_id,
+        condition,
+        timer: ConditionTimer::UntilStartOfNextTurn,
+    })]
+}
+
 /// 5e Sorcerer **Empowered Spell** metamagic. Bonus action — spend one
 /// sorcery point to prime the next spell-damage roll: dice that come up
 /// at 1 or 2 are rerolled (up to CHA-mod of them, RAW). Routed through
@@ -105,23 +127,20 @@ impl Action for EmpoweredSpell {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        // Spend the sorcery point up front (via the shared helper) so
-        // the side-effect queue can't double-install on re-validation.
-        // The condition apply is the side-effect proper; the SP debit
-        // lives on the actor directly since we don't have a dedicated
-        // `SorceryPoint` Resource variant (avoiding a third resource
-        // enum entry for a single-feature consumer).
-        spend_and_log(
+        // Routes through the shared `install_prime` helper: spend 1 SP
+        // eagerly (so a duplicate queued use can't slip past the
+        // validator) and install the EmpoweredSpelling tag on the
+        // caster. The SP debit lives on the actor directly since we
+        // don't have a dedicated `SorceryPoint` Resource variant
+        // (avoiding a third resource enum entry for a single-feature
+        // consumer).
+        install_prime(
             encounter,
             caster_id,
             1,
+            Condition::EmpoweredSpelling,
             "weaves the next spell with empowered metamagic",
-        );
-        vec![Box::new(ApplyCondition {
-            actor_id: caster_id,
-            condition: Condition::EmpoweredSpelling,
-            timer: ConditionTimer::UntilStartOfNextTurn,
-        })]
+        )
     }
 }
 
@@ -285,14 +304,13 @@ impl Action for HeightenedSpell {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        // Spend SP eagerly so a duplicate queued use can't slip past
-        // the validator — same pattern as Empowered / Quickened.
-        spend_and_log(encounter, caster_id, 3, "heightens the next spell with metamagic");
-        vec![Box::new(ApplyCondition {
-            actor_id: caster_id,
-            condition: Condition::HeightenedSpelling,
-            timer: ConditionTimer::UntilStartOfNextTurn,
-        })]
+        install_prime(
+            encounter,
+            caster_id,
+            3,
+            Condition::HeightenedSpelling,
+            "heightens the next spell with metamagic",
+        )
     }
 }
 
@@ -362,17 +380,13 @@ impl Action for CarefulSpell {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        spend_and_log(
+        install_prime(
             encounter,
             caster_id,
             1,
+            Condition::CarefulSpelling,
             "weaves the next AoE to spare allies",
-        );
-        vec![Box::new(ApplyCondition {
-            actor_id: caster_id,
-            condition: Condition::CarefulSpelling,
-            timer: ConditionTimer::UntilStartOfNextTurn,
-        })]
+        )
     }
 }
 
@@ -440,17 +454,13 @@ impl Action for DistantSpell {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        spend_and_log(
+        install_prime(
             encounter,
             caster_id,
             1,
+            Condition::DistantSpelling,
             "stretches the next spell's range with metamagic",
-        );
-        vec![Box::new(ApplyCondition {
-            actor_id: caster_id,
-            condition: Condition::DistantSpelling,
-            timer: ConditionTimer::UntilStartOfNextTurn,
-        })]
+        )
     }
 }
 
@@ -640,17 +650,13 @@ impl Action for ExtendedSpell {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        spend_and_log(
+        install_prime(
             encounter,
             caster_id,
             1,
+            Condition::ExtendedSpelling,
             "stretches the next spell's duration with metamagic",
-        );
-        vec![Box::new(ApplyCondition {
-            actor_id: caster_id,
-            condition: Condition::ExtendedSpelling,
-            timer: ConditionTimer::UntilStartOfNextTurn,
-        })]
+        )
     }
 }
 
