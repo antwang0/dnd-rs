@@ -875,6 +875,17 @@ pub enum Condition {
     /// (`UntilStartOfNextTurn`) caps an unused prime so it doesn't sit
     /// across rounds.
     ExtendedSpelling,
+    /// Seeking Spell primed (5e Tasha's Sorcerer Metamagic). The sorcerer
+    /// has spent two sorcery points via the Seeking Spell bonus-action
+    /// prime; the next spell-attack roll the sorcerer makes that misses is
+    /// rerolled (RAW: "you can spend 2 sorcery points to reroll the d20").
+    /// Read at the spell-attack chokepoint (`spell_attack_outcome` in
+    /// spells.rs) which calls `EncounterInstance::reroll_seeking_spell` on
+    /// a miss; the prime is consumed the moment the reroll lands (whether
+    /// the new roll hits or misses — RAW: "you must use the new roll").
+    /// Tick-down timer (`UntilStartOfNextTurn`) caps an unused prime so
+    /// it doesn't dangle across rounds.
+    SeekingSpelling,
 }
 
 impl Condition {
@@ -1003,6 +1014,7 @@ impl Condition {
             Condition::DistantSpelling => "primed with distant spell",
             Condition::TwinnedSpelling => "primed with twinned spell",
             Condition::ExtendedSpelling => "primed with extended spell",
+            Condition::SeekingSpelling => "primed with seeking spell",
         }
     }
 
@@ -1097,6 +1109,7 @@ impl Condition {
                 | Condition::DistantSpelling
                 | Condition::TwinnedSpelling
                 | Condition::ExtendedSpelling
+                | Condition::SeekingSpelling
         )
     }
 

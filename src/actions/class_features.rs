@@ -3006,3 +3006,244 @@ pub const REPELLING_BLAST_TAG: &str = "warlock.repelling_blast";
 /// Permanent passive — never consumed. Add this tag to a warlock
 /// template's `features` set to install it.
 pub const ELDRITCH_MIND_TAG: &str = "warlock.eldritch_mind";
+
+/// 5e Sorcerer **Font of Magic** — Create Spell Slot. Bonus action; spend
+/// `sp_cost` sorcery points to recreate one expended spell slot of the
+/// matching level. RAW cost table caps at 5th-level slot:
+///
+/// |   slot   | SP cost |
+/// |  level   |         |
+/// |    1     |    2    |
+/// |    2     |    3    |
+/// |    3     |    5    |
+/// |    4     |    6    |
+/// |    5     |    7    |
+///
+/// We expose one static per slot level (rather than a single action with
+/// an override parameter) to match how the other Action statics are
+/// shaped — each entry is a focused, named option the picker UI surfaces.
+/// The action validates the caster has the SP, has at least one expended
+/// slot at the requested level, and is combat-active. The side-effect
+/// debits SP up front (mirroring metamagic's eager-debit pattern) and
+/// restores the slot via the engine's `restore_spell_slot` lane.
+pub struct CreateSpellSlot {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub slot_level: u32,
+    pub sp_cost: u32,
+}
+
+impl Action for CreateSpellSlot {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        if !actor.is_combat_active() {
+            return false;
+        }
+        if actor.sorcery_points() < self.sp_cost {
+            return false;
+        }
+        // Only valid if at least one slot at this level is currently
+        // spent — recreating an already-full level is a no-op that would
+        // waste the SP.
+        let ssi = actor.spell_slot_manager.spell_slots(self.slot_level);
+        ssi.spell_slots < ssi.max_spell_slots
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // Direct mutation pattern mirrors the metamagic primes:
+        // eager-debit + log + restore-slot, all inside `side_effects`.
+        // No dedicated `SorceryPoint` Resource lane (avoids a third
+        // resource enum entry for a single feature).
+        let line = encounter.actors.get_mut(&caster_id).map(|actor| {
+            actor.spend_sorcery_points(self.sp_cost);
+            actor.spell_slot_manager.restore_spell_slot(self.slot_level, 1);
+            format!(
+                "{} converts {} SP into a level-{} slot ({} SP left).",
+                actor.name(),
+                self.sp_cost,
+                self.slot_level,
+                actor.sorcery_points()
+            )
+        });
+        if let Some(line) = line {
+            encounter.log(line);
+        }
+        Vec::new()
+    }
+}
+
+pub static CREATE_SPELL_SLOT_1: CreateSpellSlot = CreateSpellSlot {
+    display_name: "create level-1 slot",
+    aliases: &["cs1", "fontslot1"],
+    slot_level: 1,
+    sp_cost: 2,
+};
+
+pub static CREATE_SPELL_SLOT_2: CreateSpellSlot = CreateSpellSlot {
+    display_name: "create level-2 slot",
+    aliases: &["cs2", "fontslot2"],
+    slot_level: 2,
+    sp_cost: 3,
+};
+
+pub static CREATE_SPELL_SLOT_3: CreateSpellSlot = CreateSpellSlot {
+    display_name: "create level-3 slot",
+    aliases: &["cs3", "fontslot3"],
+    slot_level: 3,
+    sp_cost: 5,
+};
+
+/// 5e Sorcerer **Font of Magic** — Convert Spell Slot. Bonus action; burn
+/// one expended-able spell slot of `slot_level` to gain `slot_level`
+/// sorcery points (RAW: "you can transform one of your spell slots into
+/// sorcery points; the slot value is added to your sorcery points pool,
+/// up to your maximum"). Hard-capped at slot_level <= 5 — RAW lets you
+/// convert any slot but the highest practical use is refilling SP for
+/// metamagic, and a level-6+ slot is more valuable held.
+///
+/// We expose one static per slot level (rather than a single action with
+/// an override parameter) to match how the other Action statics are
+/// shaped. The action validates an open slot is available and the SP
+/// pool has room (we cap at `sorcery_points_max` per RAW — the surplus
+/// is wasted). The side-effect debits the slot up front and grants SP
+/// via the actor's pool directly (no dedicated `SorceryPoint` Resource).
+pub struct ConvertSpellSlot {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub slot_level: u32,
+}
+
+impl Action for ConvertSpellSlot {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // The spell slot cost lives in the resource lane so the engine's
+        // existing slot debit/log pipeline handles it cleanly (vs an
+        // inline `consume_spell_slot` in `side_effects`).
+        vec![Resource::BonusAction, Resource::SpellSlot(self.slot_level)]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        if !actor.is_combat_active() {
+            return false;
+        }
+        // Only valid if SP isn't already at the long-rest cap — RAW says
+        // SP gained "up to your maximum"; converting beyond the cap is
+        // strictly a slot waste, so we just block it.
+        actor.sorcery_points() < actor.sorcery_points_max()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let line = encounter.actors.get_mut(&caster_id).map(|actor| {
+            // RAW "up to your maximum": cap the gain at the long-rest pool
+            // size so we don't grow `sorcery_points` past `sorcery_points_max`.
+            let cap = actor.sorcery_points_max();
+            let gained = self.slot_level.min(cap.saturating_sub(actor.sorcery_points()));
+            actor.give_sorcery_points(gained);
+            format!(
+                "{} converts a level-{} slot into {} SP ({} SP total).",
+                actor.name(),
+                self.slot_level,
+                gained,
+                actor.sorcery_points()
+            )
+        });
+        if let Some(line) = line {
+            encounter.log(line);
+        }
+        Vec::new()
+    }
+}
+
+pub static CONVERT_SPELL_SLOT_1: ConvertSpellSlot = ConvertSpellSlot {
+    display_name: "convert level-1 slot",
+    aliases: &["convertslot1", "fontsp1"],
+    slot_level: 1,
+};
+
+pub static CONVERT_SPELL_SLOT_2: ConvertSpellSlot = ConvertSpellSlot {
+    display_name: "convert level-2 slot",
+    aliases: &["convertslot2", "fontsp2"],
+    slot_level: 2,
+};
+
+pub static CONVERT_SPELL_SLOT_3: ConvertSpellSlot = ConvertSpellSlot {
+    display_name: "convert level-3 slot",
+    aliases: &["convertslot3", "fontsp3"],
+    slot_level: 3,
+};

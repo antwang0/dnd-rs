@@ -869,6 +869,18 @@ impl ActorInstance {
         self.sorcery_points = self.sorcery_points_max;
     }
 
+    /// Grant `n` sorcery points to the pool, saturating at the long-rest
+    /// cap. Used by Font of Magic's "convert spell slot to SP" lane:
+    /// RAW "the slot value is added to your sorcery points, up to your
+    /// maximum" — surplus is silently dropped. Returns the actual delta
+    /// applied (useful for tests / logs that want the consumed amount).
+    pub fn give_sorcery_points(&mut self, n: u32) -> u32 {
+        let cap = self.sorcery_points_max;
+        let prev = self.sorcery_points;
+        self.sorcery_points = (prev + n).min(cap);
+        self.sorcery_points - prev
+    }
+
     pub fn legendary_actions_per_round(&self) -> u32 {
         self.legendary_actions_per_round
     }

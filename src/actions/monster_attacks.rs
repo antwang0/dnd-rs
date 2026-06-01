@@ -75,6 +75,7 @@ pub fn simple_weapon_attack_ranged(
             damage_type,
             is_melee,
             long_range: normal_range,
+                is_spell: false,
         },
     )
 }
@@ -490,6 +491,7 @@ impl Action for AcidSpit {
                 damage_type: DamageType::Acid,
                 is_melee: false,
                 long_range: None,
+                is_spell: false,
             },
         );
         if effects.is_empty() {
@@ -1305,6 +1307,7 @@ impl Action for LifeDrain {
                 damage_type: DamageType::Necrotic,
                 is_melee: true,
                 long_range: None,
+                is_spell: false,
             },
         );
         if damage == 0 {
@@ -1381,6 +1384,7 @@ impl Action for VampiricBite {
                 damage_type: DamageType::Piercing,
                 is_melee: true,
                 long_range: None,
+                is_spell: false,
             },
         );
         if piercing_damage == 0 {
@@ -2173,6 +2177,7 @@ impl Action for WorgBite {
                 damage_type: DamageType::Piercing,
                 is_melee: true,
                 long_range: None,
+                is_spell: false,
             },
         );
         if dealt == 0 {
@@ -2336,6 +2341,7 @@ impl Action for WightLifeDrain {
                 damage_type: DamageType::Necrotic,
                 is_melee: true,
                 long_range: None,
+                is_spell: false,
             },
         );
         if damage == 0 {
@@ -2624,6 +2630,7 @@ impl Action for MummyRottingFist {
                 damage_type: DamageType::Bludgeoning,
                 is_melee: true,
                 long_range: None,
+                is_spell: false,
             },
         );
         if damage == 0 {
@@ -2882,6 +2889,7 @@ impl Action for YetiClaws {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                is_spell: false,
             },
         );
         if damage == 0 {
@@ -3701,6 +3709,7 @@ impl Action for DragonBite {
                 damage_type: DamageType::Piercing,
                 is_melee: true,
                 long_range: None,
+                is_spell: false,
             },
         );
         if damage == 0 {
@@ -3791,6 +3800,7 @@ impl Action for LichParalyzingTouch {
                 damage_type: DamageType::Cold,
                 is_melee: true,
                 long_range: None,
+                is_spell: false,
             },
         );
         if damage == 0 {
@@ -4123,6 +4133,7 @@ impl Action for CouatlBite {
                 damage_type: DamageType::Piercing,
                 is_melee: true,
                 long_range: None,
+                is_spell: false,
             },
         );
         // 5e RAW: poison rider applies on hit only — bail if the bite missed.
@@ -4431,6 +4442,7 @@ impl Action for TarrasqueTail {
                 damage_type: DamageType::Bludgeoning,
                 is_melee: true,
                 long_range: None,
+                is_spell: false,
             },
         );
         if dmg > 0 {
@@ -4547,6 +4559,7 @@ impl Action for SolarLongsword {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                is_spell: false,
             },
         );
         // Only fire the radiant rider on a successful hit. We detect
@@ -4710,6 +4723,7 @@ impl Action for MindFlayerTentacles {
                 damage_type: DamageType::Psychic,
                 is_melee: true,
                 long_range: None,
+                is_spell: false,
             },
         );
         if effects.is_empty() {
@@ -4785,6 +4799,7 @@ impl Action for ErinyesLongsword {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                is_spell: false,
             },
         );
         if !effects.is_empty() {
@@ -5509,6 +5524,7 @@ impl Action for DeathKnightLongsword {
                 damage_type: DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                is_spell: false,
             },
         );
         if slash_dmg == 0 {

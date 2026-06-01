@@ -496,6 +496,30 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3q'''''''. Seeking Spell (Tasha's) — sorcerer bonus-action
+        //            metamagic prime. Burns 2 sorcery points so the
+        //            next missed spell-attack roll is rerolled. Fires
+        //            only when the kit owns a spell-attack spell (Fire
+        //            Bolt / Ray of Frost / Chromatic Orb / Witch Bolt /
+        //            ...) AND an enemy sits in attack range — otherwise
+        //            the prime would dangle. The 2 SP cost makes this
+        //            the most expensive of the cheap primes, so it
+        //            slots last in the metamagic lane.
+        if let Some(aei) = try_seeking_spell(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3q''''''''. Font of Magic — convert spell slot ↔ sorcery
+        //             points. Bonus action; only fires when one
+        //             resource is critically low while the other has
+        //             headroom. The two sub-tactics (refill SP from a
+        //             held slot, recreate a low-level slot from SP) are
+        //             surfaced behind the same gate so the AI doesn't
+        //             zig-zag between directions in the same turn.
+        if let Some(aei) = try_font_of_magic(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3r. Telekinetic — wizard / sorcerer / warlock bonus-action
         //     cantrip shove. Pulls an enemy 5 ft closer on a failed STR
         //     save; no slot. Fire when an enemy is just out of reach for
@@ -1571,6 +1595,115 @@ fn try_extended_spell(
         return None;
     }
     try_self_action(encounter, actor_id, "extended spell")
+}
+
+/// Seeking Spell (Tasha's) — sorcerer bonus-action metamagic prime.
+/// Burns 2 sorcery points so the next missed spell-attack roll is
+/// rerolled. Fires only when:
+/// - The sorcerer has >= 2 SP and the prime isn't already up.
+/// - The kit owns at least one spell-attack spell (`SingleActor` schema,
+///   `is_harmful`, `deals_damage`) — Fire Bolt / Ray of Frost /
+///   Chromatic Orb / Witch Bolt / Inflict Wounds / Scorching Ray and
+///   friends. Without one of these the prime never engages and the
+///   2 SP would be wasted on a save-for-half burst that ignores it.
+/// - A combat-active enemy sits within typical engagement range
+///   (24 tiles) so the prime feeds an actual attack this round.
+///
+/// We share the "kit-has-spell-attack" gate with Twinned Spell's
+/// targeting heuristic (any `SingleActor` + `is_harmful` +
+/// `deals_damage` action). Seeking is the pricier of the cheap primes
+/// (2 SP vs 1) so it slots after the other 1-SP metamagics in the AI
+/// pipeline; we also skip it when Empowered / Heightened are already
+/// up (the higher-leverage primes feed the same blast already).
+fn try_seeking_spell(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.sorcery_points() < 2 {
+        return None;
+    }
+    if actor.has_condition(Condition::SeekingSpelling)
+        || actor.has_condition(Condition::EmpoweredSpelling)
+        || actor.has_condition(Condition::HeightenedSpelling)
+    {
+        return None;
+    }
+    let has_attack_spell = actor.actions.iter().any(|a| {
+        a.is_harmful()
+            && a.deals_damage()
+            && matches!(a.targeting_schema(), TargetingSchema::SingleActor)
+    });
+    if !has_attack_spell {
+        return None;
+    }
+    if !any_enemy_within(encounter, actor_id, 24) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "seeking spell")
+}
+
+/// Font of Magic — convert spell slot ↔ sorcery points. Bonus action.
+/// Two directions:
+/// - **Refill SP from a held slot** (`convert level-N slot` → N SP).
+///   Fire when SP is at 0 AND at least one slot of an unused level is
+///   held. Picks the lowest-level held slot for the conversion (cheapest
+///   resource trade per RAW — burning a level-1 slot for 1 SP is the
+///   smallest sacrifice; higher levels are saved for actual casts).
+/// - **Recreate a spent low-level slot** (`create level-1 slot` for
+///   2 SP). Fire when the sorcerer's level-1 pool is depleted AND they
+///   hold >= 2 SP that aren't earmarked for an active metamagic prime.
+///   We only consider the level-1 conversion here — higher-level
+///   conversions cost more SP than they yield in raw casting value, so
+///   the AI sticks to the cheapest restoration.
+///
+/// Skipped when any metamagic prime is currently primed (don't muddle
+/// the bonus-action lane while a higher-leverage prime is up).
+fn try_font_of_magic(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    // Don't compete with an active prime — the prime is more valuable
+    // than re-shuffling resources between SP and slots.
+    if actor.has_condition(Condition::EmpoweredSpelling)
+        || actor.has_condition(Condition::HeightenedSpelling)
+        || actor.has_condition(Condition::CarefulSpelling)
+        || actor.has_condition(Condition::DistantSpelling)
+        || actor.has_condition(Condition::TwinnedSpelling)
+        || actor.has_condition(Condition::ExtendedSpelling)
+        || actor.has_condition(Condition::SeekingSpelling)
+    {
+        return None;
+    }
+    // Direction 1: SP empty → burn a low-level slot to refill SP.
+    if actor.sorcery_points() == 0 {
+        for (level, name) in [
+            (1, "convert level-1 slot"),
+            (2, "convert level-2 slot"),
+            (3, "convert level-3 slot"),
+        ] {
+            let ssi = actor.spell_slot_manager.spell_slots(level);
+            if ssi.spell_slots == 0 {
+                continue;
+            }
+            if let Some(aei) = try_self_action(encounter, actor_id, name) {
+                return Some(aei);
+            }
+        }
+    }
+    // Direction 2: level-1 pool depleted but SP is flush — recreate a
+    // level-1 slot. Gated on >= 2 SP so the metamagic primes still have
+    // room to fire on a future turn.
+    if actor.sorcery_points() >= 2 {
+        let lv1 = actor.spell_slot_manager.spell_slots(1);
+        if lv1.max_spell_slots > 0 && lv1.spell_slots == 0
+            && let Some(aei) = try_self_action(encounter, actor_id, "create level-1 slot")
+        {
+            return Some(aei);
+        }
+    }
+    None
 }
 
 /// Telekinetic — bonus-action cantrip shove. Pulls a single enemy 5 ft

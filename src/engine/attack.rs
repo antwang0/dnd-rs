@@ -32,6 +32,14 @@ pub struct AttackParams<'a> {
     /// converted to tiles — attacks between `long_range` and `reach`
     /// roll with disadvantage per RAW.
     pub long_range: Option<isize>,
+    /// `true` for spell-attack rolls (Fire Bolt, Eldritch Blast, Magic
+    /// Stone, ...), `false` for weapon swings. Drives the 5e Tasha's
+    /// Sorcerer Seeking Spell rider: on a miss, a spell-attack roll can
+    /// burn a sorcery-point prime to reroll the d20. Weapon attacks must
+    /// stay opted-out — the metamagic is RAW spell-attacks only. The
+    /// flag also gates any future "this is a spell" sites that the
+    /// engine grows (e.g. counterspell triggers, anti-magic field).
+    pub is_spell: bool,
 }
 
 /// Resolve a 5e d20 attack roll against a single target's AC. On a hit,
@@ -129,15 +137,31 @@ pub fn resolve_attack_outcome(
     // helper folds the reroll into the same seedable RNG so determinism
     // by seed holds — and falls back to the raw roll for actors without
     // the trait.
-    let raw_attack = encounter.roll_d20_lucky(p.caster_id, mode) as i32;
+    let mut raw_attack = encounter.roll_d20_lucky(p.caster_id, mode) as i32;
     // 5e Improved Critical: the d20 face that promotes to a crit is
     // template-driven (Champion fighter: 19+; Superior Critical: 18+).
     // The engine-level `crit_threshold` accessor folds in the default of
     // 20 for missing actors / non-Champion builds.
-    let nat_crit = raw_attack >= encounter.crit_threshold(p.caster_id);
-    let attack_total = raw_attack + p.attack_bonus + buff + cond_attack_bonus + bless_die;
-    let is_nat_one = raw_attack == 1;
-    let hit = !is_nat_one && (nat_crit || attack_total >= target_ac);
+    let mut nat_crit = raw_attack >= encounter.crit_threshold(p.caster_id);
+    let mut attack_total = raw_attack + p.attack_bonus + buff + cond_attack_bonus + bless_die;
+    let mut is_nat_one = raw_attack == 1;
+    let mut hit = !is_nat_one && (nat_crit || attack_total >= target_ac);
+    // 5e Tasha's Sorcerer Seeking Spell metamagic: on a missed spell
+    // attack, reroll the d20 and use the new face (RAW: "you must use
+    // the new roll"). Gated on `is_spell` so weapon swings don't pick
+    // up the rider. Mirrors the identical hook on the spell-attack
+    // chokepoint in spells.rs — both attack paths go through this same
+    // `EncounterInstance::reroll_seeking_spell` helper.
+    if !hit && p.is_spell {
+        let new_raw = encounter.reroll_seeking_spell(p.caster_id, raw_attack as u32, mode) as i32;
+        if new_raw != raw_attack {
+            raw_attack = new_raw;
+            nat_crit = raw_attack >= encounter.crit_threshold(p.caster_id);
+            attack_total = raw_attack + p.attack_bonus + buff + cond_attack_bonus + bless_die;
+            is_nat_one = raw_attack == 1;
+            hit = !is_nat_one && (nat_crit || attack_total >= target_ac);
+        }
+    }
     // 5e Paralyzed / Unconscious clause: any hit from within 5ft is a
     // crit. The promotion happens after we've decided the swing connected
     // so a flat miss still misses — the rider only upgrades a regular

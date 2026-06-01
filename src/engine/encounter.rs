@@ -2611,6 +2611,41 @@ impl EncounterInstance {
         }
     }
 
+    /// 5e Tasha's Sorcerer Seeking Spell metamagic — if the caster has the
+    /// prime up, reroll the d20 with the same mode and consume the prime.
+    /// Returns the (possibly higher) d20 face the caller should use.
+    /// Idempotent when no prime is up: the original `raw` value falls
+    /// through unchanged. Called from `spell_attack_outcome` on a miss so
+    /// the rider only fires when the original swing actually whiffed —
+    /// RAW: "When you make an attack roll for a spell, you can spend 2
+    /// sorcery points to reroll it." We honor the "must use the new roll"
+    /// clause by replacing `raw` unconditionally on consume; the engine's
+    /// `roll_d20_lucky` reroll path stays available on the new die (a
+    /// nat-1 reroll still chains through Lucky if the caster has it).
+    pub fn reroll_seeking_spell(&mut self, caster_id: usize, raw: u32, mode: RollMode) -> u32 {
+        let primed = self
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_condition(Condition::SeekingSpelling));
+        if !primed {
+            return raw;
+        }
+        let new_raw = self.roll_d20_lucky(caster_id, mode);
+        let name = self
+            .actors
+            .get(&caster_id)
+            .map(|a| a.name().to_string())
+            .unwrap_or_default();
+        if let Some(caster) = self.actors.get_mut(&caster_id) {
+            caster.remove_condition(Condition::SeekingSpelling);
+        }
+        self.log(format!(
+            "  seeking spell: {} rerolls {} \u{2192} {}",
+            name, raw, new_raw
+        ));
+        new_raw
+    }
+
     /// 5e Sorcerer Distant Spell metamagic — consume the prime on the
     /// caster (if present) and log it. Called from `Action::execute` for
     /// any ranged action (reach > 2) right after validation. Idempotent
@@ -7438,6 +7473,7 @@ mod tests {
                     damage_type: DamageType::Slashing,
                     is_melee: true,
                     long_range: None,
+                is_spell: false,
                 },
             );
             champ_dmg = champ_dmg.saturating_add(dealt);
@@ -7463,6 +7499,7 @@ mod tests {
                     damage_type: DamageType::Slashing,
                     is_melee: true,
                     long_range: None,
+                is_spell: false,
                 },
             );
             base_dmg = base_dmg.saturating_add(dealt);
@@ -7520,6 +7557,7 @@ mod tests {
                         damage_type: DamageType::Slashing,
                         is_melee: true,
                         long_range: None,
+                is_spell: false,
                     },
                 );
                 sum = sum.saturating_add(dealt);
@@ -7583,6 +7621,7 @@ mod tests {
                         damage_type: DamageType::Slashing,
                         is_melee: true,
                         long_range: None,
+                is_spell: false,
                     },
                 );
                 sum = sum.saturating_add(dealt);
@@ -7652,6 +7691,7 @@ mod tests {
                         damage_type: DamageType::Piercing,
                         is_melee: false,
                         long_range: None,
+                is_spell: false,
                     },
                 );
                 sum = sum.saturating_add(dealt);
@@ -8950,6 +8990,338 @@ mod tests {
         );
     }
 
+    /// Seeking Spell prime installs the condition, debits 2 SP eagerly
+    /// (mirroring Empowered / Heightened / Careful / Distant / Extended),
+    /// and gates on a non-empty pool with >= 2 SP.
+    #[test]
+    fn seeking_spell_action_spends_two_sp_and_primes() {
+        use crate::actions::metamagic::SEEKING_SPELL;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.give_resource(crate::engine::side_effects::Resource::BonusAction);
+        let sp_before = actor.sorcery_points();
+        assert!(sp_before >= 2, "template ships SP for the test");
+
+        let effects = SEEKING_SPELL.execute(&mut e, sorcerer, None, None, None);
+        assert!(!effects.is_empty(), "seeking spell should queue an effect");
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let after = e.actors.get(&sorcerer).unwrap();
+        assert_eq!(after.sorcery_points(), sp_before - 2, "2 SP spent");
+        assert!(
+            after.has_condition(Condition::SeekingSpelling),
+            "seeking prime installed"
+        );
+    }
+
+    /// Seeking Spell is gated on the sorcery-points pool: a sorcerer with
+    /// fewer than 2 SP can't fire the metamagic.
+    #[test]
+    fn seeking_spell_blocked_without_two_sp() {
+        use crate::actions::metamagic::SEEKING_SPELL;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.give_resource(crate::engine::side_effects::Resource::BonusAction);
+        while actor.sorcery_points() > 1 {
+            actor.spend_sorcery_point();
+        }
+        assert!(
+            !SEEKING_SPELL.validate_input(&e, sorcerer, None, None, None),
+            "seeking gated below 2 SP"
+        );
+    }
+
+    /// `reroll_seeking_spell` is a no-op when no prime is up: returns
+    /// the same `raw` value and does not log.
+    #[test]
+    fn reroll_seeking_spell_no_op_without_prime() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let log_len_before = e.messages().len();
+        let result = e.reroll_seeking_spell(sorcerer, 7, RollMode::Normal);
+        assert_eq!(result, 7, "returns the original raw on no prime");
+        assert_eq!(
+            e.messages().len(),
+            log_len_before,
+            "no log line when nothing to consume"
+        );
+    }
+
+    /// `reroll_seeking_spell` consumes the prime and rerolls when set.
+    /// Verifies the prime is stripped after a reroll happens, regardless
+    /// of whether the new face is higher.
+    #[test]
+    fn reroll_seeking_spell_consumes_prime() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .add_condition(Condition::SeekingSpelling, ConditionTimer::Rounds(2));
+        let _ = e.reroll_seeking_spell(sorcerer, 5, RollMode::Normal);
+        assert!(
+            !e.actors[&sorcerer].has_condition(Condition::SeekingSpelling),
+            "seeking prime consumed by the reroll"
+        );
+    }
+
+    /// Font of Magic — Create Spell Slot. Burns 2 SP and restores one
+    /// spent level-1 slot. Gated on a spent slot existing (idempotent
+    /// when the slot pool is already full) and SP being available.
+    #[test]
+    fn create_spell_slot_burns_sp_and_restores_slot() {
+        use crate::actions::class_features::CREATE_SPELL_SLOT_1;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.give_resource(crate::engine::side_effects::Resource::BonusAction);
+        // Spend a level-1 slot so there's room for the restore.
+        actor.spell_slot_manager.consume_spell_slot(1);
+        let sp_before = actor.sorcery_points();
+        let ssi_before = actor.spell_slot_manager.spell_slots(1);
+
+        let effects = CREATE_SPELL_SLOT_1.execute(&mut e, sorcerer, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let after = e.actors.get(&sorcerer).unwrap();
+        assert_eq!(after.sorcery_points(), sp_before - 2, "2 SP spent");
+        let ssi_after = after.spell_slot_manager.spell_slots(1);
+        assert_eq!(
+            ssi_after.spell_slots,
+            ssi_before.spell_slots + 1,
+            "level-1 slot restored"
+        );
+    }
+
+    /// Font of Magic — Create Spell Slot blocked when no slot is spent.
+    /// Validation falls through to `false` so the action isn't picked
+    /// when restoring would be a no-op.
+    #[test]
+    fn create_spell_slot_blocked_when_pool_full() {
+        use crate::actions::class_features::CREATE_SPELL_SLOT_1;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.give_resource(crate::engine::side_effects::Resource::BonusAction);
+        // Pool starts full — no slots spent.
+        assert!(
+            !CREATE_SPELL_SLOT_1.validate_input(&e, sorcerer, None, None, None),
+            "blocked when no slots are spent"
+        );
+    }
+
+    /// Font of Magic — Convert Spell Slot. Burns a level-N slot and
+    /// grants N sorcery points (capped at the long-rest cap).
+    #[test]
+    fn convert_spell_slot_burns_slot_and_grants_sp() {
+        use crate::actions::class_features::CONVERT_SPELL_SLOT_2;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.give_resource(crate::engine::side_effects::Resource::BonusAction);
+        // Drain SP so the convert has room to land on the pool.
+        while actor.sorcery_points() > 0 {
+            actor.spend_sorcery_point();
+        }
+        let slots_before = actor.spell_slot_manager.spell_slots(2).spell_slots;
+        assert!(slots_before > 0, "sorcerer has a level-2 slot to burn");
+
+        let effects = CONVERT_SPELL_SLOT_2.execute(&mut e, sorcerer, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let after = e.actors.get(&sorcerer).unwrap();
+        assert_eq!(
+            after.spell_slot_manager.spell_slots(2).spell_slots,
+            slots_before - 1,
+            "level-2 slot consumed"
+        );
+        assert_eq!(after.sorcery_points(), 2, "gained 2 SP from a lv2 slot");
+    }
+
+    /// Font of Magic — Convert Spell Slot blocked when SP is already at
+    /// the long-rest cap. RAW: "up to your maximum" — converting beyond
+    /// the cap is a slot waste, so we block it pre-emptively.
+    #[test]
+    fn convert_spell_slot_blocked_at_sp_cap() {
+        use crate::actions::class_features::CONVERT_SPELL_SLOT_1;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.give_resource(crate::engine::side_effects::Resource::BonusAction);
+        // SP starts at cap on the template, so just check that's true.
+        assert_eq!(actor.sorcery_points(), actor.sorcery_points_max());
+        assert!(
+            !CONVERT_SPELL_SLOT_1.validate_input(&e, sorcerer, None, None, None),
+            "blocked when SP already at cap"
+        );
+    }
+
+    /// End-to-end: a Seeking Spell prime fires through `spell_attack_outcome`.
+    /// Seed the d20 path so the first roll misses an out-of-range AC; the
+    /// reroll consume strips the `SeekingSpelling` flag and logs a "seeking
+    /// spell:" line. We don't assert the second roll hits (it might miss
+    /// too) — the load-bearing invariant is "the prime is consumed exactly
+    /// once and a seeking-spell log line appears."
+    #[test]
+    fn seeking_spell_fires_through_fire_bolt_miss() {
+        use crate::actions::spells::FIRE_BOLT;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::stone_golems::STONE_GOLEM_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+
+        // Try seeds until we find one where the first Fire Bolt roll misses
+        // the Stone Golem's AC 17 — bounded loop, deterministic per seed.
+        let mut consumed_at_least_once = false;
+        for seed in 0..200u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let sorcerer = e
+                .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let golem = e
+                .instantiate_creature(&STONE_GOLEM_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+                .unwrap();
+            let actor = e.actors.get_mut(&sorcerer).unwrap();
+            actor.give_resource(crate::engine::side_effects::Resource::Action);
+            actor.add_condition(Condition::SeekingSpelling, ConditionTimer::Rounds(2));
+
+            let effects = FIRE_BOLT.execute(&mut e, sorcerer, Some(&vec![golem]), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            let after = e.actors.get(&sorcerer).unwrap();
+            // If the prime was consumed, the seeking-spell line appears.
+            let primed_still = after.has_condition(Condition::SeekingSpelling);
+            let logged = e
+                .messages()
+                .iter()
+                .any(|line| line.contains("seeking spell:"));
+            if !primed_still && logged {
+                consumed_at_least_once = true;
+                break;
+            }
+        }
+        assert!(
+            consumed_at_least_once,
+            "across 200 seeds, at least one fire-bolt miss should consume the seeking prime"
+        );
+    }
+
+    /// Seeking Spell stays primed when the first roll hits — the reroll
+    /// only fires on a miss, mirroring RAW's "reroll" trigger. We detect
+    /// "first-roll hit" via the absence of a `seeking spell:` log line
+    /// after the cast: if the line is missing, the first roll connected
+    /// (so the seeking-spell branch was skipped). The prime ticks off at
+    /// the start of the next turn (`UntilStartOfNextTurn`) if no miss
+    /// feeds it.
+    #[test]
+    fn seeking_spell_skips_on_hit() {
+        use crate::actions::spells::FIRE_BOLT;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+
+        for seed in 0..200u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let sorcerer = e
+                .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let zombie = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+                .unwrap();
+            let actor = e.actors.get_mut(&sorcerer).unwrap();
+            actor.give_resource(crate::engine::side_effects::Resource::Action);
+            actor.add_condition(Condition::SeekingSpelling, ConditionTimer::Rounds(2));
+            let log_before = e.messages().len();
+
+            let effects = FIRE_BOLT.execute(&mut e, sorcerer, Some(&vec![zombie]), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            // If the seeking-spell log line appears, the first roll missed
+            // and the reroll fired — try another seed (we want a first-roll
+            // hit to verify the prime stays put).
+            let reroll_fired = e.messages()[log_before..]
+                .iter()
+                .any(|l| l.contains("seeking spell:"));
+            if reroll_fired {
+                continue;
+            }
+            // First roll hit. Prime should still be up.
+            let primed_still = e
+                .actors
+                .get(&sorcerer)
+                .is_some_and(|a| a.has_condition(Condition::SeekingSpelling));
+            assert!(
+                primed_still,
+                "seeking spell stays primed when the first roll already hits"
+            );
+            return;
+        }
+        panic!("no seed produced a first-roll hit in 200 attempts");
+    }
+
+    /// `give_sorcery_points` saturates at the long-rest cap and returns
+    /// the actual delta applied (not the requested `n`).
+    #[test]
+    fn give_sorcery_points_saturates_at_cap() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        let cap = actor.sorcery_points_max();
+        // Drain to 1 SP below cap.
+        while actor.sorcery_points() > cap - 1 {
+            actor.spend_sorcery_point();
+        }
+        // Try to grant 5 — only 1 should land.
+        let delta = actor.give_sorcery_points(5);
+        assert_eq!(delta, 1, "only 1 SP lands before saturating at the cap");
+        assert_eq!(actor.sorcery_points(), cap, "pool now at cap");
+    }
+
     /// Quickened Spell is gated on the sorcery-points pool: a sorcerer
     /// with fewer than 2 SP can't fire the metamagic.
     #[test]
@@ -9266,6 +9638,7 @@ mod tests {
                         damage_type: DamageType::Slashing,
                         is_melee: true,
                         long_range: None,
+                is_spell: false,
                     },
                 );
                 total = total.saturating_add(dmg);
@@ -20912,6 +21285,7 @@ mod tests {
                         damage_type: DamageType::Slashing,
                         is_melee: true,
                         long_range: None,
+                is_spell: false,
                     },
                 );
                 if !effects.is_empty() {
@@ -22214,6 +22588,24 @@ mod tests {
                 info.max_spell_slots > 0,
                 "sorcerer should have at least one level-{} slot",
                 lvl
+            );
+        }
+        // The Tasha's metamagic + Font of Magic additions land in the
+        // sorcerer's action list. A find_action smoke test catches a
+        // regression where the new statics fall out of the template push.
+        for name in [
+            "seeking spell",
+            "create level-1 slot",
+            "create level-2 slot",
+            "create level-3 slot",
+            "convert level-1 slot",
+            "convert level-2 slot",
+            "convert level-3 slot",
+        ] {
+            assert!(
+                a.find_action(name).is_some(),
+                "sorcerer should know {}",
+                name
             );
         }
     }
@@ -23907,6 +24299,7 @@ mod tests {
                 damage_type: crate::engine::types::DamageType::Slashing,
                 is_melee: true,
                 long_range: None,
+                is_spell: false,
             },
         ) {
             ef.apply(&mut e);
@@ -27760,6 +28153,7 @@ mod tests {
                     damage_type: DamageType::Slashing,
                     is_melee: true,
                 long_range: None,
+                is_spell: false,
                 },
             );
             if !effects.is_empty() {

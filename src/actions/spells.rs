@@ -146,14 +146,27 @@ fn spell_attack_outcome(
     encounter.clear_attack_advantage_riders(caster_id, target_id);
     // 5e Lucky: reroll a nat-1 if the caster has the trait. Mirrors the
     // identical hook on the weapon-attack path.
-    let raw = encounter.roll_d20_lucky(caster_id, mode) as i32;
-    let total = raw + attack_bonus + buff + cond_attack_bonus + bless_die;
+    let mut raw = encounter.roll_d20_lucky(caster_id, mode) as i32;
+    let mut total = raw + attack_bonus + buff + cond_attack_bonus + bless_die;
     // 5e Improved Critical: template-driven crit threshold. Spell attacks
     // honor the lower threshold too — a Champion fighter multiclassed
     // into Eldritch Knight crits Fire Bolt on 19s. Read via the engine
     // helper so the default (20) folds in for non-Champion casters.
-    let nat_crit = raw >= encounter.crit_threshold(caster_id);
-    let hit = nat_crit || total >= target_ac;
+    let mut nat_crit = raw >= encounter.crit_threshold(caster_id);
+    let mut hit = nat_crit || total >= target_ac;
+    // 5e Tasha's Sorcerer Seeking Spell metamagic: on a miss, if the
+    // caster has the prime up, reroll the d20 and use the new result
+    // (RAW: "you must use the new roll"). Routed through the same
+    // mode + Lucky chain so a primed sorcerer keeps their other riders.
+    if !hit {
+        let new_raw = encounter.reroll_seeking_spell(caster_id, raw as u32, mode) as i32;
+        if new_raw != raw {
+            raw = new_raw;
+            total = raw + attack_bonus + buff + cond_attack_bonus + bless_die;
+            nat_crit = raw >= encounter.crit_threshold(caster_id);
+            hit = nat_crit || total >= target_ac;
+        }
+    }
     // 5e Paralyzed / Unconscious clause — touch spell attacks honor the
     // "any hit within 5ft becomes a crit" rider too. Mirrors the gate in
     // `resolve_attack_outcome`: only `is_melee` spells trigger.
@@ -1026,6 +1039,7 @@ impl Action for FireBolt {
                 damage_type: DamageType::Fire,
                 is_melee: false,
                 long_range: None,
+                is_spell: true,
             },
         )
     }
@@ -1918,6 +1932,7 @@ impl Action for RayOfFrost {
                 damage_type: DamageType::Cold,
                 is_melee: false,
                 long_range: None,
+                is_spell: true,
             },
         )
     }

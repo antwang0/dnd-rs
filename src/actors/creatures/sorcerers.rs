@@ -213,29 +213,29 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // the next spell-damage roll (up to CHA-mod of them per RAW). The
     // engine reads the EmpoweredSpelling condition at the damage-roll
     // chokepoint (`EncounterInstance::roll_empowered`).
-    actions.push(&*crate::actions::metamagic::EMPOWERED_SPELL);
+    actions.push(&crate::actions::metamagic::EMPOWERED_SPELL);
     // 5e Sorcerer Metamagic — Quickened Spell. Burns 2 sorcery points
     // + a Bonus Action to gain an extra Action this turn (modeling the
     // RAW "cast a 1-action spell as a bonus action" transform via the
     // simpler action-economy trade).
-    actions.push(&*crate::actions::metamagic::QUICKENED_SPELL);
+    actions.push(&crate::actions::metamagic::QUICKENED_SPELL);
     // 5e Sorcerer Metamagic — Heightened Spell. Burns 3 sorcery points
     // + a Bonus Action; the next save-or-suck spell forces disadvantage
     // on the first creature that rolls a save against it. Engine reads
     // the prime via `EncounterInstance::roll_save_against_caster`.
-    actions.push(&*crate::actions::metamagic::HEIGHTENED_SPELL);
+    actions.push(&crate::actions::metamagic::HEIGHTENED_SPELL);
     // 5e Sorcerer Metamagic — Careful Spell. Burns 1 sorcery point
     // + a Bonus Action; the next AoE auto-passes saves AND zeroes
     // damage on up to CHA-mod allies caught in the blast. Engine reads
     // the prime via `EncounterInstance::careful_spell_shielded`, which
     // the burst-save chokepoints consult to find protected ids.
-    actions.push(&*crate::actions::metamagic::CAREFUL_SPELL);
+    actions.push(&crate::actions::metamagic::CAREFUL_SPELL);
     // 5e Sorcerer Metamagic — Distant Spell. Burns 1 sorcery point
     // + a Bonus Action; the next ranged spell has its reach doubled.
     // Engine reads the prime via `ActorInstance::extra_spell_reach()`
     // which `Action::validate_input` folds into the effective range;
     // consumed in `Action::execute` on the first ranged action that fires.
-    actions.push(&*crate::actions::metamagic::DISTANT_SPELL);
+    actions.push(&crate::actions::metamagic::DISTANT_SPELL);
     // 5e Sorcerer Metamagic — Twinned Spell. Burns max(1, spell_level) SP
     // (paid at the consume site, RAW timing) + a Bonus Action; the next
     // single-target spell fires a second time against a different valid
@@ -243,7 +243,7 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // `EncounterInstance::consume_twinned_spell` in `Action::execute`,
     // which picks the second target (nearest enemy / lowest-HP ally) and
     // re-runs the action's `side_effects` against it.
-    actions.push(&*crate::actions::metamagic::TWINNED_SPELL);
+    actions.push(&crate::actions::metamagic::TWINNED_SPELL);
     // 5e Sorcerer Metamagic — Extended Spell. Burns 1 sorcery point
     // + a Bonus Action; the next spell that installs a long-duration
     // condition (RAW: 1 minute or longer; we gate on Rounds(n) with
@@ -254,7 +254,26 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // at least one timer was actually extended (short-duration buffs
     // and pure-damage spells leave the prime dangling for the next
     // eligible cast).
-    actions.push(&*crate::actions::metamagic::EXTENDED_SPELL);
+    actions.push(&crate::actions::metamagic::EXTENDED_SPELL);
+    // 5e Tasha's Sorcerer Metamagic — Seeking Spell. Burns 2 sorcery
+    // points + a Bonus Action; the next missed spell-attack roll is
+    // rerolled and the new face is used (RAW: "you must use the new
+    // roll"). Hooked into `spell_attack_outcome` via
+    // `EncounterInstance::reroll_seeking_spell` so every spell-attack
+    // path benefits without per-spell wiring.
+    actions.push(&crate::actions::metamagic::SEEKING_SPELL);
+    // 5e Sorcerer **Font of Magic** — convert spell slots <-> sorcery
+    // points. Bonus action in either direction; three slot levels each
+    // way covers the typical mid-encounter resource shuffle. The "create
+    // slot" lane recreates an expended low-level slot when SP is flush;
+    // the "convert slot" lane refills SP when metamagic runs dry by
+    // burning a held spell slot.
+    actions.push(&crate::actions::class_features::CREATE_SPELL_SLOT_1);
+    actions.push(&crate::actions::class_features::CREATE_SPELL_SLOT_2);
+    actions.push(&crate::actions::class_features::CREATE_SPELL_SLOT_3);
+    actions.push(&crate::actions::class_features::CONVERT_SPELL_SLOT_1);
+    actions.push(&crate::actions::class_features::CONVERT_SPELL_SLOT_2);
+    actions.push(&crate::actions::class_features::CONVERT_SPELL_SLOT_3);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.
