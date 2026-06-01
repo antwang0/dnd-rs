@@ -366,13 +366,12 @@ impl ApplicableSideEffect for DealDamage {
             DamageOutcome::Reduced if was_concentrating && landed > 0 => {
                 // 5e: take damage while concentrating → CON save vs
                 // DC max(10, dmg/2). Use the post-mitigation amount so a
-                // resisted hit makes a smaller DC.
+                // resisted hit makes a smaller DC. The save site is
+                // `roll_concentration_save` so it can layer the Warlock
+                // Eldritch Mind invocation's advantage on top of the
+                // actor's normal save mode.
                 let dc = ((landed / 2) as i32).max(10);
-                let save = ei.roll_save(
-                    self.actor_id,
-                    crate::engine::types::AbilityScoreType::Constitution,
-                    dc,
-                );
+                let save = ei.roll_concentration_save(self.actor_id, dc);
                 if !save.passed() {
                     ei.drop_concentration(self.actor_id);
                 }

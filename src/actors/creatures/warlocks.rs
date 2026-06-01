@@ -174,17 +174,22 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Charisma,
         ]),
         condition_immunities: HashSet::new(),
-        // 5e Warlock Eldritch Invocations: Agonizing Blast (+CHA mod
-        // to each Eldritch Blast beam's damage) and Repelling Blast
-        // (push 10ft / 4 tiles on hit, Large-or-smaller targets). RAW
-        // a level-2 warlock picks 2 invocations; we pre-pick the two
-        // load-bearing EB-modifying ones since EB is the warlock's
-        // signature at-will cantrip in this kit. Permanent passive
-        // features — never consumed; the EldritchBlast action reads
-        // them via `feature_available` at cast time.
+        // 5e Warlock Eldritch Invocations:
+        //   - Agonizing Blast: +CHA mod to each Eldritch Blast beam.
+        //   - Repelling Blast: 10ft (4-tile) push on hit, Large-or-
+        //     smaller targets only.
+        //   - Eldritch Mind: advantage on Constitution saves to maintain
+        //     concentration (read at the damage chokepoint).
+        // RAW a level-5 warlock picks 3 invocations; the kit pre-picks
+        // these three since EB is the signature cantrip and
+        // concentration-bound spells (Hex / Hunger of Hadar) form the
+        // back half of the warlock's lockdown plan. Permanent passive
+        // features — never consumed; the relevant cast / save sites
+        // read them via `feature_available`.
         features: HashSet::from([
             crate::actions::class_features::AGONIZING_BLAST_TAG,
             crate::actions::class_features::REPELLING_BLAST_TAG,
+            crate::actions::class_features::ELDRITCH_MIND_TAG,
         ]),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),

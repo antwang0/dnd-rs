@@ -2997,3 +2997,12 @@ pub const AGONIZING_BLAST_TAG: &str = "warlock.agonizing_blast";
 /// Read at the EldritchBlast cast site via `feature_available`. Add this
 /// tag to a warlock template's `features` set to install it.
 pub const REPELLING_BLAST_TAG: &str = "warlock.repelling_blast";
+
+/// Warlock Eldritch Invocation — **Eldritch Mind**. Passive feature: the
+/// holder rolls with advantage on Constitution saving throws to maintain
+/// concentration. Read at the concentration save chokepoint
+/// (`EncounterInstance::roll_concentration_save`) which the DealDamage
+/// pipeline drives whenever a concentrating actor takes damage and lives.
+/// Permanent passive — never consumed. Add this tag to a warlock
+/// template's `features` set to install it.
+pub const ELDRITCH_MIND_TAG: &str = "warlock.eldritch_mind";

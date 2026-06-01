@@ -1302,6 +1302,32 @@ impl EncounterInstance {
         outcome
     }
 
+    /// Roll a Constitution save to maintain concentration vs the
+    /// post-mitigation damage DC (max(10, dmg/2)). Honors the 5e Warlock
+    /// **Eldritch Mind** invocation: actors holding the
+    /// `ELDRITCH_MIND_TAG` feature roll with an extra advantage layer,
+    /// folded on top of any condition-derived mode. Routed through one
+    /// helper so the concentration-save tag check lives in one place
+    /// rather than every damage site re-implementing it.
+    pub fn roll_concentration_save(
+        &mut self,
+        actor_id: usize,
+        dc: i32,
+    ) -> crate::engine::saves::SaveOutcome {
+        use crate::actions::class_features::ELDRITCH_MIND_TAG;
+        use crate::engine::types::AbilityScoreType;
+        let extra_mode = if self
+            .actors
+            .get(&actor_id)
+            .is_some_and(|a| a.feature_available(ELDRITCH_MIND_TAG))
+        {
+            RollMode::Advantage
+        } else {
+            RollMode::Normal
+        };
+        self.roll_save_with_extra_mode(actor_id, AbilityScoreType::Constitution, dc, extra_mode)
+    }
+
     /// Roll a saving throw attributed to `caster_id`'s spell. Identical to
     /// `roll_save` except it honors the 5e Sorcerer **Heightened Spell**
     /// metamagic: if the caster has the `HeightenedSpelling` prime up,
@@ -15181,6 +15207,72 @@ mod tests {
             "agonizing blast should boost total damage \
              (with={}, without={})",
             with, without
+        );
+    }
+
+    /// 5e Warlock Eldritch Invocation: Eldritch Mind — advantage on
+    /// Constitution saves to maintain concentration. End-to-end: a sweep
+    /// of damage-while-concentrating events drops concentration less
+    /// often when the invocation is installed than when it's stripped.
+    #[test]
+    fn eldritch_mind_buffs_concentration_saves() {
+        use crate::actions::class_features::ELDRITCH_MIND_TAG;
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        // DC math: dmg/2 max 10. Pick a damage that gives a reasonable
+        // failure rate at baseline (DC 15 — 8 damage / 2 = 4, floored to
+        // 10 + something). Use 20 damage → DC 10 vs CON+save bonus, with
+        // some margin for the advantage to bite.
+        let trials = 400u64;
+        let count_drops = |has_invocation: bool| -> u32 {
+            let mut drops = 0;
+            for seed in 0..trials {
+                let mut e = ei_with_terrain(20, 20, &[]);
+                e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+                let warlock = e
+                    .instantiate_creature(
+                        &WARLOCK_TEMPLATE,
+                        Coordinate::new(2, 2),
+                        0,
+                        0,
+                    )
+                    .unwrap();
+                if !has_invocation {
+                    e.actors
+                        .get_mut(&warlock)
+                        .unwrap()
+                        .spend_feature(ELDRITCH_MIND_TAG);
+                }
+                // Install a fake concentration so DealDamage triggers
+                // the CON save branch.
+                e.actors
+                    .get_mut(&warlock)
+                    .unwrap()
+                    .start_concentration(ConcentrationData::with_conditions("Test", vec![]));
+                // Damage that lands a DC-15 concentration save (30 dmg
+                // / 2 = 15). Use Force so the warlock has no resistance.
+                let dmg = DealDamage {
+                    actor_id: warlock,
+                    amount: 30,
+                    damage_type: DamageType::Force,
+                };
+                dmg.apply(&mut e);
+                if !e.actors[&warlock].is_concentrating() {
+                    drops += 1;
+                }
+            }
+            drops
+        };
+        let drops_with = count_drops(true);
+        let drops_without = count_drops(false);
+        assert!(
+            drops_with < drops_without,
+            "Eldritch Mind should drop concentration LESS often \
+             (with={}, without={})",
+            drops_with, drops_without
         );
     }
 
