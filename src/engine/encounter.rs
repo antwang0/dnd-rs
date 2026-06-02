@@ -2855,22 +2855,47 @@ impl EncounterInstance {
         caster_id: usize,
         side_effects: &mut [Box<dyn crate::engine::side_effects::ApplicableSideEffect>],
     ) -> bool {
-        let primed = self
+        self.consume_side_effect_metamagic(
+            caster_id,
+            Condition::ExtendedSpelling,
+            "extended spell",
+            "doubles the duration",
+            side_effects,
+            crate::engine::side_effects::extend_side_effect_timers,
+        )
+    }
+
+    /// Shared "check prime → run side-effect mutator → consume + log on
+    /// success" body for the side-effect-mutating metamagic chokepoints
+    /// (Extended Spell, Transmuted Spell). Returns true iff the prime was
+    /// consumed. Idempotent when the prime isn't up or when the mutator
+    /// returns false (no eligible side-effect was touched), mirroring the
+    /// consume-on-trigger pattern used by the other metamagic primes.
+    fn consume_side_effect_metamagic(
+        &mut self,
+        caster_id: usize,
+        prime: Condition,
+        spell_label: &str,
+        effect_summary: &str,
+        side_effects: &mut [Box<dyn crate::engine::side_effects::ApplicableSideEffect>],
+        mutate: impl FnOnce(&mut [Box<dyn crate::engine::side_effects::ApplicableSideEffect>]) -> bool,
+    ) -> bool {
+        if !self
             .actors
             .get(&caster_id)
-            .is_some_and(|a| a.has_condition(Condition::ExtendedSpelling));
-        if !primed {
+            .is_some_and(|a| a.has_condition(prime))
+        {
             return false;
         }
-        if !crate::engine::side_effects::extend_side_effect_timers(side_effects) {
+        if !mutate(side_effects) {
             return false;
         }
         let Some(caster) = self.actors.get_mut(&caster_id) else {
             return false;
         };
         let name = caster.name().to_string();
-        caster.remove_condition(Condition::ExtendedSpelling);
-        self.log(format!("  extended spell: {} doubles the duration", name));
+        caster.remove_condition(prime);
+        self.log(format!("  {}: {} {}", spell_label, name, effect_summary));
         true
     }
 
@@ -2896,11 +2921,16 @@ impl EncounterInstance {
         caster_id: usize,
         side_effects: &mut [Box<dyn crate::engine::side_effects::ApplicableSideEffect>],
     ) -> Option<crate::engine::types::DamageType> {
-        let primed = self
+        // Resolve the replacement type up front so the closure passed to
+        // `consume_side_effect_metamagic` can be a thin remap call. The
+        // prime check inside the helper short-circuits before we touch
+        // any side-effects, so picking a type when the prime is down
+        // is the only wasted work — cheap (a HashMap lookup per element).
+        if !self
             .actors
             .get(&caster_id)
-            .is_some_and(|a| a.has_condition(Condition::TransmutedSpelling));
-        if !primed {
+            .is_some_and(|a| a.has_condition(Condition::TransmutedSpelling))
+        {
             return None;
         }
         // Find the primary damage target — first side-effect that carries
@@ -2925,17 +2955,15 @@ impl EncounterInstance {
                     .map(|(id, _)| *id)
             });
         let new_type = self.pick_transmuted_damage_type(primary_target_id);
-        if !crate::engine::side_effects::remap_side_effect_damage_types(side_effects, new_type) {
-            return None;
-        }
-        let caster = self.actors.get_mut(&caster_id)?;
-        let name = caster.name().to_string();
-        caster.remove_condition(Condition::TransmutedSpelling);
-        self.log(format!(
-            "  transmuted spell: {} remaps the damage to {}",
-            name, new_type
-        ));
-        Some(new_type)
+        let consumed = self.consume_side_effect_metamagic(
+            caster_id,
+            Condition::TransmutedSpelling,
+            "transmuted spell",
+            &format!("remaps the damage to {}", new_type),
+            side_effects,
+            |se| crate::engine::side_effects::remap_side_effect_damage_types(se, new_type),
+        );
+        if consumed { Some(new_type) } else { None }
     }
 
     /// Pick the best damage type for a Transmuted Spell remap given a
