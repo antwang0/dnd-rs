@@ -9338,6 +9338,22 @@ impl Action for Counterspell {
         let Some(target) = encounter.actors.get(&target_id) else {
             return false;
         };
+        // 5e Sorcerer **Subtle Spell** rider: a sorcerer who's primed
+        // their next cast with Subtle Spell ignores Counterspell (RAW: no
+        // somatic or verbal components → nothing for the counterspeller
+        // to perceive). Block the cast at validate-time so the slot
+        // doesn't drain on a fizzle. We don't consume the prime here —
+        // the validator runs during the AI's target-picker probe loop,
+        // and consuming on probe would burn the prime against a target
+        // we never actually counterspell. The prime expires on the
+        // sorcerer's next turn via the `UntilStartOfNextTurn` tick-down,
+        // which gives the sorcerer one full round of counterspell
+        // immunity (sorcerer's turn N → opponent's reply turn → tick
+        // down at sorcerer's turn N+1) — the load-bearing window for
+        // the metamagic.
+        if target.has_condition(Condition::SubtleSpelling) {
+            return false;
+        }
         target.is_concentrating()
             || target
                 .conditions()

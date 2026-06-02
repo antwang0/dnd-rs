@@ -3007,6 +3007,108 @@ pub const REPELLING_BLAST_TAG: &str = "warlock.repelling_blast";
 /// template's `features` set to install it.
 pub const ELDRITCH_MIND_TAG: &str = "warlock.eldritch_mind";
 
+/// 5e Wild Magic Sorcerer **Tides of Chaos** feature tag. Once per long
+/// rest charge — the sorcerer leans into the chaos of their bloodline to
+/// gain advantage on their next attack roll, ability check, or saving
+/// throw. We honor the attack-roll lane (the highest-leverage in our
+/// combat model) via the `TidesOfChaos` condition, which grants
+/// `grants_self_attack_advantage` and lives in `CONSUMED_ON_ATTACK`.
+/// Tag is checked at the Tides of Chaos action's validate, decremented
+/// on use, refilled on long rest.
+pub const TIDES_OF_CHAOS_TAG: &str = "sorcerer.tides_of_chaos";
+
+/// 5e Sorcerer **Sorcerous Restoration** feature tag (lv20 capstone).
+/// Passive: the sorcerer regains 4 expended sorcery points the first
+/// time they finish a short rest after using a metamagic option. We
+/// collapse the trigger to "always restore 4 SP on short rest" — our
+/// short-rest cadence is rare enough that the once-per-rest cap and
+/// the metamagic-trigger gate would barely fire. Read by
+/// `ActorInstance::short_rest` via a templated branch (no consume
+/// because the feature is passive — the SP-give is the entire effect).
+pub const SORCEROUS_RESTORATION_TAG: &str = "sorcerer.sorcerous_restoration";
+
+/// 5e Wild Magic Sorcerer **Tides of Chaos**. Bonus action; once per
+/// long rest, install the `TidesOfChaos` prime → advantage on the next
+/// attack roll. RAW also grants advantage on the next ability check or
+/// saving throw, but the attack-roll lane is the load-bearing one in
+/// our combat model; the prime is consumed at the first swing via the
+/// `CONSUMED_ON_ATTACK` cohort. Self-target, no SP cost — the once-per-
+/// long-rest gate is the entire resource cost (mirrors Second Wind /
+/// Indomitable's rest-charge shape). Pairs naturally with a metamagic
+/// prime: the Tides advantage stacks on the same swing the metamagic
+/// prime modifies, so a Tides + Empowered + Fire Bolt combo gives both
+/// the advantage on the attack roll and the damage reroll.
+pub struct TidesOfChaos {}
+
+impl Action for TidesOfChaos {
+    fn name(&self) -> &str {
+        "tides of chaos"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["tides", "toc", "chaos"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        if !actor.is_combat_active() || !actor.feature_available(TIDES_OF_CHAOS_TAG) {
+            return false;
+        }
+        // No-stack on the prime condition: re-priming would just refresh
+        // the timer and waste the once-per-long-rest charge.
+        !actor.has_condition(Condition::TidesOfChaos)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let line = encounter.actors.get_mut(&caster_id).map(|actor| {
+            actor.spend_feature(TIDES_OF_CHAOS_TAG);
+            format!("{} embraces the tides of chaos.", actor.name())
+        });
+        if let Some(line) = line {
+            encounter.log(line);
+        }
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::TidesOfChaos,
+            timer: ConditionTimer::UntilStartOfNextTurn,
+        })]
+    }
+}
+
+pub static TIDES_OF_CHAOS: LazyLock<TidesOfChaos> = LazyLock::new(|| TidesOfChaos {});
+
 /// 5e Sorcerer **Font of Magic** — Create Spell Slot. Bonus action; spend
 /// `sp_cost` sorcery points to recreate one expended spell slot of the
 /// matching level. RAW cost table caps at 5th-level slot:

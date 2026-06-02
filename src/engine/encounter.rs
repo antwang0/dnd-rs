@@ -244,6 +244,14 @@ const CONSUMED_ON_ATTACK: &[Condition] = &[
     // accept the minor "ranged swing wastes the prime" deviation in
     // exchange for uniformity with the other one-shot primes here.
     Condition::LungingAttacking,
+    // 5e Wild Magic Sorcerer **Tides of Chaos** — the prime grants
+    // advantage on the next attack roll, ability check, or saving
+    // throw. We honor the attack-roll lane via `grants_self_attack_advantage`
+    // and consume here so a single swing burns the once-per-long-rest
+    // charge (matches the Inspired / PrecisionAttacking one-shot shape).
+    // The ability-check / saving-throw lanes are out of scope — most of
+    // the tactical leverage in our combat model is on the attack roll.
+    Condition::TidesOfChaos,
 ];
 
 pub enum StackElementEntry {
@@ -20157,6 +20165,97 @@ mod tests {
             ef.apply(&mut e);
         }
         assert!(!e.actors[&cler].is_concentrating());
+    }
+
+    /// Subtle Spell: a sorcerer with the SubtleSpelling prime up cannot
+    /// be Counterspelled even when they're concentrating on a
+    /// dispellable buff. Validates the Subtle Spell rider in
+    /// `Counterspell::custom_validate_input`.
+    #[test]
+    fn subtle_spell_blocks_counterspell_against_concentrating_caster() {
+        use crate::actions::spells::{BLESS, COUNTERSPELL};
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let opposing_wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Sorcerer concentrates on Bless (the dispellable buff).
+        let bless_target = vec![sorcerer];
+        let effects = BLESS.side_effects(&mut e, sorcerer, Some(&bless_target), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&sorcerer].is_concentrating());
+        // Without the Subtle Spell prime, Counterspell should validate.
+        let tv = vec![sorcerer];
+        assert!(
+            COUNTERSPELL.custom_validate_input(&e, opposing_wizard, Some(&tv), None, None),
+            "no subtle prime → counterspell is valid"
+        );
+        // Install the Subtle Spell prime and re-check — should fail-out.
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .add_condition(Condition::SubtleSpelling, ConditionTimer::UntilStartOfNextTurn);
+        assert!(
+            !COUNTERSPELL.custom_validate_input(&e, opposing_wizard, Some(&tv), None, None),
+            "subtle prime up → counterspell fizzles"
+        );
+        // Sorcerer remains concentrating — the prime didn't strip the buff.
+        assert!(e.actors[&sorcerer].is_concentrating());
+    }
+
+    /// Tides of Chaos installs a `TidesOfChaos` condition with attack-roll
+    /// advantage on the holder, consumed by the next swing via the
+    /// CONSUMED_ON_ATTACK cohort.
+    #[test]
+    fn tides_of_chaos_grants_self_attack_advantage_consumed_on_swing() {
+        use crate::actions::class_features::{TIDES_OF_CHAOS, TIDES_OF_CHAOS_TAG};
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Place the zombie far enough away that the ranged-adjacent
+        // disadvantage doesn't cancel the Tides advantage. Medium
+        // creatures occupy 2x2 footprints, so we need a 3+ tile gap.
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 2), 1, 0)
+            .unwrap();
+        // Charge is available, no prime yet.
+        assert!(e.actors[&sorcerer].feature_available(TIDES_OF_CHAOS_TAG));
+        assert!(!e.actors[&sorcerer].has_condition(Condition::TidesOfChaos));
+
+        // Validate fires → side_effects install the prime + spend charge.
+        assert!(TIDES_OF_CHAOS.custom_validate_input(&e, sorcerer, None, None, None));
+        let effects = TIDES_OF_CHAOS.side_effects(&mut e, sorcerer, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(!e.actors[&sorcerer].feature_available(TIDES_OF_CHAOS_TAG));
+        assert!(e.actors[&sorcerer].has_condition(Condition::TidesOfChaos));
+        // Attack mode against the zombie should now be Advantage.
+        assert_eq!(
+            e.compute_attack_mode(sorcerer, zombie, false),
+            RollMode::Advantage
+        );
+        // After the rider-clear (e.g. resolve_attack), the prime drops.
+        e.clear_attack_advantage_riders(sorcerer, zombie);
+        assert!(!e.actors[&sorcerer].has_condition(Condition::TidesOfChaos));
+
+        // Validate is now invalid (charge spent).
+        assert!(!TIDES_OF_CHAOS.custom_validate_input(&e, sorcerer, None, None, None));
+        // Long rest refreshes the charge.
+        e.actors.get_mut(&sorcerer).unwrap().long_rest();
+        assert!(TIDES_OF_CHAOS.custom_validate_input(&e, sorcerer, None, None, None));
     }
 
     /// Rage advantage on STR saves: a raging actor rolls advantage when

@@ -262,6 +262,22 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // `EncounterInstance::reroll_seeking_spell` so every spell-attack
     // path benefits without per-spell wiring.
     actions.push(&crate::actions::metamagic::SEEKING_SPELL);
+    // 5e Sorcerer Metamagic — Subtle Spell. Burns 1 sorcery point
+    // + a Bonus Action; the next spell ignores Counterspell (RAW: no
+    // verbal or somatic components → the counterspeller has nothing
+    // to react to). Engine reads via `Counterspell::custom_validate_input`
+    // which fails-out when the targeted caster has `SubtleSpelling` up.
+    // The prime ticks down on the sorcerer's next turn (UntilStartOfNextTurn)
+    // so it covers the opponent's one reaction window between casts.
+    actions.push(&crate::actions::metamagic::SUBTLE_SPELL);
+    // 5e Wild Magic Sorcerer — **Tides of Chaos**. Once per long rest,
+    // bonus action; install the `TidesOfChaos` prime → advantage on the
+    // next attack roll (consumed via the `CONSUMED_ON_ATTACK` cohort).
+    // Pairs naturally with a metamagic prime: the Tides advantage stacks
+    // on the same swing the metamagic prime modifies, so a Tides +
+    // Empowered + Fire Bolt combo gives both advantage *and* the damage
+    // reroll. Gated on the per-long-rest feature charge.
+    actions.push(&*crate::actions::class_features::TIDES_OF_CHAOS);
     // 5e Sorcerer **Font of Magic** — convert spell slots <-> sorcery
     // points. Bonus action in either direction; three slot levels each
     // way covers the typical mid-encounter resource shuffle. The "create
@@ -310,7 +326,17 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Charisma,
         ]),
         condition_immunities: HashSet::new(),
-        features: HashSet::new(),
+        // 5e Wild Magic Sorcerer features: `Tides of Chaos` (once per
+        // long rest, advantage on next attack) and `Sorcerous Restoration`
+        // (lv20 capstone, regain 4 SP on short rest). The CR-4 template is
+        // generous on `Sorcerous Restoration` vs strictly-RAW level
+        // gating, but the +4 SP only kicks in on short rest — rare enough
+        // that the partial refill rarely closes the gap to the long-rest
+        // cap.
+        features: HashSet::from([
+            crate::actions::class_features::TIDES_OF_CHAOS_TAG,
+            crate::actions::class_features::SORCEROUS_RESTORATION_TAG,
+        ]),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),
         legendary_resistances: 0,

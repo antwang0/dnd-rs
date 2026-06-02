@@ -228,6 +228,28 @@ pub static SEEKING_SPELL: InstallPrimeMetamagic = InstallPrimeMetamagic {
     log_verb: "primes the next spell attack to seek its target",
 };
 
+/// 5e Sorcerer **Subtle Spell** metamagic. Bonus action — spend one
+/// sorcery point to prime the next spell to be cast without somatic or
+/// verbal components (RAW: "you can cast it without any somatic or
+/// verbal components"). Because Counterspell needs to perceive the
+/// somatic / verbal cues of a cast, a no-component spell slips past
+/// Counterspell's interrupt — the engine reads the prime at
+/// `Counterspell::custom_validate_input` (spells.rs), which fails the
+/// validate (and consumes the prime) when the targeted caster is
+/// subtle-primed. The prime is also consumed by tick-down
+/// (`UntilStartOfNextTurn`) so an unused prime doesn't dangle across
+/// rounds. The "ignored counterspell" path is the only mechanically
+/// visible Subtle Spell effect in our model — we don't track verbal /
+/// somatic components for spells outside of the counterspell-immune
+/// rider, which is the canonical use case for the metamagic.
+pub static SUBTLE_SPELL: InstallPrimeMetamagic = InstallPrimeMetamagic {
+    display_name: "subtle spell",
+    aliases: &["subtle", "ss-subtle", "subspell"],
+    sp_cost: 1,
+    condition: Condition::SubtleSpelling,
+    log_verb: "primes the next spell to slip past counterspell",
+};
+
 /// 5e Sorcerer **Quickened Spell** metamagic. Bonus action — spend two
 /// sorcery points to gain an extra Action slot this turn (RAW: "you can
 /// spend 2 sorcery points to change the casting time of [a 1-action]

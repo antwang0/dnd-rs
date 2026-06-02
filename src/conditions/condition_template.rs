@@ -886,6 +886,28 @@ pub enum Condition {
     /// Tick-down timer (`UntilStartOfNextTurn`) caps an unused prime so
     /// it doesn't dangle across rounds.
     SeekingSpelling,
+    /// Subtle Spell primed (5e Sorcerer Metamagic). The sorcerer has spent
+    /// one sorcery point via the Subtle Spell bonus-action prime; their
+    /// next spell ignores Counterspell (RAW: "you can cast it without any
+    /// somatic or verbal components" — Counterspell needs to perceive the
+    /// cast, so a no-component cast slips past). The engine reads this at
+    /// `Counterspell::custom_validate_input` (spells.rs): if the targeted
+    /// caster has the prime up, the validate returns false and the
+    /// counterspell fizzles. The prime is consumed inside the same
+    /// validator on the failed cast (mirrors `clear_attack_advantage_riders`'s
+    /// consume-on-trigger pattern). Tick-down timer (`UntilStartOfNextTurn`)
+    /// caps an unused prime so it doesn't dangle across rounds.
+    SubtleSpelling,
+    /// Tides of Chaos primed (5e Wild Magic Sorcerer feature). The
+    /// sorcerer has spent their once-per-long-rest charge to gain
+    /// advantage on their next attack roll, ability check, or saving
+    /// throw. We honor the attack-roll lane: holders count as having
+    /// `grants_self_attack_advantage` (RollMode::Advantage on the next
+    /// swing) and the condition lives in `CONSUMED_ON_ATTACK` so it
+    /// burns off the first swing that fires. Tick-down timer
+    /// (`UntilStartOfNextTurn`) caps an unused prime so it doesn't
+    /// dangle across rounds.
+    TidesOfChaos,
 }
 
 impl Condition {
@@ -1015,6 +1037,8 @@ impl Condition {
             Condition::TwinnedSpelling => "primed with twinned spell",
             Condition::ExtendedSpelling => "primed with extended spell",
             Condition::SeekingSpelling => "primed with seeking spell",
+            Condition::SubtleSpelling => "primed with subtle spell",
+            Condition::TidesOfChaos => "riding the tides of chaos",
         }
     }
 
@@ -1110,6 +1134,30 @@ impl Condition {
                 | Condition::TwinnedSpelling
                 | Condition::ExtendedSpelling
                 | Condition::SeekingSpelling
+                | Condition::SubtleSpelling
+                | Condition::TidesOfChaos
+        )
+    }
+
+    /// True if this condition is one of the Sorcerer metamagic primes —
+    /// the bonus-action "next spell does X" buffs (`Empowered` / `Heightened`
+    /// / `Careful` / `Distant` / `Twinned` / `Extended` / `Seeking` /
+    /// `Subtle`). Centralized so the AI's "don't double-prime" gates can
+    /// read a single helper instead of listing each prime by name.
+    /// Tides of Chaos is intentionally *excluded* — it's a 1/long-rest
+    /// Wild Magic feature with no SP cost, so doubling up with a metamagic
+    /// prime is RAW-legal and tactically sensible.
+    pub fn is_metamagic_prime(&self) -> bool {
+        matches!(
+            self,
+            Condition::EmpoweredSpelling
+                | Condition::HeightenedSpelling
+                | Condition::CarefulSpelling
+                | Condition::DistantSpelling
+                | Condition::TwinnedSpelling
+                | Condition::ExtendedSpelling
+                | Condition::SeekingSpelling
+                | Condition::SubtleSpelling
         )
     }
 
@@ -1183,6 +1231,7 @@ impl Condition {
                 | Condition::Foreseen
                 | Condition::Blessed
                 | Condition::Transformed
+                | Condition::TidesOfChaos
         )
     }
 

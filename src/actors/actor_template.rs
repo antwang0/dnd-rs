@@ -13,6 +13,7 @@ use std::error::Error;
 
 use crate::actions::class_features::{
     BATTLE_MASTER_MANEUVERS, RELENTLESS_ENDURANCE_TAG, SHORT_REST_FEATURES,
+    SORCEROUS_RESTORATION_TAG,
 };
 
 /// Lifecycle state of an actor's hit points. Replaces the previous
@@ -881,6 +882,14 @@ impl ActorInstance {
         self.sorcery_points - prev
     }
 
+    /// True if any Sorcerer metamagic prime is currently up on this actor.
+    /// Reads `Condition::is_metamagic_prime` so the cohort lives in one
+    /// place and AI gates (and the Font of Magic "don't shuffle resources
+    /// mid-prime" check) don't have to list each prime by name.
+    pub fn has_any_metamagic_prime(&self) -> bool {
+        self.conditions.keys().any(|c| c.is_metamagic_prime())
+    }
+
     pub fn legendary_actions_per_round(&self) -> u32 {
         self.legendary_actions_per_round
     }
@@ -1060,6 +1069,16 @@ impl ActorInstance {
             if self.features_max.contains(tag) {
                 self.features_remaining.insert(tag);
             }
+        }
+
+        // 5e Sorcerer **Sorcerous Restoration** (lv20 capstone): regain 4
+        // expended sorcery points on short rest. We collapse the RAW
+        // "after using metamagic" gate to "always, if the feature is on"
+        // — short rests are rare enough that the partial refill rarely
+        // arrives at full pool, and the heuristic keeps the trigger
+        // testable. Capped at `sorcery_points_max` via `give_sorcery_points`.
+        if self.features_max.contains(SORCEROUS_RESTORATION_TAG) {
+            self.give_sorcery_points(4);
         }
     }
 

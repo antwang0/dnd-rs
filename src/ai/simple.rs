@@ -509,7 +509,29 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 3q''''''''. Font of Magic — convert spell slot ↔ sorcery
+        // 3q''''''''. Subtle Spell — sorcerer bonus-action metamagic
+        //             prime. Burns 1 sorcery point so the next spell
+        //             slips past Counterspell. Fires only when an
+        //             opposing-team counterspeller is on the field —
+        //             without that, the prime protects nothing and the
+        //             1 SP is wasted. Cheap enough (1 SP) that even a
+        //             single opposing wizard / sorcerer / warlock with
+        //             Counterspell triggers the gate.
+        if let Some(aei) = try_subtle_spell(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3q'''''''''. Tides of Chaos — Wild Magic Sorcerer 1/long-rest
+        //              bonus action. Installs advantage on the next
+        //              attack roll. No SP cost; pairs naturally with a
+        //              metamagic prime to double up on a single big
+        //              cast. Gated on the feature charge being available
+        //              and an enemy in attack range.
+        if let Some(aei) = try_tides_of_chaos(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3q''''''''''. Font of Magic — convert spell slot ↔ sorcery
         //             points. Bonus action; only fires when one
         //             resource is critically low while the other has
         //             headroom. The two sub-tactics (refill SP from a
@@ -1643,6 +1665,83 @@ fn try_seeking_spell(
     try_self_action(encounter, actor_id, "seeking spell")
 }
 
+/// Subtle Spell — sorcerer bonus-action metamagic prime. Burns 1 SP so
+/// the next spell ignores Counterspell. Fires only when:
+/// - The sorcerer has SP available and no metamagic prime is already up
+///   (re-priming wastes the SP).
+/// - At least one combat-active enemy on the *opposing* team owns the
+///   Counterspell action — without an opposing counterspeller, the
+///   prime has no payoff and the 1 SP is wasted.
+///
+/// We treat the gate as "does an enemy in this fight have Counterspell
+/// in their action list?" — a coarse but reliable proxy for "is the
+/// counterspell trade a live threat?" The cost is cheap enough (1 SP)
+/// that even a weak signal is worth firing on.
+fn try_subtle_spell(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.sorcery_points() == 0 {
+        return None;
+    }
+    if actor.has_any_metamagic_prime() {
+        return None;
+    }
+    // Look for an opposing counterspeller as the live threat signal —
+    // without an enemy who could Counterspell, the prime has nothing to
+    // bite on and the 1 SP is wasted. Coarse but reliable.
+    let caster_team = actor.team();
+    let any_enemy_counterspeller = encounter.actors.iter().any(|(id, other)| {
+        *id != actor_id
+            && other.team() != caster_team
+            && other.is_combat_active()
+            && other.find_action("counterspell").is_some()
+    });
+    if !any_enemy_counterspeller {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "subtle spell")
+}
+
+/// Tides of Chaos — Wild Magic Sorcerer 1/long-rest bonus action.
+/// Installs an advantage-on-next-attack prime. Fires only when:
+/// - The feature charge is still available.
+/// - The prime isn't already up.
+/// - An enemy sits within typical spell-attack reach (24 tiles) so the
+///   advantage actually feeds a swing this round.
+///
+/// Doesn't gate on SP (no SP cost) and doesn't conflict with metamagic
+/// primes (they stack — Tides + Empowered + Fire Bolt is a real combo).
+/// We do skip it when a save-or-suck control prime is up (Heightened
+/// Spell) since the next cast probably won't be an attack roll and the
+/// advantage would dangle.
+fn try_tides_of_chaos(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if !actor.feature_available(crate::actions::class_features::TIDES_OF_CHAOS_TAG) {
+        return None;
+    }
+    if actor.has_condition(Condition::TidesOfChaos) {
+        return None;
+    }
+    // Save-or-suck spells don't roll an attack roll; the advantage would
+    // dangle. The other metamagic primes (Empowered, Twinned, Seeking,
+    // ...) all feed attack-style or damage-style casts, so they're
+    // compatible and don't block Tides here.
+    if actor.has_condition(Condition::HeightenedSpelling) {
+        return None;
+    }
+    // Need a swing-able enemy in range. Use the same 24-tile gate as the
+    // empowered / seeking primes — covers Fire Bolt / Magic Missile range.
+    if !any_enemy_within(encounter, actor_id, 24) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "tides of chaos")
+}
+
 /// Font of Magic — convert spell slot ↔ sorcery points. Bonus action.
 /// Two directions:
 /// - **Refill SP from a held slot** (`convert level-N slot` → N SP).
@@ -1665,15 +1764,10 @@ fn try_font_of_magic(
 ) -> Option<ActionExecutionInfo> {
     let actor = encounter.actors.get(&actor_id)?;
     // Don't compete with an active prime — the prime is more valuable
-    // than re-shuffling resources between SP and slots.
-    if actor.has_condition(Condition::EmpoweredSpelling)
-        || actor.has_condition(Condition::HeightenedSpelling)
-        || actor.has_condition(Condition::CarefulSpelling)
-        || actor.has_condition(Condition::DistantSpelling)
-        || actor.has_condition(Condition::TwinnedSpelling)
-        || actor.has_condition(Condition::ExtendedSpelling)
-        || actor.has_condition(Condition::SeekingSpelling)
-    {
+    // than re-shuffling resources between SP and slots. Consolidated
+    // through `has_any_metamagic_prime` so new primes (Subtle Spell,
+    // future Tasha's lineup) auto-extend the gate without an edit here.
+    if actor.has_any_metamagic_prime() {
         return None;
     }
     // Direction 1: SP empty → burn a low-level slot to refill SP.
@@ -4930,6 +5024,288 @@ mod tests {
         assert!(
             try_twinned_spell(&e, sorcerer).is_none(),
             "no SP → skip"
+        );
+    }
+
+    /// `try_subtle_spell` fires when SP is available, no prime is up,
+    /// AND an opposing counterspeller is on the field. Skipped when no
+    /// enemy carries Counterspell — the prime would protect nothing.
+    #[test]
+    fn subtle_spell_ai_gates_on_opposing_counterspeller() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::encounter::EncounterInstance;
+        use crate::engine::terrain_gen::TerrainGenParams;
+        use crate::engine::types::Coordinate;
+
+        let tp = TerrainGenParams {
+            width: 30,
+            height: 30,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(11)).unwrap();
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .give_resource(Resource::BonusAction);
+
+        // No enemies → skip.
+        assert!(
+            try_subtle_spell(&e, sorcerer).is_none(),
+            "no enemies → skip"
+        );
+
+        // Plain enemy (zombie has no Counterspell) → skip.
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+            .unwrap();
+        assert!(
+            try_subtle_spell(&e, sorcerer).is_none(),
+            "enemy with no counterspell → skip"
+        );
+
+        // Replace with a wizard (carries Counterspell) → prime fires.
+        e.actors.remove(&zombie);
+        let _wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+            .unwrap();
+        assert!(
+            try_subtle_spell(&e, sorcerer).is_some(),
+            "opposing wizard with counterspell → prime fires"
+        );
+
+        // Already primed → skip.
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .add_condition(Condition::SubtleSpelling, ConditionTimer::Rounds(2));
+        assert!(
+            try_subtle_spell(&e, sorcerer).is_none(),
+            "prime already up → skip"
+        );
+
+        // Drop prime, burn SP → skip.
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .remove_condition(Condition::SubtleSpelling);
+        while e.actors[&sorcerer].sorcery_points() > 0 {
+            e.actors.get_mut(&sorcerer).unwrap().spend_sorcery_point();
+        }
+        assert!(
+            try_subtle_spell(&e, sorcerer).is_none(),
+            "no SP → skip"
+        );
+    }
+
+    /// `try_tides_of_chaos` fires once per long rest when an enemy is in
+    /// range. Skipped after the charge is spent and skipped when no
+    /// swing-able enemy is in the 24-tile window.
+    #[test]
+    fn tides_of_chaos_ai_gates_on_feature_and_range() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::encounter::EncounterInstance;
+        use crate::engine::terrain_gen::TerrainGenParams;
+        use crate::engine::types::Coordinate;
+
+        let tp = TerrainGenParams {
+            width: 30,
+            height: 30,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(11)).unwrap();
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .give_resource(Resource::BonusAction);
+
+        // No enemies → skip.
+        assert!(
+            try_tides_of_chaos(&e, sorcerer).is_none(),
+            "no enemy → skip"
+        );
+
+        // Enemy in range → fires (Tides has no SP cost, just the rest
+        // charge).
+        let _z = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+            .unwrap();
+        assert!(
+            try_tides_of_chaos(&e, sorcerer).is_some(),
+            "enemy in range + charge available → fires"
+        );
+
+        // Spend the feature charge → skip.
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .spend_feature(crate::actions::class_features::TIDES_OF_CHAOS_TAG);
+        assert!(
+            try_tides_of_chaos(&e, sorcerer).is_none(),
+            "feature charge spent → skip"
+        );
+
+        // Restore charge, install Heightened prime → skip (save-or-suck
+        // primes don't roll attacks).
+        e.actors.get_mut(&sorcerer).unwrap().long_rest();
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .give_resource(Resource::BonusAction);
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .add_condition(Condition::HeightenedSpelling, ConditionTimer::Rounds(2));
+        assert!(
+            try_tides_of_chaos(&e, sorcerer).is_none(),
+            "Heightened prime up → skip"
+        );
+    }
+
+    /// Sorcerer's `has_any_metamagic_prime` returns true when any prime
+    /// is up and false when none is up. Tides of Chaos is intentionally
+    /// excluded — it's a Wild Magic feature, not a metamagic.
+    #[test]
+    fn has_any_metamagic_prime_covers_each_prime() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::encounter::EncounterInstance;
+        use crate::engine::terrain_gen::TerrainGenParams;
+        use crate::engine::types::Coordinate;
+
+        let tp = TerrainGenParams {
+            width: 20,
+            height: 20,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(0)).unwrap();
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        assert!(!e.actors[&sorcerer].has_any_metamagic_prime());
+
+        // Tides of Chaos is NOT a metamagic prime — should remain false.
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .add_condition(Condition::TidesOfChaos, ConditionTimer::Rounds(2));
+        assert!(!e.actors[&sorcerer].has_any_metamagic_prime());
+
+        // Each metamagic prime in turn flips the flag to true.
+        for c in [
+            Condition::EmpoweredSpelling,
+            Condition::HeightenedSpelling,
+            Condition::CarefulSpelling,
+            Condition::DistantSpelling,
+            Condition::TwinnedSpelling,
+            Condition::ExtendedSpelling,
+            Condition::SeekingSpelling,
+            Condition::SubtleSpelling,
+        ] {
+            // Strip prior conditions to isolate this one.
+            let actor = e.actors.get_mut(&sorcerer).unwrap();
+            for c2 in [
+                Condition::EmpoweredSpelling,
+                Condition::HeightenedSpelling,
+                Condition::CarefulSpelling,
+                Condition::DistantSpelling,
+                Condition::TwinnedSpelling,
+                Condition::ExtendedSpelling,
+                Condition::SeekingSpelling,
+                Condition::SubtleSpelling,
+            ] {
+                actor.remove_condition(c2);
+            }
+            actor.add_condition(c, ConditionTimer::Rounds(2));
+            assert!(
+                e.actors[&sorcerer].has_any_metamagic_prime(),
+                "prime {:?} → should flip flag true",
+                c
+            );
+        }
+    }
+
+    /// Sorcerous Restoration: a sorcerer with the lv20 capstone tag
+    /// regains 4 SP on short rest (saturating at the long-rest cap).
+    #[test]
+    fn sorcerous_restoration_regains_sp_on_short_rest() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::engine::encounter::EncounterInstance;
+        use crate::engine::terrain_gen::TerrainGenParams;
+        use crate::engine::types::Coordinate;
+
+        let tp = TerrainGenParams {
+            width: 20,
+            height: 20,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(0)).unwrap();
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Burn SP to 0 to verify the restoration math.
+        while e.actors[&sorcerer].sorcery_points() > 0 {
+            e.actors.get_mut(&sorcerer).unwrap().spend_sorcery_point();
+        }
+        assert_eq!(e.actors[&sorcerer].sorcery_points(), 0);
+        let mut roller = crate::engine::dice::FastRandRoller::with_seed(1);
+        e.actors.get_mut(&sorcerer).unwrap().short_rest(&mut roller);
+        // RAW restores exactly 4 SP on short rest; the template starts
+        // with sorcery_points_max >= 4 so the full 4 land in the pool.
+        assert_eq!(
+            e.actors[&sorcerer].sorcery_points(),
+            4,
+            "short rest should restore 4 SP via Sorcerous Restoration"
+        );
+
+        // Short-rest again at near-full pool — should saturate at the
+        // long-rest cap, not exceed it.
+        e.actors.get_mut(&sorcerer).unwrap().long_rest();
+        let cap = e.actors[&sorcerer].sorcery_points_max();
+        assert_eq!(e.actors[&sorcerer].sorcery_points(), cap);
+        e.actors.get_mut(&sorcerer).unwrap().short_rest(&mut roller);
+        assert_eq!(
+            e.actors[&sorcerer].sorcery_points(),
+            cap,
+            "saturate at cap"
         );
     }
 }
