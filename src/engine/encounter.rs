@@ -2874,6 +2874,125 @@ impl EncounterInstance {
         true
     }
 
+    /// 5e Tasha's Sorcerer Transmuted Spell metamagic — if the caster has
+    /// the prime up and `side_effects` carries at least one `DealDamage`
+    /// whose damage type is one of the six elemental types
+    /// (acid / cold / fire / lightning / poison / thunder), pick the best
+    /// replacement type (worst vulnerability on the primary target, else
+    /// best non-resisted, else best non-immune), walk the side_effects
+    /// and remap every eligible damage type in place. Returns true iff
+    /// the prime was consumed — callers (e.g. the Twinned Spell re-issue
+    /// path) use the flag to propagate the same remap into the twin's
+    /// separately-built side_effects vec.
+    ///
+    /// Picks the new type by sampling each transmutable target against
+    /// the primary target's resistance profile. We prefer the type that
+    /// the target is *vulnerable* to (double damage), falling back to
+    /// any non-resisted type, then any non-immune type. With no target
+    /// data (e.g. self-cast burst with no actor target), defaults to
+    /// `Fire` as the broadest-coverage choice.
+    pub fn consume_transmuted_spell(
+        &mut self,
+        caster_id: usize,
+        side_effects: &mut [Box<dyn crate::engine::side_effects::ApplicableSideEffect>],
+    ) -> Option<crate::engine::types::DamageType> {
+        let primed = self
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_condition(Condition::TransmutedSpelling));
+        if !primed {
+            return None;
+        }
+        // Find the primary damage target — first side-effect that carries
+        // elemental damage points us at the actor whose weakness profile
+        // drives the pick. Fall back to "nearest combat-active enemy" when
+        // no DealDamage entry exposes a target (self-centered AoEs).
+        let primary_target_id = side_effects
+            .iter()
+            .find_map(|se| se.elemental_damage_target().map(|(id, _)| id))
+            .or_else(|| {
+                let caster_team = self.actors.get(&caster_id).map(|a| a.team())?;
+                let caster_loc = self.actors.get(&caster_id).map(|a| a.location())?;
+                self.actors
+                    .iter()
+                    .filter(|(id, a)| {
+                        **id != caster_id && a.team() != caster_team && a.is_combat_active()
+                    })
+                    .min_by_key(|(_, a)| {
+                        let d = a.location() - caster_loc;
+                        d.x * d.x + d.y * d.y
+                    })
+                    .map(|(id, _)| *id)
+            });
+        let new_type = self.pick_transmuted_damage_type(primary_target_id);
+        if !crate::engine::side_effects::remap_side_effect_damage_types(side_effects, new_type) {
+            return None;
+        }
+        let caster = self.actors.get_mut(&caster_id)?;
+        let name = caster.name().to_string();
+        caster.remove_condition(Condition::TransmutedSpelling);
+        self.log(format!(
+            "  transmuted spell: {} remaps the damage to {}",
+            name, new_type
+        ));
+        Some(new_type)
+    }
+
+    /// Pick the best damage type for a Transmuted Spell remap given a
+    /// target actor. Priority (best to worst):
+    /// 1. Any of the six elemental types the target is *vulnerable* to
+    ///    (doubles damage; clearly the best pick).
+    /// 2. Any of the six elemental types the target has no template
+    ///    modifier against (full damage; no resistance lost).
+    /// 3. Any of the six the target is merely resistant to (still
+    ///    delivers half damage; better than burning the prime on an
+    ///    immune type).
+    /// 4. Default to `Fire` when no target context is available —
+    ///    Fire has the broadest reach across the engine's bestiary
+    ///    (only a few constructs / fiends carry fire immunity).
+    fn pick_transmuted_damage_type(
+        &self,
+        target_id: Option<usize>,
+    ) -> crate::engine::types::DamageType {
+        use crate::engine::side_effects::TRANSMUTABLE_DAMAGE_TYPES;
+        use crate::engine::types::{DamageModifier, DamageType};
+        let Some(target_id) = target_id else {
+            return DamageType::Fire;
+        };
+        let Some(target) = self.actors.get(&target_id) else {
+            return DamageType::Fire;
+        };
+        // Sweep the six types once and bucket by modifier. We pick the
+        // first match in each bucket (the constant's iteration order is
+        // alphabetical-ish; ties break deterministically).
+        let mut vuln: Option<DamageType> = None;
+        let mut neutral: Option<DamageType> = None;
+        let mut resisted: Option<DamageType> = None;
+        for &dt in TRANSMUTABLE_DAMAGE_TYPES.iter() {
+            match target.damage_modifier(dt) {
+                Some(DamageModifier::Vulnerability) => {
+                    if vuln.is_none() {
+                        vuln = Some(dt);
+                    }
+                }
+                Some(DamageModifier::Immunity) => {
+                    // Skip — never pick an immune type.
+                }
+                Some(DamageModifier::Resistance) => {
+                    if resisted.is_none() {
+                        resisted = Some(dt);
+                    }
+                }
+                None => {
+                    if neutral.is_none() {
+                        neutral = Some(dt);
+                    }
+                }
+            }
+        }
+        vuln.or(neutral).or(resisted).unwrap_or(DamageType::Fire)
+    }
+
     /// 5e Sanctuary: if `target_id` carries the Sanctuary condition, the
     /// attacker (`attacker_id`) makes a one-shot WIS save. On fail, the
     /// attack is blocked entirely (caller short-circuits the attack roll
@@ -8995,6 +9114,138 @@ mod tests {
             e.messages().len(),
             log_len_before,
             "no log line when nothing to consume"
+        );
+    }
+
+    /// Transmuted Spell prime installs the condition + debits 1 SP eagerly
+    /// (mirroring the other install-prime metamagics).
+    #[test]
+    fn transmuted_spell_action_spends_one_sp_and_primes() {
+        use crate::actions::action_template::Action;
+        use crate::actions::metamagic::TRANSMUTED_SPELL;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&sorcerer).unwrap();
+        actor.give_resource(crate::engine::side_effects::Resource::BonusAction);
+        let sp_before = actor.sorcery_points();
+        assert!(sp_before >= 1, "template ships SP for the test");
+
+        let effects = TRANSMUTED_SPELL.execute(&mut e, sorcerer, None, None, None);
+        assert!(!effects.is_empty(), "transmuted should queue an effect");
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let after = e.actors.get(&sorcerer).unwrap();
+        assert_eq!(after.sorcery_points(), sp_before - 1, "1 SP spent");
+        assert!(
+            after.has_condition(Condition::TransmutedSpelling),
+            "transmuted prime installed"
+        );
+    }
+
+    /// `consume_transmuted_spell` is a no-op when no prime is up: returns
+    /// `None`, mutates nothing, and logs nothing.
+    #[test]
+    fn consume_transmuted_spell_no_op_without_prime() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
+            actor_id: sorcerer,
+            amount: 10,
+            damage_type: DamageType::Fire,
+        })];
+        let log_len_before = e.messages().len();
+        let result = e.consume_transmuted_spell(sorcerer, &mut effects);
+        assert!(result.is_none(), "no prime → no remap");
+        assert_eq!(
+            e.messages().len(),
+            log_len_before,
+            "no log line when nothing to consume"
+        );
+    }
+
+    /// `consume_transmuted_spell` with the prime up remaps elemental damage
+    /// to the target's vulnerability and consumes the prime. We use a
+    /// zombie target — vulnerable to radiant (not transmutable) but with
+    /// no resistance to the six elementals — so the picker falls through
+    /// to the "neutral" bucket and returns Fire (first in the constant).
+    #[test]
+    fn consume_transmuted_spell_remaps_to_neutral_when_no_vuln() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 4), 1, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .add_condition(Condition::TransmutedSpelling, ConditionTimer::Rounds(2));
+        // Cold damage at the zombie — zombie has no special resistance to
+        // cold or fire, so the picker returns the first-iteration neutral
+        // type (Fire).
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
+            actor_id: zombie,
+            amount: 10,
+            damage_type: DamageType::Cold,
+        })];
+        let result = e.consume_transmuted_spell(sorcerer, &mut effects);
+        assert!(result.is_some(), "elemental damage consumed prime");
+        // Apply effects so we can read back the mutated damage type.
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&sorcerer].has_condition(Condition::TransmutedSpelling),
+            "prime stripped after remap"
+        );
+    }
+
+    /// Transmuted Spell prime leaves the prime up when the cast carries no
+    /// elemental damage — force / radiant / necrotic / psychic / physical
+    /// damage isn't eligible for remap.
+    #[test]
+    fn consume_transmuted_spell_leaves_prime_up_on_non_elemental_damage() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .add_condition(Condition::TransmutedSpelling, ConditionTimer::Rounds(2));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
+            actor_id: sorcerer,
+            amount: 10,
+            damage_type: DamageType::Force,
+        })];
+        let result = e.consume_transmuted_spell(sorcerer, &mut effects);
+        assert!(result.is_none(), "non-elemental damage leaves prime up");
+        assert!(
+            e.actors[&sorcerer].has_condition(Condition::TransmutedSpelling),
+            "prime stays installed"
         );
     }
 

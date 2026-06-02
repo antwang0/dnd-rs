@@ -521,6 +521,19 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3q'''''''''. Transmuted Spell (Tasha's) — sorcerer bonus-action
+        //             metamagic prime. Burns 1 sorcery point to remap the
+        //             next elemental spell's damage type to the target's
+        //             worst weakness (vulnerability > non-resisted >
+        //             best-non-immune). Fires only when at least one
+        //             nearby enemy has an asymmetric resistance profile
+        //             (some elements resisted/immune AND some
+        //             vulnerable/neutral) so the prime delivers an actual
+        //             damage win.
+        if let Some(aei) = try_transmuted_spell(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3q'''''''''. Tides of Chaos — Wild Magic Sorcerer 1/long-rest
         //              bonus action. Installs advantage on the next
         //              attack roll. No SP cost; pairs naturally with a
@@ -1702,6 +1715,120 @@ fn try_subtle_spell(
         return None;
     }
     try_self_action(encounter, actor_id, "subtle spell")
+}
+
+/// Transmuted Spell (Tasha's) — sorcerer bonus-action metamagic prime.
+/// Burns 1 sorcery point so the next elemental spell (acid / cold / fire /
+/// lightning / poison / thunder) is remapped to the target's worst
+/// weakness. Fires only when:
+/// - The sorcerer has SP available and no metamagic prime is already up
+///   (Transmuted stacks with damage-rerolling primes RAW but the engine
+///   keeps the gate simple by routing through `has_any_metamagic_prime`).
+/// - The kit owns at least one elemental damage spell (Fire Bolt /
+///   Burning Hands / Lightning Bolt / Cone of Cold / Acid Splash /
+///   Thunderwave / etc.) so the prime has something to bite on.
+/// - At least one combat-active enemy on the opposing team has a
+///   resistance or immunity to at least one elemental type AND
+///   a vulnerability or neutrality to a different element — i.e.
+///   there's an actual remap win to be had. Without that asymmetry the
+///   prime burns 1 SP for zero damage delta.
+///
+/// Cheap (1 SP), so we slot it after the bigger-leverage primes
+/// (Empowered, Heightened, Twinned, Extended) but before Seeking (2 SP).
+fn try_transmuted_spell(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    use crate::engine::side_effects::TRANSMUTABLE_DAMAGE_TYPES;
+    use crate::engine::types::DamageModifier;
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.sorcery_points() == 0 {
+        return None;
+    }
+    if actor.has_any_metamagic_prime() {
+        return None;
+    }
+    // Kit gate: at least one elemental damage spell in the kit. We use a
+    // name-based whitelist rather than `damage_types()` since many spell
+    // impls don't override that hook (it's UI-only today) — the whitelist
+    // covers the elemental staples sorcerers / warlocks / wizards / druids
+    // typically carry. The prime no-ops on non-elemental casts anyway, so a
+    // false-positive here just wastes one bonus action, not the SP.
+    const ELEMENTAL_SPELLS: &[&str] = &[
+        // Acid
+        "acid splash",
+        "acid arrow",
+        "vitriolic sphere",
+        // Cold
+        "ray of frost",
+        "cone of cold",
+        "ice knife",
+        "ice storm",
+        "frostbite",
+        "snilloc's snowball swarm",
+        // Fire
+        "fire bolt",
+        "burning hands",
+        "fireball",
+        "scorching ray",
+        "wall of fire",
+        "flame strike",
+        "produce flame",
+        "delayed blast fireball",
+        "incendiary cloud",
+        "fire storm",
+        // Lightning
+        "lightning bolt",
+        "chain lightning",
+        "shocking grasp",
+        "call lightning",
+        "lightning lure",
+        // Poison
+        "poison spray",
+        "stinking cloud",
+        "cloudkill",
+        // Thunder
+        "thunderwave",
+        "shatter",
+        "thunderclap",
+        "thunder step",
+    ];
+    let has_elemental_spell = ELEMENTAL_SPELLS
+        .iter()
+        .any(|name| actor.find_action(name).is_some());
+    if !has_elemental_spell {
+        return None;
+    }
+    // Weakness-asymmetry gate: at least one nearby enemy has a non-trivial
+    // resistance profile across the six elements (some resisted/immune
+    // AND at least one not-resisted). Without the asymmetry the prime
+    // can't improve damage. 24 tiles matches the other metamagic primes.
+    let caster_team = actor.team();
+    let any_asymmetric_enemy = encounter.actors.iter().any(|(id, other)| {
+        if *id == actor_id || other.team() == caster_team || !other.is_combat_active() {
+            return false;
+        }
+        let mut has_strong = false;
+        let mut has_weak = false;
+        for &dt in TRANSMUTABLE_DAMAGE_TYPES.iter() {
+            match other.damage_modifier(dt) {
+                Some(DamageModifier::Resistance) | Some(DamageModifier::Immunity) => {
+                    has_strong = true;
+                }
+                Some(DamageModifier::Vulnerability) | None => {
+                    has_weak = true;
+                }
+            }
+        }
+        has_strong && has_weak
+    });
+    if !any_asymmetric_enemy {
+        return None;
+    }
+    if !any_enemy_within(encounter, actor_id, 24) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "transmuted spell")
 }
 
 /// Tides of Chaos — Wild Magic Sorcerer 1/long-rest bonus action.
@@ -5110,6 +5237,106 @@ mod tests {
         );
     }
 
+    /// `try_transmuted_spell` fires when:
+    /// - Sorcerer has SP and no metamagic prime up.
+    /// - Kit contains a known elemental damage spell.
+    /// - At least one combat-active enemy has asymmetric elemental
+    ///   resistance (some elements resisted/immune AND others
+    ///   neutral/vulnerable). Skipped otherwise.
+    #[test]
+    fn transmuted_spell_ai_gates_on_asymmetric_resistance() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::encounter::EncounterInstance;
+        use crate::engine::terrain_gen::TerrainGenParams;
+        use crate::engine::types::{Coordinate, DamageModifier, DamageType};
+
+        let tp = TerrainGenParams {
+            width: 30,
+            height: 30,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(13)).unwrap();
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .give_resource(Resource::BonusAction);
+
+        // No enemies at all → skip.
+        assert!(
+            try_transmuted_spell(&e, sorcerer).is_none(),
+            "no enemies → skip"
+        );
+
+        // Plain zombie carries poison immunity (one of the six elementals)
+        // so it already has asymmetric resistance — prime should fire.
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+            .unwrap();
+        assert!(
+            try_transmuted_spell(&e, sorcerer).is_some(),
+            "asymmetric resistance (zombie poison immunity) → prime fires"
+        );
+
+        // Strip the zombie's poison immunity → no asymmetry across the six
+        // elementals → prime gates off.
+        e.actors
+            .get_mut(&zombie)
+            .unwrap()
+            .set_damage_modifier(DamageType::Poison, DamageModifier::Vulnerability);
+        // Vulnerability is also "weak" (not strong), so we now have all-weak
+        // across the six elementals and the prime should skip.
+        assert!(
+            try_transmuted_spell(&e, sorcerer).is_none(),
+            "no asymmetric elemental resistance → skip"
+        );
+
+        // Hand the zombie fire resistance — re-establishes asymmetry (fire
+        // resisted + others neutral/vulnerable). Prime should fire.
+        e.actors
+            .get_mut(&zombie)
+            .unwrap()
+            .set_damage_modifier(DamageType::Fire, DamageModifier::Resistance);
+        assert!(
+            try_transmuted_spell(&e, sorcerer).is_some(),
+            "asymmetric resistance → prime fires"
+        );
+
+        // Already primed → skip.
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .add_condition(Condition::TransmutedSpelling, ConditionTimer::Rounds(2));
+        assert!(
+            try_transmuted_spell(&e, sorcerer).is_none(),
+            "prime already up → skip"
+        );
+
+        // Drop prime, burn SP → skip.
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .remove_condition(Condition::TransmutedSpelling);
+        while e.actors[&sorcerer].sorcery_points() > 0 {
+            e.actors.get_mut(&sorcerer).unwrap().spend_sorcery_point();
+        }
+        assert!(
+            try_transmuted_spell(&e, sorcerer).is_none(),
+            "no SP → skip"
+        );
+    }
+
     /// `try_tides_of_chaos` fires once per long rest when an enemy is in
     /// range. Skipped after the charge is spent and skipped when no
     /// swing-able enemy is in the 24-tile window.
@@ -5223,7 +5450,7 @@ mod tests {
         assert!(!e.actors[&sorcerer].has_any_metamagic_prime());
 
         // Each metamagic prime in turn flips the flag to true.
-        for c in [
+        const ALL_PRIMES: &[Condition] = &[
             Condition::EmpoweredSpelling,
             Condition::HeightenedSpelling,
             Condition::CarefulSpelling,
@@ -5232,19 +5459,12 @@ mod tests {
             Condition::ExtendedSpelling,
             Condition::SeekingSpelling,
             Condition::SubtleSpelling,
-        ] {
+            Condition::TransmutedSpelling,
+        ];
+        for &c in ALL_PRIMES {
             // Strip prior conditions to isolate this one.
             let actor = e.actors.get_mut(&sorcerer).unwrap();
-            for c2 in [
-                Condition::EmpoweredSpelling,
-                Condition::HeightenedSpelling,
-                Condition::CarefulSpelling,
-                Condition::DistantSpelling,
-                Condition::TwinnedSpelling,
-                Condition::ExtendedSpelling,
-                Condition::SeekingSpelling,
-                Condition::SubtleSpelling,
-            ] {
+            for &c2 in ALL_PRIMES {
                 actor.remove_condition(c2);
             }
             actor.add_condition(c, ConditionTimer::Rounds(2));

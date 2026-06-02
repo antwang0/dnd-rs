@@ -250,6 +250,28 @@ pub static SUBTLE_SPELL: InstallPrimeMetamagic = InstallPrimeMetamagic {
     log_verb: "primes the next spell to slip past counterspell",
 };
 
+/// 5e Tasha's Sorcerer **Transmuted Spell** metamagic. Bonus action — spend
+/// one sorcery point to prime the next spell that deals one of the six
+/// elemental damage types (acid, cold, fire, lightning, poison, thunder)
+/// to remap its damage to a different type from that list (RAW: "When you
+/// cast a spell that deals a type of damage from the following list, you
+/// can spend 1 sorcery point to change that damage type to one of the
+/// other listed types"). The engine walks the cast's `DealDamage`
+/// side-effects via `EncounterInstance::consume_transmuted_spell` and
+/// swaps the damage type to the target's worst weakness, preferring
+/// vulnerability, then no-resistance, then best-non-immune among the six.
+/// Spells whose only damage is non-elemental (force / radiant / necrotic
+/// / psychic / physical) leave the prime up for the next eligible cast —
+/// the prime is only consumed on a successful remap, mirroring Extended
+/// Spell's "consume on doubling" pattern.
+pub static TRANSMUTED_SPELL: InstallPrimeMetamagic = InstallPrimeMetamagic {
+    display_name: "transmuted spell",
+    aliases: &["transmute", "tms", "transspell"],
+    sp_cost: 1,
+    condition: Condition::TransmutedSpelling,
+    log_verb: "primes the next elemental spell to swap its damage type",
+};
+
 /// 5e Sorcerer **Quickened Spell** metamagic. Bonus action — spend two
 /// sorcery points to gain an extra Action slot this turn (RAW: "you can
 /// spend 2 sorcery points to change the casting time of [a 1-action]

@@ -270,6 +270,17 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // The prime ticks down on the sorcerer's next turn (UntilStartOfNextTurn)
     // so it covers the opponent's one reaction window between casts.
     actions.push(&crate::actions::metamagic::SUBTLE_SPELL);
+    // 5e Tasha's Sorcerer Metamagic — Transmuted Spell. Burns 1 sorcery
+    // point + a Bonus Action; the next spell whose damage type is one of
+    // the six elemental types (acid / cold / fire / lightning / poison /
+    // thunder) has its damage remapped to a different element from the
+    // same list. Engine reads via `EncounterInstance::consume_transmuted_spell`
+    // in `Action::execute`, which scans the cast's `DealDamage` entries,
+    // picks the primary target's worst weakness among the six, and
+    // remaps the damage type in place. Spells whose only damage is
+    // non-elemental (force / radiant / necrotic / psychic / physical)
+    // leave the prime up for the next eligible cast.
+    actions.push(&crate::actions::metamagic::TRANSMUTED_SPELL);
     // 5e Wild Magic Sorcerer — **Tides of Chaos**. Once per long rest,
     // bonus action; install the `TidesOfChaos` prime → advantage on the
     // next attack roll (consumed via the `CONSUMED_ON_ATTACK` cohort).

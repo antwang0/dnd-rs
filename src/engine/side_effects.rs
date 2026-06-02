@@ -19,6 +19,29 @@ pub trait ApplicableSideEffect {
     fn extend_duration(&mut self) -> bool {
         false
     }
+
+    /// 5e Tasha's Sorcerer Transmuted Spell metamagic hook. If this
+    /// side-effect deals damage of one of the six elemental types
+    /// (acid, cold, fire, lightning, poison, thunder), remap the damage
+    /// type to `new_type` and return true. Default: no-op (returns
+    /// false). Called once per side-effect in `Action::execute` when the
+    /// caster has the `TransmutedSpelling` prime up; the first `true`
+    /// return consumes the prime. Side-effects that don't deal elemental
+    /// damage (force / radiant / necrotic / psychic / physical) leave
+    /// the prime up for the next eligible cast.
+    fn remap_damage_type(&mut self, _new_type: DamageType) -> bool {
+        false
+    }
+
+    /// If this side-effect carries a target actor + elemental damage
+    /// type, return the pair. Used by Transmuted Spell to pick the best
+    /// replacement element based on the primary target's resistance
+    /// profile. Default: `None` (side-effect either isn't damage or
+    /// isn't aimed at a single actor — caller falls back to a
+    /// "nearest enemy" heuristic).
+    fn elemental_damage_target(&self) -> Option<(usize, DamageType)> {
+        None
+    }
 }
 
 /// 5e Sorcerer Extended Spell: minimum `Rounds(n)` timer that qualifies
@@ -417,6 +440,66 @@ impl ApplicableSideEffect for DealDamage {
             }
         }
     }
+
+    /// 5e Tasha's Sorcerer Transmuted Spell metamagic hook. If the current
+    /// `damage_type` is one of the six elemental types (acid, cold, fire,
+    /// lightning, poison, thunder), swap to `new_type` in place and return
+    /// true. Non-elemental damage (force / radiant / necrotic / psychic /
+    /// physical) is untouched and returns false so the prime stays up for
+    /// the next eligible cast.
+    fn remap_damage_type(&mut self, new_type: DamageType) -> bool {
+        if !is_transmutable_element(self.damage_type) {
+            return false;
+        }
+        self.damage_type = new_type;
+        true
+    }
+
+    fn elemental_damage_target(&self) -> Option<(usize, DamageType)> {
+        if !is_transmutable_element(self.damage_type) {
+            return None;
+        }
+        Some((self.actor_id, self.damage_type))
+    }
+}
+
+/// 5e Tasha's Transmuted Spell metamagic — the six damage types eligible
+/// for both the "source" side (must already be one of these for the prime
+/// to engage) and the "target" side (the remap can pick any of these as
+/// the new type). RAW: acid, cold, fire, lightning, poison, thunder.
+pub const TRANSMUTABLE_DAMAGE_TYPES: [DamageType; 6] = [
+    DamageType::Acid,
+    DamageType::Cold,
+    DamageType::Fire,
+    DamageType::Lightning,
+    DamageType::Poison,
+    DamageType::Thunder,
+];
+
+/// True if `dt` is one of the six damage types Transmuted Spell can remap
+/// between. Centralizes the cohort so any future "elemental damage type?"
+/// gate reads from the same source.
+pub fn is_transmutable_element(dt: DamageType) -> bool {
+    TRANSMUTABLE_DAMAGE_TYPES.contains(&dt)
+}
+
+/// Walk `side_effects` and call `remap_damage_type(new_type)` on each
+/// entry. Returns true if at least one entry was remapped (i.e. the cast
+/// carried an eligible elemental damage source). Mirrors
+/// `extend_side_effect_timers` so the Twinned + Transmuted re-issue path
+/// can propagate the same remap to the twin's separately-built
+/// side_effects vec.
+pub fn remap_side_effect_damage_types(
+    side_effects: &mut [Box<dyn ApplicableSideEffect>],
+    new_type: DamageType,
+) -> bool {
+    let mut remapped = false;
+    for se in side_effects.iter_mut() {
+        if se.remap_damage_type(new_type) {
+            remapped = true;
+        }
+    }
+    remapped
 }
 
 /// Restore HP to an actor. Logs a "comes back to consciousness" line when

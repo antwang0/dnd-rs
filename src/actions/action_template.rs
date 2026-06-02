@@ -465,6 +465,15 @@ pub trait Action {
         // spell impl from carrying the metamagic branch through its
         // side_effects builder.
         let extended_for_twin = encounter.consume_extended_spell(caster_id, &mut side_effects);
+        // 5e Tasha's Sorcerer Transmuted Spell metamagic: if the caster has
+        // the prime up and the cast carries at least one elemental
+        // (acid / cold / fire / lightning / poison / thunder) DealDamage,
+        // remap every eligible damage type to the primary target's worst
+        // weakness and burn the prime. Returned type propagates to the
+        // twin's separately-built side_effects so a Twinned + Transmuted
+        // cast lands the same remap on both targets RAW.
+        let transmuted_for_twin =
+            encounter.consume_transmuted_spell(caster_id, &mut side_effects);
         // 5e Sorcerer Twinned Spell metamagic: re-fire the action's
         // side_effects against a second target if the prime is up and the
         // caster can afford the SP cost (max(1, spell_level)). Gated to
@@ -519,6 +528,16 @@ pub trait Action {
                 // doubled duration RAW.
                 if extended_for_twin {
                     crate::engine::side_effects::extend_side_effect_timers(&mut twin_effects);
+                }
+                // Propagate the Transmuted Spell remap to the twin's
+                // side_effects. Same shape as Extended: the prime is
+                // already consumed, but the spell-level remap still
+                // applies to both twin targets RAW.
+                if let Some(new_type) = transmuted_for_twin {
+                    crate::engine::side_effects::remap_side_effect_damage_types(
+                        &mut twin_effects,
+                        new_type,
+                    );
                 }
                 side_effects.append(&mut twin_effects);
             }

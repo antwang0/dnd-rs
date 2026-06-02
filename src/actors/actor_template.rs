@@ -1157,6 +1157,15 @@ impl ActorInstance {
         self.damage_modifiers.get(&dt).copied()
     }
 
+    /// Test-only setter for an actor's per-type damage modifier. Lets tests
+    /// patch resistance / immunity / vulnerability onto an existing actor
+    /// (e.g. to verify Transmuted Spell remaps onto a resisted type)
+    /// without needing a dedicated template per resistance profile.
+    #[cfg(test)]
+    pub fn set_damage_modifier(&mut self, dt: DamageType, modifier: DamageModifier) {
+        self.damage_modifiers.insert(dt, modifier);
+    }
+
     pub fn is_resistant_to(&self, dt: DamageType) -> bool {
         matches!(
             self.damage_modifiers.get(&dt),

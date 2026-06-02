@@ -908,6 +908,23 @@ pub enum Condition {
     /// (`UntilStartOfNextTurn`) caps an unused prime so it doesn't
     /// dangle across rounds.
     TidesOfChaos,
+    /// Transmuted Spell primed (5e Tasha's Sorcerer Metamagic). The sorcerer
+    /// has spent one sorcery point via the Transmuted Spell bonus-action
+    /// prime; the next spell whose damage type is one of the "elemental six"
+    /// (acid, cold, fire, lightning, poison, thunder) is remapped to a
+    /// different element from that same list (RAW: "When you cast a spell
+    /// that deals a type of damage from the following list, you can spend 1
+    /// sorcery point to change that damage type"). The engine reads the
+    /// prime at the side-effect-assembly chokepoint in `Action::execute`:
+    /// `consume_transmuted_spell` walks the spell's `DealDamage` entries,
+    /// picks the target's worst weakness (vulnerability > non-resisted >
+    /// best-non-immune) among the six elemental types, and remaps the
+    /// damage type in place. Consumed on the first remap; spells whose only
+    /// damage is non-elemental (force / radiant / necrotic / psychic /
+    /// physical) leave the prime up for the next eligible cast. Tick-down
+    /// timer (`UntilStartOfNextTurn`) caps an unused prime so it doesn't
+    /// sit across rounds.
+    TransmutedSpelling,
 }
 
 impl Condition {
@@ -1039,6 +1056,7 @@ impl Condition {
             Condition::SeekingSpelling => "primed with seeking spell",
             Condition::SubtleSpelling => "primed with subtle spell",
             Condition::TidesOfChaos => "riding the tides of chaos",
+            Condition::TransmutedSpelling => "primed with transmuted spell",
         }
     }
 
@@ -1136,6 +1154,7 @@ impl Condition {
                 | Condition::SeekingSpelling
                 | Condition::SubtleSpelling
                 | Condition::TidesOfChaos
+                | Condition::TransmutedSpelling
         )
     }
 
@@ -1158,6 +1177,7 @@ impl Condition {
                 | Condition::ExtendedSpelling
                 | Condition::SeekingSpelling
                 | Condition::SubtleSpelling
+                | Condition::TransmutedSpelling
         )
     }
 
