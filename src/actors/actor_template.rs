@@ -2177,6 +2177,15 @@ impl ActorInstance {
         self.features_remaining.remove(tag)
     }
 
+    /// True if this actor was instantiated with `tag` in their template's
+    /// feature set. Distinct from `feature_available` — `has_passive_feature`
+    /// returns true even after the feature's per-rest charge has been spent.
+    /// Used by always-on passives (Wild Magic Surge, Sorcerous Restoration)
+    /// whose trigger fires every encounter regardless of any charge pool.
+    pub fn has_passive_feature(&self, tag: &'static str) -> bool {
+        self.features_max.contains(tag)
+    }
+
     /// Has the rogue used their once-per-turn Sneak Attack already?
     pub fn sneak_attack_used(&self) -> bool {
         self.sneak_attack_used

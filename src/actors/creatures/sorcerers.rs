@@ -347,6 +347,16 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         features: HashSet::from([
             crate::actions::class_features::TIDES_OF_CHAOS_TAG,
             crate::actions::class_features::SORCEROUS_RESTORATION_TAG,
+            // 5e Wild Magic Sorcerer **Wild Magic Surge** — passive: every
+            // level-1+ spell cast rolls a d20; on a 1, a random surge
+            // table effect fires. The trigger lives in
+            // `EncounterInstance::trigger_wild_magic_surge` and is wired
+            // through the cross-cutting `Action::execute` site. Pairs
+            // naturally with Tides of Chaos: the RAW intent is for the
+            // DM to force a surge after Tides is consumed; the 5% rate
+            // is the closest stable approximation that keeps the surge
+            // from dominating every cast.
+            crate::actions::class_features::WILD_MAGIC_SURGE_TAG,
         ]),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),

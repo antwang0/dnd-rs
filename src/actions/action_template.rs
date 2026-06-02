@@ -496,12 +496,11 @@ pub trait Action {
                 target_locations,
                 overrides,
             );
-            let sp_cost = costs
-                .iter()
-                .find_map(|c| match c {
-                    Resource::SpellSlot(lvl) => Some(*lvl),
-                    _ => None,
-                })
+            // Sniff the slot level off the resolved cost so the SP debit
+            // scales with the cast (cantrips → 1 SP, lvl-3 spell → 3 SP,
+            // etc.). RAW floor is 1 SP — cantrips have no `SpellSlot`
+            // entry, which the helper returns as `None`.
+            let sp_cost = crate::engine::side_effects::spell_slot_level(&costs)
                 .unwrap_or(1)
                 .max(1);
             if let Some(twin_id) = encounter.consume_twinned_spell(
@@ -542,13 +541,25 @@ pub trait Action {
                 side_effects.append(&mut twin_effects);
             }
         }
-        for cost in self.cost(
+        let costs = self.cost(
             encounter,
             caster_id,
             target_ids,
             target_locations,
             overrides,
-        ) {
+        );
+        // 5e Wild Magic Sorcerer **Wild Magic Surge**: after a sorcerer
+        // spell of 1st level or higher resolves, the engine rolls a d20;
+        // on a 1, a random effect from the surge table fires. Sniff the
+        // spell-slot level off the resolved cost — cantrips and non-spell
+        // actions have no `SpellSlot` cost entry, which the trigger
+        // function short-circuits on `spell_level == 0`. Surge side-
+        // effects sit between the spell's effects and the cost-consume
+        // effects so the surge resolves "after the spell" per RAW.
+        let spell_level = crate::engine::side_effects::spell_slot_level(&costs).unwrap_or(0);
+        let mut surge_effects = encounter.trigger_wild_magic_surge(caster_id, spell_level);
+        side_effects.append(&mut surge_effects);
+        for cost in costs {
             side_effects.push(Box::new(ConsumeResource {
                 actor_id: caster_id,
                 resource: cost,

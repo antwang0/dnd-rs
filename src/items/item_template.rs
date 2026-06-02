@@ -309,6 +309,22 @@ pub static SCROLL_OF_LIGHTNING_BOLT: Item = Item {
     on_use: Some(&crate::actions::item_actions::READ_LIGHTNING_BOLT_SCROLL),
 };
 
+/// Scroll of Cure Wounds — single-target touch heal (2d8+2 HP). Fills
+/// the "single-target heal scroll" niche between the self-only Potion
+/// of Healing (2d4+2) and the spell Cure Wounds (caster-mod scaling).
+/// Heals a touch-range target on use; consumed on use.
+pub static SCROLL_OF_CURE_WOUNDS: Item = Item {
+    name: "Scroll of Cure Wounds",
+    glyph: 'w',
+    bonuses: ItemBonuses {
+        ac: 0,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: Some(&crate::actions::item_actions::READ_CURE_WOUNDS_SCROLL),
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -334,6 +350,11 @@ pub static LOOT_POOL: &[&Item] = &[
     &SCROLL_OF_FIREBALL,
     &SCROLL_OF_MAGIC_MISSILE,
     &SCROLL_OF_LIGHTNING_BOLT,
+    // Single-target healing scroll — slots into the loot pool between
+    // the self-only Potion of Healing and the bonus-action Greater
+    // Healing variant. Touch-range, so it benefits front-line allies
+    // (the rogue / fighter / paladin) without needing a caster.
+    &SCROLL_OF_CURE_WOUNDS,
     &PERIAPT_OF_WOUND_CLOSURE,
     &GAUNTLETS_OF_OGRE_POWER,
 ];

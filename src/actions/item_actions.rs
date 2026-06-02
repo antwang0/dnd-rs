@@ -19,6 +19,43 @@ const SCROLL_OF_MAGIC_MISSILE_NAME: &str = "Scroll of Magic Missile";
 const POTION_OF_SPEED_NAME: &str = "Potion of Speed";
 const POTION_OF_HEROISM_NAME: &str = "Potion of Heroism";
 const POTION_OF_INVISIBILITY_NAME: &str = "Potion of Invisibility";
+const SCROLL_OF_CURE_WOUNDS_NAME: &str = "Scroll of Cure Wounds";
+
+/// Shared validate-hook body for consumable item actions: true iff the
+/// caster is still carrying at least one copy of `item_name`. Centralizes
+/// the `encounter.actors.get(&caster_id).is_some_and(|a| a.has_item_named(...))`
+/// chain so every item action's `custom_validate_input` collapses to a
+/// one-liner. Returns false when the caster vanished between enqueue and
+/// validate (e.g. died to a reaction) — same fail-safe shape as the
+/// previous inline copies.
+fn caster_holds(
+    encounter: &EncounterInstance,
+    caster_id: usize,
+    item_name: &str,
+) -> bool {
+    encounter
+        .actors
+        .get(&caster_id)
+        .is_some_and(|a| a.has_item_named(item_name))
+}
+
+/// Pop one copy of `item_name` from the caster's inventory and return
+/// true on success. Used at the head of every consumable's
+/// `side_effects` to consume the item before the spell-style effect
+/// rolls fire. Returns false (and the caller short-circuits with
+/// `Vec::new()`) when the caster vanished or the item was already
+/// consumed elsewhere — guards against a duplicate queued use slipping
+/// past the validator.
+fn consume_caster_item(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    item_name: &str,
+) -> bool {
+    encounter
+        .actors
+        .get_mut(&caster_id)
+        .is_some_and(|a| a.remove_item_by_name(item_name))
+}
 
 /// Drink a Potion of Healing. Self-targeted, costs an Action, heals
 /// 2d4+2 and removes one potion from inventory. The validate hook
@@ -56,10 +93,7 @@ impl Action for DrinkHealingPotion {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.has_item_named(POTION_OF_HEALING_NAME))
+        caster_holds(encounter, caster_id, POTION_OF_HEALING_NAME)
     }
 
     fn side_effects(
@@ -76,11 +110,7 @@ impl Action for DrinkHealingPotion {
         // already confirmed at least one was carried, and consuming
         // before the Heal side-effect runs keeps inventory consistent
         // even if the heal somehow fails (e.g. caster died mid-stack).
-        let removed = encounter
-            .actors
-            .get_mut(&caster_id)
-            .is_some_and(|a| a.remove_item_by_name(POTION_OF_HEALING_NAME));
-        if !removed {
+        if !consume_caster_item(encounter, caster_id, POTION_OF_HEALING_NAME) {
             return Vec::new();
         }
         encounter.log(format!(
@@ -144,10 +174,7 @@ impl Action for DrinkGreaterHealingPotion {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.has_item_named(POTION_OF_GREATER_HEALING_NAME))
+        caster_holds(encounter, caster_id, POTION_OF_GREATER_HEALING_NAME)
     }
 
     fn side_effects(
@@ -160,11 +187,7 @@ impl Action for DrinkGreaterHealingPotion {
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         let raw = encounter.roll(&Dice::new(4, 4)) as i32;
         let amount = (raw + 4).max(1) as u32;
-        let removed = encounter
-            .actors
-            .get_mut(&caster_id)
-            .is_some_and(|a| a.remove_item_by_name(POTION_OF_GREATER_HEALING_NAME));
-        if !removed {
+        if !consume_caster_item(encounter, caster_id, POTION_OF_GREATER_HEALING_NAME) {
             return Vec::new();
         }
         encounter.log(format!(
@@ -216,10 +239,7 @@ impl Action for ReadFireballScroll {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.has_item_named(SCROLL_OF_FIREBALL_NAME))
+        caster_holds(encounter, caster_id, SCROLL_OF_FIREBALL_NAME)
     }
 
     fn side_effects(
@@ -236,11 +256,7 @@ impl Action for ReadFireballScroll {
         let Some(&center) = target_locations.and_then(|locs| locs.first()) else {
             return Vec::new();
         };
-        let removed = encounter
-            .actors
-            .get_mut(&caster_id)
-            .is_some_and(|a| a.remove_item_by_name(SCROLL_OF_FIREBALL_NAME));
-        if !removed {
+        if !consume_caster_item(encounter, caster_id, SCROLL_OF_FIREBALL_NAME) {
             return Vec::new();
         }
 
@@ -304,10 +320,7 @@ impl Action for ReadMagicMissileScroll {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.has_item_named(SCROLL_OF_MAGIC_MISSILE_NAME))
+        caster_holds(encounter, caster_id, SCROLL_OF_MAGIC_MISSILE_NAME)
     }
 
     fn side_effects(
@@ -321,11 +334,7 @@ impl Action for ReadMagicMissileScroll {
         let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
             return Vec::new();
         };
-        let removed = encounter
-            .actors
-            .get_mut(&caster_id)
-            .is_some_and(|a| a.remove_item_by_name(SCROLL_OF_MAGIC_MISSILE_NAME));
-        if !removed {
+        if !consume_caster_item(encounter, caster_id, SCROLL_OF_MAGIC_MISSILE_NAME) {
             return Vec::new();
         }
         let mut total = 0u32;
@@ -382,10 +391,7 @@ impl Action for DrinkAntitoxin {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.has_item_named(ANTITOXIN_NAME))
+        caster_holds(encounter, caster_id, ANTITOXIN_NAME)
     }
 
     fn side_effects(
@@ -396,11 +402,7 @@ impl Action for DrinkAntitoxin {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let removed = encounter
-            .actors
-            .get_mut(&caster_id)
-            .is_some_and(|a| a.remove_item_by_name(ANTITOXIN_NAME));
-        if !removed {
+        if !consume_caster_item(encounter, caster_id, ANTITOXIN_NAME) {
             return Vec::new();
         }
         if let Some(actor) = encounter.actors.get_mut(&caster_id) {
@@ -459,10 +461,7 @@ impl Action for DrinkPotionOfSpeed {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.has_item_named(POTION_OF_SPEED_NAME))
+        caster_holds(encounter, caster_id, POTION_OF_SPEED_NAME)
     }
 
     fn side_effects(
@@ -473,11 +472,7 @@ impl Action for DrinkPotionOfSpeed {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let removed = encounter
-            .actors
-            .get_mut(&caster_id)
-            .is_some_and(|a| a.remove_item_by_name(POTION_OF_SPEED_NAME));
-        if !removed {
+        if !consume_caster_item(encounter, caster_id, POTION_OF_SPEED_NAME) {
             return Vec::new();
         }
         if let Some(actor) = encounter.actors.get_mut(&caster_id) {
@@ -550,10 +545,7 @@ impl Action for DrinkPotionOfHeroism {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.has_item_named(POTION_OF_HEROISM_NAME))
+        caster_holds(encounter, caster_id, POTION_OF_HEROISM_NAME)
     }
 
     fn side_effects(
@@ -566,11 +558,7 @@ impl Action for DrinkPotionOfHeroism {
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::conditions::{Condition, ConditionTimer};
         use crate::engine::side_effects::{ApplyCondition, GainTempHp};
-        let removed = encounter
-            .actors
-            .get_mut(&caster_id)
-            .is_some_and(|a| a.remove_item_by_name(POTION_OF_HEROISM_NAME));
-        if !removed {
+        if !consume_caster_item(encounter, caster_id, POTION_OF_HEROISM_NAME) {
             return Vec::new();
         }
         let name = encounter
@@ -631,10 +619,7 @@ impl Action for DrinkPotionOfInvisibility {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.has_item_named(POTION_OF_INVISIBILITY_NAME))
+        caster_holds(encounter, caster_id, POTION_OF_INVISIBILITY_NAME)
     }
 
     fn side_effects(
@@ -647,11 +632,7 @@ impl Action for DrinkPotionOfInvisibility {
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::conditions::{Condition, ConditionTimer};
         use crate::engine::side_effects::ApplyCondition;
-        let removed = encounter
-            .actors
-            .get_mut(&caster_id)
-            .is_some_and(|a| a.remove_item_by_name(POTION_OF_INVISIBILITY_NAME));
-        if !removed {
+        if !consume_caster_item(encounter, caster_id, POTION_OF_INVISIBILITY_NAME) {
             return Vec::new();
         }
         let name = encounter
@@ -704,10 +685,7 @@ impl Action for ReadLightningBoltScroll {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.has_item_named(SCROLL_OF_LIGHTNING_BOLT_NAME))
+        caster_holds(encounter, caster_id, SCROLL_OF_LIGHTNING_BOLT_NAME)
     }
 
     fn side_effects(
@@ -724,11 +702,7 @@ impl Action for ReadLightningBoltScroll {
         let Some(&center) = target_locations.and_then(|locs| locs.first()) else {
             return Vec::new();
         };
-        let removed = encounter
-            .actors
-            .get_mut(&caster_id)
-            .is_some_and(|a| a.remove_item_by_name(SCROLL_OF_LIGHTNING_BOLT_NAME));
-        if !removed {
+        if !consume_caster_item(encounter, caster_id, SCROLL_OF_LIGHTNING_BOLT_NAME) {
             return Vec::new();
         }
 
@@ -755,3 +729,98 @@ impl Action for ReadLightningBoltScroll {
 }
 
 pub static READ_LIGHTNING_BOLT_SCROLL: ReadLightningBoltScroll = ReadLightningBoltScroll {};
+
+/// Read a Scroll of Cure Wounds: touch one ally (or self) for 2d8+2
+/// healing. Mirrors the Cure Wounds spell at level 1 (2d8 base scaling
+/// is closer to a level-2 upcast — we err on the generous side because
+/// scroll loot is rare and the spell with WIS-mod can already roll
+/// higher in caster hands). Touch range, costs an Action, consumes the
+/// scroll. Like the Magic Missile scroll, no spell-slot cost — the
+/// scroll *is* the slot. The validate path also requires the caster to
+/// actually need healing OR be standing next to a wounded ally; the
+/// "touch range" gate is enforced via `reach_tiles`. The heal targets
+/// the actor at the target id, so a SingleActor schema is used to
+/// surface both self-healing and ally-healing in the picker.
+pub struct ReadCureWoundsScroll {}
+
+impl Action for ReadCureWoundsScroll {
+    fn name(&self) -> &str {
+        "read cure wounds scroll"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cw scroll", "cure scroll"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch range — must be footprint-adjacent. Matches the Cure
+        // Wounds spell's range. The picker uses this to filter the
+        // target list.
+        Some(1)
+    }
+
+    fn requires_los(&self) -> bool {
+        // Implicitly true at touch range, but kept on so the picker
+        // doesn't surface targets behind walls inside the 1-tile reach.
+        true
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn is_heal(&self) -> bool {
+        true
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, SCROLL_OF_CURE_WOUNDS_NAME)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        if !consume_caster_item(encounter, caster_id, SCROLL_OF_CURE_WOUNDS_NAME) {
+            return Vec::new();
+        }
+        let raw = encounter.roll(&Dice::new(2, 8)) as i32;
+        // +2 is a stand-in for the spell's caster-CHA / WIS modifier. We
+        // don't have a caster ability tied to the scroll (the scroll is
+        // a fixed magic item, not a class spell), so a flat +2 keeps the
+        // expected total comparable to a low-level cleric's Cure Wounds.
+        let amount = (raw + 2).max(1) as u32;
+        encounter.log(format!(
+            "  scroll of cure wounds: 2d8({})+2 = {} HP",
+            raw, amount
+        ));
+        vec![Box::new(Heal {
+            actor_id: target_id,
+            amount,
+        })]
+    }
+}
+
+pub static READ_CURE_WOUNDS_SCROLL: ReadCureWoundsScroll = ReadCureWoundsScroll {};

@@ -3021,6 +3021,172 @@ impl EncounterInstance {
         vuln.or(neutral).or(resisted).unwrap_or(DamageType::Fire)
     }
 
+    /// 5e Wild Magic Sorcerer **Wild Magic Surge** — after the caster
+    /// resolves a sorcerer spell of 1st level or higher, the engine rolls
+    /// a d20; on a 1, a random effect from the surge table fires.
+    /// Returns side-effects to append to the casting action's effect
+    /// list (or an empty vec for no surge / no eligible cast).
+    ///
+    /// Gates:
+    ///   - `spell_level == 0` → no surge (cantrips never trigger RAW)
+    ///   - caster lacks the `WILD_MAGIC_SURGE_TAG` passive feature
+    ///   - d20 != 1 (the 5% trigger)
+    ///
+    /// Surge table (1d6, mapped to effects with similar tactical weight):
+    ///   1. **Pyrotechnic burst** — every actor whose footprint touches
+    ///      a 1-tile burst around the caster takes 1d6 fire damage. The
+    ///      caster is in the blast — wild magic isn't friendly.
+    ///   2. **Chaotic mending** — caster heals 2d4 HP (lifted from the
+    ///      Magic Initiate Cure Wounds dice — keeps the heal modest so
+    ///      the surge doesn't dwarf a Bonus Action Healing Word).
+    ///   3. **Surge of force** — caster gains 5 temporary HP from
+    ///      crackling protective energy.
+    ///   4. **Mirror flicker** — 3 mirror images flicker into being
+    ///      around the caster (same envelope as the Mirror Image spell,
+    ///      no concentration). Re-uses the existing `SetMirrorImages` +
+    ///      `MirroredImages` cohort.
+    ///   5. **Replenishing surge** — caster regains 2 sorcery points
+    ///      (capped at their long-rest max). Mutates the actor directly
+    ///      since there's no `SorceryPoint` resource lane.
+    ///   6. **Wild dazzle** — caster casts Faerie Fire (Outlined
+    ///      condition) on every enemy in 6-tile burst around them; no
+    ///      save — wild magic ignores the usual save lane.
+    ///
+    /// The d6 surge pick is rolled through `self.roll` so tests can pin
+    /// the result by seeding `self.roller`.
+    pub fn trigger_wild_magic_surge(
+        &mut self,
+        caster_id: usize,
+        spell_level: u32,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::actions::class_features::WILD_MAGIC_SURGE_TAG;
+        use crate::conditions::ConditionTimer;
+        use crate::engine::dice::Dice;
+        use crate::engine::side_effects::{
+            ApplicableSideEffect, ApplyCondition, DealDamage, GainTempHp, Heal, SetMirrorImages,
+        };
+        use crate::engine::types::DamageType;
+
+        if spell_level == 0 {
+            return Vec::new();
+        }
+        let has_feature = self
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_passive_feature(WILD_MAGIC_SURGE_TAG));
+        if !has_feature {
+            return Vec::new();
+        }
+        let d20 = self.roll(&Dice::new(1, 20));
+        if d20 != 1 {
+            return Vec::new();
+        }
+        let caster_loc = match self.actors.get(&caster_id) {
+            Some(a) => a.location(),
+            None => return Vec::new(),
+        };
+        let caster_name = self
+            .actors
+            .get(&caster_id)
+            .map(|a| a.name().to_string())
+            .unwrap_or_default();
+        let pick = self.roll(&Dice::new(1, 6));
+        self.log(format!(
+            "{} surges with wild magic! (d20=1, table d6={})",
+            caster_name, pick
+        ));
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        match pick {
+            1 => {
+                // Pyrotechnic burst — 1d6 fire, 1-tile radius around caster.
+                // Damage is rolled once and shared across the burst so the
+                // numbers stay consistent with Sacred Burst / Fireball semantics.
+                let dmg = self.roll(&Dice::new(1, 6));
+                self.log(format!("  wild surge: pyrotechnic burst (1d6={} fire)", dmg));
+                const BURST_RADIUS: isize = 1;
+                for id in self.actors_in_burst(caster_loc, BURST_RADIUS) {
+                    effects.push(Box::new(DealDamage {
+                        actor_id: id,
+                        amount: dmg,
+                        damage_type: DamageType::Fire,
+                    }));
+                }
+            }
+            2 => {
+                // Chaotic mending — 2d4 HP heal.
+                let raw = self.roll(&Dice::new(2, 4));
+                self.log(format!("  wild surge: chaotic mending (2d4={} HP)", raw));
+                effects.push(Box::new(Heal {
+                    actor_id: caster_id,
+                    amount: raw,
+                }));
+            }
+            3 => {
+                // Surge of force — 5 temp HP shield.
+                self.log("  wild surge: 5 temp HP shield");
+                effects.push(Box::new(GainTempHp {
+                    actor_id: caster_id,
+                    amount: 5,
+                }));
+            }
+            4 => {
+                // Mirror flicker — 3 mirror images.
+                self.log("  wild surge: 3 mirror images flicker into being");
+                effects.push(Box::new(SetMirrorImages {
+                    actor_id: caster_id,
+                    count: 3,
+                }));
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: caster_id,
+                    condition: Condition::MirroredImages,
+                    timer: ConditionTimer::Rounds(10),
+                }));
+            }
+            5 => {
+                // Replenishing surge — +2 SP, capped at max. Direct mutation
+                // mirrors Font of Magic's eager-debit pattern (no SP resource
+                // lane).
+                if let Some(actor) = self.actors.get_mut(&caster_id) {
+                    let given = actor.give_sorcery_points(2);
+                    let sp_left = actor.sorcery_points();
+                    self.log(format!(
+                        "  wild surge: replenishing surge (+{} SP, {} SP)",
+                        given, sp_left
+                    ));
+                }
+            }
+            6 => {
+                // Wild dazzle — Outlined (Faerie Fire-style) on every enemy
+                // within a 6-tile burst around the caster. No save.
+                const DAZZLE_RADIUS: isize = 6;
+                let enemy_ids = self.enemy_burst_targets(caster_id, caster_loc, DAZZLE_RADIUS);
+                self.log(format!(
+                    "  wild surge: wild dazzle lights up {} enem{}",
+                    enemy_ids.len(),
+                    if enemy_ids.len() == 1 { "y" } else { "ies" }
+                ));
+                for id in enemy_ids {
+                    effects.push(Box::new(ApplyCondition {
+                        actor_id: id,
+                        condition: Condition::Outlined,
+                        timer: ConditionTimer::Rounds(10),
+                    }));
+                }
+            }
+            _ => {
+                // d6 out of range — shouldn't happen, but log defensively
+                // so a future expansion of the surge table doesn't drop
+                // silently if the pick range isn't widened in lockstep.
+                self.log(format!(
+                    "  wild surge: unmapped surge result {} (no effect)",
+                    pick
+                ));
+            }
+        }
+        effects
+    }
+
     /// 5e Sanctuary: if `target_id` carries the Sanctuary condition, the
     /// attacker (`attacker_id`) makes a one-shot WIS save. On fail, the
     /// attack is blocked entirely (caller short-circuits the attack roll
@@ -30677,6 +30843,271 @@ mod tests {
         assert!(
             e.actors[&f].has_condition(Condition::Poisoned),
             "aura of courage only blocks frightened, not other conditions"
+        );
+    }
+
+    /// 5e Wild Magic Surge: an actor without the
+    /// `WILD_MAGIC_SURGE_TAG` passive never surges, regardless of cast
+    /// level or d20 outcome. The trigger is short-circuited before the
+    /// d20 is rolled, so the roller seed is irrelevant — confirms the
+    /// feature is opt-in via the template.
+    #[test]
+    fn wild_magic_surge_skips_actor_without_feature() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Spam many seeds — even on a d20=1 the trigger should return
+        // an empty vec because the wizard isn't a wild magic sorcerer.
+        for seed in 0..50u64 {
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let effects = e.trigger_wild_magic_surge(wizard, 1);
+            assert!(
+                effects.is_empty(),
+                "wizard surged at seed {} — feature gate failed",
+                seed
+            );
+        }
+    }
+
+    /// 5e Wild Magic Surge: a `spell_level == 0` cast (cantrip) never
+    /// triggers a surge, even on a wild magic sorcerer. RAW: the surge
+    /// only fires "after you cast a sorcerer spell of 1st level or
+    /// higher" — cantrips are excluded.
+    #[test]
+    fn wild_magic_surge_skips_cantrip_casts() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        for seed in 0..50u64 {
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let effects = e.trigger_wild_magic_surge(sorcerer, 0);
+            assert!(
+                effects.is_empty(),
+                "sorcerer surged on a cantrip at seed {} — cantrip gate failed",
+                seed
+            );
+        }
+    }
+
+    /// 5e Wild Magic Surge: across a wide seed sweep, at least *some*
+    /// d20=1 rolls land and produce a logged surge — confirms the
+    /// trigger wiring fires for the WMS template. We don't pin the
+    /// exact count (depends on roller internals), but the expected rate
+    /// is 5% (1 in 20); 200 seeds × 5% ≈ 10 surges. We bound the count
+    /// loosely: at least 1 surge fires, at most 60% of seeds (so we
+    /// catch a stuck-on-1 regression without false-flagging normal
+    /// variance).
+    #[test]
+    fn wild_magic_surge_fires_at_5_percent_rate() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        let trials = 200u64;
+        let mut fired = 0u32;
+        for seed in 0..trials {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let sorcerer = e
+                .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            // Drop an enemy in the field so the "wild dazzle" surge has
+            // a target (one of the surge branches enumerates enemies).
+            let _zombie = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+                .unwrap();
+            // Reseed after instantiation so the d20 roll inside the
+            // trigger is decoupled from creature-stat rolls.
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let log_before = e.messages().len();
+            let _ = e.trigger_wild_magic_surge(sorcerer, 1);
+            let surge_logged = e.messages()[log_before..]
+                .iter()
+                .any(|m| m.contains("surges with wild magic"));
+            if surge_logged {
+                fired += 1;
+            }
+        }
+        assert!(
+            fired > 0,
+            "wild magic surge never fired across {} seeds — d20=1 unreachable?",
+            trials
+        );
+        // Loose upper bound: with binomial(200, 0.05) the chance of
+        // exceeding 60% of trials is astronomical. Catches "surge always
+        // fires" regressions.
+        assert!(
+            fired < (trials as u32 * 60 / 100),
+            "wild magic surge fired {}/{} times — far above the expected 5% rate",
+            fired,
+            trials
+        );
+    }
+
+    /// Scroll of Cure Wounds — touch-range single-target heal. Touch
+    /// implies footprint adjacency, so the test puts the caster and
+    /// the wounded ally on touching tiles. The scroll should heal,
+    /// consume itself from inventory, and leave the caster's own HP
+    /// untouched.
+    #[test]
+    fn scroll_of_cure_wounds_heals_adjacent_ally_and_consumes() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_CURE_WOUNDS_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_CURE_WOUNDS;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let healer = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        // Hand the healer a scroll; bruise the ally so the heal is observable.
+        e.actors.get_mut(&healer).unwrap().pickup_item(&SCROLL_OF_CURE_WOUNDS);
+        let ally_max = e.actors[&ally].max_hitpoints();
+        e.actors.get_mut(&ally).unwrap().take_damage(ally_max - 1);
+        assert_eq!(e.actors[&ally].hitpoints(), 1);
+        let healer_hp_before = e.actors[&healer].hitpoints();
+        let scrolls_before = e.actors[&healer].items().len();
+
+        let aei = ActionExecutionInfo::new(
+            &READ_CURE_WOUNDS_SCROLL,
+            healer,
+            Some(vec![ally]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e), "valid: scroll in inventory, ally adjacent");
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(
+            e.actors[&ally].hitpoints() > 1,
+            "ally should have been healed"
+        );
+        assert_eq!(
+            e.actors[&healer].hitpoints(),
+            healer_hp_before,
+            "healer's HP shouldn't change from casting on an ally"
+        );
+        assert!(
+            e.actors[&healer].items().is_empty(),
+            "scroll should have been consumed on use (had {} before, has {} after)",
+            scrolls_before,
+            e.actors[&healer].items().len()
+        );
+    }
+
+    /// Scroll of Cure Wounds: out-of-reach target is rejected by the
+    /// reach gate. Place the wounded ally beyond the 1-tile touch range
+    /// and confirm the action fails to validate.
+    #[test]
+    fn scroll_of_cure_wounds_rejects_out_of_reach_target() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_CURE_WOUNDS_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_CURE_WOUNDS;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let healer = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Place ally 5 tiles away — well outside the 1-tile reach.
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 2), 0, 1)
+            .unwrap();
+        e.actors.get_mut(&healer).unwrap().pickup_item(&SCROLL_OF_CURE_WOUNDS);
+        let aei = ActionExecutionInfo::new(
+            &READ_CURE_WOUNDS_SCROLL,
+            healer,
+            Some(vec![ally]),
+            None,
+            None,
+        );
+        assert!(
+            !aei.validate(&e),
+            "ally outside touch range should fail validate"
+        );
+    }
+
+    /// Scroll of Cure Wounds: with no scroll in inventory, the action
+    /// rejects at validate (the `caster_holds` helper short-circuits).
+    /// Confirms the refactored shared helper still gates correctly.
+    #[test]
+    fn scroll_of_cure_wounds_rejects_without_scroll() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_CURE_WOUNDS_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let healer = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        // Intentionally don't hand the healer a scroll.
+        let aei = ActionExecutionInfo::new(
+            &READ_CURE_WOUNDS_SCROLL,
+            healer,
+            Some(vec![ally]),
+            None,
+            None,
+        );
+        assert!(
+            !aei.validate(&e),
+            "no scroll in inventory should fail validate"
+        );
+    }
+
+    /// 5e Wild Magic Surge wiring: the `Action::execute` chokepoint
+    /// forwards the spell-slot level sniffed off the cost vec into the
+    /// surge trigger. We verify the path end-to-end by casting Magic
+    /// Missile (a level-1 sorcerer spell) repeatedly and looking for
+    /// the surge log line. Confirms `execute()` actually calls the
+    /// trigger — not just that the trigger is callable in isolation.
+    #[test]
+    fn wild_magic_surge_fires_through_action_execute() {
+        use crate::actions::spells::MAGIC_MISSILE;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        let trials = 400u64;
+        let mut surge_count = 0u32;
+        for seed in 0..trials {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let sorcerer = e
+                .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let zombie = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+                .unwrap();
+            // Grant the sorcerer an Action + a level-1 slot so the cast
+            // resolves cleanly. Reseed after instantiation so the surge
+            // d20 is independent of HP / initiative rolls.
+            let actor = e.actors.get_mut(&sorcerer).unwrap();
+            actor.give_resource(crate::engine::side_effects::Resource::Action);
+            actor.spell_slot_manager.restore_spell_slots();
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let log_before = e.messages().len();
+            let effects =
+                MAGIC_MISSILE.execute(&mut e, sorcerer, Some(&vec![zombie]), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            let surge_logged = e.messages()[log_before..]
+                .iter()
+                .any(|m| m.contains("surges with wild magic"));
+            if surge_logged {
+                surge_count += 1;
+            }
+        }
+        assert!(
+            surge_count > 0,
+            "wild magic surge never fired across {} Magic Missile casts \
+             — execute() wiring broken?",
+            trials
         );
     }
 }

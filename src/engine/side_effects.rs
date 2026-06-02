@@ -102,6 +102,19 @@ impl Resource {
     }
 }
 
+/// Sniff the spell-slot level off a resolved cost vec. Returns
+/// `Some(lvl)` if any `Resource::SpellSlot(lvl)` entry is present,
+/// `None` otherwise. Used by the cross-cutting `Action::execute` hooks
+/// (Twinned Spell SP sizing, Wild Magic Surge trigger gate) to detect
+/// "this action is a leveled spell cast" without re-walking the cost
+/// vec by hand at every call site.
+pub fn spell_slot_level(costs: &[Resource]) -> Option<u32> {
+    costs.iter().find_map(|c| match c {
+        Resource::SpellSlot(lvl) => Some(*lvl),
+        _ => None,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ConsumeResource {
     pub actor_id: usize,

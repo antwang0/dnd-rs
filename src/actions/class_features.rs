@@ -3027,6 +3027,23 @@ pub const TIDES_OF_CHAOS_TAG: &str = "sorcerer.tides_of_chaos";
 /// because the feature is passive — the SP-give is the entire effect).
 pub const SORCEROUS_RESTORATION_TAG: &str = "sorcerer.sorcerous_restoration";
 
+/// 5e Wild Magic Sorcerer **Wild Magic Surge** feature tag (level 1).
+/// Passive: whenever the sorcerer casts a sorcerer spell of 1st level
+/// or higher, the DM can have them roll a d20; on a 1, a Wild Magic
+/// Surge fires from the surge table.
+///
+/// We honor the RAW trigger: every level-1+ cast rolls. The check lives
+/// in `EncounterInstance::trigger_wild_magic_surge`, which is called
+/// from the cross-cutting `Action::execute` site (the same chokepoint
+/// the other "consume on cast" metamagic primes use). The function
+/// reads this tag from `features_max` (it's passive, not consumed) and
+/// short-circuits when the spell-slot level sniffed off the action's
+/// cost is 0 (cantrips / non-spell actions never surge).
+///
+/// Tag is checked via `ActorInstance::has_passive_feature`. Tag is
+/// added to a creature template's `features` set to install it.
+pub const WILD_MAGIC_SURGE_TAG: &str = "sorcerer.wild_magic_surge";
+
 /// 5e Wild Magic Sorcerer **Tides of Chaos**. Bonus action; once per
 /// long rest, install the `TidesOfChaos` prime → advantage on the next
 /// attack roll. RAW also grants advantage on the next ability check or
