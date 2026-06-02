@@ -9117,6 +9117,41 @@ mod tests {
         }
     }
 
+    /// Verify the Twinned + Transmuted propagation: the same `new_type`
+    /// returned by `consume_transmuted_spell` on the primary cast can be
+    /// fed back through `remap_side_effect_damage_types` on the twin's
+    /// separately-built side_effects so both targets see the same remap.
+    #[test]
+    fn transmuted_plus_twinned_remaps_both_targets() {
+        use crate::engine::side_effects::{
+            ApplicableSideEffect, DealDamage, remap_side_effect_damage_types,
+        };
+        use crate::engine::types::DamageType;
+
+        let mut original: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
+            actor_id: 1,
+            amount: 10,
+            damage_type: DamageType::Fire,
+        })];
+        let mut twin: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
+            actor_id: 2,
+            amount: 10,
+            damage_type: DamageType::Fire,
+        })];
+        // Remap the original cast to Cold — returns true.
+        assert!(remap_side_effect_damage_types(&mut original, DamageType::Cold));
+        // Propagate to the twin — returns true.
+        assert!(remap_side_effect_damage_types(&mut twin, DamageType::Cold));
+        // Non-elemental damage in either vec leaves the prime up; the
+        // existing path returns false. Confirm the no-op semantic.
+        let mut force_only: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
+            actor_id: 3,
+            amount: 10,
+            damage_type: DamageType::Force,
+        })];
+        assert!(!remap_side_effect_damage_types(&mut force_only, DamageType::Cold));
+    }
+
     /// `consume_extended_spell` is a no-op when no prime is up — it
     /// neither logs nor mutates side_effects. Mirrors the
     /// `consume_distant_spell_clears_prime_and_logs` smoke test.
