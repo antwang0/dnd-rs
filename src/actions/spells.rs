@@ -976,7 +976,7 @@ impl Action for CureWounds {
         _target_locations: Option<&Vec<Coordinate>>,
         overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -1039,7 +1039,7 @@ impl Action for FireBolt {
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::engine::attack::{AttackParams, resolve_attack};
 
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -1326,7 +1326,7 @@ impl Action for MagicMissile {
         _target_locations: Option<&Vec<Coordinate>>,
         overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         // 5e upcasting: 3 darts at level 1, +1 dart per level above 1.

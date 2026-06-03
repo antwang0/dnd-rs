@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 
 use crate::{
     actions::action_template::{
-        Action, TargetingSchema, bonus_action_only, free_cost,
+        Action, TargetingSchema, bonus_action_only, first_target_id, free_cost,
     },
     conditions::{Condition, ConditionTimer},
     engine::{
@@ -990,7 +990,7 @@ impl Action for LayOnHands {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         use crate::engine::types::AbilityScoreType;
@@ -1073,7 +1073,7 @@ impl Action for HealingHands {
         }
         // Target must be an ally (or self) and combat-active. Mirrors
         // Lay on Hands' gating — no wasted heal on a corpse.
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return false;
         };
         let Some(target) = encounter.actors.get(&target_id) else {
@@ -1089,7 +1089,7 @@ impl Action for HealingHands {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(actor) = encounter.actors.get(&caster_id) else {
@@ -1458,7 +1458,7 @@ impl Action for BardicInspiration {
         // Target must be an ally (same team), combat-active, and not
         // already Inspired — re-inspiration would just refresh the
         // timer without giving the AI a meaningful new effect.
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return false;
         };
         let Some(target) = encounter.actors.get(&target_id) else {
@@ -1476,7 +1476,7 @@ impl Action for BardicInspiration {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         if let Some(actor) = encounter.actors.get_mut(&caster_id) {
@@ -2488,7 +2488,7 @@ impl Action for CuttingWords {
         // Target must be an enemy, combat-active, not already Mocked
         // (re-applying with a one-shot timer would just refresh — wasted
         // bonus action if the target hasn't swung yet).
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return false;
         };
         let Some(target) = encounter.actors.get(&target_id) else {
@@ -2506,7 +2506,7 @@ impl Action for CuttingWords {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         if let Some(actor) = encounter.actors.get_mut(&caster_id) {
@@ -2767,7 +2767,7 @@ impl Action for FeintingAttack {
         // Target must be a live enemy (RAW: any creature, but feinting a
         // friendly is a wasted bonus action — the AI's hostile pipeline
         // is the consumer).
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return false;
         };
         let Some(target) = encounter.actors.get(&target_id) else {
@@ -2783,7 +2783,7 @@ impl Action for FeintingAttack {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         if let Some(actor) = encounter.actors.get_mut(&caster_id) {
@@ -2960,7 +2960,7 @@ impl Action for Rally {
         // see or hear you". The AI's support pipeline picks live allies
         // already; we just enforce the team-match gate here so a
         // misqueued enemy-target invocation doesn't slip through.
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return false;
         };
         let Some(target) = encounter.actors.get(&target_id) else {
@@ -2977,7 +2977,7 @@ impl Action for Rally {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::engine::types::AbilityScoreType;
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let raw = encounter.roll(&Dice::new(1, 10));
@@ -3074,7 +3074,7 @@ impl Action for CommandersStrike {
             return false;
         }
         // Ally-only — the target must be on the fighter's team and live.
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return false;
         };
         let Some(ally) = encounter.actors.get(&target_id) else {
@@ -3098,7 +3098,7 @@ impl Action for CommandersStrike {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::actors::actor_template::HelpGrant;
-        let Some(ally_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(ally_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         // Pick the closest visible enemy of the ally as the strike target.
@@ -3214,7 +3214,6 @@ impl Action for InfernalLegacyRebuke {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::actions::action_template::first_target_id;
         use crate::engine::types::AbilityScoreType;
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();

@@ -5,7 +5,7 @@ use crate::{
 use std::{collections::HashSet, sync::LazyLock};
 
 use crate::{
-    actions::action_template::Action,
+    actions::action_template::{Action, first_target_id},
     engine::{
         action_overrides::ActionOverride,
         encounter::EncounterInstance,
@@ -366,7 +366,7 @@ impl Action for Help {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
         // Help requires an *ally* target — never self, never an enemy.
-        let Some(target_id) = target_ids.and_then(|v| v.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return false;
         };
         if target_id == caster_id {
@@ -388,7 +388,7 @@ impl Action for Help {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let Some(ally_id) = target_ids.and_then(|v| v.first().copied()) else {
+        let Some(ally_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         // Pick the closest hostile to the helped ally as the "designated
@@ -464,7 +464,7 @@ impl Action for Shove {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        let Some(target_id) = target_ids.and_then(|v| v.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return false;
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -486,7 +486,7 @@ impl Action for Shove {
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
         use crate::engine::dice::Dice;
         use crate::engine::types::AbilityScoreType;
-        let Some(target_id) = target_ids.and_then(|v| v.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -563,7 +563,7 @@ impl Action for Grapple {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        let Some(target_id) = target_ids.and_then(|v| v.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return false;
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -585,7 +585,7 @@ impl Action for Grapple {
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
         use crate::engine::dice::Dice;
         use crate::engine::types::AbilityScoreType;
-        let Some(target_id) = target_ids.and_then(|v| v.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {

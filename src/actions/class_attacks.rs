@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use crate::{
-    actions::action_template::{Action, MELEE_REACH, TargetingSchema},
+    actions::action_template::{Action, MELEE_REACH, TargetingSchema, first_target_id},
     conditions::{Condition, ConditionTimer},
     engine::{
         action_overrides::ActionOverride,
@@ -53,7 +53,7 @@ impl Action for RogueShortsword {
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::engine::types::AbilityScoreType;
 
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {

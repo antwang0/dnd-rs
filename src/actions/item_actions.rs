@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::{
-    actions::action_template::{Action, TargetingSchema, bonus_action_only},
+    actions::action_template::{Action, TargetingSchema, bonus_action_only, first_target_id},
     engine::{
         action_overrides::ActionOverride,
         dice::Dice,
@@ -331,7 +331,7 @@ impl Action for ReadMagicMissileScroll {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         if !consume_caster_item(encounter, caster_id, SCROLL_OF_MAGIC_MISSILE_NAME) {
@@ -800,7 +800,7 @@ impl Action for ReadCureWoundsScroll {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+        let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
         if !consume_caster_item(encounter, caster_id, SCROLL_OF_CURE_WOUNDS_NAME) {
