@@ -1747,6 +1747,26 @@ impl ActorInstance {
         self.movement
     }
 
+    /// 5e Tasha's Rogue Steady Aim gate. True iff the actor has spent any
+    /// movement this turn. Compares the raw movement budget (unfiltered
+    /// by Prone / `zeros_movement`) against the actor's current `speed()`
+    /// — those filters are aim-irrelevant (a grappled rogue with budget
+    /// intact still hasn't moved; a prone rogue still has their full
+    /// budget, the halving is a per-step cost). A small float tolerance
+    /// absorbs FP drift from the Haste / Slow factor in `speed()`.
+    pub fn has_moved_this_turn(&self) -> bool {
+        self.movement + 0.01 < self.speed()
+    }
+
+    /// Drain the actor's remaining movement budget to zero. Used by
+    /// Steady Aim (RAW: "after you use the bonus action, your speed is 0
+    /// until the end of the current turn"). Direct setter rather than a
+    /// `consume_resource(Resource::Movement(remaining))` chain so the
+    /// "zero everything regardless of conditions" semantics is explicit.
+    pub fn zero_movement(&mut self) {
+        self.movement = 0.0;
+    }
+
     pub fn size(&self) -> Size {
         self.size
     }

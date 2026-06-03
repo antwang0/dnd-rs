@@ -357,6 +357,14 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             // is the closest stable approximation that keeps the surge
             // from dominating every cast.
             crate::actions::class_features::WILD_MAGIC_SURGE_TAG,
+            // 5e Wild Magic Sorcerer **Bend Luck** (lv6): passive
+            // reaction — when an enemy attack would hit, spend 2 SP +
+            // reaction to subtract 1d4 from the attacker's roll. Wired
+            // into both the weapon-attack and spell-attack resolvers via
+            // `EncounterInstance::apply_bend_luck_penalty`. Doubles as
+            // a defensive sink for the sorcerer's SP pool between
+            // Empowered / Heightened / Twinned casts.
+            crate::actions::class_features::BEND_LUCK_TAG,
         ]),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),

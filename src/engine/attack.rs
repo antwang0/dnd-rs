@@ -162,6 +162,24 @@ pub fn resolve_attack_outcome(
             hit = !is_nat_one && (nat_crit || attack_total >= target_ac);
         }
     }
+    // 5e Wild Magic Sorcerer **Bend Luck** (lv6 reaction): the target may
+    // burn 2 SP + their reaction to subtract a 1d4 from the attacker's
+    // total. Only worth firing when the swing would otherwise hit AND
+    // isn't a natural crit (the d4 can't undo a 20-face); a nat-1 already
+    // misses. The penalty is folded into `attack_total` so the hit check
+    // and the log line both reflect the bent total.
+    let bend_penalty = if hit && !nat_crit && !is_nat_one {
+        encounter.apply_bend_luck_penalty(p.target_id, p.caster_id) as i32
+    } else {
+        0
+    };
+    let bend_note = if bend_penalty > 0 {
+        attack_total -= bend_penalty;
+        hit = attack_total >= target_ac;
+        format!(" -d4({})", bend_penalty)
+    } else {
+        String::new()
+    };
     // 5e Paralyzed / Unconscious clause: any hit from within 5ft is a
     // crit. The promotion happens after we've decided the swing connected
     // so a flat miss still misses — the rider only upgrades a regular
@@ -181,11 +199,12 @@ pub fn resolve_attack_outcome(
     };
     let cover_note = EncounterInstance::cover_log_suffix(cover_bonus);
     encounter.log(format!(
-        "  {}: 1d20({}){:+}{} = {} vs AC {}{}{} \u{2014} {}",
+        "  {}: 1d20({}){:+}{}{} = {} vs AC {}{}{} \u{2014} {}",
         p.action_name,
         raw_attack,
         p.attack_bonus + buff + cond_attack_bonus,
         bless_note,
+        bend_note,
         attack_total,
         target_ac,
         cover_note,
@@ -329,7 +348,7 @@ pub fn resolve_attack_outcome(
     //   - `follow_up`: optional secondary clause that fires only on the
     //     swing that *consumed* the rider — used by Blinding Smite (CON
     //     save or Blinded) and Wrathful Smite (WIS save or Frightened).
-    for rider in on_hit_riders() {
+    for rider in ON_HIT_RIDERS.iter().copied() {
         if rider.melee_only && !p.is_melee {
             continue;
         }
@@ -388,7 +407,7 @@ pub fn resolve_attack_outcome(
     // damage resolves through the standard damage pipeline so the
     // attacker's typed immunity / resistance / vulnerability is honored.
     if p.is_melee {
-        for rider in melee_reflect_riders() {
+        for rider in MELEE_REFLECT_RIDERS.iter().copied() {
             if !encounter
                 .actors
                 .get(&p.target_id)
@@ -446,41 +465,39 @@ pub struct MeleeReflectRider {
     pub label: &'static str,
 }
 
-/// Build the melee retaliation rider table. Symmetric with `on_hit_riders`
-/// but consumed at the target side of `resolve_attack_outcome`. Returned
-/// by value rather than declared `const` because `Dice::new` isn't a
-/// const fn — the runtime cost is one stack-allocated array.
-fn melee_reflect_riders() -> [MeleeReflectRider; 3] {
-    [
-        // 5e Fire Shield — 2d8 fire on every melee contact. Concentration-
-        // free, self-only; the warm / cool variant only matters for the
-        // resistance lane (we collapse to a single Fire Shield condition).
-        MeleeReflectRider {
-            condition: Condition::FireShielded,
-            damage: ReflectDamage::Dice(Dice::new(2, 8)),
-            damage_type: DamageType::Fire,
-            label: "fire shield",
-        },
-        // 5e Armor of Agathys — flat 5 cold on melee contact. We don't
-        // scale with slot level (the spell's install site sets the temp
-        // HP buffer instead). Mirrors Fire Shield's shape but cheaper.
-        MeleeReflectRider {
-            condition: Condition::AgathysShielded,
-            damage: ReflectDamage::Flat(5),
-            damage_type: DamageType::Cold,
-            label: "armor of agathys",
-        },
-        // 5e Investiture of Flame — 1d10 fire on melee contact. Smaller
-        // die than Fire Shield (concentration-bound on the caster, paired
-        // with the broader fire resistance baked into the install).
-        MeleeReflectRider {
-            condition: Condition::InvestedInFlame,
-            damage: ReflectDamage::Dice(Dice::new(1, 10)),
-            damage_type: DamageType::Fire,
-            label: "investiture of flame",
-        },
-    ]
-}
+/// Melee retaliation rider table. Symmetric with `ON_HIT_RIDERS` but
+/// consumed at the target side of `resolve_attack_outcome`. `Dice::new`
+/// is a const fn so the whole table lives as a `const &[..]` — adding
+/// a rider doesn't bump a hardcoded length.
+const MELEE_REFLECT_RIDERS: &[MeleeReflectRider] = &[
+    // 5e Fire Shield — 2d8 fire on every melee contact. Concentration-
+    // free, self-only; the warm / cool variant only matters for the
+    // resistance lane (we collapse to a single Fire Shield condition).
+    MeleeReflectRider {
+        condition: Condition::FireShielded,
+        damage: ReflectDamage::Dice(Dice::new(2, 8)),
+        damage_type: DamageType::Fire,
+        label: "fire shield",
+    },
+    // 5e Armor of Agathys — flat 5 cold on melee contact. We don't
+    // scale with slot level (the spell's install site sets the temp
+    // HP buffer instead). Mirrors Fire Shield's shape but cheaper.
+    MeleeReflectRider {
+        condition: Condition::AgathysShielded,
+        damage: ReflectDamage::Flat(5),
+        damage_type: DamageType::Cold,
+        label: "armor of agathys",
+    },
+    // 5e Investiture of Flame — 1d10 fire on melee contact. Smaller
+    // die than Fire Shield (concentration-bound on the caster, paired
+    // with the broader fire resistance baked into the install).
+    MeleeReflectRider {
+        condition: Condition::InvestedInFlame,
+        damage: ReflectDamage::Dice(Dice::new(1, 10)),
+        damage_type: DamageType::Fire,
+        label: "investiture of flame",
+    },
+];
 
 /// Roll a single rider die for an on-hit bonus, doubling on crit per
 /// 5e RAW. Used by every "per-hit weapon-bonus damage" effect — Hex /
@@ -586,12 +603,13 @@ pub enum FollowUpEffect {
     },
 }
 
-/// Build the caster-side on-hit rider table. Returned by value rather
-/// than declared `const` because `Dice::new` isn't a const fn — but the
-/// runtime cost is one stack-allocated array of plain data, so the
-/// indirection is free.
-fn on_hit_riders() -> [OnHitRider; 25] {
-    [
+/// Caster-side on-hit rider table. Every per-hit damage rider that keys
+/// off a caster condition (Smite spells, Crown of Stars, Crusader's
+/// Mantle, persistent weapon-buff concentration spells, Battle Master
+/// maneuvers, etc.) lives here. `Dice::new` is a const fn so the table
+/// stays a `const &[..]` — adding a rider doesn't bump a hardcoded
+/// length.
+const ON_HIT_RIDERS: &[OnHitRider] = &[
         OnHitRider {
             condition: Condition::CrusadersMantled,
             dice: Dice::new(1, 4),
@@ -1106,8 +1124,7 @@ fn on_hit_riders() -> [OnHitRider; 25] {
                 hp_threshold: None,
             }),
         },
-    ]
-}
+];
 
 /// Process the optional secondary save-and-apply step that some Smite
 /// spells stack on top of their bonus damage. `save_ability: None`

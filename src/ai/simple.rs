@@ -544,6 +544,16 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3q''''''''''''. Steady Aim — Tasha's Rogue lv3 bonus action.
+        //                 Mirrors Tides of Chaos's advantage prime but
+        //                 costs the rest of the turn's movement instead
+        //                 of a feature charge. Gated on no movement
+        //                 spent yet AND an enemy within ranged-attack
+        //                 reach so the speed-zero trade pays off.
+        if let Some(aei) = try_steady_aim(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3q''''''''''. Font of Magic — convert spell slot ↔ sorcery
         //             points. Bonus action; only fires when one
         //             resource is critically low while the other has
@@ -1829,6 +1839,34 @@ fn try_transmuted_spell(
         return None;
     }
     try_self_action(encounter, actor_id, "transmuted spell")
+}
+
+/// Steady Aim — Tasha's Rogue lv3 bonus action. Installs an advantage-
+/// on-next-attack prime at the cost of zeroing speed for the rest of
+/// the turn. Fires when:
+/// - The action validates (haven't moved, no Helped already up).
+/// - At least one combat-active enemy is within typical ranged-weapon
+///   range so the advantage actually feeds a swing — gated wider than
+///   adjacent reach since the speed-zero cost trades best for a
+///   shortbow / hand crossbow snipe rather than a melee follow-up.
+///
+/// Doesn't trip on metamagic / concentration markers because the rogue
+/// doesn't carry those — the action's own `custom_validate_input` is the
+/// load-bearing gate.
+fn try_steady_aim(encounter: &EncounterInstance, actor_id: usize) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    // Engine-side gate is the source of truth; bail early if it would
+    // refuse so we don't burn the action picker on a no-op.
+    if actor.has_moved_this_turn() || actor.has_condition(Condition::Helped) {
+        return None;
+    }
+    // Need a swing-able enemy in range. Use the shortbow's normal range
+    // (8 tiles) as the gate — the speed-zero cost is justified when the
+    // ranged follow-up is a real option.
+    if !any_enemy_within(encounter, actor_id, 8) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "steady aim")
 }
 
 /// Tides of Chaos — Wild Magic Sorcerer 1/long-rest bonus action.
@@ -5410,6 +5448,69 @@ mod tests {
         assert!(
             try_tides_of_chaos(&e, sorcerer).is_none(),
             "Heightened prime up → skip"
+        );
+    }
+
+    /// `try_steady_aim` fires only when the rogue hasn't moved, no Helped
+    /// prime is already up, and an enemy sits within ranged-attack reach.
+    #[test]
+    fn steady_aim_ai_gates_on_movement_helped_and_range() {
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::encounter::EncounterInstance;
+        use crate::engine::terrain_gen::TerrainGenParams;
+        use crate::engine::types::Coordinate;
+
+        let tp = TerrainGenParams {
+            width: 30,
+            height: 30,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(7)).unwrap();
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&rogue).unwrap().reset_for_new_round();
+
+        // No enemies → skip.
+        assert!(try_steady_aim(&e, rogue).is_none(), "no enemy → skip");
+
+        // Enemy in shortbow range → fires.
+        let _z = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 5), 1, 0)
+            .unwrap();
+        assert!(
+            try_steady_aim(&e, rogue).is_some(),
+            "enemy in range + full movement → fires"
+        );
+
+        // Move the rogue (drain some movement) → skip.
+        e.actors
+            .get_mut(&rogue)
+            .unwrap()
+            .consume_resource(Resource::Movement(2.5));
+        assert!(
+            try_steady_aim(&e, rogue).is_none(),
+            "movement already spent → skip"
+        );
+
+        // Reset, install Helped → skip (would no-stack).
+        e.actors.get_mut(&rogue).unwrap().reset_for_new_round();
+        e.actors
+            .get_mut(&rogue)
+            .unwrap()
+            .add_condition(Condition::Helped, ConditionTimer::UntilStartOfNextTurn);
+        assert!(
+            try_steady_aim(&e, rogue).is_none(),
+            "Helped prime already up → skip"
         );
     }
 

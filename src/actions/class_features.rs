@@ -390,6 +390,99 @@ impl Action for CunningHide {
 
 pub static CUNNING_HIDE: LazyLock<CunningHide> = LazyLock::new(|| CunningHide {});
 
+/// 5e Tasha's Rogue **Steady Aim** (level 3 alternate Cunning Action).
+/// Bonus action: grant the rogue advantage on their next attack roll this
+/// turn at the cost of their speed dropping to 0 until end of turn.
+/// Pairs naturally with Sneak Attack (advantage qualifies for the rider)
+/// and the rogue's ranged finesse options — the speed-zero cost is
+/// minor for a sniping rogue and the advantage gate replaces the
+/// ally-adjacency / disadvantage-free condition that Sneak Attack
+/// normally checks.
+///
+/// RAW gate: "only if you haven't moved during this turn". Enforced via
+/// `ActorInstance::has_moved_this_turn`, which compares the current
+/// movement budget against `speed()`. After use, `zero_movement()`
+/// drains the budget so the rest of the turn is locked in place. The
+/// advantage rides on the existing `Helped` one-shot condition (cleared
+/// on the next swing in `clear_attack_advantage_riders`).
+pub struct SteadyAim {}
+
+impl Action for SteadyAim {
+    fn name(&self) -> &str {
+        "steady aim"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["aim", "sa-rogue"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.is_combat_active()
+                && !a.has_moved_this_turn()
+                // No-stack: re-priming would just refresh the timer.
+                && !a.has_condition(Condition::Helped)
+        })
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let line = encounter.actors.get_mut(&caster_id).map(|actor| {
+            actor.zero_movement();
+            format!(
+                "{} takes steady aim — speed drops to 0 for the rest of the turn.",
+                actor.name()
+            )
+        });
+        if let Some(line) = line {
+            encounter.log(line);
+        }
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::Helped,
+            timer: ConditionTimer::UntilStartOfNextTurn,
+        })]
+    }
+}
+
+pub static STEADY_AIM: LazyLock<SteadyAim> = LazyLock::new(|| SteadyAim {});
+
 /// Tag for Fighter's Indomitable — once per long rest.
 pub const INDOMITABLE_TAG: &str = "fighter.indomitable";
 
@@ -3026,6 +3119,23 @@ pub const TIDES_OF_CHAOS_TAG: &str = "sorcerer.tides_of_chaos";
 /// `ActorInstance::short_rest` via a templated branch (no consume
 /// because the feature is passive — the SP-give is the entire effect).
 pub const SORCEROUS_RESTORATION_TAG: &str = "sorcerer.sorcerous_restoration";
+
+/// 5e Wild Magic Sorcerer **Bend Luck** feature tag (level 6). Passive
+/// reaction: when a creature you can see makes an attack roll against
+/// you, you may spend 2 sorcery points + your reaction to subtract a
+/// rolled 1d4 from the attack's total. The bend can drop a hit to a
+/// miss but never undoes a natural-20 crit (the d20 face is decided
+/// before the subtraction, mirroring RAW).
+///
+/// RAW also covers ability checks and saving throws; we model only the
+/// attack-roll lane (the highest-leverage in our combat model) — the
+/// save / check lanes have no central save chokepoint that reads
+/// passive reaction features yet. The trigger fires automatically when
+/// the resource gates pass (mirrors Uncanny Dodge / Halfling Lucky's
+/// "no player prompt" shape — the engine commits the SP + reaction the
+/// moment the attack would land). See
+/// `EncounterInstance::apply_bend_luck_penalty` for the wire site.
+pub const BEND_LUCK_TAG: &str = "sorcerer.bend_luck";
 
 /// 5e Wild Magic Sorcerer **Wild Magic Surge** feature tag (level 1).
 /// Passive: whenever the sorcerer casts a sorcerer spell of 1st level

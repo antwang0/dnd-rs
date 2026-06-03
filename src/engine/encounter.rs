@@ -3255,6 +3255,69 @@ impl EncounterInstance {
         }
     }
 
+    /// 5e Wild Magic Sorcerer **Bend Luck** (lv6 reaction) penalty hook.
+    /// When `target_id` carries the Bend Luck feature and has 2+ SP +
+    /// reaction available, spend the resources and return a rolled 1d4
+    /// penalty (1..=4) to subtract from the attacker's roll. Returns 0
+    /// when the gate fails — caller treats it as a no-op.
+    ///
+    /// We approximate RAW's "can see the creature" with `!Blinded`. The
+    /// 30ft range is honored via the footprint distance (12-tile gap in
+    /// the 2.5ft grid). Caller (resolve_attack_outcome) only invokes
+    /// this when the attack would otherwise hit but isn't a natural crit,
+    /// so the d4 has a real chance of flipping the outcome — saving SP
+    /// on attacks that already miss or that crit through it.
+    pub fn apply_bend_luck_penalty(
+        &mut self,
+        target_id: usize,
+        attacker_id: usize,
+    ) -> u32 {
+        use crate::actions::class_features::BEND_LUCK_TAG;
+        use crate::engine::dice::Dice;
+        use crate::engine::side_effects::Resource;
+        const BEND_LUCK_SP_COST: u32 = 2;
+        const BEND_LUCK_RANGE_TILES: isize = 12;
+        let Some(target) = self.actors.get(&target_id) else {
+            return 0;
+        };
+        if !target.has_passive_feature(BEND_LUCK_TAG)
+            || target.sorcery_points() < BEND_LUCK_SP_COST
+            || !target.can_consume_resource(Resource::Reaction)
+            || target.has_condition(Condition::Blinded)
+            || !target.is_combat_active()
+        {
+            return 0;
+        }
+        if self
+            .footprint_distance(target_id, attacker_id)
+            .is_none_or(|d| d > BEND_LUCK_RANGE_TILES)
+        {
+            return 0;
+        }
+        let penalty = self.roll(&Dice::new(1, 4));
+        let (target_name, attacker_name, sp_left) = {
+            let target = match self.actors.get_mut(&target_id) {
+                Some(a) => a,
+                None => return 0,
+            };
+            target.spend_sorcery_points(BEND_LUCK_SP_COST);
+            target.consume_resource(Resource::Reaction);
+            let tn = target.name().to_string();
+            let sp = target.sorcery_points();
+            let an = self
+                .actors
+                .get(&attacker_id)
+                .map(|a| a.name().to_string())
+                .unwrap_or_default();
+            (tn, an, sp)
+        };
+        self.log(format!(
+            "  bend luck: {} bends fate, -1d4({}) on {}'s roll ({} SP left)",
+            target_name, penalty, attacker_name, sp_left
+        ));
+        penalty
+    }
+
     /// 5e Mirror Image deflection check. With N duplicates remaining on
     /// the target, roll a d20 against a threshold (RAW: 6+ for 3, 8+ for
     /// 2, 11+ for 1) to determine whether the swing pops a decoy and
@@ -26664,7 +26727,7 @@ mod tests {
     }
 
     /// Enlarge/Reduce (Enlarge): single-target +1d4 weapon damage rider
-    /// via the on_hit_riders table, concentration. Verifies the lv2 slot
+    /// via the ON_HIT_RIDERS table, concentration. Verifies the lv2 slot
     /// cost, the Enlarged condition installs on the ally, and the caster
     /// picks up concentration. Skip re-cast gate: a second cast should
     /// fail validation while the target is already Enlarged.
@@ -31109,5 +31172,131 @@ mod tests {
              — execute() wiring broken?",
             trials
         );
+    }
+
+    /// Steady Aim: validates only when the rogue has full movement, then
+    /// drains movement and installs the Helped one-shot.
+    #[test]
+    fn steady_aim_primes_helped_and_zeros_movement() {
+        use crate::actions::class_features::STEADY_AIM;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Top-of-turn: full movement, BonusAction available, no prime.
+        e.actors.get_mut(&rogue).unwrap().reset_for_new_round();
+        let speed_before = e.actors[&rogue].speed();
+        assert!(speed_before > 0.0);
+        assert!(STEADY_AIM.custom_validate_input(&e, rogue, None, None, None));
+        let effects = STEADY_AIM.side_effects(&mut e, rogue, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&rogue].has_condition(Condition::Helped));
+        assert_eq!(e.actors[&rogue].remaining_movement(), 0.0);
+        // Re-validate: blocked because (a) Helped already primed and
+        // (b) movement is drained (the second clause matters once Helped
+        // expires next turn).
+        assert!(!STEADY_AIM.custom_validate_input(&e, rogue, None, None, None));
+
+        // After a fresh round, full movement returns but if the rogue has
+        // taken even one tile of movement, Steady Aim won't validate.
+        let actor = e.actors.get_mut(&rogue).unwrap();
+        actor.reset_for_new_round();
+        actor.consume_resource(Resource::Movement(2.5));
+        assert!(actor.has_moved_this_turn());
+        assert!(!STEADY_AIM.custom_validate_input(&e, rogue, None, None, None));
+    }
+
+    /// Bend Luck: a hit against the sorcerer can flip to a miss when the
+    /// d4 penalty drags the total below AC. Verifies the SP and reaction
+    /// debits land and the swing is converted to a miss in the log.
+    #[test]
+    fn bend_luck_flips_hit_to_miss_and_spends_resources() {
+        use crate::actions::monster_attacks::SCIMITAR;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+        let mut bent_fires = 0u32;
+        let mut bent_to_miss = 0u32;
+        let trials = 200u64;
+        for seed in 0..trials {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            // Sorcerer template carries BEND_LUCK_TAG and starts with 6 SP.
+            let sorcerer = e
+                .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            // Zombie close enough to swing scimitar (melee reach 1 tile).
+            let zombie = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+                .unwrap();
+            // Reseed after instantiation so the per-trial RNG drives the
+            // d20 / d4 deterministically.
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            e.actors.get_mut(&sorcerer).unwrap().reset_for_new_round();
+            e.actors.get_mut(&zombie).unwrap().reset_for_new_round();
+            let sp_before = e.actors[&sorcerer].sorcery_points();
+            let log_before = e.messages().len();
+            let effects =
+                SCIMITAR.side_effects(&mut e, zombie, Some(&vec![sorcerer]), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            let bent_log = e.messages()[log_before..]
+                .iter()
+                .any(|m| m.contains("bend luck:"));
+            if bent_log {
+                bent_fires += 1;
+                // SP must have dropped by 2 and reaction must be spent.
+                let sp_after = e.actors[&sorcerer].sorcery_points();
+                assert_eq!(sp_after, sp_before - 2, "bend luck should spend 2 SP");
+                assert!(
+                    !e.actors[&sorcerer].can_consume_resource(Resource::Reaction),
+                    "bend luck should burn the reaction"
+                );
+                let miss_logged = e.messages()[log_before..]
+                    .iter()
+                    .any(|m| m.contains("\u{2014} miss"));
+                if miss_logged {
+                    bent_to_miss += 1;
+                }
+            }
+        }
+        assert!(
+            bent_fires > 0,
+            "bend luck never fired across {} attack swings",
+            trials
+        );
+        assert!(
+            bent_to_miss > 0,
+            "bend luck never flipped a hit to a miss across {} trials \
+             (fires: {})",
+            trials,
+            bent_fires
+        );
+    }
+
+    /// Bend Luck: the sorcerer with 0 SP can't bend, even if the attack
+    /// would hit and a reaction is available.
+    #[test]
+    fn bend_luck_skips_when_out_of_sp() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Drain all sorcery points.
+        let max_sp = e.actors[&sorcerer].sorcery_points();
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .spend_sorcery_points(max_sp);
+        // Fake attacker id (sorcerer self-targeting is fine for the gate
+        // check — the helper short-circuits on resource gates first).
+        let penalty = e.apply_bend_luck_penalty(sorcerer, sorcerer);
+        assert_eq!(penalty, 0, "0 SP should suppress Bend Luck");
     }
 }

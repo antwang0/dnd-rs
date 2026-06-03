@@ -167,6 +167,25 @@ fn spell_attack_outcome(
             hit = nat_crit || total >= target_ac;
         }
     }
+    // 5e Wild Magic Sorcerer Bend Luck (lv6): the target may burn 2 SP +
+    // reaction to subtract a 1d4 from the attacker's roll. Symmetric with
+    // the weapon-attack hook in `resolve_attack_outcome` — both lanes
+    // share the same `apply_bend_luck_penalty` site so a sorcerer's
+    // bend fires whether the incoming attack is a longsword or a Fire
+    // Bolt. Bypassed on nat-crit (the d20 face stands) and nat-1 (already
+    // a miss).
+    let bend_penalty = if hit && !nat_crit && raw != 1 {
+        encounter.apply_bend_luck_penalty(target_id, caster_id) as i32
+    } else {
+        0
+    };
+    let bend_note = if bend_penalty > 0 {
+        total -= bend_penalty;
+        hit = total >= target_ac;
+        format!(" -d4({})", bend_penalty)
+    } else {
+        String::new()
+    };
     // 5e Paralyzed / Unconscious clause — touch spell attacks honor the
     // "any hit within 5ft becomes a crit" rider too. Mirrors the gate in
     // `resolve_attack_outcome`: only `is_melee` spells trigger.
@@ -181,11 +200,12 @@ fn spell_attack_outcome(
     };
     let cover_note = EncounterInstance::cover_log_suffix(cover_bonus);
     encounter.log(format!(
-        "  {}: 1d20({}){:+}{} = {} vs AC {}{}{} \u{2014} {}",
+        "  {}: 1d20({}){:+}{}{} = {} vs AC {}{}{} \u{2014} {}",
         action_name,
         raw,
         attack_bonus + buff + cond_attack_bonus,
         bless_note,
+        bend_note,
         total,
         target_ac,
         cover_note,
