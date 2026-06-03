@@ -7,11 +7,12 @@ use std::sync::LazyLock;
 
 use crate::{
     actions::action_template::{Action, MELEE_REACH, TargetingSchema},
+    conditions::{Condition, ConditionTimer},
     engine::{
         action_overrides::ActionOverride,
         dice::Dice,
         encounter::EncounterInstance,
-        side_effects::{ApplicableSideEffect, DealDamage},
+        side_effects::{ApplicableSideEffect, ApplyCondition, DealDamage, GiveResource, Resource},
         types::{Coordinate, DamageType},
         util::{footprint_chebyshev, get_tiles_from_size},
     },
@@ -41,7 +42,6 @@ impl Action for RogueShortsword {
     fn reach_tiles(&self) -> Option<isize> {
         Some(MELEE_REACH)
     }
-
 
     fn side_effects(
         &self,
@@ -115,13 +115,26 @@ impl Action for RogueShortsword {
             target_id,
             mode == crate::engine::dice::RollMode::Advantage,
         );
+        let mut side_effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         if sneak_eligible {
             let level = encounter
                 .actors
                 .get(&caster_id)
                 .map(|a| a.level())
                 .unwrap_or(1);
-            let sneak_dice = sneak_attack_dice(level);
+            let total_sneak_dice = sneak_attack_dice_for_level(level);
+            // 5e 2024 Cunning Strike: deduct dice from the sneak pool for
+            // a tactical effect. Walks the active prime table, picks the
+            // first match, returns the deduction + a queued side-effect
+            // builder. The cost can't drain the whole pool: if the
+            // declared deduction would zero the sneak dice, the prime is
+            // refused (RAW: "you can't reduce the number of dice rolled to
+            // less than 1"). Side-effects from the consumed prime are
+            // appended to the swing's vec below.
+            let (sneak_dice, mut cunning_effects) =
+                consume_cunning_strike(encounter, caster_id, target_id, total_sneak_dice);
+            side_effects.append(&mut cunning_effects);
+
             let sneak_raw = encounter.roll(&Dice::new(sneak_dice, 6));
             let sneak_extra = if is_crit {
                 encounter.roll(&Dice::new(sneak_dice, 6))
@@ -145,11 +158,15 @@ impl Action for RogueShortsword {
             if is_crit { " (crit)" } else { "" }
         ));
 
-        vec![Box::new(DealDamage {
+        // Primary damage lands first so any condition follow-ups (e.g.
+        // the Daze rider's MindWhipped) read the post-damage state.
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
             actor_id: target_id,
             amount: damage,
             damage_type: DamageType::Piercing,
-        })]
+        })];
+        effects.append(&mut side_effects);
+        effects
     }
 }
 
@@ -157,12 +174,155 @@ pub static ROGUE_SHORTSWORD: LazyLock<RogueShortsword> = LazyLock::new(|| RogueS
 
 /// 5e Sneak Attack dice scaling: ceil(level / 2) d6.
 /// Level 1 = 1d6, level 3 = 2d6, level 5 = 3d6, etc.
-fn sneak_attack_dice(level: u32) -> u32 {
-    sneak_attack_dice_for_level(level)
-}
-
+/// Exposed for cross-module gates (the Cunning Strike (Daze) prime and
+/// the AI's Cunning Strike heuristic both check the pool size before
+/// committing the bonus action).
 pub fn sneak_attack_dice_for_level(level: u32) -> u32 {
     level.div_ceil(2).max(1)
+}
+
+/// 5e 2024 Rogue **Cunning Strike** consume site. Walks the active
+/// prime conditions on `rogue_id`, picks the first match, deducts the
+/// die cost from `total_sneak_dice`, builds the queued side-effects (a
+/// save + condition apply for Poison / Trip / Daze, a free half-speed
+/// move-resource grant + Disengaging install for Withdraw), and clears
+/// the prime via `remove_condition`.
+///
+/// Returns `(remaining_sneak_dice, side_effects)`. Refuses to consume
+/// the prime if doing so would drop the sneak pool below 1 die (RAW:
+/// "you can't reduce the number of dice rolled to less than 1"); the
+/// prime stays installed so a later swing with a richer pool can
+/// connect.
+fn consume_cunning_strike(
+    encounter: &mut EncounterInstance,
+    rogue_id: usize,
+    target_id: usize,
+    total_sneak_dice: u32,
+) -> (u32, Vec<Box<dyn ApplicableSideEffect>>) {
+    use crate::engine::types::AbilityScoreType;
+    let Some(rogue) = encounter.actors.get(&rogue_id) else {
+        return (total_sneak_dice, Vec::new());
+    };
+    // First-match wins. Order is fixed (Poison → Trip → Daze → Withdraw)
+    // so the consume order is deterministic for tests; the prime-install
+    // gates prevent double-priming so only one condition is ever active
+    // anyway.
+    const PRIORITY: &[Condition] = &[
+        Condition::CunningStrikePoison,
+        Condition::CunningStrikeTrip,
+        Condition::CunningStrikeDaze,
+        Condition::CunningStrikeWithdraw,
+    ];
+    let Some(prime) = PRIORITY.iter().copied().find(|c| rogue.has_condition(*c))
+    else {
+        return (total_sneak_dice, Vec::new());
+    };
+    let cost = match prime {
+        Condition::CunningStrikeDaze => 2,
+        _ => 1,
+    };
+    if total_sneak_dice <= cost {
+        // RAW: can't reduce sneak below 1 die. Leave the prime up — the
+        // rogue will get another chance next swing or next round.
+        return (total_sneak_dice, Vec::new());
+    }
+    let remaining = total_sneak_dice - cost;
+    let dc = rogue.spell_save_dc(AbilityScoreType::Dexterity);
+    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+    match prime {
+        Condition::CunningStrikePoison => {
+            encounter.log(format!(
+                "  cunning strike (poison): -1d6 sneak \u{2192} CON save vs DC {}",
+                dc
+            ));
+            let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
+            if !save.passed() {
+                encounter.log("  cunning strike (poison): target is poisoned.");
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: target_id,
+                    condition: Condition::Poisoned,
+                    timer: ConditionTimer::Rounds(10),
+                }));
+            }
+        }
+        Condition::CunningStrikeTrip => {
+            // Trip RAW: target must be Large or smaller. Sized cap mirrors
+            // Shove / Grapple's footprint gate.
+            let target_too_big = encounter
+                .actors
+                .get(&target_id)
+                .is_some_and(|t| t.size().ordinal() > crate::engine::types::Size::Large.ordinal());
+            if target_too_big {
+                encounter
+                    .log("  cunning strike (trip): target too large to knock down.".to_string());
+            } else {
+                encounter.log(format!(
+                    "  cunning strike (trip): -1d6 sneak \u{2192} DEX save vs DC {}",
+                    dc
+                ));
+                let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, dc);
+                if !save.passed() {
+                    encounter.log("  cunning strike (trip): target is knocked prone.");
+                    effects.push(Box::new(ApplyCondition {
+                        actor_id: target_id,
+                        condition: Condition::Prone,
+                        timer: ConditionTimer::Permanent,
+                    }));
+                }
+            }
+        }
+        Condition::CunningStrikeDaze => {
+            encounter.log(format!(
+                "  cunning strike (daze): -2d6 sneak \u{2192} CON save vs DC {}",
+                dc
+            ));
+            let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
+            if !save.passed() {
+                encounter.log(
+                    "  cunning strike (daze): target loses their next action and reaction.",
+                );
+                // MindWhipped: action-economy clip on next turn.
+                // NoReaction: blocks reactions until start of next turn.
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: target_id,
+                    condition: Condition::MindWhipped,
+                    timer: ConditionTimer::Rounds(1),
+                }));
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: target_id,
+                    condition: Condition::NoReaction,
+                    timer: ConditionTimer::Rounds(1),
+                }));
+            }
+        }
+        Condition::CunningStrikeWithdraw => {
+            // RAW: "Immediately after the attack, you can move up to half
+            // your Speed without provoking opportunity attacks."
+            // Model: grant Movement budget for half speed + install
+            // Disengaging so the granted budget skips OAs.
+            let half_speed = rogue.speed() / 2.0;
+            encounter.log(format!(
+                "  cunning strike (withdraw): -1d6 sneak \u{2192} +{:.1}ft of OA-free movement.",
+                half_speed
+            ));
+            effects.push(Box::new(GiveResource {
+                actor_id: rogue_id,
+                resource: Resource::Movement(half_speed),
+            }));
+            effects.push(Box::new(ApplyCondition {
+                actor_id: rogue_id,
+                condition: Condition::Disengaging,
+                timer: ConditionTimer::UntilStartOfNextTurn,
+            }));
+        }
+        _ => {}
+    }
+    // Burn the prime regardless of save outcome — RAW: "the die cost is
+    // subtracted whether or not the effect lands."
+    if let Some(rogue) = encounter.actors.get_mut(&rogue_id) {
+        rogue.remove_condition(prime);
+    }
+    (remaining, effects)
 }
 
 /// 5e Sneak Attack trigger:

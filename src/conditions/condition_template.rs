@@ -925,6 +925,35 @@ pub enum Condition {
     /// timer (`UntilStartOfNextTurn`) caps an unused prime so it doesn't
     /// sit across rounds.
     TransmutedSpelling,
+    /// Cunning Strike: Poison primed (5e 2024 Rogue lv5 feature). The
+    /// rogue has spent a bonus action committing to the poison variant of
+    /// Cunning Strike; their next Sneak Attack rider trades one d6 of
+    /// damage for an attempt to poison the target. The shortsword reads
+    /// the prime, deducts 1d6 of sneak dice, and the target makes a CON
+    /// save vs the rogue's DEX-based DC; on fail they're `Poisoned` for
+    /// `Rounds(10)` (1 minute RAW). Consumed the moment a sneak attack
+    /// fires (or, if the sneak doesn't trigger this turn, the
+    /// `UntilStartOfNextTurn` timer drops the prime so it doesn't dangle).
+    CunningStrikePoison,
+    /// Cunning Strike: Trip primed (5e 2024 Rogue lv5 feature). Bonus-
+    /// action prime; the next sneak-attack swing trades one d6 of damage
+    /// for a DEX save (target Large or smaller). On fail the target is
+    /// knocked Prone. Consumed on sneak-attack trigger or
+    /// `UntilStartOfNextTurn`.
+    CunningStrikeTrip,
+    /// Cunning Strike: Withdraw primed (5e 2024 Rogue lv5 feature).
+    /// Bonus-action prime; the next sneak-attack swing trades one d6 of
+    /// damage to immediately move up to half the rogue's speed without
+    /// provoking opportunity attacks (Disengage envelope). Consumed
+    /// on sneak-attack trigger or `UntilStartOfNextTurn`.
+    CunningStrikeWithdraw,
+    /// Cunning Strike: Daze primed (5e 2024 Rogue lv5 feature). Bonus-
+    /// action prime; the next sneak-attack swing trades two d6 of damage
+    /// (RAW: 2d6 cost) for a CON save. On fail the target's next turn
+    /// loses its Action and reaction (we model via `MindWhipped`'s
+    /// action-economy clip plus `NoReaction`). Consumed on sneak-attack
+    /// trigger or `UntilStartOfNextTurn`.
+    CunningStrikeDaze,
 }
 
 impl Condition {
@@ -1057,6 +1086,10 @@ impl Condition {
             Condition::SubtleSpelling => "primed with subtle spell",
             Condition::TidesOfChaos => "riding the tides of chaos",
             Condition::TransmutedSpelling => "primed with transmuted spell",
+            Condition::CunningStrikePoison => "primed with cunning poison",
+            Condition::CunningStrikeTrip => "primed with cunning trip",
+            Condition::CunningStrikeWithdraw => "primed with cunning withdraw",
+            Condition::CunningStrikeDaze => "primed with cunning daze",
         }
     }
 
@@ -1155,6 +1188,10 @@ impl Condition {
                 | Condition::SubtleSpelling
                 | Condition::TidesOfChaos
                 | Condition::TransmutedSpelling
+                | Condition::CunningStrikePoison
+                | Condition::CunningStrikeTrip
+                | Condition::CunningStrikeWithdraw
+                | Condition::CunningStrikeDaze
         )
     }
 
@@ -1178,6 +1215,22 @@ impl Condition {
                 | Condition::SeekingSpelling
                 | Condition::SubtleSpelling
                 | Condition::TransmutedSpelling
+        )
+    }
+
+    /// True if this condition is one of the 2024 Rogue **Cunning Strike**
+    /// primes (`Poison` / `Trip` / `Withdraw` / `Daze`). Centralized so
+    /// the bonus-action validators, the shortsword consume site, and the
+    /// AI "don't double-prime" gate all read a single helper instead of
+    /// open-coding the four-way `||` check. Mutually exclusive RAW (and
+    /// in this engine): only one cunning prime is installed at a time.
+    pub fn is_cunning_strike_prime(&self) -> bool {
+        matches!(
+            self,
+            Condition::CunningStrikePoison
+                | Condition::CunningStrikeTrip
+                | Condition::CunningStrikeWithdraw
+                | Condition::CunningStrikeDaze
         )
     }
 

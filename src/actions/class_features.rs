@@ -483,6 +483,301 @@ impl Action for SteadyAim {
 
 pub static STEADY_AIM: LazyLock<SteadyAim> = LazyLock::new(|| SteadyAim {});
 
+/// 5e 2024 Rogue **Cunning Strike** flavors. Each variant is a bonus-action
+/// prime: the rogue declares which trick they'll layer onto their next
+/// Sneak Attack, trading one (or two) sneak-attack dice for a tactical
+/// effect. The shortsword's sneak-attack rider walks the active prime
+/// table, deducts the dice cost, and applies the effect — see the
+/// `consume_cunning_strike_*` chokepoints in `RogueShortsword::side_effects`.
+///
+/// We model the four 2024 base variants:
+/// - **Poison** (1d6 cost): CON save vs rogue's DEX-based DC; on fail the
+///   target is `Poisoned` for 10 rounds (1 minute RAW).
+/// - **Trip** (1d6 cost): DEX save vs the same DC; on fail the target is
+///   knocked Prone (Large or smaller — gated at the consume site).
+/// - **Withdraw** (1d6 cost): no save; immediately after the sneak the
+///   rogue moves up to half speed without provoking OAs.
+/// - **Daze** (2d6 cost): CON save; on fail the target's next turn loses
+///   their Action and Reaction (modeled via the existing `MindWhipped`
+///   action-clip plus `NoReaction`).
+///
+/// Each variant is validated mutually-exclusive (no double-priming) and
+/// only valid when sneak attack hasn't been used this turn — otherwise
+/// the bonus-action would be wasted on a swing that can't carry the
+/// rider. Self-clearing via `UntilStartOfNextTurn` if the rogue never
+/// connects with a sneak-eligible swing.
+///
+/// Cunning Strike: Poison variant. 1d6 sneak-attack die cost; on a
+/// successful sneak-attack hit, the target makes a CON save vs the
+/// rogue's DEX-based DC (8 + prof + DEX). On fail, Poisoned for 10
+/// rounds (1 minute RAW). Bonus-action prime.
+pub struct CunningStrikePoison {}
+
+impl Action for CunningStrikePoison {
+    fn name(&self) -> &str {
+        "cunning strike (poison)"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cs-poison", "cspoison", "cunningpoison"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        cunning_strike_prime_ok(encounter, caster_id)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::CunningStrikePoison,
+            timer: ConditionTimer::UntilStartOfNextTurn,
+        })]
+    }
+}
+
+pub static CUNNING_STRIKE_POISON: LazyLock<CunningStrikePoison> =
+    LazyLock::new(|| CunningStrikePoison {});
+
+/// Cunning Strike: Trip variant. 1d6 sneak-attack die cost; target makes
+/// a DEX save (Large or smaller). On fail, knocked Prone. Bonus-action
+/// prime.
+pub struct CunningStrikeTrip {}
+
+impl Action for CunningStrikeTrip {
+    fn name(&self) -> &str {
+        "cunning strike (trip)"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cs-trip", "cstrip", "cunningtrip"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        cunning_strike_prime_ok(encounter, caster_id)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::CunningStrikeTrip,
+            timer: ConditionTimer::UntilStartOfNextTurn,
+        })]
+    }
+}
+
+pub static CUNNING_STRIKE_TRIP: LazyLock<CunningStrikeTrip> =
+    LazyLock::new(|| CunningStrikeTrip {});
+
+/// Cunning Strike: Withdraw variant. 1d6 sneak-attack die cost; on a
+/// successful sneak-attack hit, the rogue immediately moves up to half
+/// their speed without provoking opportunity attacks. Bonus-action prime.
+pub struct CunningStrikeWithdraw {}
+
+impl Action for CunningStrikeWithdraw {
+    fn name(&self) -> &str {
+        "cunning strike (withdraw)"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cs-withdraw", "cswith", "cunningwithdraw"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        cunning_strike_prime_ok(encounter, caster_id)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::CunningStrikeWithdraw,
+            timer: ConditionTimer::UntilStartOfNextTurn,
+        })]
+    }
+}
+
+pub static CUNNING_STRIKE_WITHDRAW: LazyLock<CunningStrikeWithdraw> =
+    LazyLock::new(|| CunningStrikeWithdraw {});
+
+/// Cunning Strike: Daze variant. 2d6 sneak-attack die cost (RAW: 2
+/// dice — strongest variant); target makes a CON save on a successful
+/// sneak hit, and on fail their next turn loses its Action and Reaction
+/// (we layer the action clip via `MindWhipped` plus a `NoReaction`).
+/// Bonus-action prime.
+pub struct CunningStrikeDaze {}
+
+impl Action for CunningStrikeDaze {
+    fn name(&self) -> &str {
+        "cunning strike (daze)"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cs-daze", "csdaze", "cunningdaze"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Daze costs 2d6 — only worth priming when the rogue's sneak
+        // attack pool can spare 2 dice (level 3+ = 2d6, level 5+ = 3d6).
+        if !cunning_strike_prime_ok(encounter, caster_id) {
+            return false;
+        }
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            crate::actions::class_attacks::sneak_attack_dice_for_level(a.level()) >= 2
+        })
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::CunningStrikeDaze,
+            timer: ConditionTimer::UntilStartOfNextTurn,
+        })]
+    }
+}
+
+pub static CUNNING_STRIKE_DAZE: LazyLock<CunningStrikeDaze> =
+    LazyLock::new(|| CunningStrikeDaze {});
+
+/// Shared validation for the Cunning Strike bonus-action primes. Returns
+/// true when:
+/// - the rogue is combat-active,
+/// - no other Cunning Strike prime is already up (mutually exclusive — the
+///   first prime survives the bonus-action burn, the duplicate is the
+///   wasted resource so we reject),
+/// - the rogue hasn't already used Sneak Attack this turn (priming after
+///   the once-per-turn fuse is spent is just a bonus-action waste).
+fn cunning_strike_prime_ok(encounter: &EncounterInstance, caster_id: usize) -> bool {
+    let Some(actor) = encounter.actors.get(&caster_id) else {
+        return false;
+    };
+    if !actor.is_combat_active() {
+        return false;
+    }
+    if actor.sneak_attack_used() {
+        return false;
+    }
+    !actor.has_any_cunning_strike_prime()
+}
+
 /// Tag for Fighter's Indomitable — once per long rest.
 pub const INDOMITABLE_TAG: &str = "fighter.indomitable";
 

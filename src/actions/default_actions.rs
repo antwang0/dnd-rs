@@ -814,6 +814,154 @@ impl Action for Hide {
 
 pub static HIDE: LazyLock<Hide> = LazyLock::new(|| Hide {});
 
+/// 5e Search action — Wisdom (Perception) check vs the Stealth DC of
+/// hidden enemies. Costs an Action. On success, every enemy within the
+/// searcher's normal sight range whose Stealth roll the Perception check
+/// beats loses their Hidden / Invisible cover. We approximate the
+/// "Stealth DC" with `12 + DEX modifier` (the standard passive-Stealth
+/// shape) per target, computed at the call site. Range is bounded by
+/// footprint-Chebyshev gap of 12 (60 ft) — a reasonable in-combat
+/// "scan the room" envelope. The Perception check itself routes through
+/// `roll_ability_check` so racial / passive bonuses (Keen Senses, etc.)
+/// stack on top cleanly.
+pub struct Search {}
+
+impl Action for Search {
+    fn name(&self) -> &str {
+        "search"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sr", "scan", "look"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::conditions::Condition;
+        use crate::engine::types::{AbilityScoreType, Skill};
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+        const SEARCH_RANGE: isize = 12;
+
+        let Some(searcher) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let searcher_team = searcher.team();
+        let searcher_loc = searcher.location();
+        let searcher_size = get_tiles_from_size(searcher.size());
+        // Snapshot blinded — auto-fails the sight-based search.
+        let blinded = searcher.has_condition(Condition::Blinded);
+        if blinded {
+            encounter.log("  search: blinded, fails to spot anything.".to_string());
+            return Vec::new();
+        }
+
+        // Roll Perception once — the same roll compares against every
+        // hidden enemy's Stealth DC. Mirrors 5e Perception scan semantics.
+        let perception = encounter.roll_ability_check(
+            caster_id,
+            AbilityScoreType::Wisdom,
+            Some(Skill::Perception),
+        );
+        encounter.log(format!("  search: perception check = {}", perception));
+
+        // Walk the actor table; for any hidden / invisible enemy in range
+        // with LOS, compare the searcher's roll to the target's stealth
+        // DC. On a beat, reveal them.
+        let candidates: Vec<usize> = encounter
+            .actors
+            .iter()
+            .filter_map(|(id, a)| {
+                if *id == caster_id || a.team() == searcher_team || !a.is_combat_active() {
+                    return None;
+                }
+                if !a.has_condition(Condition::Hidden) && !a.has_condition(Condition::Invisible) {
+                    return None;
+                }
+                let dist = footprint_chebyshev(
+                    searcher_loc,
+                    searcher_size,
+                    a.location(),
+                    get_tiles_from_size(a.size()),
+                );
+                if dist > SEARCH_RANGE {
+                    return None;
+                }
+                Some(*id)
+            })
+            .collect();
+
+        let mut revealed = 0usize;
+        let mut effects: Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> =
+            Vec::new();
+        for target_id in candidates {
+            if !encounter.actor_has_line_of_sight(caster_id, target_id) {
+                continue;
+            }
+            let target = match encounter.actors.get(&target_id) {
+                Some(a) => a,
+                None => continue,
+            };
+            let dex_mod = target.ability_modifier(AbilityScoreType::Dexterity);
+            let mut dc = 12 + dex_mod;
+            if target.has_skill(Skill::Stealth) {
+                dc += target.proficiency_bonus();
+            }
+            if perception < dc {
+                continue;
+            }
+            let target_name = target.name().to_string();
+            if target.has_condition(Condition::Hidden) {
+                encounter.log(format!(
+                    "  search: spotted {} (DC {}) — hidden status broken.",
+                    target_name, dc
+                ));
+                effects.push(Box::new(
+                    crate::engine::side_effects::RemoveCondition {
+                        actor_id: target_id,
+                        condition: Condition::Hidden,
+                    },
+                ));
+                revealed += 1;
+            } else if target.has_condition(Condition::Invisible) {
+                // 5e: Search reveals an invisible creature's *location*; we
+                // model the location-reveal by tagging Outlined for a
+                // round. The Invisible condition itself stays (since
+                // becoming visible would dispel the spell), but Outlined
+                // grants attack advantage to allies for the round.
+                encounter.log(format!(
+                    "  search: pinpoint {}'s invisible location (DC {}).",
+                    target_name, dc
+                ));
+                effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
+                    actor_id: target_id,
+                    condition: Condition::Outlined,
+                    timer: crate::conditions::ConditionTimer::UntilStartOfNextTurn,
+                }));
+                revealed += 1;
+            }
+        }
+        if revealed == 0 {
+            encounter.log("  search: nothing new spotted.".to_string());
+        }
+        effects
+    }
+}
+
+pub static SEARCH: LazyLock<Search> = LazyLock::new(|| Search {});
+
 pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> = LazyLock::new(
     || {
         vec![
@@ -828,6 +976,7 @@ pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> =
             &*GRAPPLE,
             &*GRAPPLE_ESCAPE,
             &*HIDE,
+            &*SEARCH,
         ]
     },
 );

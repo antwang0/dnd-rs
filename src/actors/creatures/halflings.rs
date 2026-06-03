@@ -1,5 +1,8 @@
 use crate::actions::class_attacks::ROGUE_SHORTSWORD;
-use crate::actions::class_features::{CUNNING_DASH, CUNNING_DISENGAGE, CUNNING_HIDE};
+use crate::actions::class_features::{
+    CUNNING_DASH, CUNNING_DISENGAGE, CUNNING_HIDE, CUNNING_STRIKE_DAZE, CUNNING_STRIKE_POISON,
+    CUNNING_STRIKE_TRIP, CUNNING_STRIKE_WITHDRAW,
+};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
@@ -22,6 +25,11 @@ pub static HALFLING_SCOUT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
     actions.push(&*CUNNING_DASH);
     actions.push(&*CUNNING_DISENGAGE);
     actions.push(&*CUNNING_HIDE);
+    // 5e 2024 Rogue Cunning Strike (lv5): mirror the rogue chassis.
+    actions.push(&*CUNNING_STRIKE_POISON);
+    actions.push(&*CUNNING_STRIKE_TRIP);
+    actions.push(&*CUNNING_STRIKE_WITHDRAW);
+    actions.push(&*CUNNING_STRIKE_DAZE);
     CreatureTemplate {
         name: "Halfling Scout",
         // 'h' — distinct from 'H' (already taken by harpy).

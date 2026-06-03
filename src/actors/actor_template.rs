@@ -890,6 +890,16 @@ impl ActorInstance {
         self.conditions.keys().any(|c| c.is_metamagic_prime())
     }
 
+    /// True if any 2024 Rogue Cunning Strike prime (`Poison` / `Trip` /
+    /// `Withdraw` / `Daze`) is currently up on this actor. Mirrors
+    /// `has_any_metamagic_prime`'s shape — reads
+    /// `Condition::is_cunning_strike_prime` so the cohort lives in one
+    /// place. Used by the bonus-action validators, the shortsword
+    /// consume site, and the AI's "don't double-prime" gate.
+    pub fn has_any_cunning_strike_prime(&self) -> bool {
+        self.conditions.keys().any(|c| c.is_cunning_strike_prime())
+    }
+
     pub fn legendary_actions_per_round(&self) -> u32 {
         self.legendary_actions_per_round
     }

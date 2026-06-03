@@ -554,6 +554,16 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3q'''''''''''''. Cunning Strike (2024 Rogue lv5) — bonus-action
+        //                  primes that trade Sneak Attack dice for
+        //                  tactical effects (Poison / Trip). Fires when
+        //                  the rogue has a sneak-eligible adjacent
+        //                  target, the sneak charge is still fresh, and
+        //                  the sneak pool can spare a die.
+        if let Some(aei) = try_cunning_strike(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3q''''''''''. Font of Magic — convert spell slot ↔ sorcery
         //             points. Bonus action; only fires when one
         //             resource is critically low while the other has
@@ -1867,6 +1877,57 @@ fn try_steady_aim(encounter: &EncounterInstance, actor_id: usize) -> Option<Acti
         return None;
     }
     try_self_action(encounter, actor_id, "steady aim")
+}
+
+/// Cunning Strike — 5e 2024 Rogue lv5 bonus-action primes. Trades a
+/// Sneak Attack die for one of:
+/// - Poison: CON save or Poisoned for 10 rounds (most generally useful
+///   debuff so it's the AI's first pick).
+/// - Trip: DEX save or Prone (high payoff vs ranged targets but the
+///   rogue's own next swing benefits the least; we save it for backup).
+///
+/// Gates:
+/// - The rogue's once-per-turn Sneak Attack hasn't been spent yet.
+/// - No Cunning Strike prime is already active (mutually exclusive).
+/// - A sneak-eligible enemy is adjacent (i.e. footprint-touching) so the
+///   prime is consumed this turn — the rogue's shortsword is melee-only,
+///   and primes self-clear via `UntilStartOfNextTurn`.
+/// - The shortsword action is installed (otherwise priming is pointless).
+/// - Sneak attack pool ≥ 2 dice so the consume gate (`pool > cost`) accepts
+///   the deduction. At level 1 the pool is 1d6 — priming a Cunning Strike
+///   would dangle since `consume_cunning_strike` refuses to reduce
+///   below 1 die.
+///
+/// Returns the best installable variant, or None if the gate fails.
+/// Withdraw / Daze are intentionally skipped: Withdraw is a kiting tool
+/// the simple AI doesn't strategize around, and Daze's 2-die cost is
+/// rarely worth the loss in burst damage compared to Poison's 1-die.
+fn try_cunning_strike(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.sneak_attack_used() {
+        return None;
+    }
+    // Mutually exclusive: if any prime is up, do nothing.
+    if actor.has_any_cunning_strike_prime() {
+        return None;
+    }
+    let level = actor.level();
+    if crate::actions::class_attacks::sneak_attack_dice_for_level(level) < 2 {
+        return None;
+    }
+    // Need a sneak-eligible adjacent enemy. Use gap-0 (footprint-touching)
+    // since the rogue's shortsword reach is 1 tile.
+    if !any_enemy_within(encounter, actor_id, 0) {
+        return None;
+    }
+    // Prefer Poison — broadest debuff (disadvantage on attacks and
+    // ability checks across the full 10-round timer). Falls through to
+    // Trip if Poison isn't installed.
+    try_self_action(encounter, actor_id, "cunning strike (poison)")
+        .or_else(|| try_self_action(encounter, actor_id, "cunning strike (trip)"))
 }
 
 /// Tides of Chaos — Wild Magic Sorcerer 1/long-rest bonus action.
@@ -4242,6 +4303,27 @@ mod tests {
             let _ = e.instantiate_creature(&TIEFLING_TEMPLATE, Coordinate::new(28, 6), 0, 19);
             let _ = e.instantiate_creature(&GNOME_TEMPLATE, Coordinate::new(28, 8), 0, 20);
             let _ = e.instantiate_creature(&DRAGONBORN_TEMPLATE, Coordinate::new(28, 10), 0, 21);
+            // Latest addition: a level-3 Rogue. Exercises the new 2024
+            // Cunning Strike bonus-action primes (Poison / Trip) and
+            // the Search default action through the AI picker. We bump
+            // the rogue's level to 3 directly so the sneak pool can
+            // spare the Cunning Strike die cost.
+            use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+            let rogue_id = e
+                .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(28, 12), 0, 22)
+                .unwrap();
+            {
+                use crate::engine::dice::FastRandRoller;
+                e.actors.get_mut(&rogue_id).unwrap().award_xp(10_000);
+                let mut roller = FastRandRoller::with_seed(seed);
+                while e.actors[&rogue_id].level() < 3
+                    && e.actors
+                        .get_mut(&rogue_id)
+                        .unwrap()
+                        .try_level_up(&mut roller)
+                        .is_some()
+                {}
+            }
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;
@@ -5511,6 +5593,93 @@ mod tests {
         assert!(
             try_steady_aim(&e, rogue).is_none(),
             "Helped prime already up → skip"
+        );
+    }
+
+    /// `try_cunning_strike` AI heuristic: only fires when the rogue has
+    /// an adjacent sneak-eligible enemy, the once-per-turn sneak charge
+    /// is fresh, the sneak pool can spare a die (level >= 3), and no
+    /// prime is already up.
+    #[test]
+    fn cunning_strike_ai_gates() {
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::FastRandRoller;
+        use crate::engine::encounter::EncounterInstance;
+        use crate::engine::terrain_gen::TerrainGenParams;
+        use crate::engine::types::Coordinate;
+
+        let tp = TerrainGenParams {
+            width: 20,
+            height: 20,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(3)).unwrap();
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&rogue).unwrap().reset_for_new_round();
+
+        // No adjacent enemy → skip.
+        assert!(
+            try_cunning_strike(&e, rogue).is_none(),
+            "no adjacent enemy → skip"
+        );
+
+        // Adjacent enemy but rogue level 1 (sneak pool < 2) → skip.
+        let _z = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        assert!(
+            try_cunning_strike(&e, rogue).is_none(),
+            "level-1 rogue: pool too small → skip"
+        );
+
+        // Level the rogue to 3 so the sneak pool is 2d6.
+        e.actors.get_mut(&rogue).unwrap().award_xp(10_000);
+        let mut roller = FastRandRoller::with_seed(0);
+        while e.actors[&rogue].level() < 3
+            && e.actors
+                .get_mut(&rogue)
+                .unwrap()
+                .try_level_up(&mut roller)
+                .is_some()
+        {}
+
+        // Now the AI should fire.
+        assert!(
+            try_cunning_strike(&e, rogue).is_some(),
+            "lv3 rogue + adjacent enemy → fires"
+        );
+
+        // With a prime already up → skip.
+        e.actors.get_mut(&rogue).unwrap().add_condition(
+            Condition::CunningStrikePoison,
+            ConditionTimer::UntilStartOfNextTurn,
+        );
+        assert!(
+            try_cunning_strike(&e, rogue).is_none(),
+            "prime already up → skip"
+        );
+
+        // Strip the prime, mark sneak attack used → skip (no swing left
+        // to consume the prime).
+        e.actors
+            .get_mut(&rogue)
+            .unwrap()
+            .remove_condition(Condition::CunningStrikePoison);
+        e.actors.get_mut(&rogue).unwrap().mark_sneak_attack_used();
+        assert!(
+            try_cunning_strike(&e, rogue).is_none(),
+            "sneak attack already spent → skip"
         );
     }
 

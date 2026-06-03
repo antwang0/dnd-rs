@@ -1,5 +1,8 @@
 use crate::actions::class_attacks::ROGUE_SHORTSWORD;
-use crate::actions::class_features::{CUNNING_DASH, CUNNING_DISENGAGE, CUNNING_HIDE, STEADY_AIM};
+use crate::actions::class_features::{
+    CUNNING_DASH, CUNNING_DISENGAGE, CUNNING_HIDE, CUNNING_STRIKE_DAZE, CUNNING_STRIKE_POISON,
+    CUNNING_STRIKE_TRIP, CUNNING_STRIKE_WITHDRAW, STEADY_AIM,
+};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
@@ -22,6 +25,15 @@ pub static ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Pairs naturally with Sneak Attack's advantage trigger so a sniping
     // rogue can fire mid-encounter without needing an adjacent ally.
     actions.push(&*STEADY_AIM);
+    // 5e 2024 Rogue Cunning Strike (lv5): bonus-action primes that trade
+    // Sneak Attack dice for tactical effects on the next sneak hit.
+    // Mutually exclusive (one prime at a time) — the shortsword's
+    // `consume_cunning_strike` chokepoint picks the first active prime
+    // and applies its effect.
+    actions.push(&*CUNNING_STRIKE_POISON);
+    actions.push(&*CUNNING_STRIKE_TRIP);
+    actions.push(&*CUNNING_STRIKE_WITHDRAW);
+    actions.push(&*CUNNING_STRIKE_DAZE);
     CreatureTemplate {
         name: "Rogue",
         glyph: 'R',

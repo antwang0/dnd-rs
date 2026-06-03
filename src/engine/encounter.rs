@@ -15113,6 +15113,14 @@ mod tests {
         let names: Vec<&str> = e.actors[&rogue].actions.iter().map(|a| a.name()).collect();
         assert!(names.contains(&"cunning dash"));
         assert!(names.contains(&"cunning disengage"));
+        // Cunning Strike variants (2024 lv5 feature) should be in the
+        // template's action list too.
+        assert!(names.contains(&"cunning strike (poison)"));
+        assert!(names.contains(&"cunning strike (trip)"));
+        assert!(names.contains(&"cunning strike (withdraw)"));
+        assert!(names.contains(&"cunning strike (daze)"));
+        // Search default action — picked up via DEFAULT_ACTIONS.
+        assert!(names.contains(&"search"));
     }
 
     #[test]
@@ -31298,5 +31306,321 @@ mod tests {
         // check — the helper short-circuits on resource gates first).
         let penalty = e.apply_bend_luck_penalty(sorcerer, sorcerer);
         assert_eq!(penalty, 0, "0 SP should suppress Bend Luck");
+    }
+
+    /// Search action: a successful Perception check reveals an enemy
+    /// hiding within line-of-sight. We pin the d20 with a seeded roller
+    /// so the test is deterministic.
+    #[test]
+    fn search_reveals_hidden_enemy() {
+        use crate::actions::default_actions::SEARCH;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let searcher = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let hider = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&hider)
+            .unwrap()
+            .add_condition(Condition::Hidden, ConditionTimer::Permanent);
+        // Drive the perception roll high so it definitely beats the
+        // zombie's 12 + DEX(-2) = 10 stealth DC. The roller is seeded;
+        // sweep until we get a search that reveals.
+        let mut revealed = false;
+        for _ in 0..50 {
+            // Re-add the Hidden flag each iteration so a failed sweep
+            // doesn't leave it stripped.
+            e.actors
+                .get_mut(&hider)
+                .unwrap()
+                .add_condition(Condition::Hidden, ConditionTimer::Permanent);
+            let effects = SEARCH.side_effects(&mut e, searcher, None, None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if !e.actors[&hider].has_condition(Condition::Hidden) {
+                revealed = true;
+                break;
+            }
+        }
+        assert!(revealed, "search should eventually reveal the hidden enemy");
+    }
+
+    /// Search action: a blinded searcher auto-fails — no perception
+    /// roll, no reveal.
+    #[test]
+    fn search_blinded_auto_fails() {
+        use crate::actions::default_actions::SEARCH;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let searcher = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let hider = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&hider)
+            .unwrap()
+            .add_condition(Condition::Hidden, ConditionTimer::Permanent);
+        e.actors
+            .get_mut(&searcher)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Permanent);
+        let effects = SEARCH.side_effects(&mut e, searcher, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        // Blind searcher returns no effects, hider stays hidden.
+        assert!(
+            e.actors[&hider].has_condition(Condition::Hidden),
+            "blinded searcher should not reveal"
+        );
+    }
+
+    /// Cunning Strike (Poison) bonus action installs the prime condition
+    /// on the rogue and is mutually exclusive with the other variants.
+    #[test]
+    fn cunning_strike_poison_primes_rogue() {
+        use crate::actions::class_features::{
+            CUNNING_STRIKE_POISON, CUNNING_STRIKE_TRIP,
+        };
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let aei = ActionExecutionInfo::new(&*CUNNING_STRIKE_POISON, rogue, None, None, None);
+        assert!(aei.validate(&e), "fresh rogue should be able to prime");
+        let effects = CUNNING_STRIKE_POISON.side_effects(&mut e, rogue, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&rogue].has_condition(Condition::CunningStrikePoison));
+        // Second variant should be refused while the first prime is up.
+        let aei2 = ActionExecutionInfo::new(&*CUNNING_STRIKE_TRIP, rogue, None, None, None);
+        assert!(
+            !aei2.validate(&e),
+            "second prime should be refused while another is active"
+        );
+    }
+
+    /// Cunning Strike (Daze) requires the rogue's sneak attack pool to
+    /// hold at least 2 dice. Level-1 rogues only have 1d6, so the prime
+    /// is refused; promoting to lv3+ unlocks it.
+    #[test]
+    fn cunning_strike_daze_gated_on_sneak_pool() {
+        use crate::actions::class_features::CUNNING_STRIKE_DAZE;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Rogue spawns at level 1 → sneak pool 1d6 → Daze refused.
+        let aei = ActionExecutionInfo::new(&*CUNNING_STRIKE_DAZE, rogue, None, None, None);
+        assert!(!aei.validate(&e), "level-1 rogue: pool too small for Daze");
+        // Bump the rogue to level 3 (sneak pool 2d6). Use the public
+        // level-up path so the test doesn't poke at private fields.
+        e.actors.get_mut(&rogue).unwrap().award_xp(10_000);
+        let mut roller = crate::engine::dice::FastRandRoller::with_seed(0);
+        while e
+            .actors
+            .get_mut(&rogue)
+            .unwrap()
+            .try_level_up(&mut roller)
+            .is_some()
+            && e.actors[&rogue].level() < 3
+        {}
+        // Re-validate — now the daze pool gate should pass.
+        let aei2 = ActionExecutionInfo::new(&*CUNNING_STRIKE_DAZE, rogue, None, None, None);
+        assert!(aei2.validate(&e), "level-3 rogue: Daze unlocked");
+    }
+
+    /// End-to-end: with the Cunning Strike (Withdraw) prime up and a
+    /// sneak-eligible hit landing, the rogue ends the swing with a
+    /// fresh Movement budget AND the Disengaging condition installed.
+    /// The Disengaging install is the load-bearing OA-bypass.
+    #[test]
+    fn cunning_strike_withdraw_grants_oa_free_movement() {
+        use crate::actions::class_attacks::ROGUE_SHORTSWORD;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut withdraw_fired = false;
+        for seed in 0..200 {
+            let mut e = ei_seeded(15, 15, &[], seed);
+            let rogue = e
+                .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            // Level the rogue to 3 so the sneak pool can spare a die.
+            e.actors.get_mut(&rogue).unwrap().award_xp(10_000);
+            let mut roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            while e.actors[&rogue].level() < 3
+                && e.actors
+                    .get_mut(&rogue)
+                    .unwrap()
+                    .try_level_up(&mut roller)
+                    .is_some()
+            {}
+            let _ally = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 3), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let max = e.actors[&target].max_hitpoints();
+            e.actors.get_mut(&target).unwrap().heal(max);
+            e.actors.get_mut(&rogue).unwrap().add_condition(
+                Condition::CunningStrikeWithdraw,
+                ConditionTimer::UntilStartOfNextTurn,
+            );
+            let targets = vec![target];
+            let effects = ROGUE_SHORTSWORD.side_effects(
+                &mut e,
+                rogue,
+                Some(&targets),
+                None,
+                None,
+            );
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            // Withdraw is no-save: if the prime consumed, the rogue must
+            // hold Disengaging now and the prime must be gone.
+            let prime_consumed = !e.actors[&rogue].has_condition(Condition::CunningStrikeWithdraw);
+            let disengaging = e
+                .actors
+                .get(&rogue)
+                .is_some_and(|a| a.has_condition(Condition::Disengaging));
+            if prime_consumed && disengaging {
+                withdraw_fired = true;
+                break;
+            }
+        }
+        assert!(
+            withdraw_fired,
+            "cunning strike (withdraw): should install Disengaging on a sneak hit at least once",
+        );
+    }
+
+    /// End-to-end: with the Cunning Strike (Poison) prime up and a hit
+    /// landing on a target that fails the CON save, the target ends the
+    /// swing both damaged AND Poisoned. The prime is consumed regardless.
+    /// We give the rogue a friendly adjacent ally so sneak attack
+    /// triggers without rolling for advantage.
+    #[test]
+    fn cunning_strike_poison_applies_on_sneak_hit() {
+        use crate::actions::class_attacks::ROGUE_SHORTSWORD;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        // 200 swings is overkill: hit-rate ~50% × poison-save fail ~50%
+        // = ~25% per swing; one in 200 is a 0.99999999 floor. We swing
+        // at a fighter rather than a zombie because zombies are immune
+        // to Poisoned (the condition won't land even on a save fail).
+        let mut sneak_landed_with_poison = false;
+        for seed in 0..200 {
+            let mut e = ei_seeded(15, 15, &[], seed);
+            let rogue = e
+                .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            // Level the rogue to 3 so the sneak pool is 2d6 — a level-1
+            // rogue's 1d6 pool gets refused by `consume_cunning_strike`
+            // (can't reduce dice below 1 RAW).
+            e.actors.get_mut(&rogue).unwrap().award_xp(10_000);
+            let mut roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            while e.actors[&rogue].level() < 3
+                && e.actors
+                    .get_mut(&rogue)
+                    .unwrap()
+                    .try_level_up(&mut roller)
+                    .is_some()
+            {}
+            // Ally adjacent to target → ally-adjacency sneak trigger.
+            let _ally = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 3), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            // Heal the target up so the hit can't down it before the
+            // poison rider lands.
+            let max = e.actors[&target].max_hitpoints();
+            e.actors.get_mut(&target).unwrap().heal(max);
+            // Install the Cunning Strike (Poison) prime.
+            e.actors.get_mut(&rogue).unwrap().add_condition(
+                Condition::CunningStrikePoison,
+                ConditionTimer::UntilStartOfNextTurn,
+            );
+            let targets = vec![target];
+            let effects = ROGUE_SHORTSWORD.side_effects(
+                &mut e,
+                rogue,
+                Some(&targets),
+                None,
+                None,
+            );
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            // Prime is consumed only when sneak actually fired.
+            let prime_consumed = !e.actors[&rogue].has_condition(Condition::CunningStrikePoison);
+            let poisoned = e
+                .actors
+                .get(&target)
+                .is_some_and(|a| a.has_condition(Condition::Poisoned));
+            if prime_consumed && poisoned {
+                sneak_landed_with_poison = true;
+                break;
+            }
+        }
+        assert!(
+            sneak_landed_with_poison,
+            "cunning strike (poison): rider should land at least once across 200 swings",
+        );
+    }
+
+    /// Seeded sibling of `ei_with_terrain` — same hand-crafted terrain
+    /// shape but the encounter's RNG is initialized from `seed` so callers
+    /// can sweep seeds for probabilistic assertions while keeping a
+    /// deterministic per-iteration roll trace.
+    fn ei_seeded(
+        width: usize,
+        height: usize,
+        walls: &[(isize, isize)],
+        seed: u64,
+    ) -> EncounterInstance {
+        let tp = TerrainGenParams {
+            width,
+            height,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(seed)).unwrap();
+        e.terrain = vec![
+            TerrainInfo {
+                terrain_type: TerrainType::Floor,
+            };
+            width * height
+        ];
+        for &(x, y) in walls {
+            let idx = e.idx(Coordinate::new(x, y)).unwrap();
+            e.terrain[idx] = TerrainInfo {
+                terrain_type: TerrainType::Wall,
+            };
+        }
+        e
     }
 }
