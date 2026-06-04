@@ -3306,6 +3306,7 @@ impl Action for InfernalLegacyRebuke {
         // 3d10 fire — matches Hellish Rebuke cast at level 2 (RAW).
         let (dmg, _) = crate::actions::spells::save_for_half_damage(
             encounter,
+            caster_id,
             target_id,
             AbilityScoreType::Dexterity,
             dc,

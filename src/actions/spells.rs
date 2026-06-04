@@ -564,11 +564,20 @@ fn enemy_burst_save_only(
 /// the save (e.g. attach a rider only on fail). The roll + save log
 /// line is emitted with `action_name`; callers don't need to re-log
 /// the breakdown. Folds the recurring `let raw = roll(); let dmg = if
-/// save.passed() { raw / 2 } else { raw };` shape used by ~6 single-
-/// target save-or-half spells (Hellish Rebuke, Mind Whip, Hellfire
-/// Orb, the Smite spells, etc.) into one chokepoint.
+/// save.passed() { raw / 2 } else { raw };` shape used by ~8 single-
+/// target save-or-half spells (Hellish Rebuke, Mind Whip, Mind Spike,
+/// Synaptic Static, Dawn, Disintegrate, Blight, Delayed Blast Fireball,
+/// etc.) into one chokepoint.
+///
+/// Routes the save through `roll_save_against_caster` so the Sorcerer
+/// Heightened Spell metamagic prime forces disadvantage on the first
+/// save (RAW: "the target has disadvantage on the saving throw"). The
+/// helper consumes the prime on its first call — subsequent saves in
+/// the same cast fall through to the normal save path.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn save_for_half_damage(
     encounter: &mut EncounterInstance,
+    caster_id: usize,
     target_id: usize,
     save_ability: AbilityScoreType,
     dc: i32,
@@ -577,7 +586,7 @@ pub(crate) fn save_for_half_damage(
     action_name: &str,
 ) -> (u32, bool) {
     let raw = encounter.roll(&dice);
-    let save = encounter.roll_save(target_id, save_ability, dc);
+    let save = encounter.roll_save_against_caster(target_id, save_ability, dc, caster_id);
     let dmg = if save.passed() { raw / 2 } else { raw };
     encounter.log(format!(
         "  {}: {}({}) = {} {:?} ({})",
@@ -1515,7 +1524,11 @@ impl Action for CauseFear {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        // Caster-aware save so Heightened Spell can force disadvantage
+        // on this single save-or-suck roll. RAW: the prime affects the
+        // first save against the spell, which here is the only save.
+        let save =
+            encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -4534,7 +4547,16 @@ impl Action for HypnoticPattern {
             {
                 continue;
             }
-            let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+            // Caster-aware save so the Sorcerer Heightened Spell prime
+            // can force disadvantage on the *first* save in the burst
+            // (RAW). The helper consumes the prime on its first call —
+            // subsequent targets fall through to the normal save path.
+            let save = encounter.roll_save_against_caster(
+                target_id,
+                AbilityScoreType::Wisdom,
+                dc,
+                caster_id,
+            );
             if save.passed() {
                 continue;
             }
@@ -9152,7 +9174,10 @@ impl Action for Telekinesis {
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
         let caster_loc = caster.location();
-        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, dc);
+        // Caster-aware save so Heightened Spell can force disadvantage
+        // on the single save-or-suck STR roll.
+        let save =
+            encounter.roll_save_against_caster(target_id, AbilityScoreType::Strength, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -11373,6 +11398,7 @@ impl Action for HellishRebuke {
         let dice_count = 1 + lvl; // 2d10 at lv1, 3d10 at lv2, etc.
         let (dmg, _) = save_for_half_damage(
             encounter,
+            caster_id,
             target_id,
             AbilityScoreType::Dexterity,
             dc,
@@ -13551,6 +13577,7 @@ impl Action for NegativeEnergyFlood {
         ]);
         let (dmg, _) = save_for_half_damage(
             encounter,
+            caster_id,
             target_id,
             AbilityScoreType::Constitution,
             dc,
@@ -14352,6 +14379,7 @@ impl Action for MentalPrison {
         ]);
         let (dmg, passed) = save_for_half_damage(
             encounter,
+            caster_id,
             target_id,
             AbilityScoreType::Intelligence,
             dc,
@@ -15700,6 +15728,7 @@ impl Action for MindSpike {
         ]);
         let (dmg, _passed) = save_for_half_damage(
             encounter,
+            caster_id,
             target_id,
             AbilityScoreType::Wisdom,
             dc,
@@ -15784,6 +15813,7 @@ impl Action for PsychicLance {
         ]);
         let (dmg, passed) = save_for_half_damage(
             encounter,
+            caster_id,
             target_id,
             AbilityScoreType::Intelligence,
             dc,
@@ -16018,6 +16048,7 @@ impl Action for DissonantWhispers {
         let caster_loc = caster.location();
         let (dmg, passed) = save_for_half_damage(
             encounter,
+            caster_id,
             target_id,
             AbilityScoreType::Wisdom,
             dc,
@@ -18275,6 +18306,7 @@ impl Action for Blight {
         ]);
         let (dmg, _) = save_for_half_damage(
             encounter,
+            caster_id,
             target_id,
             AbilityScoreType::Constitution,
             dc,
@@ -18430,6 +18462,7 @@ impl Action for Harm {
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
         let (dmg, passed) = save_for_half_damage(
             encounter,
+            caster_id,
             target_id,
             AbilityScoreType::Constitution,
             dc,
