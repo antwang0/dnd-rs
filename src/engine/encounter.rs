@@ -10054,6 +10054,37 @@ mod tests {
             .has_condition(Condition::Frightened));
     }
 
+    /// `effectively_immune_to_condition`: combines template-level and
+    /// dynamic immunities, so a Halfling (no static `Frightened` entry
+    /// in `condition_immunities` but has Brave) is reported as immune to
+    /// Frightened — mirrors the install-side gate in `add_condition`.
+    /// Validates the AI / spell pruning helpers see dynamic immunities
+    /// the same way the install path does.
+    #[test]
+    fn effective_immunity_honors_dynamic_immunities() {
+        use crate::actors::creatures::halflings::HALFLING_SCOUT_TEMPLATE;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let halfling = e
+            .instantiate_creature(&HALFLING_SCOUT_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        // Static immunity check would miss the halfling — it has no
+        // template-level Frightened immunity, only the Brave trait.
+        assert!(!e.actors[&halfling].is_immune_to_condition(Condition::Frightened));
+        // Effective immunity should see Brave and report true.
+        assert!(
+            e.actors[&halfling]
+                .effectively_immune_to_condition(Condition::Frightened),
+            "Halfling Brave's dynamic immunity should surface through the effective check"
+        );
+        // Baseline rogue has neither static nor dynamic immunity.
+        assert!(!e.actors[&rogue].is_immune_to_condition(Condition::Frightened));
+        assert!(!e.actors[&rogue].effectively_immune_to_condition(Condition::Frightened));
+    }
+
     /// 5e Drow Fey Ancestry: advantage on saves vs Charmed AND magic
     /// can't put a drow to sleep. Engine approximates both as install
     /// immunity at `add_condition`. End-to-end check that a force-applied

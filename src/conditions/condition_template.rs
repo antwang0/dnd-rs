@@ -738,10 +738,6 @@ pub enum Condition {
     /// save). We collapse to a condition-tagged DoT on targets caught in
     /// the initial placement.
     CloudOfDaggered,
-    /// Counterspelled — marker placed briefly during the counter-magic
-    /// resolution. Not a real debuff; used by the engine to track that
-    /// a spell was counterspelled this stack frame. Inert otherwise.
-    Counterspelled,
     /// Menacing Attack primed (5e Fighter Battle Master maneuver, once
     /// per long rest in our model). Bonus action prime; the next melee
     /// weapon hit forces the target to make a WIS save vs the fighter's
@@ -1100,7 +1096,6 @@ impl Condition {
             Condition::SpiritGuarding => "guarded by spirits",
             Condition::Moonbeamed => "caught in moonbeam",
             Condition::CloudOfDaggered => "shredded by daggers",
-            Condition::Counterspelled => "counterspelled",
             Condition::MenacingAttacking => "primed to menace",
             Condition::DisarmingAttacking => "primed to disarm",
             Condition::PushingAttacking => "primed to push",

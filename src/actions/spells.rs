@@ -4004,9 +4004,10 @@ impl Action for Command {
         };
         // 5e Command: undead and creatures that don't understand the
         // caster's language are immune. Charm immunity is the closest
-        // proxy for "won't be cowed" in our pool.
+        // proxy for "won't be cowed" in our pool — honor dynamic
+        // immunities too (Fey Ancestry / MindBlanked).
         if let Some(target) = encounter.actors.get(&target_id)
-            && target.is_immune_to_condition(Condition::Charmed)
+            && target.effectively_immune_to_condition(Condition::Charmed)
         {
             encounter.log("  command: target is immune".to_string());
             return Vec::new();
@@ -4484,12 +4485,13 @@ impl Action for HypnoticPattern {
         let mut conditions_tracked: Vec<(usize, Condition)> = Vec::new();
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         for target_id in encounter.neutral_burst_targets(caster_id, point, 4) {
-            // Charm-immune creatures shrug off the pattern. We don't
-            // log per-target immunity for AoE — would be noisy.
+            // Charm-immune creatures shrug off the pattern (template or
+            // dynamic — Fey Ancestry / MindBlanked). We don't log per-
+            // target immunity for AoE — would be noisy.
             if encounter
                 .actors
                 .get(&target_id)
-                .is_some_and(|t| t.is_immune_to_condition(Condition::Charmed))
+                .is_some_and(|t| t.effectively_immune_to_condition(Condition::Charmed))
             {
                 continue;
             }
@@ -10198,10 +10200,11 @@ impl Action for CompelledDuel {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        // Charm-immune creatures (undead / constructs in our pool) shrug
-        // off the enchantment by RAW — no save needed.
+        // Charm-immune creatures (undead / constructs in our pool, plus
+        // Fey Ancestry / MindBlanked dynamic immunities) shrug off the
+        // enchantment by RAW — no save needed.
         if let Some(target) = encounter.actors.get(&target_id)
-            && target.is_immune_to_condition(Condition::Charmed)
+            && target.effectively_immune_to_condition(Condition::Charmed)
         {
             encounter.log("  compelled duel: target resists enchantment".to_string());
             return Vec::new();
@@ -16724,11 +16727,13 @@ impl Action for FogCloud {
         for tid in encounter.neutral_burst_targets(caster_id, point, RADIUS) {
             // Skip targets that are immune to Blinded (treat the
             // condition table as the source of truth for "can this
-            // actor be obscured?").
+            // actor be obscured?"). Honors dynamic immunities too even
+            // though no current source dynamically immunes Blinded —
+            // future-proof against feature additions.
             let immune = encounter
                 .actors
                 .get(&tid)
-                .is_some_and(|a| a.is_immune_to_condition(Condition::Blinded));
+                .is_some_and(|a| a.effectively_immune_to_condition(Condition::Blinded));
             if immune {
                 continue;
             }

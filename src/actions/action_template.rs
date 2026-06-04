@@ -111,7 +111,12 @@ pub fn pool_sweep_targets(
             if *id == caster_id || !a.is_combat_active() {
                 return None;
             }
-            if a.is_immune_to_condition(skip_immune_to) {
+            // Honor dynamic immunities too — a Fey Ancestry actor
+            // dodges Sleep's pool sweep, a Halfling Brave dodges any
+            // future fear-pool sweep. The condition can't install on
+            // them anyway, so burning the pool's HP budget on a no-op
+            // re-entry would be wasted.
+            if a.effectively_immune_to_condition(skip_immune_to) {
                 return None;
             }
             let dist = footprint_chebyshev(

@@ -1387,6 +1387,19 @@ impl ActorInstance {
         self.condition_immunities.contains(&c)
     }
 
+    /// Combines template-level (`is_immune_to_condition`) and dynamic
+    /// (`dynamic_immunity_to`) immunity gates. Mirrors the install-side
+    /// gate in `add_condition` — if both bail on installing the
+    /// condition, this helper returns true. Use this from any
+    /// "should I bother targeting them?" prune (AI heuristics, spell
+    /// validators, AoE early-pruning) so dynamic immunities (Halfling
+    /// Brave's Frightened, Fey Ancestry's Charmed / Asleep, Heroic's
+    /// Frightened, MindBlanked's Charmed) are honored alongside the
+    /// static template immunities.
+    pub fn effectively_immune_to_condition(&self, c: Condition) -> bool {
+        self.condition_immunities.contains(&c) || self.dynamic_immunity_to(c)
+    }
+
     pub fn remove_condition(&mut self, c: Condition) -> bool {
         let removed = self.conditions.remove(&c).is_some();
         if removed {

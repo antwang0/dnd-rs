@@ -2005,7 +2005,7 @@ impl Action for LuringSong {
             if target.team() == caster_team || !target.is_combat_active() {
                 continue;
             }
-            if target.is_immune_to_condition(Condition::Charmed) {
+            if target.effectively_immune_to_condition(Condition::Charmed) {
                 continue;
             }
             let dist = crate::engine::util::footprint_chebyshev(
@@ -4041,9 +4041,10 @@ impl Action for VampireCharmingGaze {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        // Charm-immune creatures (undead / constructs) shrug it off.
+        // Charm-immune creatures (undead / constructs, plus Fey Ancestry
+        // / MindBlanked dynamic immunities) shrug it off.
         if let Some(target) = encounter.actors.get(&target_id)
-            && target.is_immune_to_condition(Condition::Charmed)
+            && target.effectively_immune_to_condition(Condition::Charmed)
         {
             encounter.log("  charming gaze: target is immune".to_string());
             return Vec::new();

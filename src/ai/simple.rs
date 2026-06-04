@@ -2688,7 +2688,12 @@ fn try_fear_aura(
             **id != actor_id
                 && a.team() != team
                 && a.is_combat_active()
-                && !a.is_immune_to_condition(Condition::Frightened)
+                // Honor dynamic immunities too — a Halfling Brave or
+                // Heroic-buffed ally would resist the install even if
+                // their template lacks the static immunity flag, so
+                // they shouldn't count toward the "is the aura worth it"
+                // gate.
+                && !a.effectively_immune_to_condition(Condition::Frightened)
                 && !a.has_condition(Condition::Frightened)
                 && actor.footprint_gap_to(a) <= 8
         })
