@@ -1659,7 +1659,17 @@ impl ActorInstance {
         // doubles the larger number — matching the "Haste doubles your
         // speed" RAW phrasing.
         let fly = if self.has_condition(Condition::Flying) { 60.0 } else { 0.0 };
-        let raw = (self.base_speed + bonus + fly).max(0.0);
+        // 5e Spider Climb: climbing speed equal to walking speed. We
+        // approximate with a flat +30ft bump (half of Fly's +60ft) so
+        // the level-2 spell offers a meaningful kiting boost without
+        // dwarfing the level-3 Fly. Applied additively next to Fly so a
+        // creature with both buffs picks up the stack.
+        let climb = if self.has_condition(Condition::SpiderClimbing) {
+            30.0
+        } else {
+            0.0
+        };
+        let raw = (self.base_speed + bonus + fly + climb).max(0.0);
         // 5e Haste doubles speed; Slow halves it. If both happen to be
         // active (e.g. cross-cast), they cancel back to base — applying
         // the factor multiplicatively keeps the math symmetric.

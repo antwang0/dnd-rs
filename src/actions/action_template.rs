@@ -148,6 +148,18 @@ pub fn first_target_id(ids: Option<&Vec<usize>>) -> Option<usize> {
     ids.and_then(|v| v.first().copied())
 }
 
+/// Symmetric helper for `SinglePoint` / `Burst` schemas: extract the first
+/// `Coordinate` from the optional location list, returning `None` on
+/// empty / missing. Mirrors `first_target_id` — point-target side-effect
+/// builders (Fireball, Burning Hands, Sacred Burst, AoE-burst spells)
+/// all collapse to a single `let Some(point) = first_target_location(tl)`
+/// early-return instead of re-inlining `tl.and_then(|t| t.first().copied())`
+/// at every call site. Same chokepoint benefit: a future change to how
+/// SinglePoint args are surfaced lands in one place.
+pub fn first_target_location(locations: Option<&Vec<Coordinate>>) -> Option<Coordinate> {
+    locations.and_then(|v| v.first().copied())
+}
+
 /// Standard leveled-spell cost shape: one Action plus a level-`lvl` slot.
 /// Used by ~60 leveled-spell impls; the helper keeps the cost block to
 /// one line at the call site and gives us a single chokepoint for any

@@ -3,7 +3,8 @@ use std::sync::LazyLock;
 
 use crate::{
     actions::action_template::{
-        action_and_slot, bonus_action_and_slot, first_target_id, Action, TargetingSchema,
+        action_and_slot, bonus_action_and_slot, first_target_id, first_target_location, Action,
+        TargetingSchema,
     },
     actors::actor_template::ConcentrationData,
     conditions::{Condition, ConditionTimer},
@@ -788,7 +789,7 @@ impl Action for SacredBurst {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -1249,7 +1250,7 @@ impl Action for BurningHands {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -1618,7 +1619,7 @@ impl Action for Web {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -1860,7 +1861,7 @@ impl Action for FaerieFire {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -2093,7 +2094,7 @@ impl Action for MistyStep {
         // Destination must be a legal landing spot for this caster's full
         // footprint — same constraint as Move's pathing, minus the budget
         // check (Misty Step bypasses movement entirely).
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return false;
         };
         encounter.can_move_to(caster_id, point)
@@ -2106,7 +2107,7 @@ impl Action for MistyStep {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         // Misty Step is RAW explicitly OA-free since the caster doesn't
@@ -2368,7 +2369,7 @@ impl Action for AcidSplash {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -3448,7 +3449,7 @@ impl Action for Shatter {
         target_locations: Option<&Vec<Coordinate>>,
         overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -3520,7 +3521,7 @@ impl Action for Sleep {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         const BURST_RADIUS: isize = 8; // 20ft radius
@@ -3921,7 +3922,7 @@ impl Action for ColorSpray {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         const BURST_RADIUS: isize = 2;
@@ -4075,7 +4076,7 @@ impl Action for Fireball {
         target_locations: Option<&Vec<Coordinate>>,
         overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -4303,7 +4304,7 @@ impl Action for LightningBolt {
         target_locations: Option<&Vec<Coordinate>>,
         overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -4473,7 +4474,7 @@ impl Action for HypnoticPattern {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -5220,7 +5221,7 @@ impl Action for Slow {
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -5327,7 +5328,7 @@ impl Action for ConeOfCold {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -5411,7 +5412,7 @@ impl Action for MassCureWounds {
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -5518,7 +5519,7 @@ impl Action for StinkingCloud {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -5798,7 +5799,7 @@ impl Action for IceStorm {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -6111,7 +6112,7 @@ impl Action for BeaconOfHope {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         const RADIUS: isize = 6;
@@ -6190,7 +6191,7 @@ impl Action for CloudOfDaggers {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         const RADIUS: isize = 1;
@@ -6907,7 +6908,7 @@ impl Action for SynapticStatic {
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -7159,7 +7160,7 @@ impl Action for CalmEmotions {
         use crate::engine::side_effects::RemoveCondition;
         use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -7336,7 +7337,7 @@ impl Action for MassSuggestion {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::engine::side_effects::SetCharmedBy;
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -7420,7 +7421,7 @@ impl Action for Sunburst {
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -7707,7 +7708,7 @@ impl Action for MeteorSwarm {
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -8185,7 +8186,7 @@ impl Action for DimensionDoor {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return false;
         };
         encounter.can_move_to(caster_id, point)
@@ -8198,7 +8199,7 @@ impl Action for DimensionDoor {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         vec![Box::new(crate::engine::side_effects::TeleportActor {
@@ -8259,7 +8260,7 @@ impl Action for WallOfFire {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let raw = encounter.roll(&Dice::new(5, 8));
@@ -8342,7 +8343,7 @@ impl Action for Cloudkill {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -8417,7 +8418,7 @@ impl Action for InsectPlague {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -8501,7 +8502,7 @@ impl Action for Daylight {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         encounter
@@ -8792,7 +8793,7 @@ impl Action for HealingSpirit {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let raw = encounter.roll(&Dice::new(1, 6));
@@ -8949,7 +8950,7 @@ impl Action for WallOfForce {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         // Approximate the panel by knocking enemies adjacent to the anchor
@@ -9025,7 +9026,7 @@ impl Action for SpikeGrowth {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         const RADIUS: isize = 3;
@@ -9656,7 +9657,7 @@ impl Action for Earthquake {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         const RADIUS: isize = 4;
@@ -10001,7 +10002,7 @@ impl Action for Fear {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -10494,7 +10495,7 @@ impl Action for FlameStrike {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -10849,7 +10850,7 @@ impl Action for Moonbeam {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -10941,7 +10942,7 @@ impl Action for CallLightning {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -11017,7 +11018,7 @@ impl Action for SleetStorm {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -11115,7 +11116,7 @@ impl Action for ReverseGravity {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -11213,7 +11214,7 @@ impl Action for StormOfVengeance {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -11605,7 +11606,7 @@ impl Action for HailOfThorns {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -11762,7 +11763,7 @@ impl Action for Confusion {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -11984,7 +11985,7 @@ impl Action for PlantGrowth {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         const RADIUS: isize = 4;
@@ -12218,7 +12219,7 @@ impl Action for HeroesFeast {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         // Roll the temp-HP grant and heal once and share across all
@@ -12315,7 +12316,7 @@ impl Action for SpikeStones {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         // Enemy-only burst — we don't want allies stepping into the
@@ -12522,7 +12523,7 @@ impl Action for PrismaticSpray {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -12862,7 +12863,7 @@ impl Action for FireStorm {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -13948,7 +13949,7 @@ impl Action for AganazzarsScorcher {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -14128,7 +14129,7 @@ impl Action for TidalWave {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -14213,7 +14214,7 @@ impl Action for Dawn {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -14466,7 +14467,7 @@ impl Action for Grease {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -14546,7 +14547,7 @@ impl Action for FlamingSphere {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -14629,7 +14630,7 @@ impl Action for GuardianOfFaith {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -14712,7 +14713,7 @@ impl Action for BladeBarrier {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -14862,7 +14863,7 @@ impl Action for EvardsBlackTentacles {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -15347,7 +15348,7 @@ impl Action for VitriolicSphere {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -15569,7 +15570,7 @@ impl Action for SnillocsSnowballSwarm {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -16713,7 +16714,7 @@ impl Action for FogCloud {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         const RADIUS: isize = 4;
@@ -16833,7 +16834,7 @@ impl Action for GustOfWind {
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::engine::side_effects::PushActor;
 
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -17322,7 +17323,7 @@ impl Action for ConjureBarrage {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -17587,7 +17588,7 @@ impl Action for WallOfIce {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -18141,7 +18142,7 @@ impl Action for EruptingEarth {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -18298,7 +18299,7 @@ impl Action for CircleOfDeath {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -18465,7 +18466,7 @@ impl Action for DelayedBlastFireball {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -18542,7 +18543,7 @@ impl Action for IncendiaryCloud {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -18620,7 +18621,7 @@ impl Action for Weird {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -18964,7 +18965,7 @@ impl Action for ConjureVolley {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -19043,7 +19044,7 @@ impl Action for Tsunami {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -19143,7 +19144,7 @@ impl Action for WallOfThorns {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -19478,7 +19479,7 @@ impl Action for ThunderStep {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return false;
         };
         encounter.can_move_to(caster_id, point)
@@ -19491,7 +19492,7 @@ impl Action for ThunderStep {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(dest) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(dest) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -19772,7 +19773,7 @@ impl Action for Entangle {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -19912,7 +19913,7 @@ impl Action for CreateBonfire {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -20234,7 +20235,7 @@ impl Action for WitherAndBloom {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -20324,7 +20325,7 @@ impl Action for HungerOfHadar {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -20413,7 +20414,7 @@ impl Action for SwarmOfLocusts {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -20562,7 +20563,7 @@ impl Action for CrownOfThorns {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -21186,7 +21187,7 @@ impl Action for WallOfStone {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -21307,4 +21308,83 @@ impl Action for InvestitureOfIce {
 
 pub static INVESTITURE_OF_ICE: LazyLock<InvestitureOfIce> =
     LazyLock::new(|| InvestitureOfIce {});
+
+/// Spider Climb — level-2 transmutation, concentration. Touches a willing
+/// creature (5ft / 1 tile reach); they gain a climbing speed equal to
+/// their walking speed for the duration. RAW also lets the holder traverse
+/// vertical / inverted surfaces without an Athletics check.
+///
+/// We model the load-bearing half — the climb-speed bump — as a flat
+/// +30ft via the `SpiderClimbing` condition read by `speed()`. The
+/// engine doesn't model 3D terrain so the "walls and ceilings" rider
+/// would be inert anyway; surfacing the bump as raw kiting speed gives
+/// the spell tangible tactical value (a wounded ally can reposition
+/// further than a baseline 30ft creature could).
+///
+/// Slots one spell-slot below `Fly` (level-3 transmutation, +60ft) — the
+/// stack is intentional: a doubly-buffed creature (Spider Climb + Fly)
+/// picks up both bumps for an extreme kiting envelope. Mirrors the Fly
+/// install shape (single concentration-anchored condition install with
+/// `Rounds(10)` timer ≈ 1 hour RAW capped to encounter horizon).
+pub struct SpiderClimb {}
+
+impl Action for SpiderClimb {
+    fn name(&self) -> &str {
+        "spider climb"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["scl", "climb"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch range — 5ft = 1 tile.
+        Some(1)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::SpiderClimbing,
+                timer: ConditionTimer::Rounds(10),
+            }) as Box<dyn ApplicableSideEffect>,
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Spider Climb",
+                    vec![(target_id, Condition::SpiderClimbing)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static SPIDER_CLIMB: LazyLock<SpiderClimb> = LazyLock::new(|| SpiderClimb {});
 

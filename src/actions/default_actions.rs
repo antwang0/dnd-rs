@@ -5,7 +5,7 @@ use crate::{
 use std::{collections::HashSet, sync::LazyLock};
 
 use crate::{
-    actions::action_template::{Action, first_target_id},
+    actions::action_template::{Action, first_target_id, first_target_location},
     engine::{
         action_overrides::ActionOverride,
         encounter::EncounterInstance,
@@ -36,7 +36,7 @@ impl Action for Move {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        let Some(dest) = target_locations.and_then(|t| t.first().copied()) else {
+        let Some(dest) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(dist) = encounter.path_cost_to(caster_id, dest) else {
@@ -101,7 +101,7 @@ impl Action for Move {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let Some(target_location) = target_locations.and_then(|v| v.first().copied()) else {
+        let Some(target_location) = first_target_location(target_locations) else {
             return Vec::new();
         };
         // Use the same Dijkstra path that `cost` charged for, so OAs fire on

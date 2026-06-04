@@ -3,7 +3,8 @@ use std::sync::LazyLock;
 
 use crate::{
     actions::action_template::{
-        Action, TargetingSchema, bonus_action_only, first_target_id, free_cost,
+        Action, TargetingSchema, bonus_action_only, first_target_id, first_target_location,
+        free_cost,
     },
     conditions::{Condition, ConditionTimer},
     engine::{
@@ -1394,6 +1395,83 @@ impl Action for PatientDefense {
 }
 
 pub static PATIENT_DEFENSE: LazyLock<PatientDefense> = LazyLock::new(|| PatientDefense {});
+
+/// Stillness of Mind — Monk action (5e level 7). At-will: spend an Action
+/// to end one Charmed or Frightened condition currently affecting the
+/// monk. RAW gates on "you can use your action" so it's never resource-
+/// gated — a long-rest cap or feature tag would be over-restrictive. We
+/// model exactly as RAW: removes both conditions in a single action when
+/// either is up, and silently no-ops when neither is up so a misguided
+/// click doesn't burn the Action lane. Self-targeted; needs no spell slot
+/// or other resource beyond the standard Action.
+///
+/// Sits adjacent to Patient Defense (the other in-combat survival action
+/// on the monk's sheet). The "auto-clear both" simplification matches our
+/// Charmed/Frightened coverage — both are handled at the same chokepoints
+/// (compute_attack_mode for the disadvantage on attacks, charmed_by for
+/// the can't-target-charmer gate), so stripping both at once stays
+/// consistent with how the conditions are read.
+pub struct StillnessOfMind {}
+
+impl Action for StillnessOfMind {
+    fn name(&self) -> &str {
+        "stillness of mind"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["som", "still"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Only fire when there's actually something to cleanse; otherwise
+        // a stray click would burn the monk's Action for nothing.
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.is_combat_active()
+                && (a.has_condition(Condition::Charmed)
+                    || a.has_condition(Condition::Frightened))
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::RemoveCondition;
+        encounter.log("  stillness of mind: monk centers their mind.".to_string());
+        // Drop both Charmed and Frightened in one swing — the
+        // RemoveCondition side-effect is a no-op for missing conditions
+        // so an actor with only one of the two gets the clean cleanse.
+        vec![
+            Box::new(RemoveCondition {
+                actor_id: caster_id,
+                condition: Condition::Charmed,
+            }),
+            Box::new(RemoveCondition {
+                actor_id: caster_id,
+                condition: Condition::Frightened,
+            }),
+        ]
+    }
+}
+
+pub static STILLNESS_OF_MIND: LazyLock<StillnessOfMind> = LazyLock::new(|| StillnessOfMind {});
 
 /// Class-feature tag for the Bard's Bardic Inspiration (RAW: a pool of
 /// CHA-mod uses per long rest — we collapse to a single big use to keep
@@ -3327,7 +3405,7 @@ impl Action for BreathWeapon {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::engine::types::AbilityScoreType;
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {

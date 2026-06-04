@@ -22791,6 +22791,76 @@ mod tests {
         assert!(e.actors[&cler].is_concentrating());
     }
 
+    /// Spider Climb: applies the SpiderClimbing condition
+    /// (concentration-bound) and bumps the target's speed by the +30ft
+    /// climb rider in `speed()`. Smaller bump than Fly but still a
+    /// meaningful kiting boost. Stacks with Fly when both are active.
+    #[test]
+    fn spider_climb_boosts_speed_and_starts_concentration() {
+        use crate::actions::spells::{FLY, SPIDER_CLIMB};
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        let base_speed = e.actors[&ally].speed();
+        let tv = vec![ally];
+        let effs = SPIDER_CLIMB.side_effects(&mut e, wiz, Some(&tv), None, None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&ally].has_condition(Condition::SpiderClimbing),
+            "spider climb should apply the SpiderClimbing condition"
+        );
+        let after_climb = e.actors[&ally].speed();
+        assert!(
+            after_climb > base_speed,
+            "SpiderClimbing should boost speed: {} → {}",
+            base_speed,
+            after_climb
+        );
+        assert!(e.actors[&wiz].is_concentrating());
+        // Drop concentration → buff drops off, speed returns to base.
+        e.drop_concentration(wiz);
+        assert!(
+            !e.actors[&ally].has_condition(Condition::SpiderClimbing),
+            "dropping concentration should strip SpiderClimbing"
+        );
+        assert_eq!(
+            e.actors[&ally].speed(),
+            base_speed,
+            "speed should snap back to base when SpiderClimbing drops"
+        );
+        // Stacks with Fly — re-apply both and verify the second buff
+        // adds on top of the first.
+        let effs = SPIDER_CLIMB.side_effects(&mut e, wiz, Some(&tv), None, None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        let climb_only = e.actors[&ally].speed();
+        // Pre-empt the existing Spider Climb concentration with Fly via
+        // the caster's own concentration drop, then re-apply Fly through
+        // a separate concentrator so the stack lands cleanly.
+        let other = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 2), 0, 2)
+            .unwrap();
+        let effs = FLY.side_effects(&mut e, other, Some(&tv), None, None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        let both = e.actors[&ally].speed();
+        assert!(
+            both > climb_only,
+            "stacking Fly on top of Spider Climb should add on top: {} → {}",
+            climb_only,
+            both
+        );
+    }
+
     /// Levitate: lifts a failed-save target (Lifted condition zeros
     /// movement) and installs concentration on the caster.
     #[test]
@@ -22890,6 +22960,40 @@ mod tests {
             before,
             after
         );
+    }
+
+    /// Stillness of Mind clears both Charmed and Frightened on the monk
+    /// in a single Action, and short-circuits cleanly (no-op
+    /// custom_validate_input → returns Skip-equivalent) when the monk
+    /// holds neither.
+    #[test]
+    fn stillness_of_mind_clears_charmed_and_frightened() {
+        use crate::actions::class_features::STILLNESS_OF_MIND;
+        use crate::actors::creatures::monks::MONK_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let monk = e
+            .instantiate_creature(&MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Pin Charmed + Frightened on the monk so the cleanse has work
+        // to do.
+        e.actors.get_mut(&monk).unwrap().add_condition(
+            Condition::Charmed,
+            crate::conditions::ConditionTimer::Rounds(10),
+        );
+        e.actors.get_mut(&monk).unwrap().add_condition(
+            Condition::Frightened,
+            crate::conditions::ConditionTimer::Rounds(10),
+        );
+        assert!(STILLNESS_OF_MIND.custom_validate_input(&e, monk, None, None, None));
+        let effs = STILLNESS_OF_MIND.side_effects(&mut e, monk, None, None, None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert!(!e.actors[&monk].has_condition(Condition::Charmed));
+        assert!(!e.actors[&monk].has_condition(Condition::Frightened));
+        // Validate that the action refuses to fire when neither is up
+        // (no Action wasted on a stray click).
+        assert!(!STILLNESS_OF_MIND.custom_validate_input(&e, monk, None, None, None));
     }
 
     /// Condition cohort helpers — verify the new attacker-disadvantage

@@ -1643,6 +1643,7 @@ fn try_extended_spell(
         "hold monster",
         "polymorph",
         "fly",
+        "spider climb",
         "haste",
         "invisibility",
         "greater invisibility",

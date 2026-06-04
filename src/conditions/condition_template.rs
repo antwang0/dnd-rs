@@ -415,6 +415,15 @@ pub enum Condition {
     /// drops the buff when concentration ends. Joins `is_dispellable_buff`
     /// so Dispel Magic / Counterspell can rip it.
     Flying,
+    /// Spider Climb (5e level-2 transmutation, concentration). The target
+    /// gains a climbing speed equal to their walking speed — they can move
+    /// up walls and ceilings without needing climbing checks. We don't
+    /// model 3D terrain, so we surface the climb speed as a flat +30ft
+    /// (12 tiles) speed bump via `speed()` — smaller than Fly's +60ft but
+    /// still meaningful kiting / repositioning fuel. Concentration-bound on
+    /// the caster; the spell drops the buff when concentration ends. Joins
+    /// `is_dispellable_buff` so Dispel Magic / Counterspell can rip it.
+    SpiderClimbing,
     /// Dominated (5e Dominate Person, level-5 enchantment, concentration).
     /// The target's will is overridden by the caster. We model the
     /// load-bearing half: the target is Charmed by the caster (so they
@@ -1039,6 +1048,7 @@ impl Condition {
             Condition::Confused => "confused",
             Condition::Entangled => "entangled",
             Condition::Flying => "flying",
+            Condition::SpiderClimbing => "spider-climbing",
             Condition::Dominated => "dominated",
             Condition::Feebled => "feebleminded",
             Condition::Dancing => "dancing helplessly",
@@ -1160,6 +1170,7 @@ impl Condition {
                 | Condition::HolyAuraed
                 | Condition::Foreseen
                 | Condition::Flying
+                | Condition::SpiderClimbing
                 | Condition::AgathysShielded
                 | Condition::BigbysHanded
                 | Condition::Transformed

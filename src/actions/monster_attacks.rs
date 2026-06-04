@@ -4,6 +4,7 @@ use std::sync::LazyLock;
 use crate::{
     actions::action_template::{
         Action, MELEE_REACH, TargetingSchema, bonus_action_only, first_target_id,
+        first_target_location,
     },
     conditions::{Condition, ConditionTimer},
     engine::{
@@ -3401,7 +3402,7 @@ impl Action for DragonBreathFire {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         // Spend the recharge resource before resolving damage.
@@ -3480,7 +3481,7 @@ impl Action for DragonBreathCold {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         if let Some(caster) = encounter.actors.get_mut(&caster_id) {
@@ -3552,7 +3553,7 @@ impl Action for DragonBreathLightning {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         if let Some(caster) = encounter.actors.get_mut(&caster_id) {
@@ -3626,7 +3627,7 @@ impl Action for DragonBreathPoison {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         if let Some(caster) = encounter.actors.get_mut(&caster_id) {
@@ -4631,7 +4632,7 @@ impl Action for MindFlayerMindBlast {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::engine::side_effects::ApplyCondition;
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -4927,7 +4928,7 @@ impl Action for HellHoundFireBreath {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         const DC: i32 = 12;
@@ -5585,7 +5586,7 @@ impl Action for DeathKnightHellfireOrb {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+        let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
         const DC: i32 = 18;
