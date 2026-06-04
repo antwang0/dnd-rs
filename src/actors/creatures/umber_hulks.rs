@@ -46,6 +46,7 @@ pub static UMBER_HULK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         legendary_resistances: 0,
         has_evasion: false,
         has_uncanny_dodge: false,
+        has_deflect_missiles: false,
         has_danger_sense: false,
         has_pack_tactics: false,
         has_magic_resistance: false,

@@ -28853,6 +28853,10 @@ mod tests {
         .unwrap();
         assert!(monk.has_evasion(), "Monks should have Evasion");
         assert!(!monk.has_uncanny_dodge(), "Monks should not have Uncanny Dodge");
+        assert!(
+            monk.has_deflect_missiles(),
+            "Monks should have Deflect Missiles"
+        );
     }
 
     #[test]
@@ -28911,6 +28915,104 @@ mod tests {
             }
         }
         assert!(hit_seen, "Expected at least one hit in 100 attempts");
+    }
+
+    /// Deflect Missiles fires on a ranged weapon hit, reduces damage by
+    /// 1d10 + DEX + level, and consumes the monk's reaction. Melee hits
+    /// against the monk do NOT consume the reaction (the feature is
+    /// ranged-only).
+    #[test]
+    fn deflect_missiles_reduces_ranged_damage_and_consumes_reaction() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::monks::MONK_TEMPLATE;
+        use crate::engine::attack::{AttackParams, resolve_attack};
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let archer = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let monk = e
+            .instantiate_creature(&MONK_TEMPLATE, Coordinate::new(10, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&monk].has_deflect_missiles());
+        // Search for a hit (force damage > 0) and check that the
+        // reaction is consumed and the log line lands.
+        let mut deflected = false;
+        for _ in 0..120 {
+            e.actors.get_mut(&monk).unwrap().reset_for_new_round();
+            assert!(e.actors[&monk].has_reaction());
+            let starting_hp = e.actors[&monk].hitpoints();
+            let effects = resolve_attack(
+                &mut e,
+                AttackParams {
+                    caster_id: archer,
+                    target_id: monk,
+                    action_name: "shortbow",
+                    attack_bonus: 10,
+                    damage_dice: Dice::new(1, 6),
+                    damage_bonus: 2,
+                    damage_type: DamageType::Piercing,
+                    is_melee: false,
+                    long_range: None,
+                    is_spell: false,
+                },
+            );
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            // If the swing connected (damage was rolled), the reaction
+            // should be consumed by Deflect Missiles.
+            let after_hp = e.actors[&monk].hitpoints();
+            if after_hp < starting_hp || !e.actors[&monk].has_reaction() {
+                assert!(
+                    !e.actors[&monk].has_reaction(),
+                    "Deflect Missiles should consume monk's reaction on ranged hit"
+                );
+                deflected = true;
+                break;
+            }
+        }
+        assert!(deflected, "expected at least one ranged hit in 120 attempts");
+        // Verify the melee gate: a melee swing should NOT fire the
+        // deflect, leaving the reaction intact.
+        e.actors.get_mut(&monk).unwrap().reset_for_new_round();
+        assert!(e.actors[&monk].has_reaction());
+        let mut melee_hit_seen = false;
+        for _ in 0..120 {
+            e.actors.get_mut(&monk).unwrap().reset_for_new_round();
+            assert!(e.actors[&monk].has_reaction());
+            let starting_hp = e.actors[&monk].hitpoints();
+            let effects = resolve_attack(
+                &mut e,
+                AttackParams {
+                    caster_id: archer,
+                    target_id: monk,
+                    action_name: "club",
+                    attack_bonus: 10,
+                    damage_dice: Dice::new(1, 4),
+                    damage_bonus: 2,
+                    damage_type: DamageType::Bludgeoning,
+                    is_melee: true,
+                    long_range: None,
+                    is_spell: false,
+                },
+            );
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            let after_hp = e.actors[&monk].hitpoints();
+            if after_hp < starting_hp {
+                melee_hit_seen = true;
+                assert!(
+                    e.actors[&monk].has_reaction(),
+                    "Deflect Missiles must NOT fire on a melee hit"
+                );
+                break;
+            }
+        }
+        assert!(
+            melee_hit_seen,
+            "expected at least one melee hit in 120 attempts"
+        );
     }
 
     #[test]

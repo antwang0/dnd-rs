@@ -169,6 +169,19 @@ pub struct CreatureTemplate {
     /// attack you can see. Modeled as a passive flag checked in the
     /// attack resolution pipeline.
     pub has_uncanny_dodge: bool,
+    /// 5e Monk Deflect Missiles (level 3): when hit by a ranged weapon
+    /// attack, the monk can spend their reaction to reduce the damage by
+    /// `1d10 + DEX modifier + monk level`. Modeled as a passive flag read
+    /// in the attack resolution pipeline next to `has_uncanny_dodge`:
+    /// fires only when the swing is ranged (gated on `is_melee == false`)
+    /// and the monk has a reaction available. The damage reduction lands
+    /// after Uncanny Dodge / damage modifiers so a fully-stacked
+    /// rogue/monk multiclass still gets both layers cleanly. RAW also
+    /// gates on the swing being a "weapon attack" — spell attacks don't
+    /// qualify and the rider doesn't fire on them (we read the `is_melee`
+    /// flag and the attack-rider chokepoint that the rest of the
+    /// reaction-based features use).
+    pub has_deflect_missiles: bool,
     /// 5e Displacer Beast trait: the creature projects a displaced image.
     /// Attacks against it have disadvantage. Breaks on damage; restores
     /// at the start of the creature's next turn.
@@ -497,6 +510,9 @@ pub struct ActorInstance {
     /// 5e Uncanny Dodge (Rogue 5): reaction to halve damage from one
     /// visible attack per round.
     has_uncanny_dodge: bool,
+    /// 5e Monk Deflect Missiles (level 3): reaction to reduce ranged
+    /// weapon damage by 1d10 + DEX + level.
+    has_deflect_missiles: bool,
     has_displacement: bool,
     has_danger_sense: bool,
     has_pack_tactics: bool,
@@ -622,6 +638,7 @@ impl ActorInstance {
             warding_partner: None,
             has_evasion: ct.has_evasion,
             has_uncanny_dodge: ct.has_uncanny_dodge,
+            has_deflect_missiles: ct.has_deflect_missiles,
             has_displacement: ct.has_displacement,
             has_danger_sense: ct.has_danger_sense,
             has_pack_tactics: ct.has_pack_tactics,
@@ -728,6 +745,10 @@ impl ActorInstance {
 
     pub fn has_uncanny_dodge(&self) -> bool {
         self.has_uncanny_dodge
+    }
+
+    pub fn has_deflect_missiles(&self) -> bool {
+        self.has_deflect_missiles
     }
 
     pub fn has_displacement(&self) -> bool {

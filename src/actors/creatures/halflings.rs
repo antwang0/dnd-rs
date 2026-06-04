@@ -67,6 +67,7 @@ pub static HALFLING_SCOUT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         legendary_resistances: 0,
         has_evasion: true,
         has_uncanny_dodge: true,
+        has_deflect_missiles: false,
         has_displacement: false,
         has_danger_sense: false,
         has_pack_tactics: false,

@@ -321,6 +321,38 @@ pub fn resolve_attack_outcome(
             t.consume_resource(crate::engine::side_effects::Resource::Reaction);
         }
     }
+    // 5e Monk Deflect Missiles (level 3): when hit by a ranged weapon
+    // attack, the monk can spend their reaction to reduce damage by
+    // `1d10 + DEX modifier + monk level`. Only fires on ranged weapon
+    // swings (gated on `!is_melee` AND the rider chokepoint sees only
+    // weapon attacks — spell attacks resolve through a separate path,
+    // so the gate here covers the RAW "ranged weapon attack" clause).
+    // Reaction is consumed iff the rider actually fires; an unprimed
+    // monk eats the full damage instead. Layered AFTER Uncanny Dodge so
+    // a rare rogue/monk multiclass benefits from both halves cleanly
+    // (RAW order doesn't matter since both are independent reactions).
+    if !p.is_melee
+        && damage > 0
+        && let Some(target) = encounter.actors.get(&p.target_id)
+        && target.has_deflect_missiles()
+        && target.has_reaction()
+        && !target.has_condition(Condition::Blinded)
+        && !target.has_condition(Condition::Unconscious)
+    {
+        let dex_mod = target.ability_modifier(crate::engine::types::AbilityScoreType::Dexterity);
+        let level = target.level() as i32;
+        let raw = encounter.roll(&Dice::new(1, 10)) as i32;
+        let reduction = (raw + dex_mod + level).max(0) as u32;
+        let reduced = damage.saturating_sub(reduction);
+        encounter.log(format!(
+            "  deflect missiles: 1d10({}){:+}{:+} = -{} damage ({} → {})",
+            raw, dex_mod, level, reduction, damage, reduced
+        ));
+        damage = reduced;
+        if let Some(t) = encounter.actors.get_mut(&p.target_id) {
+            t.consume_resource(crate::engine::side_effects::Resource::Reaction);
+        }
+    }
     let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
         actor_id: p.target_id,
         amount: damage,
