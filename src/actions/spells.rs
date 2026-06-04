@@ -520,6 +520,45 @@ fn neutral_burst_save_only(
     )
 }
 
+/// Enemy-only save-or-nothing burst: every hostile combat-active actor
+/// in the burst makes a save against `dc` using `save_ability`. Failed
+/// save = full damage from a *shared* roll, success = no damage. Allies
+/// are excluded via `enemy_burst_targets` (the caster aims the line).
+///
+/// Rounds out the four-way matrix of `{Enemy, Neutral} × {HalfOnSave,
+/// NoneOnSave}` helpers. Used by line spells whose RAW damage is
+/// save-or-nothing AND whose caster traditionally aims to spare allies —
+/// Tasha's Caustic Brew is the canonical case. Distinct from
+/// `enemy_burst_save_for_half` because the save outcome on success is
+/// zero damage (not half) — matches the cantrip-style RAW for line
+/// spells without the half-on-save clause.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn enemy_burst_save_only(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    point: Coordinate,
+    radius: isize,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    dice: Dice,
+    damage_type: DamageType,
+    action_name: &str,
+) -> (Vec<Box<dyn ApplicableSideEffect>>, Vec<(usize, bool)>) {
+    burst_save_damage(
+        encounter,
+        caster_id,
+        point,
+        radius,
+        save_ability,
+        dc,
+        dice,
+        damage_type,
+        action_name,
+        BurstTargets::Enemy,
+        SaveOutcome::NoneOnSave,
+    )
+}
+
 /// Roll a damage burst against a target's saving throw, halving on
 /// success. Returns `(damage, save_passed)` so callers can branch on
 /// the save (e.g. attach a rider only on fail). The roll + save log
@@ -21462,9 +21501,11 @@ impl Action for TashasCausticBrew {
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
         // Burst resolver: failed save = 2d4 acid, passed save = 0
-        // (cantrip-style outcome since the spell's only damage is from
-        // the save itself; the DoT is what survivors carry forward).
-        let (mut effects, saves) = neutral_burst_save_only(
+        // (no half-on-save: the DoT is what survivors carry forward,
+        // not a flat-damage payload). Enemy-only — the caster aims the
+        // line to spare allies, matching the engine's convention for
+        // line spells (cf. Aganazzar's Scorcher, Burning Hands).
+        let (mut effects, saves) = enemy_burst_save_only(
             encounter,
             caster_id,
             point,
