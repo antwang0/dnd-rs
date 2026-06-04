@@ -158,6 +158,15 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3f'. Monk Stillness of Mind — Action that clears Charmed /
+        //      Frightened on the holder. Fire when either condition is
+        //      up; cleansing those debuffs (especially Frightened, which
+        //      stacks disadvantage on every attack until cured) is worth
+        //      the action lane over a single attack.
+        if let Some(aei) = try_stillness_of_mind(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3g. Cleric Turn Undead — once-per-rest Channel Divinity.
         //     Fire when at least one undead-proxy enemy is within 30ft
         //     so the cleanse-and-frighten lands on someone worth it.
@@ -2582,6 +2591,24 @@ fn try_stunning_strike(
         return None;
     }
     try_self_action(encounter, actor_id, "stunning strike")
+}
+
+/// Monk Stillness of Mind — Action. Cleanses Charmed / Frightened off
+/// the monk in one swing. Fire when the monk is actually afflicted with
+/// either condition; the action's `custom_validate_input` will refuse
+/// when neither is up, but gating here too keeps the AI's swap rate
+/// down (an Action burned on Stillness of Mind is one fewer swing).
+fn try_stillness_of_mind(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if !actor.has_condition(Condition::Charmed)
+        && !actor.has_condition(Condition::Frightened)
+    {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "stillness of mind")
 }
 
 /// Cleric Channel Divinity: Turn Undead — action. Fire when at least
@@ -5093,6 +5120,43 @@ mod tests {
             try_warding_bond(&e, cleric).is_none(),
             "low-HP cleric should not bond — would die from mirrored hits"
         );
+    }
+
+    /// `try_stillness_of_mind` fires when the monk is Charmed or
+    /// Frightened (a single cleanse erases the disadvantage-on-attacks
+    /// debuff) and bails when the monk is fine — burning the Action lane
+    /// on a no-op cleanse would be worse than a single swing.
+    #[test]
+    fn ai_uses_stillness_of_mind_when_afflicted() {
+        use crate::actors::creatures::monks::MONK_TEMPLATE;
+        let mut e = empty_arena();
+        let monk = e
+            .instantiate_creature(&MONK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // No affliction → AI skips the cleanse.
+        assert!(
+            try_stillness_of_mind(&e, monk).is_none(),
+            "unencumbered monk should not waste Action on Stillness of Mind"
+        );
+        // Frightened → AI fires the cleanse.
+        e.actors.get_mut(&monk).unwrap().add_condition(
+            Condition::Frightened,
+            crate::conditions::ConditionTimer::Rounds(10),
+        );
+        let aei = try_stillness_of_mind(&e, monk).expect(
+            "Frightened monk should fire Stillness of Mind",
+        );
+        assert_eq!(aei.action().name(), "stillness of mind");
+        // Charmed → AI fires the cleanse.
+        e.actors.get_mut(&monk).unwrap().remove_condition(Condition::Frightened);
+        e.actors.get_mut(&monk).unwrap().add_condition(
+            Condition::Charmed,
+            crate::conditions::ConditionTimer::Rounds(10),
+        );
+        let aei = try_stillness_of_mind(&e, monk).expect(
+            "Charmed monk should fire Stillness of Mind",
+        );
+        assert_eq!(aei.action().name(), "stillness of mind");
     }
 
     /// `try_telekinetic` should pick the closest in-range enemy that's
