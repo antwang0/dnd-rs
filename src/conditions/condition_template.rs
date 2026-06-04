@@ -972,6 +972,20 @@ pub enum Condition {
     /// action-economy clip plus `NoReaction`). Consumed on sneak-attack
     /// trigger or `UntilStartOfNextTurn`.
     CunningStrikeDaze,
+    /// Caustic-Brewed (5e Tasha's Caustic Brew, level-1 evocation). The
+    /// target is splashed with magical acid that clings to skin / scales:
+    /// they take 2d4 acid at the end of each of their turns until they (or
+    /// an ally adjacent to them) use an Action to scrape it off, OR the
+    /// spell's duration ends. We model the DoT via the standard
+    /// `ROUND_END_DOTS` registry (2d4 acid per round) and the
+    /// scrape-off via the cleanse-style `WipeAcid` action — mirrors
+    /// `StillnessOfMind`'s self-clean envelope. Concentration-bound on
+    /// the caster RAW; we install with a `Rounds(10)` timer (~1 minute
+    /// RAW) so dropping concentration severs the drip cleanly. Distinct
+    /// from `VitriolicAcidCoated` (a one-shot drip from Vitriolic Sphere)
+    /// so the cleanse action and concentration cleanup target just this
+    /// mark.
+    CausticBrewed,
 }
 
 impl Condition {
@@ -1110,6 +1124,7 @@ impl Condition {
             Condition::CunningStrikeTrip => "primed with cunning trip",
             Condition::CunningStrikeWithdraw => "primed with cunning withdraw",
             Condition::CunningStrikeDaze => "primed with cunning daze",
+            Condition::CausticBrewed => "splashed with caustic brew",
         }
     }
 

@@ -312,6 +312,11 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     Snilloc's Snowball Swarm.
     actions.push(&*crate::actions::spells::WALL_OF_STONE);
     actions.push(&*crate::actions::spells::INVESTITURE_OF_ICE);
+    // Tasha's Caustic Brew — lv1 evocation, sustained acid drip in a 30ft
+    // line. Plays well off the sorcerer's CHA-anchored DC at the lv1 tier
+    // and pairs cleanly with the Empowered Spell metamagic (the DoT
+    // damage ticks won't reroll, but the initial 2d4 acid burst can).
+    actions.push(&*crate::actions::spells::TASHAS_CAUSTIC_BREW);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

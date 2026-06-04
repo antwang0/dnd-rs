@@ -962,6 +962,65 @@ impl Action for Search {
 
 pub static SEARCH: LazyLock<Search> = LazyLock::new(|| Search {});
 
+/// Wipe Acid — universal cleanse action. Spends an Action to scrape off
+/// the lingering acid from 5e Tasha's Caustic Brew (the `CausticBrewed`
+/// condition). RAW: "as an action, a creature can use a wet rag or a
+/// similar absorbent item to wipe off the acid, ending the effect."
+/// Self-target only — we surface the action universally rather than as
+/// a class feature so any splashed creature can scrape off their own
+/// drip, mirroring how `StandUp` lives on the default action list.
+/// Custom-validates the condition presence so a misclick doesn't burn
+/// the Action lane on a no-op.
+pub struct WipeAcid {}
+
+impl Action for WipeAcid {
+    fn name(&self) -> &str {
+        "wipe acid"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wa", "wipe", "scrape"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.is_combat_active()
+                && a.has_condition(crate::conditions::Condition::CausticBrewed)
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::engine::side_effects::RemoveCondition;
+        encounter.log("  wipe acid: the lingering brew is scraped clean.".to_string());
+        vec![Box::new(RemoveCondition {
+            actor_id: caster_id,
+            condition: crate::conditions::Condition::CausticBrewed,
+        })]
+    }
+}
+
+pub static WIPE_ACID: LazyLock<WipeAcid> = LazyLock::new(|| WipeAcid {});
+
 pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> = LazyLock::new(
     || {
         vec![
@@ -977,6 +1036,7 @@ pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> =
             &*GRAPPLE_ESCAPE,
             &*HIDE,
             &*SEARCH,
+            &*WIPE_ACID,
         ]
     },
 );

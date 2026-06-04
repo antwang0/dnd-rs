@@ -345,6 +345,13 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     themed defensive concentration option at lv6.
     actions.push(&*crate::actions::spells::WALL_OF_STONE);
     actions.push(&*crate::actions::spells::INVESTITURE_OF_ICE);
+    // Tasha's Caustic Brew — lv1 evocation, 30ft line, 2d4 acid initial +
+    // 2d4 acid drip per round until the target wipes it off or the caster
+    // drops concentration. Sustained-DoT differentiator at the lv1 tier
+    // (Burning Hands does more upfront fire, Acid Splash is cheaper but
+    // cantrip-tier; Caustic Brew sits between as the acid-themed control
+    // option whose damage accumulates across multiple rounds).
+    actions.push(&*crate::actions::spells::TASHAS_CAUSTIC_BREW);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

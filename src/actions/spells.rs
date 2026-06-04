@@ -21388,3 +21388,116 @@ impl Action for SpiderClimb {
 
 pub static SPIDER_CLIMB: LazyLock<SpiderClimb> = LazyLock::new(|| SpiderClimb {});
 
+/// Tasha's Caustic Brew — level-1 evocation, concentration, action. The
+/// caster splashes magical acid in a 30-ft line, 5 ft wide (RAW); we
+/// collapse to a 3-tile-radius burst at a chosen point per the engine's
+/// shared line→burst convention (matches Aganazzar's Scorcher's
+/// line→burst shape at the same range tier).
+///
+/// Mechanically:
+/// - Every actor in the burst makes a DEX save vs the caster's spell DC.
+/// - Failed save: takes 2d4 acid immediately AND gets the `CausticBrewed`
+///   condition — 2d4 acid at the end of each of their turns via the
+///   shared `ROUND_END_DOTS` registry until they (a) wipe it off with an
+///   action (the `WipeAcid` cleanse), (b) the caster drops concentration,
+///   or (c) the spell's `Rounds(10)` ≈ 1-minute timer expires.
+/// - Passed save: no damage, no condition (cantrips don't half-on-save
+///   here either since the spell's RAW is save-or-nothing).
+///
+/// Concentration-bound on the caster RAW. The DOT lives on the standard
+/// drip table so resistance / immunity / temp HP / death saves all flow
+/// through the normal damage pipeline. Slots between Burning Hands (lv1
+/// fire cone, no DOT) and Acid Arrow (lv2 single-target acid with splash)
+/// — the sustained-DoT is the load-bearing differentiator at the lv1 tier.
+pub struct TashasCausticBrew {}
+
+impl Action for TashasCausticBrew {
+    fn name(&self) -> &str {
+        "tasha's caustic brew"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["tcb", "brew", "caustic"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 3 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft RAW line ≈ 12 tiles. Matches Aganazzar's Scorcher.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Acid]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(1)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        // Burst resolver: failed save = 2d4 acid, passed save = 0
+        // (cantrip-style outcome since the spell's only damage is from
+        // the save itself; the DoT is what survivors carry forward).
+        let (mut effects, saves) = neutral_burst_save_only(
+            encounter,
+            caster_id,
+            point,
+            3,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(2, 4),
+            DamageType::Acid,
+            "tasha's caustic brew",
+        );
+        // Per-target rider: every actor who *failed* the save also picks
+        // up the `CausticBrewed` flag. The DoT lives on `ROUND_END_DOTS`
+        // so the per-turn drip rolls through the shared pipeline.
+        let mut conc_conditions: Vec<(usize, Condition)> = Vec::new();
+        for (tid, passed) in saves.iter() {
+            if *passed {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: *tid,
+                condition: Condition::CausticBrewed,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            conc_conditions.push((*tid, Condition::CausticBrewed));
+        }
+        // Concentration tracks every drip target — dropping concentration
+        // strips every flag at once, cleanly ending the lingering acid.
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions(
+                "Tasha's Caustic Brew",
+                conc_conditions,
+            ),
+        }));
+        effects
+    }
+}
+
+pub static TASHAS_CAUSTIC_BREW: LazyLock<TashasCausticBrew> =
+    LazyLock::new(|| TashasCausticBrew {});
+

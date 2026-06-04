@@ -167,6 +167,18 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3f''. Wipe Acid — universal cleanse Action. Fire when the
+        //       holder carries the CausticBrewed DoT and they're below
+        //       half HP — the 2d4/round acid drip (avg 5 HP/round) outpaces
+        //       most attack swings for a near-downed actor; the
+        //       cleanse-then-survive trade dominates. The action's own
+        //       validation gates on the flag being present, so the AI
+        //       just adds the HP heuristic so a topped-up actor doesn't
+        //       burn the Action lane to scrape off a single drip.
+        if let Some(aei) = try_wipe_acid(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3g. Cleric Turn Undead — once-per-rest Channel Divinity.
         //     Fire when at least one undead-proxy enemy is within 30ft
         //     so the cleanse-and-frighten lands on someone worth it.
@@ -2609,6 +2621,28 @@ fn try_stillness_of_mind(
         return None;
     }
     try_self_action(encounter, actor_id, "stillness of mind")
+}
+
+/// Wipe Acid — universal cleanse Action. Fire when the holder carries
+/// the CausticBrewed DoT (2d4 acid per round, avg 5 HP/round) AND they
+/// are below half HP — the cleanse-then-survive trade dominates a
+/// single attack lane when the drip would outpace the swing. A topped-up
+/// actor still gets to swing through the drip (cleanse becomes
+/// suboptimal when one round of acid is less than the actor's max-HP
+/// buffer). The action's own validate refuses when the flag is absent,
+/// so this just gates on the HP heuristic.
+fn try_wipe_acid(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if !actor.has_condition(Condition::CausticBrewed) {
+        return None;
+    }
+    if !is_low_hp(encounter, actor_id, 0.5) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "wipe acid")
 }
 
 /// Cleric Channel Divinity: Turn Undead — action. Fire when at least
@@ -5157,6 +5191,46 @@ mod tests {
             "Charmed monk should fire Stillness of Mind",
         );
         assert_eq!(aei.action().name(), "stillness of mind");
+    }
+
+    /// `try_wipe_acid` fires when the holder carries the CausticBrewed
+    /// DoT and they're below half HP. A topped-up actor still swings
+    /// through the drip (a single round of 2d4 acid is cheaper than a
+    /// missed swing on the offense lane).
+    #[test]
+    fn ai_uses_wipe_acid_when_low_hp_and_brewed() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::types::DamageType;
+        let mut e = empty_arena();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // No CausticBrewed flag → AI doesn't burn the Action lane.
+        assert!(
+            try_wipe_acid(&e, g).is_none(),
+            "clean goblin should not waste Action on Wipe Acid"
+        );
+        // Brewed but full HP → AI still skips (drip is cheaper than a
+        // missed swing on offense lane).
+        e.actors.get_mut(&g).unwrap().add_condition(
+            Condition::CausticBrewed,
+            crate::conditions::ConditionTimer::Rounds(10),
+        );
+        assert!(
+            try_wipe_acid(&e, g).is_none(),
+            "full-HP brewed goblin should swing through the drip"
+        );
+        // Brewed + low HP → AI fires the cleanse.
+        let max_hp = e.actors[&g].max_hitpoints();
+        let _ = e
+            .actors
+            .get_mut(&g)
+            .unwrap()
+            .take_typed_damage((max_hp / 2) + 1, DamageType::Acid);
+        let aei = try_wipe_acid(&e, g).expect(
+            "brewed low-HP goblin should fire Wipe Acid",
+        );
+        assert_eq!(aei.action().name(), "wipe acid");
     }
 
     /// `try_telekinetic` should pick the closest in-range enemy that's

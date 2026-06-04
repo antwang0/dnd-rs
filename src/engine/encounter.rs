@@ -224,6 +224,17 @@ const ROUND_END_DOTS: &[RoundEndDot] = &[
         damage_type: DamageType::Slashing,
         log_verb: "is shredded by the cloud of daggers:",
     },
+    // 5e Tasha's Caustic Brew — concentration-bound. 2d4 acid per round
+    // as the clinging acid eats at the target. Dropping concentration
+    // ends the drip; the target can also wipe it off with an Action
+    // (via `WipeAcid`). The `Rounds(10)` timer caps the duration at ~1
+    // minute RAW so the drip eventually expires even without cleanse.
+    RoundEndDot {
+        condition: Condition::CausticBrewed,
+        dice: Dice::new(2, 4),
+        damage_type: DamageType::Acid,
+        log_verb: "is eaten by caustic brew:",
+    },
 ];
 
 /// Conditions consumed by `clear_attack_advantage_riders` when the
@@ -31928,6 +31939,121 @@ mod tests {
                 !e.actors[&ally].has_condition(Condition::Restrained),
                 "Wall of Stone should never restrain allies (seed {})",
                 seed
+            );
+        }
+    }
+
+    /// Tasha's Caustic Brew: failed-save enemies pick up the CausticBrewed
+    /// flag, and the caster starts concentrating. Allies are excluded by
+    /// the `enemy`/`neutral` partitioning at the resolver — we test the
+    /// enemy-side install lane here.
+    #[test]
+    fn caustic_brew_installs_dot_on_failed_save() {
+        use crate::actions::spells::TASHAS_CAUSTIC_BREW;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut saw_install = false;
+        for seed in 0..40u64 {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+                .unwrap();
+            let center = Coordinate::new(10, 10);
+            for ef in TASHAS_CAUSTIC_BREW
+                .side_effects(&mut e, wiz, None, Some(&vec![center]), None)
+            {
+                ef.apply(&mut e);
+            }
+            // Concentration always starts regardless of save outcome —
+            // even a fully-passed cast still installs the concentration
+            // marker (RAW: concentration begins on cast, drops if no
+            // targets stuck the rider).
+            assert!(
+                e.actors[&wiz].is_concentrating(),
+                "Caustic Brew should start concentration (seed {})",
+                seed
+            );
+            if e.actors.contains_key(&enemy)
+                && e.actors[&enemy].has_condition(Condition::CausticBrewed)
+            {
+                saw_install = true;
+                break;
+            }
+        }
+        assert!(
+            saw_install,
+            "Caustic Brew never installed the DoT condition across 40 seeds"
+        );
+    }
+
+    /// Wipe Acid: actor with the CausticBrewed flag spends an action and
+    /// clears the flag. Validates the cleanse-action default registration.
+    #[test]
+    fn wipe_acid_clears_caustic_brewed() {
+        use crate::actions::default_actions::WIPE_ACID;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&g)
+            .unwrap()
+            .add_condition(Condition::CausticBrewed, ConditionTimer::Rounds(10));
+        assert!(e.actors[&g].has_condition(Condition::CausticBrewed));
+        for ef in WIPE_ACID.side_effects(&mut e, g, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(!e.actors[&g].has_condition(Condition::CausticBrewed));
+    }
+
+    /// Wipe Acid validation: silently no-ops when the actor doesn't carry
+    /// the flag (so a stray click doesn't burn the Action lane).
+    #[test]
+    fn wipe_acid_validate_requires_caustic_flag() {
+        use crate::actions::default_actions::WIPE_ACID;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // No CausticBrewed flag → validate should refuse.
+        assert!(!WIPE_ACID.validate_input(&e, g, None, None, None));
+    }
+
+    /// Caustic Brew DoT: a brewed actor takes 2d4 acid per round-end via
+    /// the shared `ROUND_END_DOTS` registry. Sweep seeds to make sure the
+    /// drip fires deterministically through the standard damage pipeline.
+    #[test]
+    fn caustic_brewed_dots_at_round_end() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        for seed in 0..10u64 {
+            let mut e = ei_seeded(10, 10, &[], seed);
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&g)
+                .unwrap()
+                .add_condition(Condition::CausticBrewed, ConditionTimer::Rounds(10));
+            let hp_before = e.actors[&g].hitpoints();
+            e.apply_condition_round_end_dots(g);
+            let hp_after = e.actors[&g].hitpoints();
+            assert!(
+                hp_after < hp_before,
+                "Caustic Brew should drip 2d4 acid at round-end (seed {})",
+                seed
+            );
+            // 2d4 max = 8 per round. Sanity-cap the drip.
+            assert!(
+                hp_before - hp_after <= 8,
+                "Caustic Brew drip should be 2d4 ({}+8 max)",
+                hp_before
             );
         }
     }
