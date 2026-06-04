@@ -332,6 +332,18 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // mid-encounter "I'm out of slots" recovery without a long rest. The
     // feature itself is a free action — no slot or action-economy cost.
     actions.push(&*ARCANE_RECOVERY);
+    // Latest wizard additions:
+    //   - lv5 **Wall of Stone**: 2-tile burst DEX save; failed-save
+    //     enemies are Restrained for 10 rounds (concentration-anchored).
+    //     Slots between Wall of Fire (lv4 damage zone) and Wall of Force
+    //     (lv5 prone shove) on the area-denial ladder; the restraint is
+    //     the load-bearing crowd-control.
+    //   - lv6 **Investiture of Ice**: self-only concentration buff —
+    //     cold resistance plus 1d10 cold retaliation on melee hits.
+    //     Symmetric to Investiture of Flame; gives the wizard a cold-
+    //     themed defensive concentration option at lv6.
+    actions.push(&*crate::actions::spells::WALL_OF_STONE);
+    actions.push(&*crate::actions::spells::INVESTITURE_OF_ICE);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

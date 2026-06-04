@@ -21114,3 +21114,197 @@ impl Action for PlaneShift {
 
 pub static PLANE_SHIFT: LazyLock<PlaneShift> = LazyLock::new(|| PlaneShift {});
 
+/// Wall of Stone — level-5 evocation (wizard / sorcerer / druid),
+/// concentration. RAW: the caster summons up to ten 10-ft panels of
+/// stone at a point within 120 ft, forming an impassable barrier. We
+/// collapse the panel geometry to the load-bearing combat hook: every
+/// creature whose footprint touches the 10-ft-radius (2-tile) burst at
+/// cast time makes a DEX save vs the caster's spell save DC. On fail,
+/// they're caught in the rising stone — `Restrained` for 10 rounds
+/// (movement zero, attack disadvantage, advantage to attackers, DEX-save
+/// disadvantage). On pass, they slip clear with no penalty. The
+/// restraint is anchored to the caster's concentration so dropping it
+/// dissolves the wall and frees everyone caught.
+///
+/// Distinct from Wall of Force (no damage, no save, just shoves
+/// adjacent enemies prone) and Wall of Ice (instant cold burst + prone).
+/// Wall of Stone's defining feature is the lockdown — a single high-CR
+/// enemy caught in the rising stone loses an entire turn while the
+/// caster's allies focus-fire.
+pub struct WallOfStone {}
+
+impl Action for WallOfStone {
+    fn name(&self) -> &str {
+        "wall of stone"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wostone", "stone-wall"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 2 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft RAW = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Concentration-gated install — don't re-cast while already
+        // concentrating on another spell.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.is_concentrating())
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = target_locations.and_then(|tl| tl.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]);
+        encounter.log(format!(
+            "  wall of stone: panels rise from the ground (DC {})",
+            dc
+        ));
+        let targets = encounter.enemy_burst_targets(caster_id, point, 2);
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut restrained: Vec<(usize, Condition)> = Vec::new();
+        for tid in targets {
+            // Route through the caster-aware save helper so Heightened
+            // Spell metamagic forces disadvantage on the first save in
+            // the burst (RAW). Subsequent targets fall through normally.
+            let save = encounter.roll_save_against_caster(
+                tid,
+                AbilityScoreType::Dexterity,
+                dc,
+                caster_id,
+            );
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Restrained,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            restrained.push((tid, Condition::Restrained));
+        }
+        // Anchor concentration so dropping it dissolves the wall and
+        // frees everyone caught in it — mirrors the Hold Person /
+        // Plant Growth concentration-prune shape.
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Wall of Stone", restrained),
+        }));
+        effects
+    }
+}
+
+pub static WALL_OF_STONE: LazyLock<WallOfStone> = LazyLock::new(|| WallOfStone {});
+
+/// Investiture of Ice — level-6 transmutation, concentration. The caster's
+/// body is sheathed in shards of ice: they gain resistance to cold damage
+/// (read by `effective_damage`'s InvestedInIce branch), and every melee
+/// attacker takes 1d10 cold damage in retaliation (handled by
+/// `resolve_attack`'s `MELEE_REFLECT_RIDERS` table next to the
+/// Investiture of Flame entry). Symmetric to Investiture of Flame: same
+/// shape, swapped element. The 4d6 cold emanation rider in RAW is omitted
+/// — the load-bearing buff is the resistance + melee retaliation envelope.
+pub struct InvestitureOfIce {}
+
+impl Action for InvestitureOfIce {
+    fn name(&self) -> &str {
+        "investiture of ice"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ioi", "iceinvest"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Already invested → don't re-cast and burn a level-6 slot.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.has_condition(Condition::InvestedInIce))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        encounter.log("  investiture of ice: your body is sheathed in shards of ice.".to_string());
+        self_concentration_buff_effects(
+            caster_id,
+            "Investiture of Ice",
+            Condition::InvestedInIce,
+            ConditionTimer::Rounds(10),
+        )
+    }
+}
+
+pub static INVESTITURE_OF_ICE: LazyLock<InvestitureOfIce> =
+    LazyLock::new(|| InvestitureOfIce {});
+

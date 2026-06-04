@@ -535,6 +535,15 @@ pub enum Condition {
     /// the spell is concentration-bound on the caster and self-only.
     /// Cleared on concentration drop.
     InvestedInFlame,
+    /// Invested with Ice (5e level-6 transmutation, concentration). The
+    /// caster's body is sheathed in shards of ice: they gain resistance to
+    /// cold damage and any creature within reach that hits them with a
+    /// melee attack takes 1d10 cold damage in retaliation. Symmetric to
+    /// `InvestedInFlame` (same shape, swapped element); the install lives
+    /// in `INVESTITURE_OF_ICE` and the retaliation rider lives in
+    /// `MELEE_REFLECT_RIDERS` next to the InvestedInFlame entry. Cleared
+    /// on concentration drop.
+    InvestedInIce,
     /// Mental Prison — RAW: imprisoned for the duration in an illusion
     /// of agony. We model the load-bearing half as a Restrained envelope
     /// (movement zero, attacks with disadvantage, attacks against have
@@ -1043,6 +1052,7 @@ impl Condition {
             Condition::DivineStriking => "primed with divine strike",
             Condition::TripAttacking => "primed to trip",
             Condition::InvestedInFlame => "invested with flame",
+            Condition::InvestedInIce => "invested with ice",
             Condition::MentallyImprisoned => "mentally imprisoned",
             Condition::Sphered => "trapped in a resilient sphere",
             Condition::WindWalled => "sheltered by a wind wall",
@@ -1156,6 +1166,7 @@ impl Condition {
                 | Condition::DivineStriking
                 | Condition::TripAttacking
                 | Condition::InvestedInFlame
+                | Condition::InvestedInIce
                 | Condition::WindWalled
                 | Condition::StaggeringSmiting
                 | Condition::BanishingSmiting

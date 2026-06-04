@@ -951,7 +951,7 @@ impl ActorInstance {
     }
 
     /// Raw recharge entries for inspection by the encounter engine.
-    pub fn recharge_entries(&self) -> &[(& 'static str, u32, bool)] {
+    pub fn recharge_entries(&self) -> &[(&'static str, u32, bool)] {
         &self.recharge_abilities
     }
 
@@ -1156,7 +1156,8 @@ impl ActorInstance {
                         dt,
                         DamageType::Bludgeoning | DamageType::Piercing | DamageType::Slashing
                     ))
-                || (dt == DamageType::Fire && self.has_condition(Condition::InvestedInFlame)));
+                || (dt == DamageType::Fire && self.has_condition(Condition::InvestedInFlame))
+                || (dt == DamageType::Cold && self.has_condition(Condition::InvestedInIce)));
         if condition_resistance {
             amt /= 2;
         }

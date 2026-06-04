@@ -301,6 +301,17 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&crate::actions::class_features::CONVERT_SPELL_SLOT_1);
     actions.push(&crate::actions::class_features::CONVERT_SPELL_SLOT_2);
     actions.push(&crate::actions::class_features::CONVERT_SPELL_SLOT_3);
+    // Latest sorcerer additions:
+    //   - lv5 **Wall of Stone**: 2-tile burst DEX save; failed-save
+    //     enemies are Restrained for 10 rounds (concentration-anchored).
+    //     CHA-anchored DC keeps the sorcerer's pick punchy at high tier.
+    //   - lv6 **Investiture of Ice**: self-only concentration buff —
+    //     cold resistance + 1d10 cold melee retaliation. Symmetric to
+    //     Investiture of Flame; gives the sorcerer a cold-flavored
+    //     defensive concentration option to pair with Cone of Cold /
+    //     Snilloc's Snowball Swarm.
+    actions.push(&*crate::actions::spells::WALL_OF_STONE);
+    actions.push(&*crate::actions::spells::INVESTITURE_OF_ICE);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

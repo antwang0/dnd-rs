@@ -173,6 +173,18 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::CONJURE_LOCUSTS);
     actions.push(&*crate::actions::spells::PROTECTION_FROM_ENERGY);
     actions.push(&*crate::actions::spells::HEALING_SPIRIT);
+    // Latest druid additions:
+    //   - lv5 **Wall of Stone**: 2-tile burst on a DEX save; failed-save
+    //     targets are Restrained for 10 rounds (concentration-anchored).
+    //     Slots in next to Wall of Fire / Spike Stones on the area-
+    //     denial lane; the restraint is the load-bearing crowd-control.
+    //   - lv6 **Investiture of Ice**: self-only concentration buff —
+    //     cold resistance plus 1d10 cold retaliation on melee hits.
+    //     Symmetric to the existing Investiture of Flame (wizard /
+    //     sorcerer pick); the druid gets the cold variant for thematic
+    //     fit with their other cold spells (Sleet Storm / Ice Storm).
+    actions.push(&*crate::actions::spells::WALL_OF_STONE);
+    actions.push(&*crate::actions::spells::INVESTITURE_OF_ICE);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

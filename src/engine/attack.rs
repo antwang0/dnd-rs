@@ -497,6 +497,16 @@ const MELEE_REFLECT_RIDERS: &[MeleeReflectRider] = &[
         damage_type: DamageType::Fire,
         label: "investiture of flame",
     },
+    // 5e Investiture of Ice — 1d10 cold on melee contact. Symmetric to
+    // Investiture of Flame: same die / shape, swapped element. Paired
+    // with cold resistance on the caster via the InvestedInIce branch
+    // of `effective_damage`.
+    MeleeReflectRider {
+        condition: Condition::InvestedInIce,
+        damage: ReflectDamage::Dice(Dice::new(1, 10)),
+        damage_type: DamageType::Cold,
+        label: "investiture of ice",
+    },
 ];
 
 /// Roll a single rider die for an on-hit bonus, doubling on crit per

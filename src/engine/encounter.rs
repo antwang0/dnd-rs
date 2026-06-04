@@ -1915,19 +1915,23 @@ impl EncounterInstance {
         false
     }
 
-    /// Sorted ids of combat-active actors inside the burst, filtered by
-    /// team relation to the caster. `same_team = true` returns allies
-    /// (including the caster if they sit in the blast); `same_team = false`
-    /// returns enemies and implicitly excludes the caster via the team
-    /// mismatch. Shared body for `enemy_burst_targets` / `ally_burst_targets`
-    /// — both used to duplicate this loop verbatim with one comparison flip.
-    fn team_burst_targets(
+    /// Shared body for the three public burst-target helpers
+    /// (`enemy_burst_targets` / `ally_burst_targets` / `neutral_burst_targets`).
+    /// `keep` decides whether a candidate id should be admitted; it sees
+    /// the candidate's id, the candidate actor, and the caster's team.
+    /// Returning `true` keeps the id; `false` drops it. The geometry +
+    /// combat-active + sort invariants live here so adding a new
+    /// burst-target lens is a one-line lambda over a single chokepoint.
+    fn burst_targets_with<F>(
         &self,
         caster_id: usize,
         point: Coordinate,
         radius: isize,
-        same_team: bool,
-    ) -> Vec<usize> {
+        keep: F,
+    ) -> Vec<usize>
+    where
+        F: Fn(usize, &ActorInstance, usize) -> bool,
+    {
         let Some(caster) = self.actors.get(&caster_id) else {
             return Vec::new();
         };
@@ -1939,7 +1943,7 @@ impl EncounterInstance {
                 if !a.is_combat_active() {
                     return None;
                 }
-                if (a.team() == caster_team) != same_team {
+                if !keep(*id, a, caster_team) {
                     return None;
                 }
                 let dist = footprint_chebyshev(
@@ -1966,7 +1970,9 @@ impl EncounterInstance {
         point: Coordinate,
         radius: isize,
     ) -> Vec<usize> {
-        self.team_burst_targets(caster_id, point, radius, false)
+        self.burst_targets_with(caster_id, point, radius, |_id, a, caster_team| {
+            a.team() != caster_team
+        })
     }
 
     /// Sorted ids of combat-active actors inside the burst that *are* on
@@ -1979,7 +1985,9 @@ impl EncounterInstance {
         point: Coordinate,
         radius: isize,
     ) -> Vec<usize> {
-        self.team_burst_targets(caster_id, point, radius, true)
+        self.burst_targets_with(caster_id, point, radius, |_id, a, caster_team| {
+            a.team() == caster_team
+        })
     }
 
     /// Sorted ids of every combat-active actor inside the burst —
@@ -1993,24 +2001,7 @@ impl EncounterInstance {
         point: Coordinate,
         radius: isize,
     ) -> Vec<usize> {
-        let mut ids: Vec<usize> = self
-            .actors
-            .iter()
-            .filter_map(|(id, a)| {
-                if *id == caster_id || !a.is_combat_active() {
-                    return None;
-                }
-                let dist = footprint_chebyshev(
-                    a.location(),
-                    get_tiles_from_size(a.size()),
-                    point,
-                    1,
-                );
-                if dist <= radius { Some(*id) } else { None }
-            })
-            .collect();
-        ids.sort_unstable();
-        ids
+        self.burst_targets_with(caster_id, point, radius, |id, _a, _ct| id != caster_id)
     }
 
     /// Footprint-Chebyshev distance between two living actors, or `None` if
@@ -31584,6 +31575,155 @@ mod tests {
             sneak_landed_with_poison,
             "cunning strike (poison): rider should land at least once across 200 swings",
         );
+    }
+
+    /// Investiture of Ice: self-buff installs InvestedInIce + a
+    /// concentration mark; the holder takes half cold damage while up.
+    /// Symmetric to `investiture_of_flame_installs_self_buff_and_resists_fire`.
+    #[test]
+    fn investiture_of_ice_installs_self_buff_and_resists_cold() {
+        use crate::actions::spells::INVESTITURE_OF_ICE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        for ef in INVESTITURE_OF_ICE.side_effects(&mut e, wiz, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&wiz].has_condition(Condition::InvestedInIce));
+        assert!(e.actors[&wiz].is_concentrating());
+        // Half-cold-damage check: with the buff up, 20 cold damage
+        // should land as 10 HP loss.
+        let actor = &e.actors[&wiz];
+        assert_eq!(actor.effective_damage(20, DamageType::Cold), 10);
+        // Non-cold damage is untouched (fire is unaffected).
+        assert_eq!(actor.effective_damage(20, DamageType::Fire), 20);
+    }
+
+    /// Investiture of Ice's retaliation rider: a melee swing against the
+    /// invested caster deals 1d10 cold damage back to the attacker.
+    /// Mirrors `fire_shield_reflects_melee_damage` shape.
+    #[test]
+    fn investiture_of_ice_reflects_cold_on_melee_hit() {
+        use crate::actions::spells::INVESTITURE_OF_ICE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        // Sweep seeds — the rider rolls 1d10 + the attacker may miss
+        // the swing entirely. We assert the rider lands at least once.
+        let mut reflected = false;
+        for seed in 0..40u64 {
+            let mut e = ei_seeded(10, 10, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let gob = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            // Invest the wizard so the retaliation rider is armed.
+            for ef in INVESTITURE_OF_ICE.side_effects(&mut e, wiz, None, None, None) {
+                ef.apply(&mut e);
+            }
+            let gob_hp_before = e.actors[&gob].hitpoints();
+            // Goblin swings melee at the wizard. Use the scimitar attack
+            // which is the goblin's melee weapon.
+            let scimitar = e.actors[&gob].find_action("scimitar").unwrap();
+            for ef in scimitar.side_effects(&mut e, gob, Some(&vec![wiz]), None, None) {
+                ef.apply(&mut e);
+            }
+            // If the goblin's HP dropped, the rider lands (the attack
+            // itself doesn't deal damage TO the goblin, so any drop on
+            // the goblin's side is the cold rider).
+            if e.actors
+                .get(&gob)
+                .is_some_and(|a| a.hitpoints() < gob_hp_before)
+            {
+                reflected = true;
+                break;
+            }
+        }
+        assert!(
+            reflected,
+            "Investiture of Ice should reflect cold damage on at least one melee hit across seeds"
+        );
+    }
+
+    /// Wall of Stone: lv5 concentration burst. Verifies the lv5 slot cost,
+    /// that failed-save enemies eventually pick up Restrained across
+    /// seeds, and that the caster picks up concentration.
+    #[test]
+    fn wall_of_stone_restrains_enemies_in_burst() {
+        use crate::actions::spells::WALL_OF_STONE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut concentrated = false;
+        let mut restrained = false;
+        for seed in 0..40u64 {
+            let mut e = ei_seeded(30, 30, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(15, 5), 1, 0)
+                .unwrap();
+            let center = Coordinate::new(15, 5);
+            let costs = WALL_OF_STONE.cost(&e, wiz, None, Some(&vec![center]), None);
+            assert!(
+                costs.iter().any(|c| matches!(c, Resource::SpellSlot(5))),
+                "Wall of Stone should cost a lv5 spell slot"
+            );
+            for ef in WALL_OF_STONE.side_effects(&mut e, wiz, None, Some(&vec![center]), None) {
+                ef.apply(&mut e);
+            }
+            if e.actors[&wiz].is_concentrating() {
+                concentrated = true;
+            }
+            if e.actors
+                .get(&g)
+                .is_some_and(|a| a.has_condition(Condition::Restrained))
+            {
+                restrained = true;
+            }
+            if concentrated && restrained {
+                break;
+            }
+        }
+        assert!(concentrated, "Wall of Stone should anchor caster concentration");
+        assert!(
+            restrained,
+            "Wall of Stone should restrain at least one enemy across seeds"
+        );
+    }
+
+    /// Wall of Stone spares allies in the burst (uses enemy_burst_targets
+    /// so friendly fire is impossible). Verifies an ally in the same
+    /// radius never picks up Restrained.
+    #[test]
+    fn wall_of_stone_spares_allies_in_burst() {
+        use crate::actions::spells::WALL_OF_STONE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        for seed in 0..20u64 {
+            let mut e = ei_seeded(30, 30, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+                .unwrap();
+            // Ally on team 0 — same team as the wizard.
+            let ally = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(15, 5), 0, 0)
+                .unwrap();
+            let center = Coordinate::new(15, 5);
+            for ef in WALL_OF_STONE.side_effects(&mut e, wiz, None, Some(&vec![center]), None) {
+                ef.apply(&mut e);
+            }
+            assert!(
+                !e.actors[&ally].has_condition(Condition::Restrained),
+                "Wall of Stone should never restrain allies (seed {})",
+                seed
+            );
+        }
     }
 
     /// Seeded sibling of `ei_with_terrain` — same hand-crafted terrain
