@@ -982,6 +982,28 @@ pub enum Condition {
     /// so the cleanse action and concentration cleanup target just this
     /// mark.
     CausticBrewed,
+    /// Distracting Strike primed (5e Fighter Battle Master maneuver, once
+    /// per long rest in our model). Bonus-action prime that adds +1d6
+    /// damage to the next melee weapon hit and tags the target as
+    /// `Distracted` — the next attack against that target by an attacker
+    /// other than the fighter has advantage. One-shot — the rider table
+    /// strips this flag the moment a melee swing lands. Tick-down timer
+    /// (`UntilStartOfNextTurn`) caps a swing-less prime so it doesn't
+    /// sit across rounds. Mirrors Goading Attack's prime+target-debuff
+    /// shape but with a target-side advantage rider instead of
+    /// attacker-side disadvantage.
+    DistractingAttacking,
+    /// Distracted (5e Battle Master Distracting Strike rider). The
+    /// target's guard has been compromised: attack rolls against them by
+    /// any attacker *other* than the fighter who tagged them have
+    /// advantage. Engine reads the `distracted_by` link on the holder to
+    /// identify the fighter (mirrors how `Goaded` + `goaded_by` route
+    /// through `compute_attack_mode`, but as a target-side rider rather
+    /// than an attacker-side one). Short timer
+    /// (`UntilStartOfNextTurn`) — RAW: lasts until the start of the
+    /// fighter's next turn; we use the target-side tick-down envelope
+    /// shared with Mocked / Helped / Goaded.
+    Distracted,
 }
 
 impl Condition {
@@ -1120,6 +1142,8 @@ impl Condition {
             Condition::CunningStrikeWithdraw => "primed with cunning withdraw",
             Condition::CunningStrikeDaze => "primed with cunning daze",
             Condition::CausticBrewed => "splashed with caustic brew",
+            Condition::DistractingAttacking => "primed to distract",
+            Condition::Distracted => "distracted",
         }
     }
 
@@ -1224,6 +1248,7 @@ impl Condition {
                 | Condition::CunningStrikeTrip
                 | Condition::CunningStrikeWithdraw
                 | Condition::CunningStrikeDaze
+                | Condition::DistractingAttacking
         )
     }
 

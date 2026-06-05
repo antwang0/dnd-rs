@@ -998,6 +998,27 @@ impl ApplicableSideEffect for SetGoadedBy {
     }
 }
 
+/// Record which fighter has tagged the target with Distracting Strike.
+/// Pairs with ApplyCondition (Distracted): `compute_attack_mode` reads
+/// this to grant advantage on attack rolls against the target by any
+/// attacker *other* than the distractor. `set_distracted_by(None)`
+/// clears the link explicitly; the engine also clears it automatically
+/// when the Distracted condition is removed via `remove_condition`.
+/// Mirrors `SetGoadedBy` in shape, distinct field on `ActorInstance`.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct SetDistractedBy {
+    pub target_id: usize,
+    pub distracter: Option<usize>,
+}
+
+impl ApplicableSideEffect for SetDistractedBy {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        if let Some(actor) = ei.get_actor(self.target_id) {
+            actor.set_distracted_by(self.distracter);
+        }
+    }
+}
+
 /// Record the partner of a Warding Bond (5e level-2 abjuration). Paired
 /// with ApplyCondition (WardingBonded) on the same target: the condition
 /// flag carries the AC / save / resistance buff, while the `warding_partner`

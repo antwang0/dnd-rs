@@ -53,6 +53,7 @@ pub const BATTLE_MASTER_MANEUVERS: &[&str] = &[
     LUNGING_ATTACK_TAG,
     RALLY_TAG,
     COMMANDERS_STRIKE_TAG,
+    DISTRACTING_ATTACK_TAG,
 ];
 
 /// Tags used by `ActorInstance::feature_available` / `spend_feature` to
@@ -2241,6 +2242,86 @@ impl Action for GoadingAttack {
 }
 
 pub static GOADING_ATTACK: LazyLock<GoadingAttack> = LazyLock::new(|| GoadingAttack {});
+
+/// Class-feature tag for the Fighter's Distracting Strike Battle Master
+/// maneuver (once per long rest in our model). Refreshes on a short rest
+/// via the `BATTLE_MASTER_MANEUVERS` registry.
+pub const DISTRACTING_ATTACK_TAG: &str = "fighter.distracting_attack";
+
+/// Distracting Strike — Fighter Battle Master maneuver. Bonus action;
+/// primes the next melee weapon hit: on connect, the target takes
+/// +1d6 bonus damage (the superiority die) and is tagged Distracted —
+/// the next attack roll against them by an attacker *other* than the
+/// fighter has advantage until the end of the fighter's next turn.
+/// RAW's superiority-die damage IS the load-bearing damage rider
+/// (no save needed — the target-side advantage rider lands
+/// unconditionally on hit). Mirrors Goading Attack's prime + target-
+/// link pairing, but flipped to a target-side advantage rather than
+/// an attacker-side disadvantage. One-shot — the OnHitRider table
+/// strips this flag the moment a melee swing lands.
+pub struct DistractingAttack {}
+
+impl Action for DistractingAttack {
+    fn name(&self) -> &str {
+        "distracting strike"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["distract", "dsa"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.is_combat_active()
+                && a.feature_available(DISTRACTING_ATTACK_TAG)
+                && !a.has_condition(Condition::DistractingAttacking)
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        prime_self_condition(
+            encounter,
+            caster_id,
+            DISTRACTING_ATTACK_TAG,
+            Condition::DistractingAttacking,
+            ConditionTimer::UntilStartOfNextTurn,
+            "  distracting strike: fighter's next melee hit will rattle the target's guard.",
+        )
+    }
+}
+
+pub static DISTRACTING_ATTACK: LazyLock<DistractingAttack> =
+    LazyLock::new(|| DistractingAttack {});
 
 /// Class-feature tag for the Wizard's Arcane Recovery — once per long
 /// rest, refreshes on long rest. RAW: once per day during a short rest,

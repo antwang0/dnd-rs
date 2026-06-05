@@ -2,7 +2,7 @@ use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::Dice;
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::side_effects::{
-    ApplicableSideEffect, ApplyCondition, DealDamage, PushActor, SetGoadedBy,
+    ApplicableSideEffect, ApplyCondition, DealDamage, PushActor, SetDistractedBy, SetGoadedBy,
 };
 use crate::engine::types::{AbilityScoreType, DamageType};
 
@@ -1166,7 +1166,65 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
                 hp_threshold: None,
             }),
         },
+        // 5e Battle Master Distracting Strike maneuver. +1d6 bonus damage
+        // on the consuming melee hit (RAW: add the superiority die to
+        // the damage roll) plus a no-save auto-apply Distracted tag on
+        // the target. The Distracted condition itself carries the
+        // load-bearing rider — `compute_attack_mode` grants advantage
+        // to any attacker *other* than the fighter, gated via the
+        // `distracted_by` link set in the chained `SetDistractedBy`
+        // emission inside `push_follow_up_effect`. RAW duration is
+        // "until the start of your next turn" — modeled with the
+        // `UntilStartOfNextTurn` target-side tick-down envelope shared
+        // with Goaded / Mocked / Helped.
+        OnHitRider {
+            condition: Condition::DistractingAttacking,
+            dice: Dice::new(1, 6),
+            label: "distracting strike",
+            damage_type: DamageType::Slashing,
+            melee_only: true,
+            ranged_only: false,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: None,
+                dc_ability: AbilityScoreType::Strength,
+                effect: FollowUpEffect::Condition {
+                    condition: Condition::Distracted,
+                    timer: ConditionTimer::UntilStartOfNextTurn,
+                },
+                label: "distracting strike distract",
+                hp_threshold: None,
+            }),
+        },
 ];
+
+/// Build the `SetXBy` side-effect that records the attacker for a
+/// linked condition. Conditions that carry a back-reference to the
+/// attacker — `Goaded` (`goaded_by`), `Distracted` (`distracted_by`) —
+/// need this companion emission so `compute_attack_mode` can read the
+/// link and apply the "attacker-specific" clause (Goaded forces
+/// disadvantage on attacks against anyone other than the goader;
+/// Distracted grants advantage to attackers other than the distracter).
+/// Returns `None` for conditions that don't carry a link — the caller
+/// just emits the bare `ApplyCondition`. Future linked conditions land
+/// in this match without touching the rider-dispatch loop.
+fn attacker_link_side_effect(
+    condition: Condition,
+    target_id: usize,
+    caster_id: usize,
+) -> Option<Box<dyn ApplicableSideEffect>> {
+    match condition {
+        Condition::Goaded => Some(Box::new(SetGoadedBy {
+            target_id,
+            goader: Some(caster_id),
+        })),
+        Condition::Distracted => Some(Box::new(SetDistractedBy {
+            target_id,
+            distracter: Some(caster_id),
+        })),
+        _ => None,
+    }
+}
 
 /// Process the optional secondary save-and-apply step that some Smite
 /// spells stack on top of their bonus damage. `save_ability: None`
@@ -1240,18 +1298,20 @@ fn push_follow_up_effect(
                 condition,
                 timer,
             }));
-            // Conditions that carry a back-reference to the attacker:
-            // chain the link-update side-effect alongside the apply so a
-            // re-cast / re-trigger never leaves a stale link in place.
-            // Mirrors how Compelled Duel's action pairs ApplyCondition
-            // (Dueled) with SetDueledBy at the spell site; here we hide
-            // the pairing inside the rider's follow-up so every "goading
-            // attack hit" path lands it without re-stating the chain.
-            if condition == Condition::Goaded {
-                effects.push(Box::new(SetGoadedBy {
-                    target_id,
-                    goader: Some(caster_id),
-                }));
+            // Some conditions carry a back-reference to the attacker
+            // (`goaded_by`, `distracted_by`) — chain the matching
+            // `SetXBy` side-effect alongside the apply so the link is
+            // never stale relative to the condition flag. Single match
+            // chokepoint so a new linked condition lands in one place
+            // rather than growing another if-let here. Mirrors how
+            // Compelled Duel's spell-site pairing emits ApplyCondition
+            // (Dueled) + SetDueledBy together — same shape, lifted
+            // behind the rider helper so the on-hit path doesn't
+            // re-state the chain at every smite-follow-up site.
+            if let Some(link) =
+                attacker_link_side_effect(condition, target_id, caster_id)
+            {
+                effects.push(link);
             }
         }
         FollowUpEffect::Push { tiles } => {

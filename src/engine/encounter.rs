@@ -849,6 +849,21 @@ impl EncounterInstance {
             {
                 mode = mode.combine(RollMode::Disadvantage);
             }
+            // 5e Battle Master Distracting Strike rider. A distracted
+            // creature is open to attack by anyone other than the
+            // fighter who tagged them — that *other* attacker rolls with
+            // advantage. The distractor themselves gets no benefit from
+            // their own setup (RAW: "the next attack roll against the
+            // target by an attacker other than you"). Not in the static
+            // `grants_advantage_to_attackers` cohort because the
+            // attacker-skip needs target-side state (`distracted_by`).
+            if target.has_condition(Condition::Distracted)
+                && target
+                    .distracted_by()
+                    .is_some_and(|distracter| distracter != attacker_id)
+            {
+                mode = mode.combine(RollMode::Advantage);
+            }
         }
         mode
     }
@@ -25237,6 +25252,7 @@ mod tests {
             DISARMING_ATTACK_TAG,
             PUSHING_ATTACK_TAG,
             GOADING_ATTACK_TAG,
+            crate::actions::class_features::DISTRACTING_ATTACK_TAG,
         ] {
             actor.spend_feature(tag);
             assert!(!actor.feature_available(tag), "{} should be spent", tag);
@@ -25251,6 +25267,7 @@ mod tests {
             DISARMING_ATTACK_TAG,
             PUSHING_ATTACK_TAG,
             GOADING_ATTACK_TAG,
+            crate::actions::class_features::DISTRACTING_ATTACK_TAG,
         ] {
             assert!(
                 actor.feature_available(tag),
@@ -25324,6 +25341,134 @@ mod tests {
             .unwrap()
             .remove_condition(Condition::Goaded);
         assert!(e.actors[&goblin].goaded_by().is_none());
+    }
+
+    /// Distracting Strike primes DistractingAttacking on the fighter and
+    /// consumes the once-per-rest feature. Mirrors the Goading Attack
+    /// shape — bonus-action prime, no-stack gate on the prime condition.
+    #[test]
+    fn distracting_attack_primes_caster_and_consumes_feature() {
+        use crate::actions::class_features::{DISTRACTING_ATTACK, DISTRACTING_ATTACK_TAG};
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&f].feature_available(DISTRACTING_ATTACK_TAG));
+        let effects = DISTRACTING_ATTACK.side_effects(&mut e, f, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&f].has_condition(Condition::DistractingAttacking));
+        assert!(!e.actors[&f].feature_available(DISTRACTING_ATTACK_TAG));
+    }
+
+    /// Distracting Strike primed + a melee swing that lands tags the
+    /// target Distracted and wires the `distracted_by` link onto the
+    /// fighter. Exercises the full prime → hit → rider chain (rider
+    /// table consume_on_trigger + push_follow_up_effect's chained
+    /// SetDistractedBy emission), not just the prime install. Probes
+    /// across RNG seeds because the swing has to actually hit at least
+    /// once for the rider to fire.
+    #[test]
+    fn distracting_strike_rider_applies_distracted_on_hit() {
+        use crate::actions::class_features::DISTRACTING_ATTACK;
+        use crate::actions::monster_attacks::SCIMITAR;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut applied = false;
+        for seed in 0..80 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let f = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            // Prime distracting strike.
+            let prime_effects = DISTRACTING_ATTACK.side_effects(&mut e, f, None, None, None);
+            for ef in prime_effects {
+                ef.apply(&mut e);
+            }
+            assert!(e.actors[&f].has_condition(Condition::DistractingAttacking));
+            // Swing.
+            let tv = vec![g];
+            let weapon_effects = SCIMITAR.side_effects(&mut e, f, Some(&tv), None, None);
+            for ef in weapon_effects {
+                ef.apply(&mut e);
+            }
+            // If the goblin survived the swing AND was tagged, the rider
+            // fired correctly. Check distracted_by link too.
+            if let Some(goblin) = e.actors.get(&g)
+                && goblin.has_condition(Condition::Distracted)
+            {
+                assert_eq!(
+                    goblin.distracted_by(),
+                    Some(f),
+                    "distracted_by link should point at the fighter"
+                );
+                // Prime should be consumed on the hit.
+                assert!(!e.actors[&f].has_condition(Condition::DistractingAttacking));
+                applied = true;
+                break;
+            }
+        }
+        assert!(
+            applied,
+            "distracting strike rider never landed across 80 seeds"
+        );
+    }
+
+    /// Distracted condition + distracted_by link grant advantage to
+    /// attackers *other* than the fighter who tagged the target.
+    /// Symmetric inverse of the goaded test: same plumbing, flipped
+    /// polarity (target-side advantage vs attacker-side disadvantage).
+    #[test]
+    fn distracted_attack_mode_grants_advantage_to_off_attackers() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let other_ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        // Tag the goblin as Distracted by the fighter.
+        {
+            let g = e.actors.get_mut(&goblin).unwrap();
+            g.add_condition(Condition::Distracted, ConditionTimer::UntilStartOfNextTurn);
+            g.set_distracted_by(Some(fighter));
+        }
+        // Fighter (the distractor) attacking the goblin: no advantage
+        // from their own setup — RAW: "an attacker other than you."
+        let mode_self = e.compute_attack_mode(fighter, goblin, true);
+        assert_ne!(
+            mode_self,
+            RollMode::Advantage,
+            "the distractor gets no advantage from their own setup",
+        );
+        // Other ally attacking the goblin: gets advantage from the
+        // Distracted rider.
+        let mode_ally = e.compute_attack_mode(other_ally, goblin, true);
+        assert_eq!(
+            mode_ally,
+            RollMode::Advantage,
+            "ally swing benefits from the distracter's setup",
+        );
+        // Removing the condition clears the link automatically.
+        e.actors
+            .get_mut(&goblin)
+            .unwrap()
+            .remove_condition(Condition::Distracted);
+        assert!(e.actors[&goblin].distracted_by().is_none());
     }
 
     /// Bullette template: high-HP CR-5 monstrosity with bite + multi +

@@ -492,6 +492,14 @@ pub struct ActorInstance {
     /// simultaneously be dueled by a paladin and goaded by a fighter
     /// without the two getting confused.
     goaded_by: Option<usize>,
+    /// Identity of the fighter that has distracted this actor (5e Battle
+    /// Master Distracting Strike). Paired with the `Distracted`
+    /// condition: attack rolls against this actor by anyone *other* than
+    /// this id have advantage. Cleared when the Distracted condition
+    /// lifts. Mirrors `goaded_by` in shape but reversed in polarity —
+    /// Distracted is a target-side advantage rider rather than an
+    /// attacker-side disadvantage one.
+    distracted_by: Option<usize>,
     /// 5e Legendary Resistance — remaining auto-pass charges on failed
     /// saves this long rest. Refreshed to `legendary_resistance_max` on
     /// long rest. See `EncounterInstance::roll_save` for the trigger site.
@@ -633,6 +641,7 @@ impl ActorInstance {
             indomitable_pending: false,
             dueled_by: None,
             goaded_by: None,
+            distracted_by: None,
             legendary_resistance_remaining: ct.legendary_resistances,
             legendary_resistance_max: ct.legendary_resistances,
             warding_partner: None,
@@ -724,6 +733,19 @@ impl ActorInstance {
 
     pub fn set_goaded_by(&mut self, id: Option<usize>) {
         self.goaded_by = id;
+    }
+
+    /// Identity of the fighter that has distracted this actor
+    /// (Distracting Strike maneuver). Read by `compute_attack_mode` to
+    /// grant advantage to any attacker *other* than this fighter.
+    /// Symmetric to `goaded_by` but target-side advantage rather than
+    /// attacker-side disadvantage.
+    pub fn distracted_by(&self) -> Option<usize> {
+        self.distracted_by
+    }
+
+    pub fn set_distracted_by(&mut self, id: Option<usize>) {
+        self.distracted_by = id;
     }
 
     /// Caster id this actor is currently Warding-Bonded to (5e
@@ -1410,6 +1432,7 @@ impl ActorInstance {
                 Condition::MirroredImages => self.mirror_images = 0,
                 Condition::Dueled => self.dueled_by = None,
                 Condition::Goaded => self.goaded_by = None,
+                Condition::Distracted => self.distracted_by = None,
                 Condition::WardingBonded => self.warding_partner = None,
                 _ => {}
             }

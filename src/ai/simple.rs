@@ -443,6 +443,21 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3p'''''''. Distracting Strike — fighter bonus-action prime
+        //            (Battle Master). +1d6 damage to the next melee hit
+        //            plus a target-side advantage rider for *other*
+        //            allies who attack the same target. Fire only when
+        //            both (a) an enemy sits in melee reach so the prime
+        //            lands this turn AND (b) at least one other ally is
+        //            adjacent to that same enemy — without a follow-up
+        //            attacker, the target-side advantage is wasted and
+        //            the maneuver collapses to a flat +1d6, which other
+        //            maneuvers above already serve. The damage prime is
+        //            the floor; the team setup is the upside.
+        if let Some(aei) = try_distracting_attack(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3p'''''''. Feinting Attack — fighter bonus-action prime (Battle
         //            Master). Targets one enemy in melee reach and grants
         //            self-advantage on the next attack vs them via the
@@ -1279,6 +1294,64 @@ fn try_precision_attack(
         return None;
     }
     try_self_action(encounter, actor_id, "precision attack")
+}
+
+/// Fighter Battle Master Distracting Strike — bonus-action prime that
+/// adds +1d6 damage to the next melee hit and tags the target with
+/// `Distracted`. The Distracted condition grants advantage to *other*
+/// attackers — the fighter's own follow-up swings don't benefit. So
+/// the prime only earns its full value when an ally is positioned to
+/// cash in on the advantage rider.
+///
+/// Gate: at least one in-reach hostile (so the prime lands this turn)
+/// AND at least one other ally footprint-adjacent to the same hostile
+/// (so the advantage rider has a follow-up attacker to feed). Without
+/// that follow-up, the maneuver collapses to a flat +1d6 which the
+/// other once-per-rest primes above already serve — no point burning
+/// this charge for the same floor.
+fn try_distracting_attack(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let my_team = actor.team();
+    let my_loc = actor.location();
+    let my_size = get_tiles_from_size(actor.size());
+
+    // Find at least one in-melee hostile that *also* has a non-fighter
+    // ally adjacent — that's the target whose Distracted rider would
+    // actually feed a follow-up swing this round.
+    let mut has_setup = false;
+    'outer: for (eid, enemy) in encounter.actors.iter() {
+        if *eid == actor_id || enemy.team() == my_team || !enemy.is_combat_active() {
+            continue;
+        }
+        let e_loc = enemy.location();
+        let e_size = get_tiles_from_size(enemy.size());
+        // Enemy must be in fighter's melee reach so the prime hits this turn.
+        if footprint_chebyshev(my_loc, my_size, e_loc, e_size) > 1 {
+            continue;
+        }
+        // Scan for an ally (not the fighter) adjacent to the same enemy.
+        for (aid, ally) in encounter.actors.iter() {
+            if *aid == actor_id || *aid == *eid {
+                continue;
+            }
+            if ally.team() != my_team || !ally.is_combat_active() {
+                continue;
+            }
+            let a_loc = ally.location();
+            let a_size = get_tiles_from_size(ally.size());
+            if footprint_chebyshev(a_loc, a_size, e_loc, e_size) == 0 {
+                has_setup = true;
+                break 'outer;
+            }
+        }
+    }
+    if !has_setup {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "distracting strike")
 }
 
 /// Fighter Battle Master Sweeping Attack — bonus-action prime that

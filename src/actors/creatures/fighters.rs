@@ -1,10 +1,10 @@
 use crate::actions::class_features::{
     ACTION_SURGE, ACTION_SURGE_TAG, COMMANDERS_STRIKE, COMMANDERS_STRIKE_TAG, DISARMING_ATTACK,
-    DISARMING_ATTACK_TAG, FEINTING_ATTACK, FEINTING_ATTACK_TAG, GOADING_ATTACK, GOADING_ATTACK_TAG,
-    INDOMITABLE, INDOMITABLE_TAG, LUNGING_ATTACK, LUNGING_ATTACK_TAG, MENACING_ATTACK,
-    MENACING_ATTACK_TAG, PRECISION_ATTACK, PRECISION_ATTACK_TAG, PUSHING_ATTACK, PUSHING_ATTACK_TAG,
-    RALLY, RALLY_TAG, SECOND_WIND, SECOND_WIND_TAG, SWEEPING_ATTACK, SWEEPING_ATTACK_TAG,
-    TRIP_ATTACK, TRIP_ATTACK_TAG,
+    DISARMING_ATTACK_TAG, DISTRACTING_ATTACK, DISTRACTING_ATTACK_TAG, FEINTING_ATTACK,
+    FEINTING_ATTACK_TAG, GOADING_ATTACK, GOADING_ATTACK_TAG, INDOMITABLE, INDOMITABLE_TAG,
+    LUNGING_ATTACK, LUNGING_ATTACK_TAG, MENACING_ATTACK, MENACING_ATTACK_TAG, PRECISION_ATTACK,
+    PRECISION_ATTACK_TAG, PUSHING_ATTACK, PUSHING_ATTACK_TAG, RALLY, RALLY_TAG, SECOND_WIND,
+    SECOND_WIND_TAG, SWEEPING_ATTACK, SWEEPING_ATTACK_TAG, TRIP_ATTACK, TRIP_ATTACK_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGSWORD, SCIMITAR};
@@ -147,6 +147,13 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*LUNGING_ATTACK);
     actions.push(&*RALLY);
     actions.push(&*COMMANDERS_STRIKE);
+    //   - Distracting Strike: bonus action prime that adds +1d6 damage
+    //     to the next melee swing and tags the target Distracted —
+    //     allies attacking the same target get advantage until the
+    //     fighter's next turn. The "set up the rogue" maneuver — pairs
+    //     cleanly with Sneak Attack riders or Smite spells from a
+    //     follow-up ally swing.
+    actions.push(&*DISTRACTING_ATTACK);
     CreatureTemplate {
         name: "Fighter",
         glyph: 'F',
@@ -188,6 +195,7 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             LUNGING_ATTACK_TAG,
             RALLY_TAG,
             COMMANDERS_STRIKE_TAG,
+            DISTRACTING_ATTACK_TAG,
         ]),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),
