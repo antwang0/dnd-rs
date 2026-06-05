@@ -179,6 +179,16 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3f'''. Paladin Cleansing Touch — once-per-long-rest cleanse on
+        //        an adjacent ally (or self) afflicted with a heavyweight
+        //        lockdown debuff (Paralyzed / Stunned / Charmed / Confused
+        //        / Dominated / Frightened). Sits next to the other Action-
+        //        priced cleanses so the support pipeline picks it before
+        //        the standard attack lane fires.
+        if let Some(aei) = try_cleansing_touch(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3g. Cleric Turn Undead — once-per-rest Channel Divinity.
         //     Fire when at least one undead-proxy enemy is within 30ft
         //     so the cleanse-and-frighten lands on someone worth it.
@@ -2754,6 +2764,63 @@ fn try_wipe_acid(
         return None;
     }
     try_self_action(encounter, actor_id, "wipe acid")
+}
+
+/// Paladin Cleansing Touch — once-per-long-rest action that ends one
+/// spell on a willing creature within touch reach. Fire when an adjacent
+/// ally (or self) carries one of the heavyweight lockdown debuffs that
+/// shuts down a turn outright (Paralyzed / Stunned / Charmed / Confused /
+/// Dominated). The action's `validate_input` re-checks the broader
+/// cleansable list and the feature-flag gate; the AI's narrower trigger
+/// list keeps the once-per-rest charge from burning on a minor debuff
+/// (Mocked / Outlined) that a single swing could outpace.
+///
+/// We pick the closest qualifying ally — the touch reach is 1 tile so
+/// only adjacent targets validate anyway. Self counts since RAW lets the
+/// paladin target themselves; nothing in the engine prevents a paralyzed
+/// paladin from finding their own ID at the top of the candidate list.
+fn try_cleansing_touch(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    const HIGH_PRIORITY: &[Condition] = &[
+        Condition::Paralyzed,
+        Condition::Stunned,
+        Condition::Petrified,
+        Condition::Dominated,
+        Condition::Charmed,
+        Condition::Confused,
+        Condition::Frightened,
+    ];
+
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor.find_action("cleansing touch")?;
+    let my_team = actor.team();
+    // Walk the sorted-id list so the picked target is deterministic
+    // when multiple allies carry the same debuff.
+    for tid in encounter.sorted_actor_ids() {
+        let Some(t) = encounter.actors.get(&tid) else {
+            continue;
+        };
+        if t.team() != my_team || !t.is_combat_active() {
+            continue;
+        }
+        // Touch range — gate the candidate list to footprint-adjacent
+        // allies (and self at gap 0) so the AI's pick lines up with
+        // the action's `reach_tiles() = 1`.
+        if actor.footprint_gap_to(t) > 1 {
+            continue;
+        }
+        if !HIGH_PRIORITY.iter().any(|c| t.has_condition(*c)) {
+            continue;
+        }
+        let tv = vec![tid];
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(tv), None, None);
+        if aei.validate(encounter) {
+            return Some(aei);
+        }
+    }
+    None
 }
 
 /// Cleric Channel Divinity: Turn Undead — action. Fire when at least
@@ -5347,6 +5414,47 @@ mod tests {
             "brewed low-HP goblin should fire Wipe Acid",
         );
         assert_eq!(aei.action().name(), "wipe acid");
+    }
+
+    /// `try_cleansing_touch` fires on an adjacent ally carrying a heavy
+    /// lockdown debuff (Paralyzed). A clean ally, or an ally outside touch
+    /// reach, doesn't trigger the cleanse.
+    #[test]
+    fn ai_uses_cleansing_touch_on_paralyzed_ally() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        let mut e = empty_arena();
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        // Clean ally → no cleanse.
+        assert!(
+            try_cleansing_touch(&e, pal).is_none(),
+            "AI should not burn cleansing touch on a clean ally"
+        );
+        // Paralyze the fighter → AI picks them as the cleanse target.
+        e.actors.get_mut(&fighter).unwrap().add_condition(
+            Condition::Paralyzed,
+            crate::conditions::ConditionTimer::Rounds(10),
+        );
+        let aei = try_cleansing_touch(&e, pal).expect(
+            "paralyzed adjacent ally should trigger Cleansing Touch",
+        );
+        assert_eq!(aei.action().name(), "cleansing touch");
+        assert_eq!(
+            aei.target_ids().expect("cleansing touch picks an ally")[0],
+            fighter
+        );
+        // Now move the fighter out of touch reach → cleanse is gated by
+        // the touch radius and no longer triggers.
+        e.place_actor_at(fighter, Coordinate::new(15, 5)).unwrap();
+        assert!(
+            try_cleansing_touch(&e, pal).is_none(),
+            "out-of-touch ally should not trigger cleansing touch"
+        );
     }
 
     /// `try_telekinetic` should pick the closest in-range enemy that's

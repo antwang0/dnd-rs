@@ -1113,6 +1113,115 @@ impl ApplicableSideEffect for DispelMagicOn {
     }
 }
 
+/// End one spell affecting `target_id` (5e Cleansing Touch). Walks three
+/// fallbacks so the action is useful regardless of what's loaded on the
+/// target:
+///   1. Drop the target's concentration (ends a spell *they* are sustaining
+///      — useful when the paladin themselves is concentrating on something
+///      they want to swap out, or when the target is an enemy concentrator
+///      that the paladin can touch).
+///   2. Strip one of the canonical "spell-installed debuff" conditions
+///      (Paralyzed / Stunned / Charmed / Frightened / Blinded / Poisoned
+///      / Restrained / Hexed / Hunter's Marked / Confused / Mocked /
+///      Baned / Slowed). This is the load-bearing use case — the paladin
+///      cleanses a debuffed ally without burning a level-5 Greater
+///      Restoration slot.
+///   3. Fallback to the Dispel Magic "strip one beneficial buff" lane so
+///      the action is never wasted on a clean concentration-free target.
+///
+/// Caller is responsible for spending the once-per-rest feature charge —
+/// the side effect itself is pure dispel logic. Logged on success;
+/// silent no-op when the target has nothing eligible to end.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct CleansingTouchOn {
+    pub target_id: usize,
+}
+
+/// Spell-installed debuffs Cleansing Touch will lift (step 2 of the
+/// fallback chain). Order matters — the first match pops, so the heavyweight
+/// lockdown conditions (Paralyzed, Stunned) sit at the top so the cleanse
+/// targets the most-impactful debuff first. Mirrors `GreaterRestoration::
+/// CANDIDATES` in spirit but with a broader spell-source list since RAW
+/// Cleansing Touch ends *any* spell, not just the curated Greater
+/// Restoration set. Public so the action's validate gate can pre-flight
+/// "is there anything to cleanse?" without copying the list.
+pub const CLEANSING_TOUCH_DEBUFFS: &[Condition] = &[
+    Condition::Paralyzed,
+    Condition::Stunned,
+    Condition::Petrified,
+    Condition::Charmed,
+    Condition::Dominated,
+    Condition::Frightened,
+    Condition::Confused,
+    Condition::Restrained,
+    Condition::Blinded,
+    Condition::Poisoned,
+    Condition::Deafened,
+    Condition::Asleep,
+    Condition::Hexed,
+    Condition::HuntersMarked,
+    Condition::Mocked,
+    Condition::Baned,
+    Condition::Slowed,
+    Condition::Outlined,
+    Condition::Burning,
+];
+
+impl ApplicableSideEffect for CleansingTouchOn {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        // Step 1: drop the target's own concentration if any. Highest-
+        // leverage outcome — ends both the spell *and* every condition
+        // it installed across the encounter cleanly through the existing
+        // concentration-drop pipeline.
+        if ei
+            .actors
+            .get(&self.target_id)
+            .is_some_and(|a| a.is_concentrating())
+        {
+            ei.drop_concentration(self.target_id);
+            return;
+        }
+        // Step 2: strip one canonical spell-installed debuff.
+        let Some(actor) = ei.get_actor(self.target_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        for &c in CLEANSING_TOUCH_DEBUFFS {
+            if actor.remove_condition(c) {
+                ei.log(format!(
+                    "{} is no longer {} (cleansing touch).",
+                    name,
+                    c.name()
+                ));
+                return;
+            }
+        }
+        // Step 3: fallback to Dispel Magic semantics — strip one
+        // beneficial buff. Deterministic order via name sort, same
+        // selection rule as `DispelMagicOn`.
+        let Some(actor) = ei.get_actor(self.target_id) else {
+            return;
+        };
+        let mut buffs: Vec<Condition> = actor
+            .conditions()
+            .keys()
+            .copied()
+            .filter(|c| c.is_dispellable_buff())
+            .collect();
+        buffs.sort_unstable_by_key(|c| c.name());
+        let Some(&c) = buffs.first() else {
+            return;
+        };
+        if actor.remove_condition(c) {
+            ei.log(format!(
+                "{} is no longer {} (cleansing touch).",
+                name,
+                c.name()
+            ));
+        }
+    }
+}
+
 /// Pull a Dying actor back to 1 HP, clearing the auxiliary Unconscious /
 /// Prone conditions that come with the Dying state. No-op for Active /
 /// Stable / Dead actors — 5e Revivify only works on creatures that died

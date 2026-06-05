@@ -21454,6 +21454,107 @@ mod tests {
         );
     }
 
+    /// Cleansing Touch on an ally with a spell-installed debuff (Charmed)
+    /// strips the debuff and burns the once-per-rest feature charge.
+    #[test]
+    fn cleansing_touch_strips_debuff_on_ally() {
+        use crate::actions::class_features::{CLEANSING_TOUCH, CLEANSING_TOUCH_TAG};
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        // Charm the fighter so the cleanse has something to grab.
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .add_condition(Condition::Charmed, ConditionTimer::Rounds(10));
+        assert!(e.actors[&fighter].has_condition(Condition::Charmed));
+        assert!(e.actors[&pal].feature_available(CLEANSING_TOUCH_TAG));
+        let tv = vec![fighter];
+        assert!(
+            CLEANSING_TOUCH.validate_input(&e, pal, Some(&tv), None, None),
+            "validate should pass when target has a cleansable debuff"
+        );
+        let effects = CLEANSING_TOUCH.side_effects(&mut e, pal, Some(&tv), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&fighter].has_condition(Condition::Charmed),
+            "cleansing touch should strip Charmed"
+        );
+        assert!(
+            !e.actors[&pal].feature_available(CLEANSING_TOUCH_TAG),
+            "the feature should be spent after use"
+        );
+    }
+
+    /// Cleansing Touch on a concentrating target drops their concentration
+    /// (the highest-priority dispel lane).
+    #[test]
+    fn cleansing_touch_drops_concentration_first() {
+        use crate::actions::class_features::CLEANSING_TOUCH;
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        // Set up: the fighter is concentrating on a pretend spell (we
+        // don't care about its name — only that concentration is active).
+        let f = e.actors.get_mut(&fighter).unwrap();
+        f.start_concentration(ConcentrationData::new("Mock Concentration"));
+        // Also stack a Charmed debuff so we can verify concentration was
+        // dispelled FIRST (the debuff should still be present afterward).
+        f.add_condition(Condition::Charmed, ConditionTimer::Rounds(10));
+        assert!(e.actors[&fighter].is_concentrating());
+        let tv = vec![fighter];
+        let effects = CLEANSING_TOUCH.side_effects(&mut e, pal, Some(&tv), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&fighter].is_concentrating(),
+            "cleansing touch should drop concentration first"
+        );
+        assert!(
+            e.actors[&fighter].has_condition(Condition::Charmed),
+            "the debuff lane should not run when concentration was dispelled"
+        );
+    }
+
+    /// Cleansing Touch's validate rejects clean targets so the once-per-
+    /// rest charge isn't burnt on a no-op.
+    #[test]
+    fn cleansing_touch_validate_rejects_clean_target() {
+        use crate::actions::class_features::CLEANSING_TOUCH;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        let tv = vec![fighter];
+        assert!(
+            !CLEANSING_TOUCH.validate_input(&e, pal, Some(&tv), None, None),
+            "validate should reject a target with nothing to cleanse"
+        );
+    }
+
     /// Vampire has the regen profile (20 HP per round, suppressed by
     /// radiant damage), the lifesteal multiattack, and the standard
     /// undead immunity set.

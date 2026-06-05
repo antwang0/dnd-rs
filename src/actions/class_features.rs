@@ -71,6 +71,24 @@ pub const ACTION_SURGE_TAG: &str = "fighter.action_surge";
 /// short-duration condition.
 pub const RELENTLESS_ENDURANCE_TAG: &str = "half_orc.relentless_endurance";
 
+/// Common gating shape for once-per-rest class features: the caster must
+/// exist, be combat-active, and have an unspent charge of `tag`. Returns
+/// true when all three hold. Centralizes the `is_some_and(|a|
+/// a.is_combat_active() && a.feature_available(tag))` boilerplate that
+/// every `custom_validate_input` previously open-coded — keeps the gate
+/// to a one-line call and gives a single chokepoint for future cross-
+/// cutting checks (e.g. "feature suppressed while Silenced").
+pub fn feature_ready(
+    encounter: &EncounterInstance,
+    caster_id: usize,
+    tag: &'static str,
+) -> bool {
+    encounter
+        .actors
+        .get(&caster_id)
+        .is_some_and(|a| a.is_combat_active() && a.feature_available(tag))
+}
+
 /// Fighter Second Wind — bonus action; restore 1d10 + level HP. Once per
 /// long rest. Self-targeted; only valid while combat-active (no reviving
 /// yourself out of dying via this).
@@ -116,10 +134,7 @@ impl Action for SecondWind {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_combat_active() && a.feature_available(SECOND_WIND_TAG))
+        feature_ready(encounter, caster_id, SECOND_WIND_TAG)
     }
 
     fn side_effects(
@@ -196,10 +211,7 @@ impl Action for ActionSurge {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_combat_active() && a.feature_available(ACTION_SURGE_TAG))
+        feature_ready(encounter, caster_id, ACTION_SURGE_TAG)
     }
 
     fn side_effects(
@@ -829,10 +841,7 @@ impl Action for Indomitable {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_combat_active() && a.feature_available(INDOMITABLE_TAG))
+        feature_ready(encounter, caster_id, INDOMITABLE_TAG)
     }
 
     fn side_effects(
@@ -905,10 +914,7 @@ impl Action for Rage {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_combat_active() && a.feature_available(RAGE_TAG))
+        feature_ready(encounter, caster_id, RAGE_TAG)
     }
 
     fn side_effects(
@@ -979,10 +985,7 @@ impl Action for LayOnHands {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_combat_active() && a.feature_available(LAY_ON_HANDS_TAG))
+        feature_ready(encounter, caster_id, LAY_ON_HANDS_TAG)
     }
     fn side_effects(
         &self,
@@ -1020,6 +1023,107 @@ impl Action for LayOnHands {
 }
 
 pub static LAY_ON_HANDS: LazyLock<LayOnHands> = LazyLock::new(|| LayOnHands {});
+
+/// Class-feature tag for the Paladin's Cleansing Touch (Oath capstone,
+/// once per long rest in our model — RAW: CHA-mod uses per long rest;
+/// we collapse to a single charge so the gating stays uniform with
+/// Lay on Hands / Second Wind / Action Surge).
+pub const CLEANSING_TOUCH_TAG: &str = "paladin.cleansing_touch";
+
+/// Cleansing Touch — Paladin action, touch range. Spend the once-per-rest
+/// feature to end one spell affecting a willing creature (or self). The
+/// load-bearing late-game paladin tool: removes a heavyweight debuff
+/// (Hold Person / Charm / Fear / Confusion) from an ally without burning
+/// a level-5 Greater Restoration slot, or drops a concentrating
+/// enemy's spell entirely without paying the level-3 Dispel Magic tax.
+///
+/// Three-tier dispel logic lives inside `CleansingTouchOn`:
+///   1. Drop target's concentration.
+///   2. Strip one canonical spell-installed debuff.
+///   3. Fallback: strip one beneficial buff (Dispel Magic shape).
+///
+/// Custom-validates that the feature is available *and* there's something
+/// on the target worth cleansing so a misclick doesn't burn the once-per-
+/// rest charge on a clean target.
+pub struct CleansingTouch {}
+
+impl Action for CleansingTouch {
+    fn name(&self) -> &str {
+        "cleansing touch"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ct", "cleanse"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        // Targeting an ally is the headline use case; the AI's support
+        // pipeline reads this lane to pick the action for debuffed
+        // teammates rather than queueing it as offense.
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !feature_ready(encounter, caster_id, CLEANSING_TOUCH_TAG) {
+            return false;
+        }
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return false;
+        };
+        if !target.is_combat_active() {
+            return false;
+        }
+        // Mirror Lesser Restoration's gate: there must be *something*
+        // on the target for the cleanse to grab. Walking the three
+        // fallback lanes (concentration, debuff, buff) up front spares
+        // the once-per-rest charge from a no-op apply.
+        target.is_concentrating()
+            || crate::engine::side_effects::CLEANSING_TOUCH_DEBUFFS
+                .iter()
+                .any(|c| target.has_condition(*c))
+            || target
+                .conditions()
+                .keys()
+                .any(|c| c.is_dispellable_buff())
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        if let Some(paladin) = encounter.actors.get_mut(&caster_id) {
+            paladin.spend_feature(CLEANSING_TOUCH_TAG);
+        }
+        encounter.log("  cleansing touch: paladin channels divine cleansing.".to_string());
+        vec![Box::new(crate::engine::side_effects::CleansingTouchOn {
+            target_id,
+        })]
+    }
+}
+
+pub static CLEANSING_TOUCH: LazyLock<CleansingTouch> = LazyLock::new(|| CleansingTouch {});
 
 /// Tag for the Aasimar Healing Hands racial trait. Once per long rest,
 /// the aasimar touches a creature (or themselves) and heals them for a
@@ -1233,10 +1337,7 @@ impl Action for SacredWeapon {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_combat_active() && a.feature_available(SACRED_WEAPON_TAG))
+        feature_ready(encounter, caster_id, SACRED_WEAPON_TAG)
     }
     fn side_effects(
         &self,
@@ -1673,10 +1774,7 @@ impl Action for TurnUndead {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_combat_active() && a.feature_available(TURN_UNDEAD_TAG))
+        feature_ready(encounter, caster_id, TURN_UNDEAD_TAG)
     }
     fn side_effects(
         &self,
@@ -2557,10 +2655,7 @@ impl Action for PreserveLife {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_combat_active() && a.feature_available(PRESERVE_LIFE_TAG))
+        feature_ready(encounter, caster_id, PRESERVE_LIFE_TAG)
     }
     fn side_effects(
         &self,
@@ -3427,10 +3522,7 @@ impl Action for InfernalLegacyRebuke {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_combat_active() && a.feature_available(INFERNAL_LEGACY_REBUKE_TAG))
+        feature_ready(encounter, caster_id, INFERNAL_LEGACY_REBUKE_TAG)
     }
     fn side_effects(
         &self,

@@ -1,5 +1,6 @@
 use crate::actions::class_features::{
-    DIVINE_SMITE, LAY_ON_HANDS, LAY_ON_HANDS_TAG, SACRED_WEAPON, SACRED_WEAPON_TAG,
+    CLEANSING_TOUCH, CLEANSING_TOUCH_TAG, DIVINE_SMITE, LAY_ON_HANDS, LAY_ON_HANDS_TAG,
+    SACRED_WEAPON, SACRED_WEAPON_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GREATSWORD;
@@ -88,6 +89,14 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // one-shot smite primes that hold the same concentration slot, so the
     // AI's smite picker steers around it when it's already up.
     actions.push(&*crate::actions::spells::HOLY_WEAPON);
+    // Cleansing Touch — Oath capstone (RAW: lv14). Once-per-long-rest
+    // action that ends one spell on a willing target. The three-tier
+    // dispel logic (drop concentration → strip spell-debuff → strip
+    // beneficial buff) lives inside `CleansingTouchOn`; the action here
+    // just spends the feature charge and queues the dispel. Headline use
+    // case: clear Hold Person / Charm / Fear off an ally without burning
+    // a Greater Restoration slot.
+    actions.push(&*CLEANSING_TOUCH);
     CreatureTemplate {
         name: "Paladin",
         glyph: 'P',
@@ -119,7 +128,11 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Paladins are proficient in WIS and CHA saves (5e PHB).
         proficient_saves: HashSet::from([AbilityScoreType::Wisdom, AbilityScoreType::Charisma]),
         condition_immunities: HashSet::new(),
-        features: HashSet::from([LAY_ON_HANDS_TAG, SACRED_WEAPON_TAG]),
+        features: HashSet::from([
+            LAY_ON_HANDS_TAG,
+            SACRED_WEAPON_TAG,
+            CLEANSING_TOUCH_TAG,
+        ]),
         regen_per_round: 0,
         regen_suppressors: HashSet::new(),
         legendary_resistances: 0,
