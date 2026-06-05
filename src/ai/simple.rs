@@ -458,13 +458,13 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 3p'''''''. Feinting Attack — fighter bonus-action prime (Battle
-        //            Master). Targets one enemy in melee reach and grants
-        //            self-advantage on the next attack vs them via the
-        //            help-grant lane. Higher leverage than Precision
-        //            against high-AC targets where advantage outperforms
-        //            a flat +4; lower than Sweeping when there's an
-        //            adjacent splash target available.
+        // 3p''''''''. Feinting Attack — fighter bonus-action prime (Battle
+        //             Master). Targets one enemy in melee reach and grants
+        //             self-advantage on the next attack vs them via the
+        //             help-grant lane. Higher leverage than Precision
+        //             against high-AC targets where advantage outperforms
+        //             a flat +4; lower than Sweeping when there's an
+        //             adjacent splash target available.
         if let Some(aei) = try_feinting_attack(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }

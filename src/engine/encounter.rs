@@ -25570,6 +25570,11 @@ mod tests {
         assert!(Condition::InvestedInFlame.is_dispellable_buff());
         assert!(Condition::Displaced.is_dispellable_buff());
         assert!(Condition::AbsorbedElements.is_dispellable_buff());
+        // Distracting Strike prime joins the maneuver-buff cohort.
+        // Distracted itself is a debuff (target-side advantage rider)
+        // and intentionally stays out of the buff list.
+        assert!(Condition::DistractingAttacking.is_dispellable_buff());
+        assert!(!Condition::Distracted.is_dispellable_buff());
     }
 
     /// Acid Arrow: on hit deals 4d4 + 2d4 splash acid; on miss the
