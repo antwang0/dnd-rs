@@ -1200,7 +1200,8 @@ impl ActorInstance {
                         DamageType::Bludgeoning | DamageType::Piercing | DamageType::Slashing
                     ))
                 || (dt == DamageType::Fire && self.has_condition(Condition::InvestedInFlame))
-                || (dt == DamageType::Cold && self.has_condition(Condition::InvestedInIce)));
+                || (dt == DamageType::Cold && self.has_condition(Condition::InvestedInIce))
+                || (dt == DamageType::Poison && self.has_condition(Condition::Purified)));
         if condition_resistance {
             amt /= 2;
         }
@@ -1361,12 +1362,17 @@ impl ActorInstance {
     pub fn dynamic_immunity_to(&self, c: Condition) -> bool {
         match c {
             Condition::Frightened => {
-                self.has_condition(Condition::Heroic) || self.has_brave
+                self.has_condition(Condition::Heroic)
+                    || self.has_condition(Condition::Purified)
+                    || self.has_brave
             }
             Condition::Charmed => {
-                self.has_condition(Condition::MindBlanked) || self.has_fey_ancestry
+                self.has_condition(Condition::MindBlanked)
+                    || self.has_condition(Condition::Purified)
+                    || self.has_fey_ancestry
             }
             Condition::Asleep => self.has_fey_ancestry,
+            Condition::Poisoned => self.has_condition(Condition::Purified),
             _ => false,
         }
     }

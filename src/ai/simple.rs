@@ -334,6 +334,17 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3n*. Aura of Purity — level-4 paladin concentration aura,
+        //      same envelope as Aura of Life but trades the killing-blow
+        //      interception for broad debuff immunity (Charmed /
+        //      Frightened / Poisoned + poison resistance). Ordered after
+        //      Aura of Life so the lethality button gets first pick;
+        //      both auras gate on the same engagement + ally-cluster
+        //      check and share the lv4 slot lane via concentration.
+        if let Some(aei) = try_aura_of_purity(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3n''. Holy Weapon — level-5 paladin self concentration buff
         //       (persistent +2d8 radiant per-hit rider). Fire when an
         //       enemy is in attack reach so the rider lands this turn.
@@ -1146,6 +1157,33 @@ fn try_aura_of_life(
         return None;
     }
     try_self_action(encounter, actor_id, "aura of life")
+}
+
+/// Aura of Purity — level-4 paladin concentration aura. Mirrors the
+/// Aura of Life gate shape (concentration-free, ally-cluster, enemy
+/// engaged) but skips re-cast when the caster already holds the
+/// Purified condition instead of DeathWarded. The two auras burn the
+/// same lv4 slot lane, so the AI's decision loop picks the first one
+/// to clear its gates and the other naturally backs off via the
+/// `is_concentrating()` check.
+fn try_aura_of_purity(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.is_concentrating() {
+        return None;
+    }
+    if actor.has_condition(Condition::Purified) {
+        return None;
+    }
+    if !any_enemy_within(encounter, actor_id, 60) {
+        return None;
+    }
+    if n_actors_within(encounter, actor_id, 6, true, 1) < 1 {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "aura of purity")
 }
 
 /// Holy Weapon — level-5 paladin concentration self-buff. Every weapon
@@ -2419,8 +2457,8 @@ fn any_enemy_within(
 ///
 /// Returns 0 when `actor_id` is missing. Shared body for the
 /// proximity-and-cluster checks used by `any_enemy_within`,
-/// `try_holy_aura` (ally-cluster gate), `try_aura_of_life`, and
-/// other ally-or-enemy-radius heuristics.
+/// `try_holy_aura` (ally-cluster gate), `try_aura_of_life`,
+/// `try_aura_of_purity`, and other ally-or-enemy-radius heuristics.
 fn n_actors_within(
     encounter: &EncounterInstance,
     actor_id: usize,

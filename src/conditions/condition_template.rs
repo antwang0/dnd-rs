@@ -1004,6 +1004,19 @@ pub enum Condition {
     /// fighter's next turn; we use the target-side tick-down envelope
     /// shared with Mocked / Helped / Goaded.
     Distracted,
+    /// Purified — 5e Paladin Aura of Purity (lv4 abjuration, concentration).
+    /// The holder is shielded by the paladin's protective aura: resistance
+    /// to poison damage (folded into the condition_resistance lane in
+    /// `effective_damage` alongside Globed / Raging), plus dynamic
+    /// immunity to Charmed / Frightened / Poisoned installs (gated in
+    /// `dynamic_immunity_to`, same chokepoint as Heroic / MindBlanked /
+    /// Brave). Distinct from `Warded` (Protection from Evil and Good's
+    /// fiend/undead-only advantage rider) — Purified is broader and
+    /// allies-only, but only against the three social/biological
+    /// debuffs. Applied to every ally inside the paladin's 30ft aura at
+    /// cast time; concentration tracks the full list so dropping
+    /// concentration strips the flag from every ally at once.
+    Purified,
 }
 
 impl Condition {
@@ -1144,6 +1157,7 @@ impl Condition {
             Condition::CausticBrewed => "splashed with caustic brew",
             Condition::DistractingAttacking => "primed to distract",
             Condition::Distracted => "distracted",
+            Condition::Purified => "purified",
         }
     }
 
@@ -1249,6 +1263,7 @@ impl Condition {
                 | Condition::CunningStrikeWithdraw
                 | Condition::CunningStrikeDaze
                 | Condition::DistractingAttacking
+                | Condition::Purified
         )
     }
 

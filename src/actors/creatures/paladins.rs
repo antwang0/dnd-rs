@@ -4,9 +4,9 @@ use crate::actions::class_features::{
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GREATSWORD;
 use crate::actions::spells::{
-    AURA_OF_LIFE, BANISHING_SMITE, BLESS, BLINDING_SMITE, BRANDING_SMITE, COMPELLED_DUEL,
-    CURE_WOUNDS, DESTRUCTIVE_WAVE, HEALING_WORD, LESSER_RESTORATION, SEARING_SMITE,
-    SHIELD_OF_FAITH, STAGGERING_SMITE, THUNDEROUS_SMITE, WRATHFUL_SMITE,
+    AURA_OF_LIFE, AURA_OF_PURITY, BANISHING_SMITE, BLESS, BLINDING_SMITE, BRANDING_SMITE,
+    COMPELLED_DUEL, CURE_WOUNDS, DESTRUCTIVE_WAVE, HEALING_WORD, LESSER_RESTORATION,
+    SEARING_SMITE, SHIELD_OF_FAITH, STAGGERING_SMITE, THUNDEROUS_SMITE, WRATHFUL_SMITE,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
@@ -61,6 +61,13 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // the half-caster ramp below it gives the late-game paladin a true
     // mass-save-the-party button alongside the smite primes.
     actions.push(&*AURA_OF_LIFE);
+    // Aura of Purity — lv4 abjuration, concentration; allies in the same
+    // 30ft sphere pick up Purified, granting dynamic immunity to
+    // Charmed / Frightened / Poisoned installs plus poison resistance
+    // for the duration. Trades Aura of Life's killing-blow interception
+    // for broader debuff coverage — the AI's smite picker steers between
+    // them based on which axis the incoming encounter pressures.
+    actions.push(&*AURA_OF_PURITY);
     // Destructive Wave — lv5 evocation. Self-burst (6-tile radius)
     // enemy-only CON-save burst dealing 5d6 thunder + 5d6 radiant +
     // prone-on-fail. Non-concentration — pairs cleanly with whichever

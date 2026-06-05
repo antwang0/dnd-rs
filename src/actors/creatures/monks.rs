@@ -1,5 +1,6 @@
 use crate::actions::class_features::{
-    FLURRY_OF_BLOWS, PATIENT_DEFENSE, STILLNESS_OF_MIND, STUNNING_STRIKE, STUNNING_STRIKE_TAG,
+    FLURRY_OF_BLOWS, PATIENT_DEFENSE, STEP_OF_THE_WIND, STILLNESS_OF_MIND, STUNNING_STRIKE,
+    STUNNING_STRIKE_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::MONK_UNARMED_STRIKE;
@@ -33,6 +34,7 @@ pub static MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*PATIENT_DEFENSE);
     actions.push(&*FLURRY_OF_BLOWS);
     actions.push(&*STILLNESS_OF_MIND);
+    actions.push(&*STEP_OF_THE_WIND);
     CreatureTemplate {
         name: "Monk",
         glyph: 'M',

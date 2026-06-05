@@ -24750,6 +24750,134 @@ mod tests {
         assert!(e.actors[&pal].is_concentrating());
     }
 
+    /// Aura of Purity: paladin's ally-only aura installs `Purified` on the
+    /// caster and every ally inside the 30ft sphere; enemies in the radius
+    /// are spared. Mirrors the Aura of Life invariants (both auras now
+    /// share the same `ally_aura_concentration_effects` builder).
+    #[test]
+    fn aura_of_purity_installs_purified_on_allies() {
+        use crate::actions::spells::AURA_OF_PURITY;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 5), 0, 1)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+            .unwrap();
+        let effects = AURA_OF_PURITY.side_effects(&mut e, pal, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&pal].has_condition(Condition::Purified));
+        assert!(e.actors[&ally].has_condition(Condition::Purified));
+        assert!(
+            !e.actors[&enemy].has_condition(Condition::Purified),
+            "Aura of Purity must not bless enemies in the radius"
+        );
+        assert!(e.actors[&pal].is_concentrating());
+    }
+
+    /// Purified blocks Charmed, Frightened, and Poisoned condition
+    /// installs via the dynamic-immunity chokepoint in `add_condition` —
+    /// the three "social/biological" debuffs the aura blocks RAW. Other
+    /// conditions (e.g. Prone, Stunned, Blinded) still install normally.
+    #[test]
+    fn purified_grants_immunity_to_charm_fear_poison() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        actor.add_condition(Condition::Purified, crate::conditions::ConditionTimer::Rounds(10));
+        // The three aura-blocked installs must all bounce.
+        assert!(!actor.add_condition(Condition::Charmed, crate::conditions::ConditionTimer::Rounds(1)));
+        assert!(!actor.add_condition(Condition::Frightened, crate::conditions::ConditionTimer::Rounds(1)));
+        assert!(!actor.add_condition(Condition::Poisoned, crate::conditions::ConditionTimer::Rounds(1)));
+        assert!(!actor.has_condition(Condition::Charmed));
+        assert!(!actor.has_condition(Condition::Frightened));
+        assert!(!actor.has_condition(Condition::Poisoned));
+        // Non-aura conditions still land.
+        assert!(actor.add_condition(Condition::Prone, crate::conditions::ConditionTimer::Permanent));
+        assert!(actor.has_condition(Condition::Prone));
+    }
+
+    /// Purified halves incoming poison damage via the condition-resistance
+    /// lane in `effective_damage`. Other damage types are unaffected.
+    #[test]
+    fn purified_halves_poison_damage() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        assert_eq!(actor.effective_damage(10, DamageType::Poison), 10);
+        actor.add_condition(Condition::Purified, crate::conditions::ConditionTimer::Rounds(10));
+        assert_eq!(actor.effective_damage(10, DamageType::Poison), 5);
+        // Non-poison damage is unchanged — only the poison lane is
+        // halved, matching the spell's RAW text.
+        assert_eq!(actor.effective_damage(10, DamageType::Fire), 10);
+        assert_eq!(actor.effective_damage(10, DamageType::Slashing), 10);
+    }
+
+    /// Dropping concentration on Aura of Purity strips Purified from every
+    /// recipient at once — the concentration data carries the full ally
+    /// cohort the cast collected.
+    #[test]
+    fn aura_of_purity_strips_purified_on_concentration_drop() {
+        use crate::actions::spells::AURA_OF_PURITY;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 5), 0, 1)
+            .unwrap();
+        let effects = AURA_OF_PURITY.side_effects(&mut e, pal, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&pal].has_condition(Condition::Purified));
+        assert!(e.actors[&ally].has_condition(Condition::Purified));
+        e.drop_concentration(pal);
+        assert!(!e.actors[&pal].has_condition(Condition::Purified));
+        assert!(!e.actors[&ally].has_condition(Condition::Purified));
+    }
+
+    /// Step of the Wind: monk's bonus action grants extra movement equal
+    /// to speed AND the Disengaging flag, fusing Dash and Disengage into
+    /// one bonus-action lane.
+    #[test]
+    fn step_of_the_wind_grants_dash_and_disengage() {
+        use crate::actions::class_features::STEP_OF_THE_WIND;
+        use crate::actors::creatures::monks::MONK_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let monk = e
+            .instantiate_creature(&MONK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let speed = e.actors[&monk].speed();
+        let mv_before = e.actors[&monk].remaining_movement();
+        let effects = STEP_OF_THE_WIND.side_effects(&mut e, monk, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let mv_after = e.actors[&monk].remaining_movement();
+        assert!(
+            (mv_after - (mv_before + speed)).abs() < 0.001,
+            "Step of the Wind should grant +speed movement; before={mv_before} after={mv_after} speed={speed}",
+        );
+        assert!(e.actors[&monk].has_condition(Condition::Disengaging));
+    }
+
     /// Aganazzar's Scorcher: enemy-only DEX-save fire burst. Allies in
     /// the radius are spared by `enemy_burst_targets`.
     #[test]
@@ -25575,6 +25703,9 @@ mod tests {
         // and intentionally stays out of the buff list.
         assert!(Condition::DistractingAttacking.is_dispellable_buff());
         assert!(!Condition::Distracted.is_dispellable_buff());
+        // Aura of Purity's Purified rider — Dispel Magic should be able
+        // to rip the protective bubble off a single recipient.
+        assert!(Condition::Purified.is_dispellable_buff());
     }
 
     /// Acid Arrow: on hit deals 4d4 + 2d4 splash acid; on miss the

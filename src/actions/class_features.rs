@@ -1397,6 +1397,73 @@ impl Action for PatientDefense {
 
 pub static PATIENT_DEFENSE: LazyLock<PatientDefense> = LazyLock::new(|| PatientDefense {});
 
+/// Step of the Wind — 5e Monk level-2 bonus action. Spends ki to take the
+/// Dash AND Disengage actions for free as a bonus action (we collapse
+/// the ki cost into the bonus-action lane since the engine doesn't track
+/// a ki pool — same simplification as Patient Defense / Flurry of Blows).
+/// Mechanically a fusion of the rogue's `CunningDash` (extra movement
+/// equal to speed) and `CunningDisengage` (movement this turn doesn't
+/// provoke OAs) — fired in one bonus action instead of two separate
+/// activations, matching the monk's signature "blow past the front line"
+/// flavor. RAW also doubles jump distance for the turn; we don't model
+/// vertical movement so that clause is a no-op.
+pub struct StepOfTheWind {}
+
+impl Action for StepOfTheWind {
+    fn name(&self) -> &str {
+        "step of the wind"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sotw", "step", "wind"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let speed = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.speed())
+            .unwrap_or(0.0);
+        encounter.log("  step of the wind: monk surges past the front line.".to_string());
+        vec![
+            Box::new(GiveResource {
+                actor_id: caster_id,
+                resource: Resource::Movement(speed),
+            }),
+            Box::new(crate::engine::side_effects::SetDisengaging {
+                actor_id: caster_id,
+                disengaging: true,
+            }),
+        ]
+    }
+}
+
+pub static STEP_OF_THE_WIND: LazyLock<StepOfTheWind> = LazyLock::new(|| StepOfTheWind {});
+
 /// Stillness of Mind — Monk action (5e level 7). At-will: spend an Action
 /// to end one Charmed or Frightened condition currently affecting the
 /// monk. RAW gates on "you can use your action" so it's never resource-

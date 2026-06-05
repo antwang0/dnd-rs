@@ -632,6 +632,45 @@ fn self_concentration_buff_effects(
     ]
 }
 
+/// Ally-aura concentration buff: every ally inside `radius` of the caster
+/// (including the caster, who always sits at the center) picks up
+/// `condition` with `timer`, and the caster takes concentration tracking
+/// the full ally cohort so dropping concentration strips the flag from
+/// every recipient cleanly.
+///
+/// Used by paladin auras (Aura of Life's DeathWarded, Aura of Purity's
+/// Purified) — same shape as `self_concentration_buff_effects` but with
+/// the radius-walk + multi-target concentration list. Caster missing →
+/// empty effect list (cast is a no-op rather than panicking).
+fn ally_aura_concentration_effects(
+    encounter: &EncounterInstance,
+    caster_id: usize,
+    radius: isize,
+    spell_name: &'static str,
+    condition: Condition,
+    timer: ConditionTimer,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let Some(caster) = encounter.actors.get(&caster_id) else {
+        return Vec::new();
+    };
+    let center = caster.location();
+    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+    let mut conditions: Vec<(usize, Condition)> = Vec::new();
+    for tid in encounter.ally_burst_targets(caster_id, center, radius) {
+        effects.push(Box::new(ApplyCondition {
+            actor_id: tid,
+            condition,
+            timer,
+        }));
+        conditions.push((tid, condition));
+    }
+    effects.push(Box::new(StartConcentration {
+        caster_id,
+        data: ConcentrationData::with_conditions(spell_name, conditions),
+    }));
+    effects
+}
+
 /// Sacred Flame — cleric cantrip. Range 60ft (24 tiles), DEX save vs the
 /// caster's WIS-based spell save DC. On fail: 1d8 radiant. On success:
 /// nothing (cantrips don't half-on-save). No spell slot consumed.
@@ -13942,34 +13981,88 @@ impl Action for AuraOfLife {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let center = caster.location();
-        const RADIUS: isize = 6;
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        let mut conditions: Vec<(usize, Condition)> = Vec::new();
-        // Allies (including the caster) in radius receive DeathWarded.
-        // `ally_burst_targets` includes the caster if they sit in the
-        // burst — and they always do, since the aura is centered on
-        // them.
-        for tid in encounter.ally_burst_targets(caster_id, center, RADIUS) {
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::DeathWarded,
-                timer: ConditionTimer::Rounds(10),
-            }));
-            conditions.push((tid, Condition::DeathWarded));
-        }
-        effects.push(Box::new(StartConcentration {
+        // 30ft aura ≈ 6-tile radius; allies (including the caster) in the
+        // burst receive DeathWarded for the spell's 10-round duration.
+        // Concentration tracks every recipient so a single drop clears
+        // the aura cleanly from the whole party.
+        ally_aura_concentration_effects(
+            encounter,
             caster_id,
-            data: ConcentrationData::with_conditions("Aura of Life", conditions),
-        }));
-        effects
+            6,
+            "Aura of Life",
+            Condition::DeathWarded,
+            ConditionTimer::Rounds(10),
+        )
     }
 }
 
 pub static AURA_OF_LIFE: LazyLock<AuraOfLife> = LazyLock::new(|| AuraOfLife {});
+
+/// Aura of Purity — level-4 paladin abjuration, concentration. The paladin
+/// emits a 30ft protective aura; the caster and every ally inside pick up
+/// the `Purified` condition for 10 rounds. While Purified, the holder is
+/// dynamically immune to Charmed / Frightened / Poisoned installs (the
+/// three "social/biological" debuffs) and gains resistance to poison
+/// damage — folded into `dynamic_immunity_to` and `effective_damage`
+/// respectively, same chokepoints as Heroic / MindBlanked / Globed.
+///
+/// Slots between Aura of Life (death-ward, lv4) and Holy Aura (lv8 fiend-
+/// rebuke disadvantage): the broader immunity profile makes it the
+/// paladin's go-to opener vs charm-heavy / poison-heavy encounters
+/// (hags, drow, spiders), while Aura of Life remains the lethality
+/// emergency button. Both share the same `ally_aura_concentration_effects`
+/// shape so the engine treats them identically for concentration drops.
+pub struct AuraOfPurity {}
+
+impl Action for AuraOfPurity {
+    fn name(&self) -> &str {
+        "aura of purity"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["aop", "aura-purity", "purity"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // Same envelope as Aura of Life: 30ft (6-tile) ally-only burst,
+        // 10-round (1-minute RAW) install, concentration tracks every
+        // recipient.
+        ally_aura_concentration_effects(
+            encounter,
+            caster_id,
+            6,
+            "Aura of Purity",
+            Condition::Purified,
+            ConditionTimer::Rounds(10),
+        )
+    }
+}
+
+pub static AURA_OF_PURITY: LazyLock<AuraOfPurity> = LazyLock::new(|| AuraOfPurity {});
 
 /// Aganazzar's Scorcher — level-2 evocation. Roaring flames erupt in a
 /// 30ft line (RAW); we approximate as a 3-tile burst at the target
