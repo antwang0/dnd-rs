@@ -559,6 +559,75 @@ fn enemy_burst_save_only(
     )
 }
 
+/// Walk the `(target_id, save_passed)` vector returned by any of the
+/// `*_burst_save_*` helpers and append an `ApplyCondition` side-effect
+/// for every failed-save target. Centralizes the recurring shape:
+///
+/// ```ignore
+/// for (tid, passed) in saves {
+///     if !passed {
+///         effects.push(Box::new(ApplyCondition { actor_id: tid, condition, timer }));
+///     }
+/// }
+/// ```
+///
+/// Used by ~9 burst spells that layer a per-target failed-save rider
+/// on top of the shared save-for-half damage roll (Tidal Wave Prone,
+/// Wall of Stone Prone, Mental Prison Restrained, Vitriolic Sphere
+/// drip, etc.). Returning the appended effects directly lets the
+/// caller fold them into the main effect vec with a single `.extend()`
+/// call, or — for cases that also need to record the (target, condition)
+/// pair for concentration tracking — the `_with_conditions` variant
+/// below.
+fn push_condition_on_failed_save(
+    effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    saves: &[(usize, bool)],
+    condition: Condition,
+    timer: ConditionTimer,
+) {
+    for &(tid, passed) in saves {
+        if !passed {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition,
+                timer,
+            }));
+        }
+    }
+}
+
+/// Concentration-tracking sibling of `push_condition_on_failed_save`.
+/// Same loop body — append an `ApplyCondition` for each failed-save
+/// target — but also collect the `(target_id, condition)` pairs into
+/// a vec the caller can hand to `ConcentrationData::with_conditions`
+/// so dropping concentration strips every install cleanly.
+///
+/// Used by burst spells where the failed-save rider is concentration-
+/// bound (Wall of Light's Blinded cohort, Black Tentacles' Restrained
+/// cohort, Caustic Brew's CausticBrewed DoT, etc.). Without this
+/// helper each call site re-inlined the same loop body twice — once
+/// to push the `ApplyCondition` effect and once to collect the
+/// concentration pair — which the helper folds into one pass.
+fn push_condition_on_failed_save_for_concentration(
+    effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    saves: &[(usize, bool)],
+    condition: Condition,
+    timer: ConditionTimer,
+) -> Vec<(usize, Condition)> {
+    let mut conditions: Vec<(usize, Condition)> = Vec::new();
+    for &(tid, passed) in saves {
+        if !passed {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition,
+                timer,
+            }));
+            conditions.push((tid, condition));
+        }
+    }
+    conditions
+}
+
 /// Roll a damage burst against a target's saving throw, halving on
 /// success. Returns `(damage, save_passed)` so callers can branch on
 /// the save (e.g. attach a rider only on fail). The roll + save log
@@ -14313,15 +14382,12 @@ impl Action for TidalWave {
             "tidal wave",
         );
         // Failed-save targets are knocked Prone by the breaker wave.
-        for (tid, passed) in saves {
-            if !passed {
-                effects.push(Box::new(ApplyCondition {
-                    actor_id: tid,
-                    condition: Condition::Prone,
-                    timer: ConditionTimer::Permanent,
-                }));
-            }
-        }
+        push_condition_on_failed_save(
+            &mut effects,
+            &saves,
+            Condition::Prone,
+            ConditionTimer::Permanent,
+        );
         effects
     }
 }
@@ -15051,19 +15117,13 @@ impl Action for EvardsBlackTentacles {
         );
         // Tag failed-save targets with Restrained for the duration. The
         // concentration mark captures the restrained ids so dropping
-        // concentration releases them cleanly.
-        let mut conditions: Vec<(usize, Condition)> = Vec::new();
-        for (tid, passed) in saves {
-            if !passed {
-                effects.push(Box::new(ApplyCondition {
-                    actor_id: tid,
-                    condition: Condition::Restrained,
-                    // 10 rounds = 1 minute RAW.
-                    timer: ConditionTimer::Rounds(10),
-                }));
-                conditions.push((tid, Condition::Restrained));
-            }
-        }
+        // concentration releases them cleanly. 10 rounds = 1 minute RAW.
+        let conditions = push_condition_on_failed_save_for_concentration(
+            &mut effects,
+            &saves,
+            Condition::Restrained,
+            ConditionTimer::Rounds(10),
+        );
         effects.push(Box::new(StartConcentration {
             caster_id,
             data: ConcentrationData::with_conditions("Black Tentacles", conditions),
@@ -15531,18 +15591,14 @@ impl Action for VitriolicSphere {
             DamageType::Acid,
             "vitriolic sphere",
         );
-        for (tid, passed) in saves {
-            if !passed {
-                effects.push(Box::new(ApplyCondition {
-                    actor_id: tid,
-                    condition: Condition::VitriolicAcidCoated,
-                    // One-shot drip — the central round-end DoT rolls the
-                    // 5d4 damage at round-end, then the Rounds(1) timer
-                    // expires the flag.
-                    timer: ConditionTimer::Rounds(1),
-                }));
-            }
-        }
+        // One-shot drip — the central round-end DoT rolls the 5d4
+        // damage at round-end, then the Rounds(1) timer expires the flag.
+        push_condition_on_failed_save(
+            &mut effects,
+            &saves,
+            Condition::VitriolicAcidCoated,
+            ConditionTimer::Rounds(1),
+        );
         effects
     }
 }
@@ -16772,15 +16828,12 @@ impl Action for EarthTremor {
         // targets regardless of damage type. Permanent prone (the target
         // pays a movement to stand up); mirrors Tidal Wave / Destructive
         // Wave's prone follow-up.
-        for (tid, passed) in saves {
-            if !passed {
-                effects.push(Box::new(ApplyCondition {
-                    actor_id: tid,
-                    condition: Condition::Prone,
-                    timer: ConditionTimer::Permanent,
-                }));
-            }
-        }
+        push_condition_on_failed_save(
+            &mut effects,
+            &saves,
+            Condition::Prone,
+            ConditionTimer::Permanent,
+        );
         effects
     }
 }
@@ -17321,16 +17374,12 @@ impl Action for ArmsOfHadar {
         // start of their next turn." We tack a NoReaction install on
         // every failed save here; passed saves take just the half damage
         // (queued by the helper).
-        for (tid, passed) in saves {
-            if passed {
-                continue;
-            }
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::NoReaction,
-                timer: ConditionTimer::UntilStartOfNextTurn,
-            }));
-        }
+        push_condition_on_failed_save(
+            &mut effects,
+            &saves,
+            Condition::NoReaction,
+            ConditionTimer::UntilStartOfNextTurn,
+        );
         effects
     }
 }
@@ -17768,16 +17817,12 @@ impl Action for WallOfIce {
         // the engine has no "shove out" primitive, so we approximate
         // by knocking them Prone (the wall fractures around them and
         // they slip on the ice). Passed-save targets dodge clear.
-        for (tid, passed) in saves {
-            if passed {
-                continue;
-            }
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::Prone,
-                timer: ConditionTimer::Permanent,
-            }));
-        }
+        push_condition_on_failed_save(
+            &mut effects,
+            &saves,
+            Condition::Prone,
+            ConditionTimer::Permanent,
+        );
         effects.push(Box::new(StartConcentration {
             caster_id,
             data: ConcentrationData::new("Wall of Ice"),
@@ -19221,18 +19266,13 @@ impl Action for Tsunami {
         );
         // Prone rider on every actor that failed their STR save —
         // mirrors Tidal Wave's prone-on-fail clause but with the bigger
-        // burst footprint. Iterate the save vector so the rider lands
-        // exactly on the actors who got the full hit.
-        for (tid, passed) in saves {
-            if passed {
-                continue;
-            }
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::Prone,
-                timer: ConditionTimer::Permanent,
-            }));
-        }
+        // burst footprint.
+        push_condition_on_failed_save(
+            &mut effects,
+            &saves,
+            Condition::Prone,
+            ConditionTimer::Permanent,
+        );
         // Concentration mark so a re-cast drops the prior install
         // cleanly. The burst already landed at cast time; the
         // concentration is just the engine's bookkeeping anchor.
@@ -21696,20 +21736,14 @@ impl Action for TashasCausticBrew {
         // Per-target rider: every actor who *failed* the save also picks
         // up the `CausticBrewed` flag. The DoT lives on `ROUND_END_DOTS`
         // so the per-turn drip rolls through the shared pipeline.
-        let mut conc_conditions: Vec<(usize, Condition)> = Vec::new();
-        for (tid, passed) in saves.iter() {
-            if *passed {
-                continue;
-            }
-            effects.push(Box::new(ApplyCondition {
-                actor_id: *tid,
-                condition: Condition::CausticBrewed,
-                timer: ConditionTimer::Rounds(10),
-            }));
-            conc_conditions.push((*tid, Condition::CausticBrewed));
-        }
         // Concentration tracks every drip target — dropping concentration
         // strips every flag at once, cleanly ending the lingering acid.
+        let conc_conditions = push_condition_on_failed_save_for_concentration(
+            &mut effects,
+            &saves,
+            Condition::CausticBrewed,
+            ConditionTimer::Rounds(10),
+        );
         effects.push(Box::new(StartConcentration {
             caster_id,
             data: ConcentrationData::with_conditions(
@@ -22080,18 +22114,12 @@ impl Action for WallOfLight {
         // wipe their eyes — we collapse to "blinded for the duration"
         // since the engine has no per-target action-economy cleanse
         // outside the existing StillnessOfMind cohort).
-        let mut conditions: Vec<(usize, Condition)> = Vec::new();
-        for (tid, passed) in saves {
-            if passed {
-                continue;
-            }
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::Blinded,
-                timer: ConditionTimer::Rounds(10),
-            }));
-            conditions.push((tid, Condition::Blinded));
-        }
+        let conditions = push_condition_on_failed_save_for_concentration(
+            &mut effects,
+            &saves,
+            Condition::Blinded,
+            ConditionTimer::Rounds(10),
+        );
         effects.push(Box::new(StartConcentration {
             caster_id,
             data: ConcentrationData::with_conditions("Wall of Light", conditions),
@@ -22289,3 +22317,297 @@ impl Action for InvestitureOfWind {
 
 pub static INVESTITURE_OF_WIND: LazyLock<InvestitureOfWind> =
     LazyLock::new(|| InvestitureOfWind {});
+
+/// Otiluke's Freezing Sphere — level-6 evocation (PHB, sorcerer / wizard).
+/// A globe of frigid energy explodes at a target point within 300 ft.
+/// Every creature in a 60-ft-radius sphere makes a CON save vs the
+/// caster's spell DC: pass = half, fail = full. 10d6 cold damage.
+///
+/// Slots between Cone of Cold (lv5, 8d8) and Sunburst (lv8, 12d6) on
+/// the AoE blasting ladder — same shared-roll save-for-half shape, but
+/// with a cold typing that pairs cleanly with Investiture of Ice and
+/// the Cold Sorcerer's elemental affinity. Empowered Spell metamagic
+/// applies to the shared roll via the same `roll_empowered_sum` hook
+/// that Cone of Cold / Fireball / Sunburst use.
+pub struct OtilukesFreezingSphere {}
+
+impl Action for OtilukesFreezingSphere {
+    fn name(&self) -> &str {
+        "freezing sphere"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ofs", "otiluke", "sphere"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 60ft-radius sphere → burst radius 6 on this 2.5ft grid.
+        // Matches Cone of Cold's footprint at the same blast tier.
+        TargetingSchema::Burst { radius: 6 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 300 ft RAW = 120 tiles, but the map is far smaller. Cap at
+        // 40 (matches Sunburst's pragmatic cap) so the picker still
+        // covers the full board without dangling pins off the map.
+        Some(40)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Cold]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Sorcerer (CHA) + wizard (INT) — best-of so a multi-class caster
+        // anchors on the right stat. Same shape as Chromatic Orb's
+        // INT/CHA gate.
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+        ]);
+        // Empowered Spell metamagic — the 10d6 shared pool is the single
+        // roll the sorcerer's CHA-mod reroll applies to. Mirrors the
+        // exact hook used by Cone of Cold / Fireball / Sunburst.
+        let raw = encounter.roll_empowered_sum(caster_id, 10, 6);
+        encounter.log(format!(
+            "  freezing sphere: 10d6({}) = {} cold area",
+            raw, raw
+        ));
+        crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            6,
+            AbilityScoreType::Constitution,
+            dc,
+            raw,
+            DamageType::Cold,
+        )
+    }
+}
+
+pub static OTILUKES_FREEZING_SPHERE: LazyLock<OtilukesFreezingSphere> =
+    LazyLock::new(|| OtilukesFreezingSphere {});
+
+/// Maelstrom — level-5 evocation (XGtE, druid / sorcerer / wizard /
+/// warlock). A swirling vortex of water roars at a target point within
+/// 120 ft. Every creature in a 30-ft (3-tile) burst makes a STR save vs
+/// the caster's spell DC: pass = half, fail = full. 6d6 bludgeoning
+/// damage. Failed-save targets are *pulled* 10 ft (4 tiles) toward the
+/// center of the vortex — same `PullActor` hook that Thorn Whip's catch
+/// uses, so wall / occupancy blocking is honored cleanly.
+///
+/// Distinct from Tidal Wave (lv3, 4d8 DEX-save bludgeoning + Prone) at a
+/// higher slot tier: STR save instead of DEX (heavy hitters fare worse),
+/// pull rider replaces the prone rider so the AoE bunches enemies for a
+/// follow-up Fireball / Cone of Cold instead of laying them flat.
+pub struct Maelstrom {}
+
+impl Action for Maelstrom {
+    fn name(&self) -> &str {
+        "maelstrom"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mael", "vortex"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 30 ft radius circle → 3-tile burst on this grid (matches Tidal Wave).
+        TargetingSchema::Burst { radius: 3 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft RAW = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::PullActor;
+
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Druid (WIS), sorcerer / warlock (CHA), wizard (INT) all reach
+        // for Maelstrom RAW — same best-of triplet as Watery Sphere.
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]);
+        let (mut effects, saves) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            3,
+            AbilityScoreType::Strength,
+            dc,
+            Dice::new(6, 6),
+            DamageType::Bludgeoning,
+            "maelstrom",
+        );
+        // 5e RAW: failed-save targets are dragged 10 ft toward the
+        // center of the vortex. PullActor stops cleanly on walls /
+        // occupied tiles — a target already pinned doesn't budge.
+        const PULL_TILES: u32 = 4;
+        for (tid, passed) in saves {
+            if !passed {
+                effects.push(Box::new(PullActor {
+                    actor_id: tid,
+                    toward: point,
+                    max_tiles: PULL_TILES,
+                }));
+            }
+        }
+        effects
+    }
+}
+
+pub static MAELSTROM: LazyLock<Maelstrom> = LazyLock::new(|| Maelstrom {});
+
+/// Dust Devil — level-2 conjuration (XGtE, druid / sorcerer / wizard /
+/// warlock). The caster summons a 5-ft cube of swirling air at a target
+/// tile within 60 ft. Every creature within 10 ft (1 tile) of the cube
+/// makes a STR save vs the caster's spell DC: pass = half, fail = full.
+/// 1d8 bludgeoning damage. Failed-save targets are *pushed* 10 ft (4
+/// tiles) away from the dust devil — same `PushActor` hook Thunderwave's
+/// push uses, so wall / occupancy blocking is honored cleanly.
+///
+/// RAW lets the caster sustain the dust devil for up to 1 minute with
+/// concentration, moving it as a bonus action so it can buffet additional
+/// creatures on subsequent turns. We collapse the sustained sweep into a
+/// one-shot burst at cast time (matches our Dawn / Sickening Radiance
+/// simplification): the lv2 slot lands a single small-burst stagger and
+/// the persistent-field upkeep falls out cleanly. The push lane fills
+/// the lv2 displacement niche between Thunderwave (lv1 caster-centered
+/// 4-tile push, CON save) and Maelstrom (lv5 pull-into-center, STR save).
+pub struct DustDevil {}
+
+impl Action for DustDevil {
+    fn name(&self) -> &str {
+        "dust devil"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dd", "devil", "dust"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 10ft sweep → 1-tile burst around the summon point. Mirrors
+        // Snilloc's Snowball Swarm's small footprint at the lv2 tier.
+        TargetingSchema::Burst { radius: 1 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft RAW = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::PushActor;
+
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Druid (WIS), sorcerer / warlock (CHA), wizard (INT) all reach
+        // for Dust Devil RAW — same best-of triplet as Watery Sphere /
+        // Maelstrom for consistent multi-class handling.
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]);
+        let (mut effects, saves) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            1,
+            AbilityScoreType::Strength,
+            dc,
+            Dice::new(1, 8),
+            DamageType::Bludgeoning,
+            "dust devil",
+        );
+        // 5e RAW push: 10 ft away from the dust devil's tile on a failed
+        // save. PushActor halts cleanly on walls / occupied tiles so a
+        // target pinned to the wall takes the damage but doesn't budge.
+        const PUSH_TILES: u32 = 4;
+        for (tid, passed) in saves {
+            if !passed {
+                effects.push(Box::new(PushActor {
+                    actor_id: tid,
+                    from: point,
+                    max_tiles: PUSH_TILES,
+                }));
+            }
+        }
+        effects
+    }
+}
+
+pub static DUST_DEVIL: LazyLock<DustDevil> = LazyLock::new(|| DustDevil {});

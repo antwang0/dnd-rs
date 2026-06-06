@@ -24014,7 +24014,7 @@ mod tests {
                 // valid. The goblin's footprint at (15,5) is far enough
                 // out that walling (0..12, 0..12) doesn't touch it.
                 let inside_wiz_footprint =
-                    x >= 5 && x <= 6 && y >= 5 && y <= 6;
+                    (5..=6).contains(&x) && (5..=6).contains(&y);
                 if inside_wiz_footprint {
                     continue;
                 }
@@ -33059,6 +33059,155 @@ mod tests {
         assert_eq!(actor.effective_damage(20, DamageType::Poison), 10);
         assert_eq!(actor.effective_damage(20, DamageType::Fire), 20);
         assert_eq!(actor.effective_damage(20, DamageType::Bludgeoning), 20);
+    }
+
+    /// Otiluke's Freezing Sphere: cold AoE save-for-half. RAW is a
+    /// neutral sphere (hits friend and foe alike, same as Sunburst /
+    /// Cone of Cold via `resolve_burst_save_damage`). Verifies that
+    /// (a) at least one creature in the burst takes cold damage,
+    /// (b) the caster outside the radius takes none, and
+    /// (c) the spell doesn't install concentration (it's a one-shot
+    /// blast, not a sustained field).
+    #[test]
+    fn freezing_sphere_damages_creatures_in_burst() {
+        use crate::actions::spells::OTILUKES_FREEZING_SPHERE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        let wiz_hp_before = e.actors[&wiz].hitpoints();
+        let enemy_hp_before = e.actors[&enemy].hitpoints();
+        let origin = Coordinate::new(10, 10);
+        for ef in OTILUKES_FREEZING_SPHERE.side_effects(
+            &mut e,
+            wiz,
+            None,
+            Some(&vec![origin]),
+            None,
+        ) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&enemy].hitpoints() < enemy_hp_before,
+            "enemy inside the burst should take cold damage"
+        );
+        assert_eq!(
+            e.actors[&wiz].hitpoints(),
+            wiz_hp_before,
+            "caster well outside the radius should take no damage"
+        );
+        assert!(
+            !e.actors[&wiz].is_concentrating(),
+            "Freezing Sphere is a one-shot blast, not concentration-bound"
+        );
+    }
+
+    /// Maelstrom: STR-save bludgeoning burst that pulls failed-save
+    /// targets toward the vortex center. Verifies (a) allies in the
+    /// radius are spared, (b) at least one failed-save enemy ends up
+    /// closer to the center than they started.
+    #[test]
+    fn maelstrom_pulls_failed_save_enemies_toward_center() {
+        use crate::actions::spells::MAELSTROM;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut saw_pull = false;
+        for seed in 0..40u64 {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let ally = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 7), 0, 1)
+                .unwrap();
+            // Place the enemy 2 tiles diagonal from the vortex center
+            // so a successful pull collapses the gap visibly.
+            let enemy_start = Coordinate::new(12, 12);
+            let enemy = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, enemy_start, 1, 0)
+                .unwrap();
+            let center = Coordinate::new(10, 10);
+            let ally_hp_before = e.actors[&ally].hitpoints();
+            for ef in MAELSTROM.side_effects(&mut e, wiz, None, Some(&vec![center]), None) {
+                ef.apply(&mut e);
+            }
+            assert_eq!(
+                e.actors[&ally].hitpoints(),
+                ally_hp_before,
+                "ally inside the maelstrom should be spared"
+            );
+            // A passed save lets the enemy stand fast; a failed save
+            // pulls them toward the center. Sweep seeds until we see
+            // at least one pull land.
+            if let Some(enemy_actor) = e.actors.get(&enemy) {
+                let now = enemy_actor.location();
+                if now != enemy_start
+                    && now.chebyshev_to(center) < enemy_start.chebyshev_to(center)
+                {
+                    saw_pull = true;
+                    break;
+                }
+            }
+        }
+        assert!(
+            saw_pull,
+            "Maelstrom should pull at least one failed-save enemy toward the center"
+        );
+    }
+
+    /// Dust Devil: STR-save 1-tile bludgeoning burst that pushes failed-
+    /// save targets away from the dust devil. Verifies (a) at least
+    /// one failed-save enemy is pushed away from the cast point across
+    /// a sweep of seeds, and (b) allies in the radius are spared.
+    #[test]
+    fn dust_devil_pushes_failed_save_enemies_away() {
+        use crate::actions::spells::DUST_DEVIL;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut saw_push = false;
+        for seed in 0..40u64 {
+            let mut e = ei_seeded(15, 15, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let ally = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 7), 0, 1)
+                .unwrap();
+            // Place the enemy adjacent to the dust devil's tile so a
+            // failed save flings them outward visibly.
+            let enemy_start = Coordinate::new(9, 9);
+            let enemy = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, enemy_start, 1, 0)
+                .unwrap();
+            let point = Coordinate::new(8, 8);
+            let ally_hp_before = e.actors[&ally].hitpoints();
+            for ef in DUST_DEVIL.side_effects(&mut e, wiz, None, Some(&vec![point]), None) {
+                ef.apply(&mut e);
+            }
+            assert_eq!(
+                e.actors[&ally].hitpoints(),
+                ally_hp_before,
+                "ally outside the 1-tile burst should be spared by Dust Devil"
+            );
+            if let Some(enemy_actor) = e.actors.get(&enemy) {
+                let now = enemy_actor.location();
+                if now != enemy_start
+                    && now.chebyshev_to(point) > enemy_start.chebyshev_to(point)
+                {
+                    saw_push = true;
+                    break;
+                }
+            }
+        }
+        assert!(
+            saw_push,
+            "Dust Devil should push at least one failed-save enemy away from the cast point"
+        );
     }
 
     /// Seeded sibling of `ei_with_terrain` — same hand-crafted terrain

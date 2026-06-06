@@ -390,6 +390,23 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::WATERY_SPHERE);
     actions.push(&*crate::actions::spells::WALL_OF_LIGHT);
     actions.push(&*crate::actions::spells::INVESTITURE_OF_WIND);
+    // Wizard blasting / displacement additions (PHB / XGtE):
+    //   - lv2 **Dust Devil** (conjuration, XGtE): 1-tile burst at a
+    //     target point, STR save 1d8 bludgeoning for half + 4-tile push
+    //     on fail. The lv2 displacement option that complements
+    //     Thunderwave (self-centered) and Vortex Warp (single-target
+    //     teleport) — pushes a clustered enemy line apart at range.
+    //   - lv5 **Maelstrom** (evocation, XGtE): 3-tile burst, 6d6
+    //     bludgeoning STR-save for half + pull-into-center on fail. The
+    //     anti-Tidal-Wave: pulls enemies INTO the center for a follow-up
+    //     Fireball / Cone of Cold instead of laying them flat.
+    //   - lv6 **Otiluke's Freezing Sphere** (evocation): 6-tile burst,
+    //     10d6 cold CON-save for half. Slots between Cone of Cold (lv5)
+    //     and Sunburst (lv8) on the AoE blasting ladder — a cold-typed
+    //     nuke that pairs with the wizard's Investiture of Ice.
+    actions.push(&*crate::actions::spells::DUST_DEVIL);
+    actions.push(&*crate::actions::spells::MAELSTROM);
+    actions.push(&*crate::actions::spells::OTILUKES_FREEZING_SPHERE);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

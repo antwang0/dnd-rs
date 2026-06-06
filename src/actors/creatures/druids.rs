@@ -204,6 +204,19 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     mobility lane the druid otherwise had to spend Fly for.
     actions.push(&*crate::actions::spells::WATERY_SPHERE);
     actions.push(&*crate::actions::spells::INVESTITURE_OF_WIND);
+    // Druid water / air additions (XGtE):
+    //   - lv2 **Dust Devil** (conjuration): elemental-air burst, STR
+    //     save 1d8 bludgeoning + 4-tile push on fail. Pairs with the
+    //     druid's existing Wind Wall as the lv2 air-themed displacement
+    //     option — slots between Thunderwave (caster-self) and Gust of
+    //     Wind (line-shaped push) thematically.
+    //   - lv5 **Maelstrom** (evocation): 3-tile water-burst, 6d6
+    //     bludgeoning STR-save half + pull-into-center on fail. The
+    //     water-themed sibling of Tidal Wave at a higher slot — pulls
+    //     enemies into the vortex rather than knocking them prone for
+    //     spike-stones / spike-growth follow-up.
+    actions.push(&*crate::actions::spells::DUST_DEVIL);
+    actions.push(&*crate::actions::spells::MAELSTROM);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

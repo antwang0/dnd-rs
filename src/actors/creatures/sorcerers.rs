@@ -333,6 +333,19 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::PHANTASMAL_FORCE);
     actions.push(&*crate::actions::spells::WALL_OF_LIGHT);
     actions.push(&*crate::actions::spells::INVESTITURE_OF_WIND);
+    // Sorcerer blasting additions (PHB / XGtE):
+    //   - lv2 **Dust Devil** (conjuration): STR-save 1d8 bludgeoning
+    //     1-tile burst + 4-tile push on fail. Displacement option that
+    //     pairs cleanly with Thunderwave for double-push pressure.
+    //   - lv5 **Maelstrom** (evocation): 3-tile burst, 6d6 bludgeoning
+    //     STR-save half + pull-into-center on fail. The anti-Tidal-Wave
+    //     — bunches enemies for a follow-up Empowered Cone of Cold.
+    //   - lv6 **Otiluke's Freezing Sphere** (evocation): 6-tile burst,
+    //     10d6 cold CON-save half. Cold-typed nuke that benefits from
+    //     the sorcerer's Empowered Spell metamagic on the shared roll.
+    actions.push(&*crate::actions::spells::DUST_DEVIL);
+    actions.push(&*crate::actions::spells::MAELSTROM);
+    actions.push(&*crate::actions::spells::OTILUKES_FREEZING_SPHERE);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.
