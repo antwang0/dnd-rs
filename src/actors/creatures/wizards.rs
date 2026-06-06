@@ -366,6 +366,30 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // displacement at the lv2 tier — pulls a stranded ally to safety or
     // drags a back-line caster into the wizard's allies' melee envelope.
     actions.push(&*crate::actions::spells::VORTEX_WARP);
+    // Latest wizard additions:
+    //   - lv2 **Phantasmal Force** (illusion): INT save vs the wizard's
+    //     spell DC, on fail target picks up the `PhantasmalForced`
+    //     condition (1d6 psychic / round via the central DoT registry).
+    //     Sustained-DoT differentiator at the lv2 illusion tier; the
+    //     INT save rules anchor the wizard's strongest stat against
+    //     low-INT brutes.
+    //   - lv4 **Watery Sphere** (conjuration, XGtE): STR save vs the
+    //     wizard's spell DC; on fail target is `WaterSphered` (Restrained
+    //     + Lifted envelope, concentration-bound). Single-target trap at
+    //     the lv4 tier — slots between Levitate (lv2 CON-save lift) and
+    //     Otiluke's Resilient Sphere (lv4 DEX-save full lockout).
+    //   - lv5 **Wall of Light** (evocation, XGtE): 4d8 radiant 2-tile
+    //     burst CON save for half + Blinded-on-fail (concentration).
+    //     Wizard's first multi-target Blinded lane — complements the
+    //     Wall of Stone / Cloudkill / Wall of Force lv5 ladder.
+    //   - lv6 **Investiture of Wind** (transmutation, XGtE): self-only
+    //     concentration buff — ranged disadvantage to attackers +
+    //     +60ft flying speed. Rounds out the Flame / Ice / Stone /
+    //     Wind investiture quartet at the lv6 slot.
+    actions.push(&*crate::actions::spells::PHANTASMAL_FORCE);
+    actions.push(&*crate::actions::spells::WATERY_SPHERE);
+    actions.push(&*crate::actions::spells::WALL_OF_LIGHT);
+    actions.push(&*crate::actions::spells::INVESTITURE_OF_WIND);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

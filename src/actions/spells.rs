@@ -6331,11 +6331,10 @@ pub static CLOUD_OF_DAGGERS: LazyLock<CloudOfDaggers> = LazyLock::new(|| CloudOf
 
 /// Witch Bolt — level-1 evocation, concentration. A spell-attack against a
 /// single target deals 1d12 lightning on the initial hit. The 5e RAW
-/// sustained-damage clause (a free 1d12 each subsequent turn) isn't yet
-/// modeled — the engine's concentration ticking happens on round-end but
-/// doesn't yet support author-defined per-round damage hooks. We still
-/// install concentration so dropping it clears the spell cleanly and to
-/// keep the caster from juggling two concentration spells.
+/// sustained-damage clause (a free 1d12 each subsequent turn) lands via
+/// the `WitchBolted` entry in the central `ROUND_END_DOTS` table — the
+/// caster's concentration anchors the condition, so dropping it severs
+/// the bolt cleanly.
 pub struct WitchBolt {}
 
 impl Action for WitchBolt {
@@ -15393,10 +15392,7 @@ impl Action for MaximiliansEarthenGrasp {
         // spell against `validate_input`; the gate keeps Earthen Grasp
         // out of the picker when a more valuable buff already holds
         // the concentration slot.
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| !a.is_concentrating())
+        encounter.caster_can_concentrate(caster_id)
     }
     fn side_effects(
         &self,
@@ -16867,10 +16863,7 @@ impl Action for FogCloud {
         // Don't replace our own concentration on a less-valuable spell;
         // the AI's concentration pipeline tests every concentration-
         // bound spell against `validate_input` first.
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| !a.is_concentrating())
+        encounter.caster_can_concentrate(caster_id)
     }
     fn side_effects(
         &self,
@@ -16987,10 +16980,7 @@ impl Action for GustOfWind {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| !a.is_concentrating())
+        encounter.caster_can_concentrate(caster_id)
     }
     fn side_effects(
         &self,
@@ -17743,10 +17733,7 @@ impl Action for WallOfIce {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| !a.is_concentrating())
+        encounter.caster_can_concentrate(caster_id)
     }
     fn side_effects(
         &self,
@@ -19930,10 +19917,7 @@ impl Action for Entangle {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| !a.is_concentrating())
+        encounter.caster_can_concentrate(caster_id)
     }
     fn side_effects(
         &self,
@@ -20155,10 +20139,7 @@ impl Action for FlameBlade {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| !a.is_concentrating())
+        encounter.caster_can_concentrate(caster_id)
     }
     fn side_effects(
         &self,
@@ -20290,10 +20271,7 @@ impl Action for RayOfEnfeeblement {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| !a.is_concentrating())
+        encounter.caster_can_concentrate(caster_id)
     }
     fn side_effects(
         &self,
@@ -20482,10 +20460,7 @@ impl Action for HungerOfHadar {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| !a.is_concentrating())
+        encounter.caster_can_concentrate(caster_id)
     }
     fn side_effects(
         &self,
@@ -20720,10 +20695,7 @@ impl Action for CrownOfThorns {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| !a.is_concentrating())
+        encounter.caster_can_concentrate(caster_id)
     }
     fn side_effects(
         &self,
@@ -21344,10 +21316,7 @@ impl Action for WallOfStone {
     ) -> bool {
         // Concentration-gated install — don't re-cast while already
         // concentrating on another spell.
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| !a.is_concentrating())
+        encounter.caster_can_concentrate(caster_id)
     }
     fn side_effects(
         &self,
@@ -21904,3 +21873,419 @@ impl Action for VortexWarp {
 }
 
 pub static VORTEX_WARP: LazyLock<VortexWarp> = LazyLock::new(|| VortexWarp {});
+
+/// Phantasmal Force — level-2 illusion (bard / sorcerer / warlock /
+/// wizard), concentration. The caster crafts an illusion in the target's
+/// mind; the target makes an INT save vs the caster's spell DC. On
+/// fail, the illusion lands: the target picks up the `PhantasmalForced`
+/// condition, taking 1d6 psychic damage at the end of each of their
+/// turns (the central `ROUND_END_DOTS` registry handles the drip — see
+/// the `PhantasmalForced` entry there). On save: the illusion fails
+/// outright and the spell fizzles. Concentration-bound on the caster;
+/// dropping concentration dispels the illusion cleanly.
+///
+/// Differentiated from `MindSliver` (cantrip, one-shot psychic),
+/// `MindSpike` (lv2 save-for-half psychic burst), and `PhantasmalKiller`
+/// (lv4 WIS save plus Frightened) by the sustained DoT: at low slot
+/// tiers the per-round drip outpaces the cantrip burst over multi-round
+/// fights, and the INT save (vs the more common WIS / CHA paths) hits
+/// low-INT brutes harder.
+pub struct PhantasmalForce {}
+
+impl Action for PhantasmalForce {
+    fn name(&self) -> &str {
+        "phantasmal force"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pf", "phantasm-force", "phantasmal"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Psychic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Don't burn a slot to replace our own concentration. The AI's
+        // focus_fire pipeline tests every harmful single-target spell
+        // against `validate_input`; this gate keeps Phantasmal Force out
+        // of the picker when a more valuable concentration buff is up.
+        encounter.caster_can_concentrate(caster_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // INT-primary casters (wizard) and CHA-primary casters (bard /
+        // sorcerer / warlock) all reach for Phantasmal Force RAW. The
+        // best-of resolver picks the strongest DC so a multi-class
+        // caster anchors on the right stat.
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+        ]);
+        let save = encounter.roll_save_against_caster(
+            target_id,
+            AbilityScoreType::Intelligence,
+            dc,
+            caster_id,
+        );
+        if save.passed() {
+            encounter.log("  phantasmal force: target sees through the illusion.".to_string());
+            return Vec::new();
+        }
+        encounter.log("  phantasmal force: the illusion takes hold.".to_string());
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::PhantasmalForced,
+                // 10 rounds = 1 minute RAW. Concentration anchors the
+                // real lifetime — dropping concentration ends the
+                // illusion before the timer expires.
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Phantasmal Force",
+                    vec![(target_id, Condition::PhantasmalForced)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static PHANTASMAL_FORCE: LazyLock<PhantasmalForce> = LazyLock::new(|| PhantasmalForce {});
+
+/// Wall of Light — level-5 evocation (sorcerer / warlock / wizard),
+/// concentration. The caster summons a wall of radiant light. We collapse
+/// the 60ft line / 10ft tall wall to the load-bearing combat hook: every
+/// enemy whose footprint sits within `radius` of the burst point takes
+/// 4d8 radiant on a failed CON save (half on success). Failed-save
+/// targets are also Blinded for the duration as the brilliance sears
+/// their eyes — the load-bearing crowd-control rider. Concentration
+/// anchors the Blinded marks so dropping concentration ends every blind
+/// at once via the standard concentration-cleanup path.
+///
+/// Differentiated from `Sunbeam` (lv6 evocation, line of sun) by the
+/// blind rider; differentiated from `Dawn` (lv5 cleric, neutral burst)
+/// by the enemy-only partition and the blind-on-fail clause.
+pub struct WallOfLight {}
+
+impl Action for WallOfLight {
+    fn name(&self) -> &str {
+        "wall of light"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wol", "light-wall"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 2 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft RAW = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Radiant]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+        ]);
+        let (mut effects, saves) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            2,
+            AbilityScoreType::Constitution,
+            dc,
+            Dice::new(4, 8),
+            DamageType::Radiant,
+            "wall of light",
+        );
+        // RAW: failed-save targets are also blinded by the brilliance
+        // (until the wall ends OR until the target spends an action to
+        // wipe their eyes — we collapse to "blinded for the duration"
+        // since the engine has no per-target action-economy cleanse
+        // outside the existing StillnessOfMind cohort).
+        let mut conditions: Vec<(usize, Condition)> = Vec::new();
+        for (tid, passed) in saves {
+            if passed {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Blinded,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            conditions.push((tid, Condition::Blinded));
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Wall of Light", conditions),
+        }));
+        effects
+    }
+}
+
+pub static WALL_OF_LIGHT: LazyLock<WallOfLight> = LazyLock::new(|| WallOfLight {});
+
+/// Watery Sphere — level-4 conjuration (XGtE, druid / sorcerer / warlock /
+/// wizard), concentration. The caster conjures a 5ft sphere of water and
+/// catches a single creature inside. Target makes a STR save vs the
+/// caster's spell DC. On fail, they're encased in the sphere — the
+/// `WaterSphered` condition collapses the Restrained envelope (zero
+/// movement, attack disadvantage, attacks against have advantage) with
+/// the Lifted clause (suspended above the ground). On save: the spell
+/// fizzles. Concentration-bound on the caster; dropping concentration
+/// bursts the sphere cleanly via the standard concentration-cleanup path.
+///
+/// Distinct from `Levitate` (Lifted only, CON save) and `OtilukesResilientSphere`
+/// (DEX save, full incapacitation): Watery Sphere splits the difference —
+/// a STR-save trap with the Restrained envelope rather than the full
+/// action-economy lockout, slotting cleanly between the two on the
+/// single-target control ladder.
+pub struct WaterySphere {}
+
+impl Action for WaterySphere {
+    fn name(&self) -> &str {
+        "watery sphere"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ws", "water-sphere"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 90 ft RAW = 36 tiles.
+        Some(36)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Druid (WIS), sorcerer / warlock (CHA), wizard (INT) all reach
+        // for Watery Sphere RAW. Best-of routes through the helper so a
+        // multi-class caster anchors on the right stat.
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]);
+        let save = encounter.roll_save_against_caster(
+            target_id,
+            AbilityScoreType::Strength,
+            dc,
+            caster_id,
+        );
+        if save.passed() {
+            encounter.log("  watery sphere: target tears free of the water.".to_string());
+            return Vec::new();
+        }
+        encounter.log("  watery sphere: target is caught inside the sphere.".to_string());
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::WaterSphered,
+                // 10 rounds = 1 minute RAW. Concentration anchors the
+                // real lifetime.
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Watery Sphere",
+                    vec![(target_id, Condition::WaterSphered)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static WATERY_SPHERE: LazyLock<WaterySphere> = LazyLock::new(|| WaterySphere {});
+
+/// Investiture of Wind — level-6 transmutation (XGtE; sorcerer / warlock /
+/// wizard / druid), concentration. The caster is wrapped in a swirling
+/// vortex of air: ranged attacks against them have disadvantage (the
+/// `InvestedInWind` condition joins `imposes_disadvantage_to_ranged_attackers`
+/// next to Wind Wall) and they hover above the ground (joins the Flying
+/// cohort via `remaining_speed`'s `InvestedInWind` branch).
+///
+/// Symmetric to Investiture of Flame / Ice / Stone — same self-only
+/// concentration-bound install shape, but a different defensive envelope:
+/// ranged deflection plus flight instead of damage resistance + melee
+/// retaliation. The RAW Gust-of-Wind action and the per-turn 3d10
+/// bludgeoning radial burst are omitted — the load-bearing combat clauses
+/// are the ranged deflection and the +60ft flying speed.
+pub struct InvestitureOfWind {}
+
+impl Action for InvestitureOfWind {
+    fn name(&self) -> &str {
+        "investiture of wind"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["iow", "windinvest"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Already invested → don't re-cast and burn a level-6 slot.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.has_condition(Condition::InvestedInWind))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        encounter
+            .log("  investiture of wind: a vortex of air whips around you.".to_string());
+        self_concentration_buff_effects(
+            caster_id,
+            "Investiture of Wind",
+            Condition::InvestedInWind,
+            ConditionTimer::Rounds(10),
+        )
+    }
+}
+
+pub static INVESTITURE_OF_WIND: LazyLock<InvestitureOfWind> =
+    LazyLock::new(|| InvestitureOfWind {});

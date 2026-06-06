@@ -317,6 +317,22 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // and pairs cleanly with the Empowered Spell metamagic (the DoT
     // damage ticks won't reroll, but the initial 2d4 acid burst can).
     actions.push(&*crate::actions::spells::TASHAS_CAUSTIC_BREW);
+    // Latest sorcerer additions (XGtE / PHB):
+    //   - lv2 **Phantasmal Force** (illusion): INT save vs the sorcerer's
+    //     CHA-based DC for a sustained 1d6 psychic / round DoT. Slots
+    //     between Witch Bolt (lv1 concentration DoT) and the bigger
+    //     concentration-bound DoTs at higher tiers.
+    //   - lv5 **Wall of Light** (evocation): 4d8 radiant 2-tile burst
+    //     CON save for half + Blinded-on-fail. Sorcerer's first multi-
+    //     target Blinded lane at lv5 — pairs cleanly with the existing
+    //     Wall of Stone Restrained-on-fail counterpart.
+    //   - lv6 **Investiture of Wind** (transmutation): self-only
+    //     concentration buff — ranged disadvantage to attackers + +60ft
+    //     flying speed. Adds the Wind variant to the sorcerer's Flame
+    //     / Ice investiture lane.
+    actions.push(&*crate::actions::spells::PHANTASMAL_FORCE);
+    actions.push(&*crate::actions::spells::WALL_OF_LIGHT);
+    actions.push(&*crate::actions::spells::INVESTITURE_OF_WIND);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

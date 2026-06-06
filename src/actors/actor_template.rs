@@ -1770,7 +1770,17 @@ impl ActorInstance {
         // Applied additively before the Haste / Slow factor so haste-fly
         // doubles the larger number — matching the "Haste doubles your
         // speed" RAW phrasing.
-        let fly = if self.has_condition(Condition::Flying) { 60.0 } else { 0.0 };
+        // Both the Fly spell and Investiture of Wind grant the holder a
+        // 60ft flying speed RAW; either condition flips the same +60 bonus
+        // (the two don't stack — they're separate concentration spells the
+        // caster can't both maintain, but the gate honors whichever is up).
+        let fly = if self.has_condition(Condition::Flying)
+            || self.has_condition(Condition::InvestedInWind)
+        {
+            60.0
+        } else {
+            0.0
+        };
         // 5e Spider Climb: climbing speed equal to walking speed. We
         // approximate with a flat +30ft bump (half of Fly's +60ft) so
         // the level-2 spell offers a meaningful kiting boost without

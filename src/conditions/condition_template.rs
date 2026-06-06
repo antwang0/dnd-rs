@@ -1027,6 +1027,45 @@ pub enum Condition {
     /// cast time; concentration tracks the full list so dropping
     /// concentration strips the flag from every ally at once.
     Purified,
+    /// Beset by a Phantasmal Force (5e level-2 illusion, concentration).
+    /// The target perceives the illusion as real and is mentally
+    /// distracted by it — they take 1d6 psychic damage at the end of
+    /// each of their turns via the standard `ROUND_END_DOTS` registry
+    /// (the illusion "harms" them as their mind invents wounds). The
+    /// load-bearing combat clause RAW is the per-round drip; we omit
+    /// the "engaged with illusion" attack-disadvantage clause since the
+    /// drip is the differentiator vs the existing single-target psychic
+    /// lane (Mind Sliver / Mind Spike / Phantasmal Killer). Concentration-
+    /// bound on the caster; dropping concentration dispels the illusion
+    /// cleanly via the standard concentration-cleanup path.
+    PhantasmalForced,
+    /// Trapped in a Watery Sphere (5e XGtE level-4 conjuration,
+    /// concentration). The target is encased in a 5-foot sphere of
+    /// water held aloft by the caster — Restrained envelope (zero
+    /// movement, attack disadvantage, attacks against have advantage)
+    /// AND Lifted (suspended above the ground). We collapse the two
+    /// halves into a single condition that joins both `zeros_movement`
+    /// and `grants_advantage_to_attackers` so the sphere's mechanical
+    /// envelope reads correctly without piling two separate flags onto
+    /// the holder. Concentration-bound on the caster; dropping
+    /// concentration bursts the sphere and frees the target cleanly.
+    /// Distinct from `Sphered` (Otiluke's Resilient Sphere, lv4
+    /// evocation): Watery Sphere targets a single creature with a STR
+    /// save instead of DEX, lifts them above the ground, and uses a
+    /// distinct log line for the concentration cleanup.
+    WaterSphered,
+    /// Invested with Wind (5e XGtE level-6 transmutation, concentration).
+    /// The caster is wrapped in a swirling vortex of air: ranged attacks
+    /// against them have disadvantage (the wind deflects arrows / bolts
+    /// just like Wind Wall — joins `imposes_disadvantage_to_ranged_attackers`),
+    /// and they can hover above the ground (joins the `Flying` cohort
+    /// via `is_flying`). Symmetric to Investiture of Flame / Ice / Stone
+    /// — same self-only concentration-bound install shape but a different
+    /// defensive envelope (ranged deflection + flight rather than damage
+    /// resistance + melee retaliation). The Gust-of-Wind action RAW grants
+    /// is omitted; the load-bearing combat clause is the ranged
+    /// deflection plus flight.
+    InvestedInWind,
 }
 
 impl Condition {
@@ -1169,6 +1208,9 @@ impl Condition {
             Condition::DistractingAttacking => "primed to distract",
             Condition::Distracted => "distracted",
             Condition::Purified => "purified",
+            Condition::PhantasmalForced => "haunted by a phantasm",
+            Condition::WaterSphered => "trapped in a watery sphere",
+            Condition::InvestedInWind => "invested with wind",
         }
     }
 
@@ -1238,6 +1280,7 @@ impl Condition {
                 | Condition::InvestedInFlame
                 | Condition::InvestedInIce
                 | Condition::InvestedInStone
+                | Condition::InvestedInWind
                 | Condition::WindWalled
                 | Condition::StaggeringSmiting
                 | Condition::BanishingSmiting
@@ -1346,6 +1389,7 @@ impl Condition {
                 | Condition::MentallyImprisoned
                 | Condition::Sphered
                 | Condition::EarthenGrasped
+                | Condition::WaterSphered
         )
     }
 
@@ -1373,6 +1417,7 @@ impl Condition {
                 | Condition::Sphered
                 | Condition::EarthenGrasped
                 | Condition::Disarmed
+                | Condition::WaterSphered
         )
     }
 
@@ -1414,6 +1459,7 @@ impl Condition {
                 | Condition::Sphered
                 | Condition::EarthenGrasped
                 | Condition::Lifted
+                | Condition::WaterSphered
         )
     }
 
@@ -1443,7 +1489,7 @@ impl Condition {
     /// `compute_attack_mode` only when `!is_melee` so a wind-walled
     /// caster still eats melee damage normally.
     pub fn imposes_disadvantage_to_ranged_attackers(&self) -> bool {
-        matches!(self, Condition::WindWalled)
+        matches!(self, Condition::WindWalled | Condition::InvestedInWind)
     }
 
     /// True if the holder cannot take Reactions while this condition is

@@ -192,6 +192,18 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // the druid's Wall of Stone and Spike Stones. Mutually exclusive
     // with Investiture of Ice via the concentration short-circuit.
     actions.push(&*crate::actions::spells::INVESTITURE_OF_STONE);
+    // Latest druid additions (XGtE):
+    //   - lv4 **Watery Sphere** (conjuration): single-target STR-save
+    //     restraint. Water-themed sister to Maximilian's Earthen Grasp
+    //     at the lv4 tier — lifts the target out of melee envelopes and
+    //     locks them down while concentration holds.
+    //   - lv6 **Investiture of Wind** (transmutation): self-only
+    //     concentration buff — ranged-attack disadvantage to attackers
+    //     plus +60ft flying speed. Wind-themed sibling of the Ice /
+    //     Stone investitures already on the druid list; fills the
+    //     mobility lane the druid otherwise had to spend Fly for.
+    actions.push(&*crate::actions::spells::WATERY_SPHERE);
+    actions.push(&*crate::actions::spells::INVESTITURE_OF_WIND);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

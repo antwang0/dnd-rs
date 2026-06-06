@@ -235,6 +235,15 @@ const ROUND_END_DOTS: &[RoundEndDot] = &[
         damage_type: DamageType::Acid,
         log_verb: "is eaten by caustic brew:",
     },
+    // 5e Phantasmal Force — concentration-bound. 1d6 psychic per round
+    // as the target's mind invents wounds from the illusion. Dropping
+    // concentration dispels the illusion and ends the drip cleanly.
+    RoundEndDot {
+        condition: Condition::PhantasmalForced,
+        dice: Dice::new(1, 6),
+        damage_type: DamageType::Psychic,
+        log_verb: "is wounded by the phantasm:",
+    },
 ];
 
 /// Conditions consumed by `clear_attack_advantage_riders` when the
@@ -3456,6 +3465,20 @@ impl EncounterInstance {
                     my_size,
                 ) == 0
         })
+    }
+
+    /// True if `actor_id` exists AND is not currently concentrating on a
+    /// spell. The canonical "don't burn a slot to replace our own
+    /// concentration" gate used by every concentration-bound spell's
+    /// `custom_validate_input`. Centralizes the
+    /// `encounter.actors.get(&caster_id).is_some_and(|a| !a.is_concentrating())`
+    /// idiom (~13 spell sites) into a single chokepoint so a future
+    /// rule change (e.g. War Caster feat granting a concentration
+    /// re-cast hook) lands in one place.
+    pub fn caster_can_concentrate(&self, caster_id: usize) -> bool {
+        self.actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.is_concentrating())
     }
 
     /// End the actor's concentration (if any) and roll back every
@@ -32798,6 +32821,205 @@ mod tests {
             names.contains(&"vortex warp"),
             "wizard missing vortex warp (have: {:?})",
             names
+        );
+    }
+
+    /// Phantasmal Force installs the `PhantasmalForced` condition on a
+    /// failed INT save and starts the caster's concentration. The 1d6
+    /// psychic DoT is the load-bearing combat clause; it lands via the
+    /// central `ROUND_END_DOTS` registry.
+    #[test]
+    fn phantasmal_force_installs_psychic_dot_on_failed_save() {
+        use crate::actions::spells::PHANTASMAL_FORCE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        // Sweep seeds — INT save can pass / fail. Assert at least one
+        // seed installs the condition (concentration AND DoT lane).
+        let mut installed = false;
+        for seed in 0..40u64 {
+            let mut e = ei_seeded(10, 10, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let gob = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 6), 1, 0)
+                .unwrap();
+            for ef in PHANTASMAL_FORCE.side_effects(&mut e, wiz, Some(&vec![gob]), None, None) {
+                ef.apply(&mut e);
+            }
+            if e.actors[&gob].has_condition(Condition::PhantasmalForced)
+                && e.actors[&wiz].is_concentrating()
+            {
+                installed = true;
+                break;
+            }
+        }
+        assert!(
+            installed,
+            "Phantasmal Force should install PhantasmalForced + concentration on at least one seed"
+        );
+    }
+
+    /// Phantasmal Force's round-end DoT: a target with `PhantasmalForced`
+    /// takes 1d6 psychic at each round-end. Plays the same DoT routing
+    /// as Caustic Brew / Witch Bolt — verifies the new entry in
+    /// `ROUND_END_DOTS` fires correctly.
+    #[test]
+    fn phantasmal_force_dots_at_round_end() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        for seed in 0..10u64 {
+            let mut e = ei_seeded(10, 10, &[], seed);
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&g)
+                .unwrap()
+                .add_condition(Condition::PhantasmalForced, ConditionTimer::Rounds(10));
+            let hp_before = e.actors[&g].hitpoints();
+            e.apply_condition_round_end_dots(g);
+            let hp_after = e.actors[&g].hitpoints();
+            // Goblins aren't psychic-immune; the drip should land.
+            assert!(
+                hp_after < hp_before,
+                "Phantasmal Force should drip 1d6 psychic at round-end (seed {})",
+                seed
+            );
+            // 1d6 max = 6 per round. Sanity-cap the drip.
+            assert!(
+                hp_before - hp_after <= 6,
+                "Phantasmal Force drip should be 1d6 (max 6)"
+            );
+        }
+    }
+
+    /// Watery Sphere installs the `WaterSphered` condition on a failed
+    /// STR save and starts the caster's concentration. The envelope
+    /// joins `zeros_movement` (Restrained-style lockdown) and
+    /// `grants_advantage_to_attackers` (attackers see a flailing target).
+    #[test]
+    fn watery_sphere_installs_envelope_on_failed_save() {
+        use crate::actions::spells::WATERY_SPHERE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut installed = false;
+        for seed in 0..40u64 {
+            let mut e = ei_seeded(10, 10, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let gob = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 6), 1, 0)
+                .unwrap();
+            for ef in WATERY_SPHERE.side_effects(&mut e, wiz, Some(&vec![gob]), None, None) {
+                ef.apply(&mut e);
+            }
+            if e.actors[&gob].has_condition(Condition::WaterSphered)
+                && e.actors[&wiz].is_concentrating()
+            {
+                installed = true;
+                // Sanity-check the envelope: WaterSphered joins the
+                // `zeros_movement` cohort and grants attackers
+                // advantage. Read off the condition's classifier flags
+                // since the actor-level `remaining_movement` depends on
+                // an active turn budget.
+                assert!(
+                    Condition::WaterSphered.zeros_movement(),
+                    "Watery Sphere should zero the target's movement"
+                );
+                assert!(
+                    Condition::WaterSphered.grants_advantage_to_attackers(),
+                    "Watery Sphere should grant attackers advantage"
+                );
+                break;
+            }
+        }
+        assert!(
+            installed,
+            "Watery Sphere should install WaterSphered + concentration on at least one seed"
+        );
+    }
+
+    /// Investiture of Wind installs the self-only `InvestedInWind`
+    /// condition + concentration, grants the caster a +60ft flying
+    /// speed (matching the Fly spell), and imposes disadvantage on
+    /// ranged attacks targeting them (matching the Wind Wall clause).
+    #[test]
+    fn investiture_of_wind_installs_self_buff_with_fly_and_ranged_disadvantage() {
+        use crate::actions::spells::INVESTITURE_OF_WIND;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let speed_before = e.actors[&wiz].speed();
+        for ef in INVESTITURE_OF_WIND.side_effects(&mut e, wiz, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&wiz].has_condition(Condition::InvestedInWind));
+        assert!(e.actors[&wiz].is_concentrating());
+        // Flying clause: speed should bump by 60 ft from the InvestedInWind
+        // branch in `speed`.
+        let speed_after = e.actors[&wiz].speed();
+        assert_eq!(
+            speed_after - speed_before,
+            60.0,
+            "Investiture of Wind should grant +60ft flying speed"
+        );
+        // Ranged-attack disadvantage clause: routes through
+        // `imposes_disadvantage_to_ranged_attackers`.
+        assert!(
+            Condition::InvestedInWind.imposes_disadvantage_to_ranged_attackers(),
+            "Investiture of Wind should impose ranged-attack disadvantage on attackers"
+        );
+    }
+
+    /// Wall of Light installs the Blinded condition on every enemy whose
+    /// CON save fails inside the burst, and starts caster concentration
+    /// anchored to the cohort.
+    #[test]
+    fn wall_of_light_blinds_failed_save_enemies_in_burst() {
+        use crate::actions::spells::WALL_OF_LIGHT;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut blinded_at_least_once = false;
+        for seed in 0..20u64 {
+            let mut e = ei_seeded(15, 15, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let gob1 = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+                .unwrap();
+            let gob2 = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 8), 1, 1)
+                .unwrap();
+            let point = Coordinate::new(8, 8);
+            for ef in WALL_OF_LIGHT.side_effects(
+                &mut e,
+                wiz,
+                None,
+                Some(&vec![point]),
+                None,
+            ) {
+                ef.apply(&mut e);
+            }
+            assert!(e.actors[&wiz].is_concentrating());
+            if e.actors
+                .get(&gob1)
+                .is_some_and(|a| a.has_condition(Condition::Blinded))
+                || e.actors
+                    .get(&gob2)
+                    .is_some_and(|a| a.has_condition(Condition::Blinded))
+            {
+                blinded_at_least_once = true;
+                break;
+            }
+        }
+        assert!(
+            blinded_at_least_once,
+            "Wall of Light should blind at least one failed-save enemy across seeds"
         );
     }
 

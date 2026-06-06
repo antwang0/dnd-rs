@@ -311,6 +311,18 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3m'a''. Investiture of Wind — level-6 caster concentration self-buff
+        //         (ranged-attack disadvantage + +60ft flying). Sibling to the
+        //         Flame / Ice / Stone investitures with a mobility / ranged-
+        //         deflection envelope instead of damage resistance. Engagement
+        //         gate uses the longer 20-tile radius (matching Wind Wall) so
+        //         the deflection rider matters this fight; mutually exclusive
+        //         with the other Investitures via the concentration short-
+        //         circuit shared with the sibling helpers.
+        if let Some(aei) = try_investiture_of_wind(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3m''. Wind Wall — level-3 caster concentration self-buff
         //       (ranged-attack disadvantage). Fire when an enemy sits
         //       at long range so the deflection rider matters this
@@ -1144,6 +1156,28 @@ fn try_investiture_of_stone(
         "investiture of stone",
         Condition::InvestedInStone,
         6,
+    )
+}
+
+/// Investiture of Wind — level-6 caster concentration self-buff (ranged
+/// attacks against caster have disadvantage + +60ft flying speed).
+/// Sibling to `try_investiture_of_flame` / `try_investiture_of_ice` /
+/// `try_investiture_of_stone`, but the engagement gate uses the longer
+/// 20-tile radius matching Wind Wall: the ranged-deflection clause is
+/// the load-bearing rider, so the buff wants a longer engagement window
+/// before the slot is spent. Mutually exclusive with the other
+/// Investitures via the `is_concentrating` short-circuit inside
+/// `try_self_buff_concentration`.
+fn try_investiture_of_wind(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_self_buff_concentration(
+        encounter,
+        actor_id,
+        "investiture of wind",
+        Condition::InvestedInWind,
+        20,
     )
 }
 
