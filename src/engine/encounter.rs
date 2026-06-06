@@ -3798,6 +3798,56 @@ impl EncounterInstance {
         None
     }
 
+    /// Sibling of `find_adjacent_spawn` for *teleporting an existing
+    /// actor* near `anchor_id`. Walks rings of distance from
+    /// `anchor_id`'s footprint outward and returns the closest legal
+    /// anchor that `mover_id`'s footprint can occupy via the standard
+    /// `can_move_to` check (which honors `mover_id`'s own current tiles
+    /// as "free" — the mover is leaving those tiles to land here).
+    ///
+    /// Used by Vortex Warp's "yank target next to caster" landing-tile
+    /// pick. Distinct from `find_adjacent_spawn` (which uses
+    /// `is_spawnable`) because the mover hasn't been removed from the
+    /// map yet — its current tiles aren't "spawnable" but ARE legal
+    /// landing tiles for itself.
+    ///
+    /// Returns `None` only when no legal anchor exists inside the
+    /// expanded search ring (both creatures' footprints + slack), in
+    /// which case the spell's apply path silently no-ops.
+    pub fn find_adjacent_teleport_anchor(
+        &self,
+        anchor_id: usize,
+        mover_id: usize,
+    ) -> Option<Coordinate> {
+        let anchor = self.actors.get(&anchor_id)?;
+        let mover = self.actors.get(&mover_id)?;
+        let anchor_loc = anchor.location();
+        let anchor_size = get_tiles_from_size(anchor.size()) as isize;
+        let mover_size = get_tiles_from_size(mover.size()) as isize;
+        // Search radius spans far enough to clear both footprints.
+        // For two Medium (2-tile) creatures, an anchor at gap ±3 from
+        // the host's origin tile is the closest spot whose footprint
+        // won't overlap. Add 1 for slack so a Large host + Medium
+        // mover doesn't fall off the end of the search.
+        let search_radius = (anchor_size + mover_size).max(2);
+        for ring in 1..=search_radius {
+            for dy in -ring..=ring {
+                for dx in -ring..=ring {
+                    // Only walk the outer ring at this iteration so the
+                    // closest legal anchor wins.
+                    if dx.abs() != ring && dy.abs() != ring {
+                        continue;
+                    }
+                    let candidate = Coordinate::new(anchor_loc.x + dx, anchor_loc.y + dy);
+                    if self.can_move_to(mover_id, candidate) {
+                        return Some(candidate);
+                    }
+                }
+            }
+        }
+        None
+    }
+
     pub fn instantiate_creature(
         &mut self,
         creature_template: &'static CreatureTemplate,
@@ -23881,6 +23931,78 @@ mod tests {
         assert!(
             anchor.is_none(),
             "Huge footprint can't fit through the wall ring near the caster"
+        );
+    }
+
+    /// find_adjacent_teleport_anchor returns an anchor whose mover-size
+    /// footprint touches the host's footprint. Distinct from
+    /// find_adjacent_spawn because the mover's *current* footprint
+    /// doesn't block it — the mover is leaving those tiles to land here.
+    #[test]
+    fn find_adjacent_teleport_anchor_picks_footprint_adjacent_spot() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let host = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Mover starts 10 tiles away — its current tiles shouldn't block
+        // the landing search (which is anchored on host's location).
+        let mover = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(15, 5), 1, 0)
+            .unwrap();
+        let anchor = e.find_adjacent_teleport_anchor(host, mover).unwrap();
+        // Build expected gap test: the anchor + mover's footprint must
+        // touch (gap = 0) host's footprint at (5,5)-(6,6).
+        let host_loc = e.actors[&host].location();
+        let host_size = get_tiles_from_size(e.actors[&host].size());
+        let mover_size = get_tiles_from_size(e.actors[&mover].size());
+        let gap = footprint_chebyshev(anchor, mover_size, host_loc, host_size);
+        assert_eq!(gap, 0, "anchor must be footprint-adjacent to the host");
+        assert!(
+            e.can_move_to(mover, anchor),
+            "anchor must be a legal landing tile for the mover"
+        );
+    }
+
+    /// find_adjacent_teleport_anchor returns None when every legal anchor
+    /// is sealed off by walls. Sanity-check the failure path so
+    /// Vortex Warp's apply path's no-op log fires correctly when the
+    /// caster is fully surrounded.
+    #[test]
+    fn find_adjacent_teleport_anchor_returns_none_when_fully_walled() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let host = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let mover = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(15, 5), 1, 0)
+            .unwrap();
+        // Wall off every tile in a 12x12 box around the wizard (the
+        // search radius for two Medium-2-tile creatures is bounded to 4,
+        // so an 11-tile-wide wall ring fully encloses both footprints).
+        for x in 0..12 {
+            for y in 0..12 {
+                let coord = Coordinate::new(x as isize, y as isize);
+                // Skip the wizard's own footprint tiles to keep them
+                // valid. The goblin's footprint at (15,5) is far enough
+                // out that walling (0..12, 0..12) doesn't touch it.
+                let inside_wiz_footprint =
+                    x >= 5 && x <= 6 && y >= 5 && y <= 6;
+                if inside_wiz_footprint {
+                    continue;
+                }
+                let idx = e.idx(coord).unwrap();
+                e.terrain[idx].terrain_type = TerrainType::Wall;
+            }
+        }
+        let anchor = e.find_adjacent_teleport_anchor(host, mover);
+        assert!(
+            anchor.is_none(),
+            "no legal anchor should exist when the host is fully walled in"
         );
     }
 

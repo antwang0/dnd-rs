@@ -185,6 +185,13 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     fit with their other cold spells (Sleet Storm / Ice Storm).
     actions.push(&*crate::actions::spells::WALL_OF_STONE);
     actions.push(&*crate::actions::spells::INVESTITURE_OF_ICE);
+    // lv6 **Investiture of Stone** — self-only concentration buff:
+    // bludgeoning + piercing + slashing resistance plus 1d10 force
+    // melee retaliation. The earth-themed sibling of Investiture of
+    // Ice on the druid's transmutation list — fits thematically with
+    // the druid's Wall of Stone and Spike Stones. Mutually exclusive
+    // with Investiture of Ice via the concentration short-circuit.
+    actions.push(&*crate::actions::spells::INVESTITURE_OF_STONE);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

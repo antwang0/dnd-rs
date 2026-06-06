@@ -21845,7 +21845,6 @@ impl Action for VortexWarp {
             return Vec::new();
         };
         let caster_team = caster.team();
-        let caster_loc = caster.location();
         let dc = caster.best_spell_save_dc([
             AbilityScoreType::Intelligence,
             AbilityScoreType::Wisdom,
@@ -21876,53 +21875,12 @@ impl Action for VortexWarp {
                 return Vec::new();
             }
         }
-        // Pick an unoccupied anchor tile near the caster that the
-        // target's full footprint can occupy. Walk the ring of anchors
-        // one Chebyshev step at a time so the closest legal spot wins
-        // (matters when caster + target are both > Medium and the inner
-        // ring won't fit). `can_move_to` does the per-subtile occupancy
-        // + terrain check and excludes the target's own current tiles —
-        // a creature moving from elsewhere can land in the freed spot.
-        use crate::engine::util::get_tiles_from_size;
-        let target_size = encounter
-            .actors
-            .get(&target_id)
-            .map(|a| get_tiles_from_size(a.size()) as isize)
-            .unwrap_or(1);
-        let caster_size = encounter
-            .actors
-            .get(&caster_id)
-            .map(|a| get_tiles_from_size(a.size()) as isize)
-            .unwrap_or(1);
-        // Search radius spans far enough to clear both footprints.
-        // For two Medium (2-tile) creatures we need to walk out to
-        // ±3 anchors to find a spot whose footprint doesn't overlap
-        // the caster's. We add 1 for slack.
-        let search_radius = (target_size + caster_size).max(2);
-        let mut dest: Option<Coordinate> = None;
-        for ring in 1..=search_radius {
-            for dy in -ring..=ring {
-                for dx in -ring..=ring {
-                    // Only walk the outer ring at this iteration so the
-                    // closest legal anchor wins.
-                    if dx.abs() != ring && dy.abs() != ring {
-                        continue;
-                    }
-                    let candidate = Coordinate::new(caster_loc.x + dx, caster_loc.y + dy);
-                    if encounter.can_move_to(target_id, candidate) {
-                        dest = Some(candidate);
-                        break;
-                    }
-                }
-                if dest.is_some() {
-                    break;
-                }
-            }
-            if dest.is_some() {
-                break;
-            }
-        }
-        let Some(dest) = dest else {
+        // Pick an unoccupied anchor tile next to the caster that the
+        // target's full footprint can occupy. Routed through the engine
+        // helper so the ring-walk + footprint-overlap math lives in one
+        // place (shared with any future "yank target next to host"
+        // teleport spell).
+        let Some(dest) = encounter.find_adjacent_teleport_anchor(caster_id, target_id) else {
             // No legal landing tile around the caster — the spell still
             // resolves but the target stays put. RAW: "an unoccupied
             // space" — if there isn't one, the spell fails for that
