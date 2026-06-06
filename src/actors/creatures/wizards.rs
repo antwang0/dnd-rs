@@ -345,6 +345,14 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     themed defensive concentration option at lv6.
     actions.push(&*crate::actions::spells::WALL_OF_STONE);
     actions.push(&*crate::actions::spells::INVESTITURE_OF_ICE);
+    // Investiture of Stone — lv6 transmutation, concentration. Hardens
+    // the wizard's body: bludgeoning / piercing / slashing resistance
+    // (the physical trio) plus 1d10 force retaliation on every melee
+    // hit. Sibling to Investiture of Flame / Ice — same install +
+    // reflect shape, but broader physical resistance against martial
+    // swarms instead of a single-element shield. Force-typed
+    // retaliation chips through almost any creature's defenses.
+    actions.push(&*crate::actions::spells::INVESTITURE_OF_STONE);
     // Tasha's Caustic Brew — lv1 evocation, 30ft line, 2d4 acid initial +
     // 2d4 acid drip per round until the target wipes it off or the caster
     // drops concentration. Sustained-DoT differentiator at the lv1 tier
@@ -352,6 +360,12 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // cantrip-tier; Caustic Brew sits between as the acid-themed control
     // option whose damage accumulates across multiple rounds).
     actions.push(&*crate::actions::spells::TASHAS_CAUSTIC_BREW);
+    // Vortex Warp — lv2 conjuration (Tasha's). 90-ft single-target
+    // teleport: willing ally auto-yanked to the wizard's side, unwilling
+    // enemy makes a CON save vs the wizard's spell DC. Tactical
+    // displacement at the lv2 tier — pulls a stranded ally to safety or
+    // drags a back-line caster into the wizard's allies' melee envelope.
+    actions.push(&*crate::actions::spells::VORTEX_WARP);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

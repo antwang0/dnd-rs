@@ -553,6 +553,16 @@ pub enum Condition {
     /// `MELEE_REFLECT_RIDERS` next to the InvestedInFlame entry. Cleared
     /// on concentration drop.
     InvestedInIce,
+    /// Invested with Stone (5e level-6 transmutation, concentration). The
+    /// caster's body hardens to living rock: they gain resistance to
+    /// bludgeoning, piercing, and slashing damage (the three physical
+    /// weapon types) and any creature within reach that hits them with a
+    /// melee attack takes 1d10 force damage in retaliation. Sibling to
+    /// `InvestedInFlame` / `InvestedInIce` — same install + reflect
+    /// shape, with a broader resistance envelope (all physical) instead
+    /// of a single damage type. Concentration-bound on the caster;
+    /// dropping concentration drops the buff.
+    InvestedInStone,
     /// Mental Prison — RAW: imprisoned for the duration in an illusion
     /// of agony. We model the load-bearing half as a Restrained envelope
     /// (movement zero, attacks with disadvantage, attacks against have
@@ -1108,6 +1118,7 @@ impl Condition {
             Condition::TripAttacking => "primed to trip",
             Condition::InvestedInFlame => "invested with flame",
             Condition::InvestedInIce => "invested with ice",
+            Condition::InvestedInStone => "invested with stone",
             Condition::MentallyImprisoned => "mentally imprisoned",
             Condition::Sphered => "trapped in a resilient sphere",
             Condition::WindWalled => "sheltered by a wind wall",
@@ -1226,6 +1237,7 @@ impl Condition {
                 | Condition::TripAttacking
                 | Condition::InvestedInFlame
                 | Condition::InvestedInIce
+                | Condition::InvestedInStone
                 | Condition::WindWalled
                 | Condition::StaggeringSmiting
                 | Condition::BanishingSmiting

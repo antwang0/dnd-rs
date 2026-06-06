@@ -32471,6 +32471,252 @@ mod tests {
         }
     }
 
+    /// Investiture of Stone: self-buff installs InvestedInStone + a
+    /// concentration mark; the holder takes half damage from all three
+    /// physical types (bludgeoning / piercing / slashing) while up.
+    /// Sibling test to `investiture_of_flame_installs_self_buff_and_resists_fire`
+    /// and `investiture_of_ice_installs_self_buff_and_resists_cold`,
+    /// stretched to the multi-type resistance envelope.
+    #[test]
+    fn investiture_of_stone_installs_self_buff_and_resists_physical() {
+        use crate::actions::spells::INVESTITURE_OF_STONE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        for ef in INVESTITURE_OF_STONE.side_effects(&mut e, wiz, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&wiz].has_condition(Condition::InvestedInStone));
+        assert!(e.actors[&wiz].is_concentrating());
+        let actor = &e.actors[&wiz];
+        // All three physical damage types should be halved (20 -> 10).
+        assert_eq!(actor.effective_damage(20, DamageType::Bludgeoning), 10);
+        assert_eq!(actor.effective_damage(20, DamageType::Piercing), 10);
+        assert_eq!(actor.effective_damage(20, DamageType::Slashing), 10);
+        // Non-physical (fire, cold, force) damage is untouched.
+        assert_eq!(actor.effective_damage(20, DamageType::Fire), 20);
+        assert_eq!(actor.effective_damage(20, DamageType::Cold), 20);
+        assert_eq!(actor.effective_damage(20, DamageType::Force), 20);
+    }
+
+    /// Investiture of Stone's retaliation rider: a melee swing against the
+    /// invested caster deals 1d10 force damage back to the attacker.
+    /// Mirrors `investiture_of_ice_reflects_cold_on_melee_hit` shape.
+    #[test]
+    fn investiture_of_stone_reflects_force_on_melee_hit() {
+        use crate::actions::spells::INVESTITURE_OF_STONE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        // Sweep seeds — the rider rolls 1d10 + the attacker may miss
+        // the swing entirely. We assert the rider lands at least once.
+        let mut reflected = false;
+        for seed in 0..40u64 {
+            let mut e = ei_seeded(10, 10, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let gob = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            for ef in INVESTITURE_OF_STONE.side_effects(&mut e, wiz, None, None, None) {
+                ef.apply(&mut e);
+            }
+            let gob_hp_before = e.actors[&gob].hitpoints();
+            let scimitar = e.actors[&gob].find_action("scimitar").unwrap();
+            for ef in scimitar.side_effects(&mut e, gob, Some(&vec![wiz]), None, None) {
+                ef.apply(&mut e);
+            }
+            if e.actors
+                .get(&gob)
+                .is_some_and(|a| a.hitpoints() < gob_hp_before)
+            {
+                reflected = true;
+                break;
+            }
+        }
+        assert!(
+            reflected,
+            "Investiture of Stone should reflect force damage on at least one melee hit across seeds"
+        );
+    }
+
+    /// Investiture of Stone is on the wizard's loadout — same shape as
+    /// `wizard_loadout_includes_new_spells` but scoped to the new lv6
+    /// physical-shield buff.
+    #[test]
+    fn wizard_loadout_includes_investiture_of_stone() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let w = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let names: Vec<&str> = e.actors[&w].actions.iter().map(|a| a.name()).collect();
+        assert!(
+            names.contains(&"investiture of stone"),
+            "wizard missing investiture of stone (have: {:?})",
+            names
+        );
+    }
+
+    /// Vortex Warp on a willing ally: no save, the ally is yanked to a
+    /// tile adjacent to the caster.
+    #[test]
+    fn vortex_warp_pulls_willing_ally_adjacent_to_caster() {
+        use crate::actions::spells::VORTEX_WARP;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Ally on team 0 — same team as the wizard, 10 tiles away.
+        let ally = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(15, 5), 0, 0)
+            .unwrap();
+        let before = e.actors[&ally].location();
+        assert_ne!(before, Coordinate::new(5, 5));
+        // Sanity: a tile far enough out from the caster's 2-tile
+        // footprint should be walkable for the ally (this is a fresh
+        // test floor with no walls).
+        assert!(
+            e.can_move_to(ally, Coordinate::new(2, 2)),
+            "expected (2,2) to be walkable for the ally"
+        );
+        let side_effects = VORTEX_WARP.side_effects(&mut e, wiz, Some(&vec![ally]), None, None);
+        assert!(
+            !side_effects.is_empty(),
+            "vortex warp on a willing ally should produce a side effect (caster_loc={:?}, ally_loc={:?})",
+            e.actors[&wiz].location(),
+            e.actors[&ally].location()
+        );
+        for ef in side_effects {
+            ef.apply(&mut e);
+        }
+        let after = e.actors[&ally].location();
+        assert_ne!(after, before, "vortex warp should move the ally");
+        // After the teleport, the ally's footprint should touch the
+        // caster (gap 0 — they're standing right next to each other).
+        let caster_loc = e.actors[&wiz].location();
+        let caster_size = get_tiles_from_size(e.actors[&wiz].size());
+        let ally_size = get_tiles_from_size(e.actors[&ally].size());
+        let gap = footprint_chebyshev(after, ally_size, caster_loc, caster_size);
+        assert_eq!(gap, 0, "yanked ally should land adjacent to caster");
+    }
+
+    /// Vortex Warp on an enemy that passes its CON save: no teleport.
+    /// Use a CON-tanky target (goblin's CON is 10, so this can both pass
+    /// and fail — we just verify that *if* the save passes, no movement
+    /// happens). Run across seeds to catch both outcomes.
+    #[test]
+    fn vortex_warp_unwilling_target_either_warps_or_fizzles() {
+        use crate::actions::spells::VORTEX_WARP;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut warped_at_least_once = false;
+        let mut fizzled_at_least_once = false;
+        for seed in 0..40u64 {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            // Enemy on team 1 — opposite of the wizard.
+            let foe = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(15, 5), 1, 0)
+                .unwrap();
+            let before = e.actors[&foe].location();
+            for ef in VORTEX_WARP.side_effects(&mut e, wiz, Some(&vec![foe]), None, None) {
+                ef.apply(&mut e);
+            }
+            let after = e.actors[&foe].location();
+            if after == before {
+                fizzled_at_least_once = true;
+            } else {
+                // Warped — must land footprint-adjacent to the caster
+                // (the spell's intended destination is "next to the
+                // caster", not necessarily anchor-adjacent).
+                let caster_loc = e.actors[&wiz].location();
+                let caster_size = crate::engine::util::get_tiles_from_size(e.actors[&wiz].size());
+                let target_size = crate::engine::util::get_tiles_from_size(e.actors[&foe].size());
+                let gap = crate::engine::util::footprint_chebyshev(
+                    after,
+                    target_size,
+                    caster_loc,
+                    caster_size,
+                );
+                assert_eq!(
+                    gap, 0,
+                    "warped enemy should land footprint-adjacent to caster (got {:?} from caster {:?})",
+                    after, caster_loc
+                );
+                warped_at_least_once = true;
+            }
+            if warped_at_least_once && fizzled_at_least_once {
+                break;
+            }
+        }
+        assert!(
+            warped_at_least_once,
+            "across 40 seeds, at least one enemy should have failed the CON save and warped"
+        );
+    }
+
+    /// Vortex Warp is on the wizard's loadout.
+    #[test]
+    fn wizard_loadout_includes_vortex_warp() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let w = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let names: Vec<&str> = e.actors[&w].actions.iter().map(|a| a.name()).collect();
+        assert!(
+            names.contains(&"vortex warp"),
+            "wizard missing vortex warp (have: {:?})",
+            names
+        );
+    }
+
+    /// `has_condition_resistance` table-driven cleanup smoke test — the
+    /// refactor moved the typed-condition resistance lookup into a
+    /// `TYPED_RESISTANCE_CONDITIONS` table; verify the existing buffs
+    /// (Raging physical resistance, Purified poison resistance) still
+    /// flow through the unified lookup.
+    #[test]
+    fn condition_resistance_table_covers_existing_buffs() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Apply Raging — should grant resistance to bludgeoning,
+        // piercing, slashing only.
+        e.actors
+            .get_mut(&wiz)
+            .unwrap()
+            .add_condition(Condition::Raging, ConditionTimer::Rounds(10));
+        let actor = &e.actors[&wiz];
+        assert_eq!(actor.effective_damage(20, DamageType::Bludgeoning), 10);
+        assert_eq!(actor.effective_damage(20, DamageType::Piercing), 10);
+        assert_eq!(actor.effective_damage(20, DamageType::Slashing), 10);
+        assert_eq!(actor.effective_damage(20, DamageType::Fire), 20);
+        assert_eq!(actor.effective_damage(20, DamageType::Poison), 20);
+        // Now drop Raging and apply Purified — should grant resistance to
+        // poison only.
+        e.actors.get_mut(&wiz).unwrap().remove_condition(Condition::Raging);
+        e.actors
+            .get_mut(&wiz)
+            .unwrap()
+            .add_condition(Condition::Purified, ConditionTimer::Rounds(10));
+        let actor = &e.actors[&wiz];
+        assert_eq!(actor.effective_damage(20, DamageType::Poison), 10);
+        assert_eq!(actor.effective_damage(20, DamageType::Fire), 20);
+        assert_eq!(actor.effective_damage(20, DamageType::Bludgeoning), 20);
+    }
+
     /// Seeded sibling of `ei_with_terrain` — same hand-crafted terrain
     /// shape but the encounter's RNG is initialized from `seed` so callers
     /// can sweep seeds for probabilistic assertions while keeping a

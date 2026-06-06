@@ -539,6 +539,17 @@ const MELEE_REFLECT_RIDERS: &[MeleeReflectRider] = &[
         damage_type: DamageType::Cold,
         label: "investiture of ice",
     },
+    // 5e Investiture of Stone — 1d10 force on melee contact. Sibling to
+    // Investiture of Flame / Ice but force-typed (the stone shell
+    // crackles with telekinetic recoil rather than burning / freezing
+    // the attacker). Paired with broad physical resistance on the
+    // caster via the InvestedInStone row of TYPED_RESISTANCE_CONDITIONS.
+    MeleeReflectRider {
+        condition: Condition::InvestedInStone,
+        damage: ReflectDamage::Dice(Dice::new(1, 10)),
+        damage_type: DamageType::Force,
+        label: "investiture of stone",
+    },
 ];
 
 /// Roll a single rider die for an on-hit bonus, doubling on crit per

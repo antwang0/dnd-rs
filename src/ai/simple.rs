@@ -300,6 +300,17 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3m'a'. Investiture of Stone — level-6 caster concentration self-buff
+        //        (bludgeoning + piercing + slashing resistance + 1d10 force
+        //        melee retaliation). Sibling to Investiture of Flame / Ice
+        //        with a broader resistance envelope (the physical trio) and
+        //        force-typed retaliation (the rarest type to resist). Same
+        //        engagement gate as the elemental siblings; mutually
+        //        exclusive via the concentration short-circuit.
+        if let Some(aei) = try_investiture_of_stone(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3m''. Wind Wall — level-3 caster concentration self-buff
         //       (ranged-attack disadvantage). Fire when an enemy sits
         //       at long range so the deflection rider matters this
@@ -1113,6 +1124,25 @@ fn try_investiture_of_ice(
         actor_id,
         "investiture of ice",
         Condition::InvestedInIce,
+        6,
+    )
+}
+
+/// Investiture of Stone — level-6 caster concentration self-buff
+/// (bludgeoning + piercing + slashing resistance + 1d10 force melee
+/// retaliation). Sibling to `try_investiture_of_flame` /
+/// `try_investiture_of_ice`: same engagement gate, swapped condition.
+/// Mutually exclusive with the elemental siblings via the
+/// `is_concentrating` short-circuit inside `try_self_buff_concentration`.
+fn try_investiture_of_stone(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_self_buff_concentration(
+        encounter,
+        actor_id,
+        "investiture of stone",
+        Condition::InvestedInStone,
         6,
     )
 }

@@ -16,6 +16,43 @@ use crate::actions::class_features::{
     SORCEROUS_RESTORATION_TAG,
 };
 
+/// Conditions whose resistance covers every damage type — a blanket
+/// "halve all incoming damage" buff. Read by `has_condition_resistance`
+/// so a new generic damage-resistant condition (future Stoneskin /
+/// Globe-style buff) only needs an entry here.
+const BLANKET_RESISTANCE_CONDITIONS: &[Condition] = &[
+    Condition::DamageResistant,
+    Condition::Globed,
+    Condition::WardingBonded,
+    Condition::Petrified,
+];
+
+/// Conditions whose resistance only applies to a curated damage-type
+/// subset. Each row is `(condition, &[damage types resisted])`. Read by
+/// `has_condition_resistance` so a new Investiture-style buff lands as a
+/// one-line entry without touching the damage-pipeline code.
+const TYPED_RESISTANCE_CONDITIONS: &[(Condition, &[DamageType])] = &[
+    (Condition::InvestedInFlame, &[DamageType::Fire]),
+    (Condition::InvestedInIce, &[DamageType::Cold]),
+    (
+        Condition::InvestedInStone,
+        &[
+            DamageType::Bludgeoning,
+            DamageType::Piercing,
+            DamageType::Slashing,
+        ],
+    ),
+    (Condition::Purified, &[DamageType::Poison]),
+    (
+        Condition::Raging,
+        &[
+            DamageType::Bludgeoning,
+            DamageType::Piercing,
+            DamageType::Slashing,
+        ],
+    ),
+];
+
 /// Lifecycle state of an actor's hit points. Replaces the previous
 /// `dying: bool` + `stable: bool` pair so the four meaningful states are
 /// type-checked, and the death-save counters are scoped to the only
@@ -1189,23 +1226,35 @@ impl ActorInstance {
         // rules, only one halving applies regardless of how many sources
         // grant resistance. If the template (or dwarven resilience) has
         // already halved, condition-based halving is skipped.
-        let condition_resistance = !template_resisted
-            && (self.has_condition(Condition::DamageResistant)
-                || self.has_condition(Condition::Globed)
-                || self.has_condition(Condition::WardingBonded)
-                || self.has_condition(Condition::Petrified)
-                || (self.has_condition(Condition::Raging)
-                    && matches!(
-                        dt,
-                        DamageType::Bludgeoning | DamageType::Piercing | DamageType::Slashing
-                    ))
-                || (dt == DamageType::Fire && self.has_condition(Condition::InvestedInFlame))
-                || (dt == DamageType::Cold && self.has_condition(Condition::InvestedInIce))
-                || (dt == DamageType::Poison && self.has_condition(Condition::Purified)));
+        let condition_resistance = !template_resisted && self.has_condition_resistance(dt);
         if condition_resistance {
             amt /= 2;
         }
         amt
+    }
+
+    /// True iff the actor holds a condition that grants resistance to
+    /// damage of type `dt`. Walks two cohorts:
+    /// - `BLANKET_RESISTANCE_CONDITIONS`: conditions that resist *every*
+    ///   damage type (Stoneskin / Globe of Invulnerability / Warding
+    ///   Bond / Petrified).
+    /// - `TYPED_RESISTANCE_CONDITIONS`: conditions whose resistance only
+    ///   applies to a curated subset of damage types (Investiture of
+    ///   Flame → Fire, Raging → physical trio, Purified → Poison).
+    ///
+    /// Centralizes the per-condition resistance lookup so a new Investiture
+    /// spell only needs a one-line entry in the typed cohort, and the
+    /// `effective_damage` site stays a single boolean read.
+    pub fn has_condition_resistance(&self, dt: DamageType) -> bool {
+        if BLANKET_RESISTANCE_CONDITIONS
+            .iter()
+            .any(|c| self.has_condition(*c))
+        {
+            return true;
+        }
+        TYPED_RESISTANCE_CONDITIONS.iter().any(|(c, types)| {
+            self.has_condition(*c) && types.contains(&dt)
+        })
     }
 
     pub fn damage_modifier(&self, dt: DamageType) -> Option<DamageModifier> {

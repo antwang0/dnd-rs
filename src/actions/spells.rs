@@ -21479,6 +21479,88 @@ impl Action for InvestitureOfIce {
 pub static INVESTITURE_OF_ICE: LazyLock<InvestitureOfIce> =
     LazyLock::new(|| InvestitureOfIce {});
 
+/// Investiture of Stone — level-6 transmutation, concentration. The caster's
+/// body hardens to living rock: they gain resistance to bludgeoning,
+/// piercing, and slashing damage (the three physical weapon types, read by
+/// `effective_damage`'s InvestedInStone branch of `TYPED_RESISTANCE_CONDITIONS`),
+/// and every melee attacker takes 1d10 force damage in retaliation (the
+/// stone shell crackles with telekinetic recoil — handled by
+/// `resolve_attack`'s `MELEE_REFLECT_RIDERS` table next to the
+/// Investiture of Flame / Ice entries).
+///
+/// Distinct from `InvestedInFlame` / `InvestedInIce` in two ways:
+///   - Resistance covers the *physical* trio rather than a single element,
+///     so the buff is broader against martial enemies (a melee swarm) but
+///     blank against any caster slinging elemental damage.
+///   - Retaliation is force-typed — the rarest damage type to resist, so
+///     the reflect chips through almost any creature's defenses.
+///
+/// The earth-tremor emanation and difficult-terrain creation in RAW are
+/// omitted — the load-bearing buff is the resistance + melee-reflect
+/// envelope, mirroring the Flame / Ice install shape.
+pub struct InvestitureOfStone {}
+
+impl Action for InvestitureOfStone {
+    fn name(&self) -> &str {
+        "investiture of stone"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ios", "stoneinvest"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Already invested → don't re-cast and burn a level-6 slot.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.has_condition(Condition::InvestedInStone))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        encounter.log("  investiture of stone: your body hardens to living rock.".to_string());
+        self_concentration_buff_effects(
+            caster_id,
+            "Investiture of Stone",
+            Condition::InvestedInStone,
+            ConditionTimer::Rounds(10),
+        )
+    }
+}
+
+pub static INVESTITURE_OF_STONE: LazyLock<InvestitureOfStone> =
+    LazyLock::new(|| InvestitureOfStone {});
+
 /// Spider Climb — level-2 transmutation, concentration. Touches a willing
 /// creature (5ft / 1 tile reach); they gain a climbing speed equal to
 /// their walking speed for the duration. RAW also lets the holder traverse
@@ -21673,3 +21755,194 @@ impl Action for TashasCausticBrew {
 pub static TASHAS_CAUSTIC_BREW: LazyLock<TashasCausticBrew> =
     LazyLock::new(|| TashasCausticBrew {});
 
+/// Vortex Warp — level-2 conjuration (Tasha's). The caster opens a rift
+/// of swirling magic that snatches a creature within 90 ft (36 tiles) and
+/// drops them at an unoccupied space the caster picks within the same
+/// range. RAW: the target is automatically teleported if willing
+/// (ally-cast); otherwise it makes a CON save vs the caster's spell DC,
+/// and on a pass the spell fizzles for that creature.
+///
+/// We model the spell as a single-target teleport with the destination
+/// resolved by the engine rather than the caster picking a tile:
+///   - **Ally target** → snatched to a tile adjacent to the caster (the
+///     classic "yank an injured ally out of a melee" play). No save.
+///   - **Enemy target** → CON save vs the caster's spell DC. On fail,
+///     the target is yanked next to the caster (which is *hostile*
+///     ground: the caster's allies typically surround them, and the
+///     target loses ground gained). On pass, the spell fizzles silently.
+///
+/// The "adjacent to caster" destination keeps the schema simple
+/// (SingleActor — no separate destination picker needed) while
+/// preserving the spell's load-bearing tactical use case: forced
+/// repositioning at a 90-ft range. RAW lets the caster aim the
+/// destination anywhere within 90 ft of themselves; we collapse to
+/// adjacent-to-caster since that's the highest-value spot for either
+/// allegiance and avoids surfacing a second targeting axis.
+///
+/// Slots between Misty Step (lv2, self-teleport 30 ft bonus action) and
+/// Thunder Step (lv3, self + 1 willing creature, 90 ft Action) — Vortex
+/// Warp is the "displace someone else" niche at the lv2 tier.
+pub struct VortexWarp {}
+
+impl Action for VortexWarp {
+    fn name(&self) -> &str {
+        "vortex warp"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["vw", "warp", "vortex"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 90 ft RAW = 36 tiles in the 2.5ft grid.
+        Some(36)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        // RAW: a willing target auto-passes; an unwilling target makes a
+        // save. The AI's enemy-target heuristics treat this as harmful
+        // (unwilling-target use is the common case), but a friendly
+        // surface in the UI mirrors how Banishment is flagged: harmful
+        // for the focus-fire picker, but the spell's apply path handles
+        // ally vs enemy cleanly.
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::TeleportActor;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        if target_id == caster_id {
+            // 5e RAW: the spell can't target the caster (range is "a
+            // creature you can see", which excludes self by convention
+            // for ally-style teleport spells).
+            return Vec::new();
+        }
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let caster_team = caster.team();
+        let caster_loc = caster.location();
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]);
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return Vec::new();
+        };
+        let target_team = target.team();
+        let target_name = target.name().to_string();
+        let willing = target_team == caster_team;
+        // Unwilling target → CON save. On pass, the spell fizzles for
+        // that creature (no teleport, no further effects). Routed through
+        // the caster-aware save lane so Heightened Spell forces
+        // disadvantage on the first save in the cast RAW.
+        if !willing {
+            let save = encounter.roll_save_against_caster(
+                target_id,
+                AbilityScoreType::Constitution,
+                dc,
+                caster_id,
+            );
+            if save.passed() {
+                encounter.log(format!(
+                    "  vortex warp: {} resists the pull.",
+                    target_name
+                ));
+                return Vec::new();
+            }
+        }
+        // Pick an unoccupied anchor tile near the caster that the
+        // target's full footprint can occupy. Walk the ring of anchors
+        // one Chebyshev step at a time so the closest legal spot wins
+        // (matters when caster + target are both > Medium and the inner
+        // ring won't fit). `can_move_to` does the per-subtile occupancy
+        // + terrain check and excludes the target's own current tiles —
+        // a creature moving from elsewhere can land in the freed spot.
+        use crate::engine::util::get_tiles_from_size;
+        let target_size = encounter
+            .actors
+            .get(&target_id)
+            .map(|a| get_tiles_from_size(a.size()) as isize)
+            .unwrap_or(1);
+        let caster_size = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| get_tiles_from_size(a.size()) as isize)
+            .unwrap_or(1);
+        // Search radius spans far enough to clear both footprints.
+        // For two Medium (2-tile) creatures we need to walk out to
+        // ±3 anchors to find a spot whose footprint doesn't overlap
+        // the caster's. We add 1 for slack.
+        let search_radius = (target_size + caster_size).max(2);
+        let mut dest: Option<Coordinate> = None;
+        for ring in 1..=search_radius {
+            for dy in -ring..=ring {
+                for dx in -ring..=ring {
+                    // Only walk the outer ring at this iteration so the
+                    // closest legal anchor wins.
+                    if dx.abs() != ring && dy.abs() != ring {
+                        continue;
+                    }
+                    let candidate = Coordinate::new(caster_loc.x + dx, caster_loc.y + dy);
+                    if encounter.can_move_to(target_id, candidate) {
+                        dest = Some(candidate);
+                        break;
+                    }
+                }
+                if dest.is_some() {
+                    break;
+                }
+            }
+            if dest.is_some() {
+                break;
+            }
+        }
+        let Some(dest) = dest else {
+            // No legal landing tile around the caster — the spell still
+            // resolves but the target stays put. RAW: "an unoccupied
+            // space" — if there isn't one, the spell fails for that
+            // target. Burn the slot anyway (the cast happened) but log
+            // the no-op so the player understands why.
+            encounter.log(format!(
+                "  vortex warp: no open tile next to the caster — {} stays put.",
+                target_name
+            ));
+            return Vec::new();
+        };
+        encounter.log(format!(
+            "  vortex warp: {} is yanked through the rift.",
+            target_name
+        ));
+        vec![Box::new(TeleportActor {
+            actor_id: target_id,
+            dest,
+        })]
+    }
+}
+
+pub static VORTEX_WARP: LazyLock<VortexWarp> = LazyLock::new(|| VortexWarp {});
