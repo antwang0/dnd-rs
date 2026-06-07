@@ -149,6 +149,13 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     stun).
     actions.push(&*crate::actions::spells::FLESH_TO_STONE);
     actions.push(&*crate::actions::spells::PSYCHIC_SCREAM);
+    // Latest warlock additions:
+    //   - lv8 **Maddening Darkness** (evocation, XGtE): 6-tile burst,
+    //     8d8 psychic WIS-save for half (concentration-bound). The
+    //     warlock's lv8 mass-control burst — distinct from Power Word
+    //     Stun (lv8 single-target HP-gated). Pairs cleanly with the
+    //     warlock's CHA-anchored DC and the lv8 slot in the chassis.
+    actions.push(&*crate::actions::spells::MADDENING_DARKNESS);
     CreatureTemplate {
         name: "Warlock",
         // 'L' (uppercase) — distinct from 'l' (Lich), 'W' (Wolf glyph),

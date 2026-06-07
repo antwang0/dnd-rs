@@ -718,6 +718,18 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 5a''. Geas — level-5 enchantment, concentration-FREE. Charms
+        //       the toughest enemy on a failed WIS save, locking them
+        //       out of attacking the caster via the engine's existing
+        //       `charmed_by` link. Slots after Dominate Monster (lv8,
+        //       concentration, broader debuff) and before the AoE
+        //       picker — the lv5 slot can compete with Cone of Cold /
+        //       Hold Monster, so we want it to fire only when no
+        //       AoE / lockdown is queued.
+        if let Some(aei) = try_geas(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 5. AoE — point that catches 2+ enemies, no friendly fire.
         if let Some(aei) = try_attack_aoe(encounter, actor_id) {
             return ControllerDecision::Act(aei);
@@ -977,6 +989,52 @@ fn try_dominate_monster(
         }
         // Skip already-dominated targets.
         if target.has_condition(Condition::Dominated) {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![target_id]), None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        let hp = target.hitpoints();
+        if best.as_ref().is_none_or(|(best_hp, _)| hp > *best_hp) {
+            best = Some((hp, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
+}
+
+/// Geas — level-5 enchantment. Drops a long-duration `Charmed` rider on
+/// the toughest enemy via the existing `charmed_by` link, blocking them
+/// from making hostile actions against the caster. Concentration-FREE
+/// RAW (the timer carries the install instead), so this skips the
+/// `is_concentrating()` short-circuit that the Hold Person / Dominate
+/// Monster pickers gate on — Geas can stack on top of a separate
+/// concentration buff cleanly.
+///
+/// Highest-HP target picker (mirrors `try_dominate_monster`) — the
+/// long-duration Charmed mark wants to land on the threat with the most
+/// remaining swings to gain value, and the higher-HP target is the one
+/// most likely to use those swings on the caster otherwise. Skip
+/// targets that are already Charmed (the install would be a no-op /
+/// the engine collapses re-applies).
+fn try_geas(encounter: &EncounterInstance, actor_id: usize) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor.find_action("geas")?;
+    let my_team = actor.team();
+
+    let mut best: Option<(u32, ActionExecutionInfo)> = None;
+    for target_id in encounter.sorted_actor_ids() {
+        let Some(target) = encounter.actors.get(&target_id) else {
+            continue;
+        };
+        if target_id == actor_id || target.team() == my_team || !target.is_combat_active() {
+            continue;
+        }
+        // Skip already-charmed targets — re-applying Charmed is a
+        // no-op, and the engine's charmed-by link gets overwritten
+        // (which could clobber an existing Hold Person / Dominate
+        // Monster anchor on a different caster).
+        if target.has_condition(Condition::Charmed) {
             continue;
         }
         let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![target_id]), None, None);

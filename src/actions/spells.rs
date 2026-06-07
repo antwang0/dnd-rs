@@ -341,7 +341,11 @@ impl SaveOutcome {
 /// Centralizes the loop body that ~15 burst spells used to reimplement.
 /// The thin `enemy_burst_save_for_half` / `neutral_burst_save_for_half`
 /// / `neutral_burst_save_only` wrappers above pre-pick the two enum
-/// dimensions so call sites stay one-liner-readable.
+/// dimensions so call sites stay one-liner-readable. The
+/// concentration-anchored variant (Wall of Light / Black Tentacles /
+/// Caustic Brew) routes through `concentration_burst_with_rider`
+/// instead, which collapses the burst+rider+anchor recipe to a single
+/// helper call.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn burst_save_damage(
     encounter: &mut EncounterInstance,
@@ -520,45 +524,6 @@ fn neutral_burst_save_only(
     )
 }
 
-/// Enemy-only save-or-nothing burst: every hostile combat-active actor
-/// in the burst makes a save against `dc` using `save_ability`. Failed
-/// save = full damage from a *shared* roll, success = no damage. Allies
-/// are excluded via `enemy_burst_targets` (the caster aims the line).
-///
-/// Rounds out the four-way matrix of `{Enemy, Neutral} × {HalfOnSave,
-/// NoneOnSave}` helpers. Used by line spells whose RAW damage is
-/// save-or-nothing AND whose caster traditionally aims to spare allies —
-/// Tasha's Caustic Brew is the canonical case. Distinct from
-/// `enemy_burst_save_for_half` because the save outcome on success is
-/// zero damage (not half) — matches the cantrip-style RAW for line
-/// spells without the half-on-save clause.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
-fn enemy_burst_save_only(
-    encounter: &mut EncounterInstance,
-    caster_id: usize,
-    point: Coordinate,
-    radius: isize,
-    save_ability: AbilityScoreType,
-    dc: i32,
-    dice: Dice,
-    damage_type: DamageType,
-    action_name: &str,
-) -> (Vec<Box<dyn ApplicableSideEffect>>, Vec<(usize, bool)>) {
-    burst_save_damage(
-        encounter,
-        caster_id,
-        point,
-        radius,
-        save_ability,
-        dc,
-        dice,
-        damage_type,
-        action_name,
-        BurstTargets::Enemy,
-        SaveOutcome::NoneOnSave,
-    )
-}
-
 /// Walk the `(target_id, save_passed)` vector returned by any of the
 /// `*_burst_save_*` helpers and append an `ApplyCondition` side-effect
 /// for every failed-save target. Centralizes the recurring shape:
@@ -626,6 +591,70 @@ fn push_condition_on_failed_save_for_concentration(
         }
     }
     conditions
+}
+
+/// Enemy-only AoE burst whose failed-save targets pick up a
+/// concentration-anchored rider. Folds the recurring three-step recipe
+/// used by Black Tentacles, Wall of Light, Caustic Brew, and Psychic
+/// Scream into a single call:
+///
+///   1. resolve `enemy_burst_save_for_half` (shared damage roll, sorted
+///      ids, allies spared, Heightened-aware saves);
+///   2. layer `push_condition_on_failed_save_for_concentration` to tag
+///      every failed-save target with `rider` for `rider_timer`;
+///   3. push a `StartConcentration` anchored to the failed-save cohort
+///      so dropping concentration strips every rider cleanly.
+///
+/// `outcome` picks between `HalfOnSave` (Wall of Light / Psychic Scream
+/// — half damage on a passed save) and `NoneOnSave` (Caustic Brew —
+/// zero damage on a passed save). The variant-pick used to live at the
+/// call site as a separate `enemy_burst_save_for_half` /
+/// `enemy_burst_save_only` choice; folding it here keeps the
+/// concentration-burst pattern to a single chokepoint.
+///
+/// Returns the resolved effect list ready to fold into the action's
+/// `side_effects` return — no further bookkeeping needed at the call
+/// site.
+#[allow(clippy::too_many_arguments)]
+fn concentration_burst_with_rider(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    point: Coordinate,
+    radius: isize,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    dice: Dice,
+    damage_type: DamageType,
+    action_name: &str,
+    spell_name: &'static str,
+    rider: Condition,
+    rider_timer: ConditionTimer,
+    outcome: SaveOutcome,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let (mut effects, saves) = burst_save_damage(
+        encounter,
+        caster_id,
+        point,
+        radius,
+        save_ability,
+        dc,
+        dice,
+        damage_type,
+        action_name,
+        BurstTargets::Enemy,
+        outcome,
+    );
+    let conditions = push_condition_on_failed_save_for_concentration(
+        &mut effects,
+        &saves,
+        rider,
+        rider_timer,
+    );
+    effects.push(Box::new(StartConcentration {
+        caster_id,
+        data: ConcentrationData::with_conditions(spell_name, conditions),
+    }));
+    effects
 }
 
 /// Roll a damage burst against a target's saving throw, halving on
@@ -15135,9 +15164,14 @@ impl Action for EvardsBlackTentacles {
             AbilityScoreType::Wisdom,
             AbilityScoreType::Charisma,
         ]);
-        // Damage burst: half on save, full on fail. The save vector tells
-        // us which targets failed → those get Restrained.
-        let (mut effects, saves) = enemy_burst_save_for_half(
+        // Failed-save targets take 3d6 bludgeoning AND pick up Restrained
+        // for the duration; pass = half damage and no rider. The
+        // concentration mark captures the restrained ids so dropping
+        // concentration releases them cleanly. 10 rounds = 1 minute RAW.
+        // Same recipe Caustic Brew / Wall of Light / Psychic Scream
+        // route through — concentration_burst_with_rider keeps the
+        // three-step burst/rider/anchor shape in one chokepoint.
+        concentration_burst_with_rider(
             encounter,
             caster_id,
             point,
@@ -15147,21 +15181,11 @@ impl Action for EvardsBlackTentacles {
             Dice::new(3, 6),
             DamageType::Bludgeoning,
             "black tentacles",
-        );
-        // Tag failed-save targets with Restrained for the duration. The
-        // concentration mark captures the restrained ids so dropping
-        // concentration releases them cleanly. 10 rounds = 1 minute RAW.
-        let conditions = push_condition_on_failed_save_for_concentration(
-            &mut effects,
-            &saves,
+            "Black Tentacles",
             Condition::Restrained,
             ConditionTimer::Rounds(10),
-        );
-        effects.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::with_conditions("Black Tentacles", conditions),
-        }));
-        effects
+            SaveOutcome::HalfOnSave,
+        )
     }
 }
 
@@ -21750,12 +21774,17 @@ impl Action for TashasCausticBrew {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-        // Burst resolver: failed save = 2d4 acid, passed save = 0
-        // (no half-on-save: the DoT is what survivors carry forward,
-        // not a flat-damage payload). Enemy-only — the caster aims the
-        // line to spare allies, matching the engine's convention for
-        // line spells (cf. Aganazzar's Scorcher, Burning Hands).
-        let (mut effects, saves) = enemy_burst_save_only(
+        // Failed save = 2d4 acid AND the target picks up the
+        // `CausticBrewed` flag (DoT lives on `ROUND_END_DOTS` so the
+        // per-turn drip rolls through the shared pipeline). Passed save
+        // = 0 damage AND no DoT (cantrip-flavored — no half-on-save:
+        // the DoT is what survivors carry forward, not a flat-damage
+        // payload). Enemy-only — the caster aims the line to spare
+        // allies, matching the engine's convention for line spells
+        // (cf. Aganazzar's Scorcher, Burning Hands). Concentration
+        // tracks every drip target so dropping concentration strips
+        // every flag at once.
+        concentration_burst_with_rider(
             encounter,
             caster_id,
             point,
@@ -21765,26 +21794,11 @@ impl Action for TashasCausticBrew {
             Dice::new(2, 4),
             DamageType::Acid,
             "tasha's caustic brew",
-        );
-        // Per-target rider: every actor who *failed* the save also picks
-        // up the `CausticBrewed` flag. The DoT lives on `ROUND_END_DOTS`
-        // so the per-turn drip rolls through the shared pipeline.
-        // Concentration tracks every drip target — dropping concentration
-        // strips every flag at once, cleanly ending the lingering acid.
-        let conc_conditions = push_condition_on_failed_save_for_concentration(
-            &mut effects,
-            &saves,
+            "Tasha's Caustic Brew",
             Condition::CausticBrewed,
             ConditionTimer::Rounds(10),
-        );
-        effects.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::with_conditions(
-                "Tasha's Caustic Brew",
-                conc_conditions,
-            ),
-        }));
-        effects
+            SaveOutcome::NoneOnSave,
+        )
     }
 }
 
@@ -22118,7 +22132,16 @@ impl Action for WallOfLight {
             AbilityScoreType::Intelligence,
             AbilityScoreType::Charisma,
         ]);
-        let (mut effects, saves) = enemy_burst_save_for_half(
+        // RAW: 4d8 radiant CON-save half + Blinded-on-fail
+        // (concentration). The recipe — burst save for half, then
+        // anchor the rider on the caster's concentration — is shared
+        // with Caustic Brew / Black Tentacles / Psychic Scream, so we
+        // route through the canonical `concentration_burst_with_rider`
+        // chokepoint. Blinded is read until the wall ends OR until the
+        // target spends an action to wipe their eyes — we collapse to
+        // "blinded for the duration" since the engine has no per-target
+        // action-economy cleanse outside the StillnessOfMind cohort.
+        concentration_burst_with_rider(
             encounter,
             caster_id,
             point,
@@ -22128,23 +22151,11 @@ impl Action for WallOfLight {
             Dice::new(4, 8),
             DamageType::Radiant,
             "wall of light",
-        );
-        // RAW: failed-save targets are also blinded by the brilliance
-        // (until the wall ends OR until the target spends an action to
-        // wipe their eyes — we collapse to "blinded for the duration"
-        // since the engine has no per-target action-economy cleanse
-        // outside the existing StillnessOfMind cohort).
-        let conditions = push_condition_on_failed_save_for_concentration(
-            &mut effects,
-            &saves,
+            "Wall of Light",
             Condition::Blinded,
             ConditionTimer::Rounds(10),
-        );
-        effects.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::with_conditions("Wall of Light", conditions),
-        }));
-        effects
+            SaveOutcome::HalfOnSave,
+        )
     }
 }
 
@@ -22927,3 +22938,347 @@ impl Action for BonesOfTheEarth {
 
 pub static BONES_OF_THE_EARTH: LazyLock<BonesOfTheEarth> =
     LazyLock::new(|| BonesOfTheEarth {});
+
+/// Storm Sphere — level-4 evocation (sorcerer / wizard, XGtE), action,
+/// concentration. The caster summons a sphere of crackling storm clouds
+/// at a target point within 150ft. Every creature whose footprint sits
+/// in the 4-tile (20ft) burst makes a STR save vs the caster's spell
+/// DC: pass = no damage, fail = 2d6 bludgeoning from the lashing winds
+/// AND the target picks up the `WindBlasted` rider for the duration —
+/// the storm's residual gusts impose disadvantage on the target's
+/// ranged attacks. Concentration tracks the failed-save cohort so
+/// dropping concentration strips every install at once.
+///
+/// RAW's "every creature that enters the sphere or starts its turn
+/// there" sustained-zone clause is collapsed to a one-shot install at
+/// cast time (matches our Dawn / Sickening Radiance simplification);
+/// the bonus-action lightning-strike clause RAW grants is omitted (the
+/// engine has no separate action-economy lane for a concentration-
+/// driven follow-up attack). Slots between Ice Storm (lv4, DEX-save
+/// half damage, no rider) and Wall of Light (lv5, blind on fail) on
+/// the AoE-control ladder — distinct from Ice Storm by the rider,
+/// distinct from Wall of Light by the save ability (STR vs CON) and
+/// the smaller burst size.
+pub struct StormSphere {}
+
+impl Action for StormSphere {
+    fn name(&self) -> &str {
+        "storm sphere"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sphere", "storm", "ss"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 20ft radius sphere → 4-tile burst on this grid.
+        TargetingSchema::Burst { radius: 4 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 150 ft RAW = 60 tiles; cap at 48 (matches Bones of the Earth's
+        // pragmatic cap) so the picker still covers the full board
+        // without dangling pins off the map edge.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Sorcerer (CHA) + wizard (INT) — best-of so a multi-class caster
+        // anchors on the right stat. Same shape as Otiluke's Freezing
+        // Sphere's INT/CHA gate at the same lv4 evocation tier.
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+        ]);
+        // Cantrip-flavored "no damage on save" outcome — RAW: a passed
+        // STR save lets the target dodge out of the sphere entirely.
+        // The `WindBlasted` rider only lands on failed saves; the same
+        // concentration mark anchors the cohort.
+        concentration_burst_with_rider(
+            encounter,
+            caster_id,
+            point,
+            4,
+            AbilityScoreType::Strength,
+            dc,
+            Dice::new(2, 6),
+            DamageType::Bludgeoning,
+            "storm sphere",
+            "Storm Sphere",
+            Condition::WindBlasted,
+            // 10 rounds = 1 minute RAW. Concentration anchors the real
+            // lifetime — dropping concentration ends the storm before
+            // the timer expires.
+            ConditionTimer::Rounds(10),
+            SaveOutcome::NoneOnSave,
+        )
+    }
+}
+
+pub static STORM_SPHERE: LazyLock<StormSphere> = LazyLock::new(|| StormSphere {});
+
+/// Maddening Darkness — level-8 evocation (warlock / wizard, XGtE),
+/// action, concentration. The caster conjures a 60-ft sphere of magical
+/// darkness at a target point within 150 ft. Every enemy whose
+/// footprint sits in the 6-tile burst makes a WIS save vs the caster's
+/// spell DC: pass = half damage (RAW), fail = full. 8d8 psychic damage
+/// from the gibbering whispers in the dark. Concentration-bound — RAW
+/// the sphere lingers up to 10 minutes, and any creature entering /
+/// starting its turn in the area re-rolls the save. We collapse the
+/// sustained zone to a one-shot install at cast time, matching the
+/// Sickening Radiance / Sleet Storm / Dawn shape used elsewhere.
+///
+/// Slots between Sunburst (lv8, radiant DEX-save AoE) and Psychic
+/// Scream (lv9, INT-save psychic burst + Stunned) on the lv8+
+/// caster-burst ladder. Distinct from Power Word Stun (lv8, HP-gated
+/// single-target stun) by being a multi-target AoE; distinct from
+/// Sunburst by the damage type and save ability (WIS vs DEX). The
+/// flagship lv8 mind-spike for warlocks who can't reach Psychic
+/// Scream's lv9 slot.
+pub struct MaddeningDarkness {}
+
+impl Action for MaddeningDarkness {
+    fn name(&self) -> &str {
+        "maddening darkness"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["maddening", "darkness", "md"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 60ft radius sphere → 6-tile burst on this grid (matches
+        // Otiluke's Freezing Sphere's footprint at a higher tier).
+        TargetingSchema::Burst { radius: 6 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 150 ft RAW = 60 tiles; cap at 48 (mirrors Bones of the Earth)
+        // so the picker covers the full board.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Psychic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(8)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actors::actor_template::ConcentrationData;
+
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Warlock (CHA) + wizard (INT) — best-of so a multi-class caster
+        // anchors on the right stat. Mirrors Flesh to Stone / Otiluke's
+        // Freezing Sphere on the wizard / warlock list.
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+        ]);
+        let (mut effects, _saves) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            6,
+            AbilityScoreType::Wisdom,
+            dc,
+            // 8d8 psychic shared roll; halved on save via the standard
+            // SaveOutcome::HalfOnSave lane the helper picks.
+            Dice::new(8, 8),
+            DamageType::Psychic,
+            "maddening darkness",
+        );
+        // RAW: the sphere lingers under concentration; while no per-
+        // target rider rides into `effects` (no condition tag), the
+        // concentration anchor is still useful — re-cast / drop
+        // concentration ends the darkness cleanly and the metamagic
+        // / dispel paths can prune the bare mark via the existing
+        // concentration cleanup hook. Bare mark (no conditions to
+        // strip) — matches the Crusader's Mantle / Mordenkainen's
+        // Sword shape.
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::new("Maddening Darkness"),
+        }));
+        effects
+    }
+}
+
+pub static MADDENING_DARKNESS: LazyLock<MaddeningDarkness> =
+    LazyLock::new(|| MaddeningDarkness {});
+
+/// Geas — level-5 enchantment (bard / cleric / druid / paladin /
+/// wizard), action. The caster levels a magical command at a target
+/// within 60 ft. The target makes a WIS save vs the caster's spell DC:
+/// pass = nothing, fail = the target is Charmed by the caster for the
+/// duration (and the engine's existing Charmed-on-actor enforcement
+/// blocks them from making hostile actions against the caster — RAW's
+/// "must obey the spoken command" clause).
+///
+/// RAW's 30-day duration is capped to `Rounds(100)` (~10 minutes of
+/// combat) since the engine has no rest mechanic to amortize the
+/// month-long timer; concentration-FREE per RAW. Routes through the
+/// `save_or_concentration_condition` shape but *without* the
+/// concentration anchor — Geas is the rare long-duration Charmed
+/// install that doesn't burn the caster's concentration. We open-code
+/// the two-step `if save.passed() { ... } else { ApplyCondition }`
+/// branch instead of pulling the concentration helper.
+///
+/// Slots between Charm Person (lv1, short-duration WIS-save Charmed)
+/// and Charm Monster (lv4, lifted CR cap) on the single-target
+/// charm ladder — Geas trades the long duration for the requirement
+/// that the target understand the caster's language (we omit the
+/// language gate since the engine doesn't enforce per-target language
+/// awareness). Distinct from Dominate Person / Monster which add the
+/// blanket attack disadvantage clause.
+pub struct Geas {}
+
+impl Action for Geas {
+    fn name(&self) -> &str {
+        "geas"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["compel", "command", "g"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft RAW = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::SetCharmedBy;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Multi-class casters (bard / cleric / druid / paladin / wizard)
+        // anchor on different stats — best-of picks the right one.
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]);
+        let save = encounter.roll_save_against_caster(
+            target_id,
+            AbilityScoreType::Wisdom,
+            dc,
+            caster_id,
+        );
+        if save.passed() {
+            encounter.log("  geas: target shrugs off the command.".to_string());
+            return Vec::new();
+        }
+        encounter.log("  geas: target is bound to obey the caster.".to_string());
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Charmed,
+                // ~10 minutes of combat — long enough to cover any
+                // realistic encounter span without sitting truly
+                // permanent. RAW's 30-day timer would be effectively
+                // permanent in any combat session.
+                timer: ConditionTimer::Rounds(100),
+            }),
+            // Anchor the charm to the caster so the engine's "can't
+            // attack your charmer" enforcement (validate_input in
+            // action_template.rs) blocks hostile actions against the
+            // caster cleanly.
+            Box::new(SetCharmedBy {
+                target_id,
+                charmer: Some(caster_id),
+            }),
+        ]
+    }
+}
+
+pub static GEAS: LazyLock<Geas> = LazyLock::new(|| Geas {});

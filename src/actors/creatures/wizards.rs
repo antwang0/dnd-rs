@@ -423,6 +423,29 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     the lv9 nuke ladder by save ability + stunning rider.
     actions.push(&*crate::actions::spells::FLESH_TO_STONE);
     actions.push(&*crate::actions::spells::PSYCHIC_SCREAM);
+    // Latest wizard additions:
+    //   - lv4 **Storm Sphere** (evocation, XGtE): 4-tile burst, 2d6
+    //     bludgeoning STR save (none-on-save) + `WindBlasted` rider
+    //     for the duration (concentration-bound). The lv4 control
+    //     differentiator — slots between Ice Storm (lv4 DEX-save
+    //     half) and Wall of Light (lv5 CON-save half + Blinded).
+    //     Targets the bow-wielding back rank: the rider's ranged-
+    //     attacker disadvantage compounds with Storm Sphere's
+    //     initial damage.
+    //   - lv5 **Geas** (enchantment, PHB): single-target Charmed-on-
+    //     fail WIS save (concentration-FREE). Long-duration
+    //     compulsion that locks the target out of attacking the
+    //     wizard. Slots between Charm Monster (lv4) and Dominate
+    //     Person (lv5) on the single-target charm ladder.
+    //   - lv8 **Maddening Darkness** (evocation, XGtE): 6-tile
+    //     burst, 8d8 psychic WIS save for half (concentration-
+    //     bound). The lv8 burst differentiator from Sunburst (DEX
+    //     save, radiant) and Power Word Stun (single-target HP-
+    //     gated) — saves vs WIS hit caster/martial types that
+    //     shrug off the DEX/INT lanes.
+    actions.push(&*crate::actions::spells::STORM_SPHERE);
+    actions.push(&*crate::actions::spells::GEAS);
+    actions.push(&*crate::actions::spells::MADDENING_DARKNESS);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

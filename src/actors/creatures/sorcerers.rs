@@ -351,6 +351,14 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Stunned-on-fail. The flagship lv9 mind-spike for sorcerers that
     // pairs with Empowered Spell metamagic on the shared damage roll.
     actions.push(&*crate::actions::spells::PSYCHIC_SCREAM);
+    // Latest sorcerer additions:
+    //   - lv4 **Storm Sphere** (evocation, XGtE): 4-tile burst, 2d6
+    //     bludgeoning STR-save (none-on-save) + `WindBlasted` rider
+    //     for the duration. Pairs with Empowered Spell metamagic on
+    //     the shared 2d6 roll — small damage but the rider blanks
+    //     enemy bow / ranged-spell shots for the duration, which the
+    //     sorcerer's CHA-anchored DC keeps potent.
+    actions.push(&*crate::actions::spells::STORM_SPHERE);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

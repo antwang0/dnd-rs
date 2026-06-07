@@ -1066,6 +1066,19 @@ pub enum Condition {
     /// is omitted; the load-bearing combat clause is the ranged
     /// deflection plus flight.
     InvestedInWind,
+    /// Caught in a Storm Sphere (5e XGtE level-4 evocation, concentration).
+    /// The target was buffeted by the storm's lashing winds on cast and
+    /// is still riding the residual gusts: their own ranged attacks have
+    /// disadvantage (joins `imposes_attacker_disadvantage_on_ranged`)
+    /// — the wind throws off bow swings / spell arrows the moment they
+    /// release. Melee swings still land normally. Distinct from
+    /// `WindWalled` / `InvestedInWind` (which impose disadvantage on
+    /// attackers vs the holder), Storm Sphere imposes it on the holder
+    /// themselves, mirroring how Frightened / Blinded penalize the
+    /// holder rather than their attackers. Concentration-bound on the
+    /// caster; dropping concentration ends the storm and strips the
+    /// flag from every failed-save target at once.
+    WindBlasted,
 }
 
 impl Condition {
@@ -1211,6 +1224,7 @@ impl Condition {
             Condition::PhantasmalForced => "haunted by a phantasm",
             Condition::WaterSphered => "trapped in a watery sphere",
             Condition::InvestedInWind => "invested with wind",
+            Condition::WindBlasted => "wind-blasted",
         }
     }
 
@@ -1490,6 +1504,18 @@ impl Condition {
     /// caster still eats melee damage normally.
     pub fn imposes_disadvantage_to_ranged_attackers(&self) -> bool {
         matches!(self, Condition::WindWalled | Condition::InvestedInWind)
+    }
+
+    /// True if the *holder's own* ranged attacks roll with disadvantage,
+    /// while their melee swings are unaffected. Storm Sphere's residual
+    /// gusts are the canonical case — bow / spell-arrow shots get
+    /// thrown off, but melee weapons still bite normally. Symmetric to
+    /// `imposes_disadvantage_to_ranged_attackers` (which imposes the
+    /// penalty on attackers shooting *into* the holder), but on the
+    /// attacker side. Read by `compute_attack_mode` only when
+    /// `!is_melee` — gated on the ranged lane.
+    pub fn imposes_attacker_disadvantage_on_ranged(&self) -> bool {
+        matches!(self, Condition::WindBlasted)
     }
 
     /// True if the holder cannot take Reactions while this condition is

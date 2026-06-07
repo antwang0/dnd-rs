@@ -773,6 +773,14 @@ impl EncounterInstance {
                 if c.grants_self_attack_advantage() {
                     mode = mode.combine(RollMode::Advantage);
                 }
+                // Ranged-only attacker disadvantage cohort: Storm Sphere's
+                // gusts throw off bow shots / spell arrows but leave the
+                // attacker's melee swings unaffected. Symmetric to the
+                // target-side `imposes_disadvantage_to_ranged_attackers`
+                // clause, but on the attacker side.
+                if !is_melee && c.imposes_attacker_disadvantage_on_ranged() {
+                    mode = mode.combine(RollMode::Disadvantage);
+                }
             }
             // 5e Pack Tactics (Wolf, Dire Wolf, Kobold): advantage on
             // attack rolls when a non-incapacitated ally is adjacent to
@@ -33410,6 +33418,208 @@ mod tests {
         assert!(
             proned,
             "Bones of the Earth should knock at least one failed-save enemy prone with damage"
+        );
+    }
+
+    /// Storm Sphere: 4-tile burst, 2d6 bludgeoning STR save (none-on-save)
+    /// + `WindBlasted` rider on fail (concentration-bound). Verifies the
+    /// rider lands AND the caster picks up concentration on the cohort.
+    #[test]
+    fn storm_sphere_blasts_failed_save_enemies_and_anchors_concentration() {
+        use crate::actions::spells::STORM_SPHERE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut installed = false;
+        for seed in 0..40u64 {
+            let mut e = ei_seeded(15, 15, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+                .unwrap();
+            let point = Coordinate::new(8, 8);
+            for ef in STORM_SPHERE.side_effects(&mut e, wiz, None, Some(&vec![point]), None) {
+                ef.apply(&mut e);
+            }
+            if e.actors
+                .get(&enemy)
+                .is_some_and(|a| a.has_condition(Condition::WindBlasted))
+                && e.actors[&wiz].is_concentrating()
+            {
+                installed = true;
+                break;
+            }
+        }
+        assert!(
+            installed,
+            "Storm Sphere should install WindBlasted + concentration on at least one seed"
+        );
+    }
+
+    /// `WindBlasted` ranged-only attacker-disadvantage clause: a holder
+    /// rolling a ranged attack against a normal target gets disadvantage,
+    /// while their melee swings stay at Normal. Mirror of the
+    /// Wind-Wall ranged-only target-disadvantage test but on the
+    /// attacker side.
+    #[test]
+    fn wind_blasted_imposes_disadvantage_on_holders_ranged_attacks_only() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        let mut e = ei_seeded(15, 15, &[], 0);
+        let attacker = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::WindBlasted, ConditionTimer::Rounds(10));
+        // Ranged swing: WindBlasted should bite.
+        let ranged_mode = e.compute_attack_mode(attacker, target, false);
+        assert_eq!(
+            ranged_mode,
+            RollMode::Disadvantage,
+            "WindBlasted should impose disadvantage on holder's ranged attacks"
+        );
+        // Melee swing: WindBlasted should NOT bite.
+        let melee_mode = e.compute_attack_mode(attacker, target, true);
+        assert_eq!(
+            melee_mode,
+            RollMode::Normal,
+            "WindBlasted should not affect holder's melee attacks"
+        );
+    }
+
+    /// Geas: WIS-save Charmed-on-fail, no concentration (capped at
+    /// Rounds(100) instead). Verifies (a) the failed-save target picks
+    /// up Charmed, (b) the `charmed_by` link points at the caster (so
+    /// the engine's "can't attack your charmer" gate fires), AND
+    /// (c) the caster does *not* take concentration (Geas is concentration-
+    /// free RAW — distinguishing it from Dominate Person / Flesh to
+    /// Stone et al.).
+    #[test]
+    fn geas_charms_failed_save_target_without_concentration() {
+        use crate::actions::spells::GEAS;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut installed = false;
+        for seed in 0..40u64 {
+            let mut e = ei_seeded(10, 10, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let gob = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 6), 1, 0)
+                .unwrap();
+            for ef in GEAS.side_effects(&mut e, wiz, Some(&vec![gob]), None, None) {
+                ef.apply(&mut e);
+            }
+            if e.actors[&gob].has_condition(Condition::Charmed)
+                && e.actors[&gob].charmed_by() == Some(wiz)
+                && !e.actors[&wiz].is_concentrating()
+            {
+                installed = true;
+                break;
+            }
+        }
+        assert!(
+            installed,
+            "Geas should install Charmed + charmer link without burning concentration"
+        );
+    }
+
+    /// Maddening Darkness: 6-tile burst, 8d8 psychic WIS save for half
+    /// (concentration-bound). Verifies the burst damages enemies and the
+    /// caster takes concentration on the spell.
+    #[test]
+    fn maddening_darkness_damages_enemies_and_anchors_concentration() {
+        use crate::actions::spells::MADDENING_DARKNESS;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut damaged = false;
+        for seed in 0..40u64 {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+                .unwrap();
+            let point = Coordinate::new(10, 10);
+            let hp_before = e.actors[&enemy].hitpoints();
+            for ef in
+                MADDENING_DARKNESS.side_effects(&mut e, wiz, None, Some(&vec![point]), None)
+            {
+                ef.apply(&mut e);
+            }
+            let took_damage = e
+                .actors
+                .get(&enemy)
+                .map(|a| a.hitpoints() < hp_before)
+                .unwrap_or(true);
+            // Concentration must be installed regardless of whether
+            // anyone failed the save (bare anchor for the sustained
+            // zone).
+            if took_damage && e.actors[&wiz].is_concentrating() {
+                damaged = true;
+                break;
+            }
+        }
+        assert!(
+            damaged,
+            "Maddening Darkness should damage at least one enemy in the burst across seeds and anchor concentration"
+        );
+    }
+
+    /// `concentration_burst_with_rider` regression: the helper must
+    /// match the previous hand-rolled shape that Wall of Light used
+    /// pre-refactor. We exercise the canonical Wall-of-Light call (CON
+    /// save for half + Blinded-on-fail) and check (a) the failed-save
+    /// target picks up Blinded, (b) the caster takes concentration,
+    /// AND (c) dropping the caster's concentration strips the Blinded
+    /// rider via the existing cleanup hook.
+    #[test]
+    fn wall_of_light_blinds_failed_save_and_drops_on_concentration_break() {
+        use crate::actions::spells::WALL_OF_LIGHT;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut full_cycle = false;
+        for seed in 0..40u64 {
+            let mut e = ei_seeded(15, 15, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+                .unwrap();
+            let point = Coordinate::new(8, 8);
+            for ef in WALL_OF_LIGHT.side_effects(&mut e, wiz, None, Some(&vec![point]), None) {
+                ef.apply(&mut e);
+            }
+            let installed = e
+                .actors
+                .get(&enemy)
+                .is_some_and(|a| a.has_condition(Condition::Blinded))
+                && e.actors[&wiz].is_concentrating();
+            if !installed {
+                continue;
+            }
+            // Break concentration — the cleanup hook should strip
+            // Blinded from the failed-save cohort. `drop_concentration`
+            // routes through the standard pipeline that prunes
+            // concentration-anchored riders.
+            e.drop_concentration(wiz);
+            if !e.actors[&enemy].has_condition(Condition::Blinded) {
+                full_cycle = true;
+                break;
+            }
+        }
+        assert!(
+            full_cycle,
+            "Wall of Light should blind a failed-save enemy and drop the rider on concentration break"
         );
     }
 
