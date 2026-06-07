@@ -224,6 +224,12 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // ladder — a clean Prone-rider AoE that pairs with Spike Growth /
     // Spirit Guardians for stacked damage on enemies caught flat.
     actions.push(&*crate::actions::spells::BONES_OF_THE_EARTH);
+    // lv3 **Wall of Water** (evocation, XGtE): 3-tile burst, no save /
+    // no damage — every enemy in the burst picks up `WindWalled` for
+    // the duration (ranged-attacker disadvantage). Concentration-bound.
+    // The druid's water-themed ranged-defense option — slots alongside
+    // Wind Wall (lv3 self-only) on the deflection ladder.
+    actions.push(&*crate::actions::spells::WALL_OF_WATER);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

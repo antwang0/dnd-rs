@@ -12,7 +12,7 @@ use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
-/// Bard PC template. CHA-primary half-caster with a support-flavored
+/// Bard PC template. CHA-primary full caster with a support-flavored
 /// spell list (heals, debuffs, crowd-control). Headline mechanic:
 /// **Bardic Inspiration** — bonus action that grants an ally the
 /// Inspired condition (flat +3 to their next attack roll or save).
@@ -20,9 +20,10 @@ use std::sync::LazyLock;
 /// Loadout: Vicious Mockery / Cure Wounds / Healing Word as workhorse
 /// cantrip + heals, Heroism / Bless / Charm Person / Faerie Fire /
 /// Protection from Evil and Good for support, Hold Person / Suggestion
-/// / Mass Healing Word for higher-leverage utility, plus a Scimitar
-/// for when the slots run dry. PC flag flips on so the bard enters
-/// Dying at 0 HP rather than dropping outright.
+/// / Mass Healing Word for higher-leverage utility, **Compulsion** at
+/// the lv4 capstone for crowd-control, plus a Scimitar for when the
+/// slots run dry. PC flag flips on so the bard enters Dying at 0 HP
+/// rather than dropping outright.
 pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&SCIMITAR);
@@ -56,6 +57,15 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::SILVERY_BARBS);
     actions.push(&*crate::actions::spells::CLOUD_OF_DAGGERS);
     actions.push(&*crate::actions::spells::HEALING_SPIRIT);
+    // Compulsion — lv4 enchantment (bard-only RAW), concentration. Self-
+    // centered 12-tile burst; each enemy in range makes a WIS save vs the
+    // bard's CHA-based DC or is Charmed by the bard for the duration
+    // (their `charmed_by` link points at the bard, blocking the engine's
+    // existing hostile-action gate). The bard's flagship lv4 crowd-control
+    // option — slots between Charm Person (lv1) / Hypnotic Pattern (lv3,
+    // here on wizard / warlock only) / Charm Monster (lv4, single-target)
+    // / Mass Suggestion (lv6) on the enchantment ladder.
+    actions.push(&*crate::actions::spells::COMPULSION);
     // Cutting Words — Bard signature defensive feature, once per short
     // rest. Applies Mocked (disadvantage on next attack) to one enemy
     // within 60ft. Collapsing the RAW reactive cast into a bonus action
@@ -66,7 +76,7 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         name: "Bard",
         glyph: 'B',
         ac: 14,
-        hitpoints: "5d8+5".parse().unwrap(),
+        hitpoints: "7d8+7".parse().unwrap(),
         speed: 30.,
         strength: 10,
         intelligence: 12,
@@ -78,14 +88,16 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         items: Vec::new(),
         senses: HashSet::new(),
         languages: HashSet::from([Language::Common]),
-        cr: 1.5,
+        cr: 2.0,
         size: Size::Medium,
         creature_type: CreatureType::Humanoid,
         actions,
-        // Level-5 half-caster slots: 4/3/2. Plenty of slots for the
-        // CC + heal staples, with two level-3 slots for high-leverage
-        // Suggestion / Mass Healing Word casts per encounter.
-        spell_slots_by_level: vec![4, 3, 2],
+        // Level-7 full-caster slots: 4/3/3/1. The lv4 slot fuels exactly
+        // one Compulsion per encounter (the bard's flagship crowd-control
+        // option), while the lv1-3 spread covers the CC + heal staples
+        // (Healing Word / Bless / Charm Person / Hold Person / Suggestion
+        // / Mass Healing Word).
+        spell_slots_by_level: vec![4, 3, 3, 1],
         rolls_death_saves: true,
         damage_modifiers: HashMap::new(),
         // Bards are proficient in DEX and CHA saves (5e PHB).

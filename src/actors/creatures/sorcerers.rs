@@ -359,6 +359,14 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     enemy bow / ranged-spell shots for the duration, which the
     //     sorcerer's CHA-anchored DC keeps potent.
     actions.push(&*crate::actions::spells::STORM_SPHERE);
+    // lv3 **Wall of Water** (evocation, XGtE): 3-tile burst, no save /
+    // no damage — every enemy in the burst picks up `WindWalled` for
+    // the duration. Concentration-bound. The sorcerer's ranged-defense
+    // companion to Wind Wall (lv3 self-only) and Wall of Sand (which
+    // is wizard-only RAW). Pairs with Twinned Spell metamagic poorly
+    // (multi-target), but Subtle Spell shines through it (Counterspell
+    // can't catch a no-component wall).
+    actions.push(&*crate::actions::spells::WALL_OF_WATER);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

@@ -33623,6 +33623,137 @@ mod tests {
         );
     }
 
+    /// Wall of Sand: 3-tile burst, STR save or Restrained for the duration
+    /// (concentration-bound, no damage). Verifies (a) at least one failed-
+    /// save enemy picks up Restrained, (b) the caster takes concentration,
+    /// and (c) dropping concentration strips the Restrained rider via the
+    /// standard cleanup hook.
+    #[test]
+    fn wall_of_sand_restrains_failed_save_and_drops_on_concentration_break() {
+        use crate::actions::spells::WALL_OF_SAND;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut full_cycle = false;
+        for seed in 0..40u64 {
+            let mut e = ei_seeded(15, 15, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+                .unwrap();
+            let point = Coordinate::new(8, 8);
+            for ef in WALL_OF_SAND.side_effects(&mut e, wiz, None, Some(&vec![point]), None) {
+                ef.apply(&mut e);
+            }
+            let installed = e
+                .actors
+                .get(&enemy)
+                .is_some_and(|a| a.has_condition(Condition::Restrained))
+                && e.actors[&wiz].is_concentrating();
+            if !installed {
+                continue;
+            }
+            e.drop_concentration(wiz);
+            if !e.actors[&enemy].has_condition(Condition::Restrained) {
+                full_cycle = true;
+                break;
+            }
+        }
+        assert!(
+            full_cycle,
+            "Wall of Sand should restrain a failed-save enemy and drop the rider on concentration break"
+        );
+    }
+
+    /// Wall of Water: 3-tile burst, no save / no damage — every enemy in
+    /// the burst picks up `WindWalled` (ranged-attacker disadvantage) for
+    /// the duration (concentration-bound). Verifies (a) the enemy picks up
+    /// WindWalled deterministically (no save / dice gate), and (b) the
+    /// caster takes concentration on the cohort. No seed sweep needed —
+    /// the install is unconditional.
+    #[test]
+    fn wall_of_water_installs_wind_walled_and_anchors_concentration() {
+        use crate::actions::spells::WALL_OF_WATER;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_seeded(15, 15, &[], 0);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        let point = Coordinate::new(8, 8);
+        for ef in WALL_OF_WATER.side_effects(&mut e, wiz, None, Some(&vec![point]), None) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&enemy].has_condition(Condition::WindWalled),
+            "Wall of Water should install WindWalled on every enemy in the burst (no save)"
+        );
+        assert!(
+            e.actors[&wiz].is_concentrating(),
+            "Wall of Water should anchor concentration on the caster"
+        );
+        // Concentration drop should strip the WindWalled rider via the
+        // standard cleanup hook — sibling of the Wall of Light /
+        // Wall of Sand drop-cycle test.
+        e.drop_concentration(wiz);
+        assert!(
+            !e.actors[&enemy].has_condition(Condition::WindWalled),
+            "Dropping Wall of Water concentration should strip the WindWalled rider"
+        );
+    }
+
+    /// Compulsion: self-centered 12-tile burst, WIS save or Charmed by
+    /// caster for the duration (concentration-bound, no damage).
+    /// Verifies (a) at least one failed-save enemy picks up Charmed,
+    /// (b) the `charmed_by` link points at the caster (so the engine's
+    /// "can't attack your charmer" gate fires), (c) the caster takes
+    /// concentration, and (d) dropping concentration strips both the
+    /// Charmed flag and the `charmed_by` link.
+    #[test]
+    fn compulsion_charms_failed_save_and_drops_on_concentration_break() {
+        use crate::actions::spells::COMPULSION;
+        use crate::actors::creatures::bards::BARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut full_cycle = false;
+        for seed in 0..40u64 {
+            let mut e = ei_seeded(15, 15, &[], seed);
+            let bard = e
+                .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+                .unwrap();
+            for ef in COMPULSION.side_effects(&mut e, bard, None, None, None) {
+                ef.apply(&mut e);
+            }
+            let installed = e
+                .actors
+                .get(&enemy)
+                .is_some_and(|a| {
+                    a.has_condition(Condition::Charmed) && a.charmed_by() == Some(bard)
+                })
+                && e.actors[&bard].is_concentrating();
+            if !installed {
+                continue;
+            }
+            e.drop_concentration(bard);
+            let charmed_after = e.actors[&enemy].has_condition(Condition::Charmed);
+            let link_after = e.actors[&enemy].charmed_by();
+            if !charmed_after && link_after.is_none() {
+                full_cycle = true;
+                break;
+            }
+        }
+        assert!(
+            full_cycle,
+            "Compulsion should Charm a failed-save enemy (with charmed_by link) and drop both on concentration break"
+        );
+    }
+
     /// Seeded sibling of `ei_with_terrain` — same hand-crafted terrain
     /// shape but the encounter's RNG is initialized from `seed` so callers
     /// can sweep seeds for probabilistic assertions while keeping a

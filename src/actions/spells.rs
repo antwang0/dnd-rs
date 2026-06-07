@@ -852,6 +852,55 @@ fn install_charmed_by(
     ]
 }
 
+/// Enemy-only AoE burst whose only effect is "save or pick up a
+/// concentration-anchored condition" — no damage. Mirror of
+/// `concentration_burst_with_rider` but without the shared damage roll:
+/// each enemy in the radius rolls the save up-front (via the Heightened-
+/// aware `roll_save_against_caster` helper), and failures pick up `rider`
+/// for `rider_timer`. The caster anchors concentration on the failed-save
+/// cohort so dropping concentration strips every install at once via the
+/// standard concentration-cleanup hook.
+///
+/// Used by save-or-condition burst spells where the load-bearing effect
+/// is the rider, not damage (Wall of Sand's Restrained-on-fail, Compulsion's
+/// Charmed-on-fail). Keeps the recurring shape — burst-loop, per-target
+/// save, condition-on-fail, anchor concentration — to a single chokepoint
+/// shared with the damage-burst variant.
+#[allow(clippy::too_many_arguments)]
+fn concentration_burst_condition_only(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    point: Coordinate,
+    radius: isize,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    action_name: &str,
+    spell_name: &'static str,
+    rider: Condition,
+    rider_timer: ConditionTimer,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+    let mut conditions: Vec<(usize, Condition)> = Vec::new();
+    for tid in encounter.enemy_burst_targets(caster_id, point, radius) {
+        let save = encounter.roll_save_against_caster(tid, save_ability, dc, caster_id);
+        if save.passed() {
+            encounter.log(format!("  {}: target shrugs off the effect.", action_name));
+            continue;
+        }
+        effects.push(Box::new(ApplyCondition {
+            actor_id: tid,
+            condition: rider,
+            timer: rider_timer,
+        }));
+        conditions.push((tid, rider));
+    }
+    effects.push(Box::new(StartConcentration {
+        caster_id,
+        data: ConcentrationData::with_conditions(spell_name, conditions),
+    }));
+    effects
+}
+
 /// Sacred Flame — cleric cantrip. Range 60ft (24 tiles), DEX save vs the
 /// caster's WIS-based spell save DC. On fail: 1d8 radiant. On success:
 /// nothing (cantrips don't half-on-save). No spell slot consumed.
@@ -901,7 +950,13 @@ impl Action for SacredFlame {
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
         let n = crate::engine::util::cantrip_dice_count(caster.level());
 
-        let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, dc);
+        // Route through the caster-aware save helper so the Sorcerer
+        // Heightened Spell metamagic prime forces disadvantage on the
+        // save (RAW). The prime is consumed on the first save resolved
+        // through this site; a passed save is a clean miss (cantrips
+        // don't half-on-save).
+        let save = encounter
+            .roll_save_against_caster(target_id, AbilityScoreType::Dexterity, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -1896,7 +1951,7 @@ impl Action for Web {
         // captures that policy in one chokepoint instead of an ad-hoc
         // loop over `actors.keys()`.
         for tid in encounter.neutral_burst_targets(caster_id, point, radius) {
-            let save = encounter.roll_save(tid, AbilityScoreType::Dexterity, dc);
+            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Dexterity, dc, caster_id);
             if !save.passed() {
                 effects.push(Box::new(ApplyCondition {
                     actor_id: tid,
@@ -2015,7 +2070,11 @@ impl Action for Blindness {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
+        // Route through the caster-aware save helper so Heightened Spell
+        // metamagic forces disadvantage on the save (RAW). The prime is
+        // consumed on the first save resolved through this site.
+        let save = encounter
+            .roll_save_against_caster(target_id, AbilityScoreType::Constitution, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -2134,7 +2193,7 @@ impl Action for FaerieFire {
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         let mut conditions = Vec::new();
         for tid in encounter.neutral_burst_targets(caster_id, point, radius) {
-            let save = encounter.roll_save(tid, AbilityScoreType::Dexterity, dc);
+            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Dexterity, dc, caster_id);
             if !save.passed() {
                 effects.push(Box::new(ApplyCondition {
                     actor_id: tid,
@@ -2437,7 +2496,7 @@ impl Action for Bane {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Charisma, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Charisma, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -2884,7 +2943,7 @@ impl Action for PoisonSpray {
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
         let n = crate::engine::util::cantrip_dice_count(caster.level());
-        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Constitution, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -3038,7 +3097,11 @@ impl Action for RayOfSickness {
         if effects.is_empty() {
             return effects;
         }
-        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
+        // Caster-aware save so Heightened Spell metamagic can force
+        // disadvantage on the rider save. The prime is consumed on the
+        // first save resolved through this site.
+        let save = encounter
+            .roll_save_against_caster(target_id, AbilityScoreType::Constitution, dc, caster_id);
         if !save.passed() {
             effects.push(Box::new(ApplyCondition {
                 actor_id: target_id,
@@ -3329,7 +3392,11 @@ impl Action for TollTheDead {
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
         let n = crate::engine::util::cantrip_dice_count(caster.level());
-        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        // Caster-aware save so Heightened Spell metamagic can force
+        // disadvantage on the save. The prime is consumed on the first
+        // save resolved through this site.
+        let save = encounter
+            .roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -3397,7 +3464,11 @@ impl Action for ViciousMockery {
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
         let n = crate::engine::util::cantrip_dice_count(caster.level());
-        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        // Caster-aware save so Heightened Spell metamagic can force
+        // disadvantage on the save. The prime is consumed on the first
+        // save resolved through this site.
+        let save = encounter
+            .roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -4267,7 +4338,11 @@ impl Action for Command {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        // Caster-aware save so Heightened Spell metamagic can force
+        // disadvantage on the save. The prime is consumed on the first
+        // save resolved through this site.
+        let save = encounter
+            .roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -5214,7 +5289,7 @@ impl Action for BestowCurse {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -5279,7 +5354,11 @@ impl Action for MindSliver {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Intelligence, dc);
+        // Caster-aware save so Heightened Spell metamagic can force
+        // disadvantage on the save. The prime is consumed on the first
+        // save resolved through this site.
+        let save = encounter
+            .roll_save_against_caster(target_id, AbilityScoreType::Intelligence, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -5515,7 +5594,7 @@ impl Action for Slow {
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         let mut applied: Vec<(usize, Condition)> = Vec::new();
         for tid in victims {
-            let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, dc);
+            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Wisdom, dc, caster_id);
             if save.passed() {
                 continue;
             }
@@ -5788,7 +5867,7 @@ impl Action for StinkingCloud {
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         let mut applied: Vec<(usize, Condition)> = Vec::new();
         for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
-            let save = encounter.roll_save(tid, AbilityScoreType::Constitution, dc);
+            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Constitution, dc, caster_id);
             if save.passed() {
                 continue;
             }
@@ -6624,7 +6703,7 @@ impl Action for PhantasmalKiller {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -6795,7 +6874,7 @@ impl Action for TashasHideousLaughter {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -6958,7 +7037,7 @@ impl Action for Disintegrate {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Dexterity, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -7032,7 +7111,7 @@ impl Action for FingerOfDeath {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Constitution, dc, caster_id);
         let dmg_full = encounter.roll(&Dice::new(7, 8)) + 30;
         let dmg = if save.passed() { dmg_full / 2 } else { dmg_full };
         encounter.log(format!(
@@ -7195,7 +7274,7 @@ impl Action for SynapticStatic {
             if dist > RADIUS {
                 continue;
             }
-            let save = encounter.roll_save(tid, AbilityScoreType::Intelligence, dc);
+            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Intelligence, dc, caster_id);
             let dmg = if save.passed() { full / 2 } else { full };
             if dmg > 0 {
                 effects.push(Box::new(DealDamage {
@@ -7274,7 +7353,7 @@ impl Action for CrownOfMadness {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -7445,7 +7524,7 @@ impl Action for CalmEmotions {
             // 5e: no save = no effect. The save is *against* the cleanse
             // (a fey trying to keep its charm). On fail, the charm /
             // frighten is stripped.
-            let save = encounter.roll_save(tid, AbilityScoreType::Charisma, dc);
+            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Charisma, dc, caster_id);
             if save.passed() {
                 continue;
             }
@@ -7517,7 +7596,7 @@ impl Action for Suggestion {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -7608,7 +7687,7 @@ impl Action for MassSuggestion {
         let candidates = encounter.enemy_burst_targets(caster_id, point, RADIUS);
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         for tid in candidates.into_iter().take(MAX_TARGETS) {
-            let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, dc);
+            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Wisdom, dc, caster_id);
             if save.passed() {
                 continue;
             }
@@ -7710,7 +7789,7 @@ impl Action for Sunburst {
             if dist > RADIUS {
                 continue;
             }
-            let save = encounter.roll_save(tid, AbilityScoreType::Constitution, dc);
+            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Constitution, dc, caster_id);
             let dmg = if save.passed() { full / 2 } else { full };
             if dmg > 0 {
                 effects.push(Box::new(DealDamage {
@@ -8002,7 +8081,7 @@ impl Action for MeteorSwarm {
             if dist > RADIUS {
                 continue;
             }
-            let save = encounter.roll_save(tid, AbilityScoreType::Dexterity, dc);
+            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Dexterity, dc, caster_id);
             let (f_dmg, b_dmg) = if save.passed() {
                 (fire / 2, bludge / 2)
             } else {
@@ -9781,7 +9860,7 @@ impl Action for MindWhip {
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
         let raw = encounter.roll(&Dice::new(3, 6));
-        let save = encounter.roll_save(target_id, AbilityScoreType::Intelligence, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Intelligence, dc, caster_id);
         let dmg = if save.passed() { raw / 2 } else { raw };
         encounter.log(format!(
             "  mind whip: 3d6({}) = {} psychic",
@@ -9931,7 +10010,7 @@ impl Action for Earthquake {
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
-            let save = encounter.roll_save(tid, AbilityScoreType::Strength, dc);
+            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Strength, dc, caster_id);
             if save.passed() {
                 continue;
             }
@@ -10147,7 +10226,7 @@ impl Action for Forcecage {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Charisma, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Charisma, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -10272,7 +10351,7 @@ impl Action for Fear {
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         let mut applied = Vec::new();
         for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
-            let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, dc);
+            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Wisdom, dc, caster_id);
             if save.passed() {
                 continue;
             }
@@ -10470,7 +10549,7 @@ impl Action for CompelledDuel {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -10943,8 +11022,13 @@ impl Action for ChainLightning {
         ));
 
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        // Primary target — full DEX save for half.
-        let save = encounter.roll_save(primary_id, AbilityScoreType::Dexterity, dc);
+        // Primary target — full DEX save for half. Routes through the
+        // caster-aware save helper so Heightened Spell metamagic can
+        // force disadvantage on the first save (RAW applies it to the
+        // primary, not the chained forks); the prime is consumed here
+        // so subsequent fork saves fall through to the normal path.
+        let save = encounter
+            .roll_save_against_caster(primary_id, AbilityScoreType::Dexterity, dc, caster_id);
         let dmg = if save.passed() { raw / 2 } else { raw };
         if dmg > 0 {
             effects.push(Box::new(DealDamage {
@@ -10983,7 +11067,14 @@ impl Action for ChainLightning {
         // Deterministic by (distance, id) so seeded tests are stable.
         forks.sort_unstable();
         for (_, fork_id) in forks.into_iter().take(3) {
-            let save = encounter.roll_save(fork_id, AbilityScoreType::Dexterity, dc);
+            // Fork saves route through the caster-aware helper too —
+            // the prime is consumed on the primary's save above, so
+            // these fall through to the normal save path. Keeping the
+            // call site uniform with the primary keeps a future
+            // "metamagic affects all chain forks" tweak landing in one
+            // place.
+            let save = encounter
+                .roll_save_against_caster(fork_id, AbilityScoreType::Dexterity, dc, caster_id);
             let dmg = if save.passed() { raw / 2 } else { raw };
             if dmg > 0 {
                 effects.push(Box::new(DealDamage {
@@ -11123,7 +11214,7 @@ impl Action for Moonbeam {
         let mut effs: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         let mut conc_conditions: Vec<(usize, Condition)> = Vec::new();
         for tid in targets {
-            let save = encounter.roll_save(tid, AbilityScoreType::Constitution, dc);
+            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Constitution, dc, caster_id);
             let dmg = if save.passed() { raw / 2 } else { raw };
             if dmg > 0 {
                 effs.push(Box::new(DealDamage {
@@ -11290,7 +11381,7 @@ impl Action for SleetStorm {
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         let mut applied: Vec<(usize, Condition)> = Vec::new();
         for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
-            let save = encounter.roll_save(tid, AbilityScoreType::Dexterity, dc);
+            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Dexterity, dc, caster_id);
             if save.passed() {
                 continue;
             }
@@ -11311,7 +11402,7 @@ impl Action for SleetStorm {
                 .is_some_and(|a| a.is_concentrating())
             {
                 let conc_save =
-                    encounter.roll_save(tid, AbilityScoreType::Constitution, dc);
+                    encounter.roll_save_against_caster(tid, AbilityScoreType::Constitution, dc, caster_id);
                 if !conc_save.passed() {
                     encounter.drop_concentration(tid);
                 }
@@ -11399,7 +11490,7 @@ impl Action for ReverseGravity {
         // column rolls a save. Caster is excluded (they cast it; they
         // brace themselves).
         for tid in encounter.neutral_burst_targets(caster_id, point, RADIUS) {
-            let save = encounter.roll_save(tid, AbilityScoreType::Strength, dc);
+            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Strength, dc, caster_id);
             if save.passed() {
                 continue;
             }
@@ -11493,7 +11584,7 @@ impl Action for StormOfVengeance {
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         let mut deafened: Vec<(usize, Condition)> = Vec::new();
         for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
-            let save = encounter.roll_save(tid, AbilityScoreType::Constitution, dc);
+            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Constitution, dc, caster_id);
             let t_dmg = if save.passed() { thunder / 2 } else { thunder };
             let l_dmg = if save.passed() { lightning / 2 } else { lightning };
             if t_dmg > 0 {
@@ -12035,7 +12126,7 @@ impl Action for Confusion {
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         let mut applied: Vec<(usize, Condition)> = Vec::new();
         for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
-            let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, dc);
+            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Wisdom, dc, caster_id);
             if save.passed() {
                 continue;
             }
@@ -12178,7 +12269,7 @@ impl Action for Levitate {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Constitution, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -12672,7 +12763,7 @@ impl Action for HolyWord {
         let enemies = encounter.enemy_burst_targets(caster_id, caster_loc, 6);
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         for tid in enemies {
-            let save = encounter.roll_save(tid, AbilityScoreType::Charisma, dc);
+            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Charisma, dc, caster_id);
             if save.passed() {
                 continue;
             }
@@ -12802,7 +12893,7 @@ impl Action for PrismaticSpray {
                 _ => (DamageType::Necrotic, "indigo", false),
             };
             let raw = encounter.roll(&Dice::new(10, 6));
-            let save = encounter.roll_save(tid, AbilityScoreType::Dexterity, dc);
+            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Dexterity, dc, caster_id);
             let dmg = if save.passed() { raw / 2 } else { raw };
             encounter.log(format!(
                 "  prismatic spray: 1d8({}) {} ray \u{2014} 10d6({}) {:?} ({}{})",
@@ -12904,7 +12995,7 @@ impl Action for Feeblemind {
             amount: damage,
             damage_type: DamageType::Psychic,
         })];
-        let save = encounter.roll_save(target_id, AbilityScoreType::Intelligence, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Intelligence, dc, caster_id);
         if !save.passed() {
             encounter.log("  feeblemind: target's mind shatters");
             effects.push(Box::new(ApplyCondition {
@@ -12978,7 +13069,7 @@ impl Action for OttosIrresistibleDance {
             AbilityScoreType::Charisma,
             AbilityScoreType::Intelligence,
         ]);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
         if save.passed() {
             encounter.log("  otto's dance: target resists the compulsion");
             return Vec::new();
@@ -13211,7 +13302,7 @@ impl Action for Eyebite {
             AbilityScoreType::Charisma,
             AbilityScoreType::Intelligence,
         ]);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
         if save.passed() {
             encounter.log("  eyebite: target shakes off the evil eye");
             return Vec::new();
@@ -13499,7 +13590,7 @@ impl Action for MassPolymorph {
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         let mut tagged: Vec<(usize, Condition)> = Vec::new();
         for target_id in targets {
-            let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+            let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
             if save.passed() {
                 encounter.log(format!(
                     "  mass polymorph: actor #{} resists the transformation",
@@ -13678,7 +13769,7 @@ impl Action for Frostbite {
         let n = crate::engine::util::cantrip_dice_count(
             encounter.actors.get(&caster_id).map(|a| a.level()).unwrap_or(1),
         );
-        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Constitution, dc, caster_id);
         if save.passed() {
             encounter.log("  frostbite: target shrugs off the chill");
             return Vec::new();
@@ -13924,7 +14015,7 @@ impl Action for SickeningRadiance {
         let mut conditions: Vec<(usize, Condition)> = Vec::new();
         for tid in targets {
             let raw = encounter.roll(&Dice::new(4, 10));
-            let save = encounter.roll_save(tid, AbilityScoreType::Constitution, dc);
+            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Constitution, dc, caster_id);
             encounter.log(format!(
                 "  sickening radiance: 4d10({}) radiant ({})",
                 raw,
@@ -14791,7 +14882,7 @@ impl Action for Grease {
         encounter.log(format!("  grease: slick patch at {} (DC {})", point, dc));
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
-            let save = encounter.roll_save(tid, AbilityScoreType::Dexterity, dc);
+            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Dexterity, dc, caster_id);
             if save.passed() {
                 continue;
             }
@@ -14956,7 +15047,7 @@ impl Action for GuardianOfFaith {
         ));
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         for tid in encounter.enemy_burst_targets(caster_id, point, 2) {
-            let save = encounter.roll_save(tid, AbilityScoreType::Dexterity, dc);
+            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Dexterity, dc, caster_id);
             let dmg = if save.passed() { 10 } else { 20 };
             effects.push(Box::new(DealDamage {
                 actor_id: tid,
@@ -15269,7 +15360,7 @@ impl Action for OtilukesResilientSphere {
             AbilityScoreType::Wisdom,
             AbilityScoreType::Charisma,
         ]);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Dexterity, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -15344,7 +15435,7 @@ impl Action for LightningLure {
             AbilityScoreType::Intelligence,
             AbilityScoreType::Charisma,
         ]);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Strength, dc, caster_id);
         if save.passed() {
             encounter.log("  lightning lure: target saves".to_string());
             return Vec::new();
@@ -15552,7 +15643,7 @@ impl Action for MaximiliansEarthenGrasp {
             AbilityScoreType::Wisdom,
             AbilityScoreType::Charisma,
         ]);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Strength, dc, caster_id);
         if save.passed() {
             encounter.log("  earthen grasp: target saves, fist crumbles".to_string());
             return Vec::new();
@@ -16811,7 +16902,7 @@ impl Action for Catapult {
             AbilityScoreType::Charisma,
         ]);
         let raw = encounter.roll(&Dice::new(3, 8));
-        let save = encounter.roll_save(target_id, AbilityScoreType::Dexterity, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Dexterity, dc, caster_id);
         encounter.log(format!(
             "  catapult: 3d8({}) bludgeoning ({})",
             raw,
@@ -17157,7 +17248,7 @@ impl Action for GustOfWind {
         // future single-cast concentration spells.
         let conditions: Vec<(usize, Condition)> = Vec::new();
         for tid in encounter.neutral_burst_targets(caster_id, midpoint, RADIUS) {
-            let save = encounter.roll_save(tid, AbilityScoreType::Strength, dc);
+            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Strength, dc, caster_id);
             if save.passed() {
                 continue;
             }
@@ -18106,7 +18197,7 @@ impl Action for Telekinetic {
             AbilityScoreType::Charisma,
             AbilityScoreType::Wisdom,
         ]);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Strength, dc, caster_id);
         if save.passed() {
             encounter.log("  telekinetic: target resists the pull".to_string());
             return Vec::new();
@@ -18344,7 +18435,7 @@ impl Action for SappingSting {
             AbilityScoreType::Charisma,
         ]);
         let n = crate::engine::util::cantrip_dice_count(caster.level());
-        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Constitution, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -18916,7 +19007,7 @@ impl Action for Weird {
         ));
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         for tid in encounter.enemy_burst_targets(caster_id, point, 6) {
-            let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, dc);
+            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Wisdom, dc, caster_id);
             if save.passed() {
                 continue;
             }
@@ -20055,7 +20146,7 @@ impl Action for Entangle {
         let mut effs: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         let mut restrained: Vec<(usize, Condition)> = Vec::new();
         for target_id in encounter.neutral_burst_targets(caster_id, point, 4) {
-            let save = encounter.roll_save(target_id, AbilityScoreType::Strength, dc);
+            let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Strength, dc, caster_id);
             if !save.passed() {
                 restrained.push((target_id, Condition::Restrained));
                 effs.push(Box::new(ApplyCondition {
@@ -20328,7 +20419,7 @@ impl Action for Infestation {
         };
         let dc = caster.best_spell_save_dc([AbilityScoreType::Wisdom, AbilityScoreType::Intelligence]);
         let n = crate::engine::util::cantrip_dice_count(caster.level());
-        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Constitution, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -20754,7 +20845,7 @@ impl Action for EldritchSmite {
             amount: raw,
             damage_type: DamageType::Force,
         })];
-        let save = encounter.roll_save(tid, AbilityScoreType::Strength, dc);
+        let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Strength, dc, caster_id);
         if !save.passed() {
             encounter.log("  the target is knocked prone!".to_string());
             effs.push(Box::new(ApplyCondition {
@@ -21354,7 +21445,7 @@ impl Action for PlaneShift {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Charisma, dc);
+        let save = encounter.roll_save_against_caster(target_id, AbilityScoreType::Charisma, dc, caster_id);
         if save.passed() {
             return Vec::new();
         }
@@ -23283,3 +23374,336 @@ impl Action for Geas {
 }
 
 pub static GEAS: LazyLock<Geas> = LazyLock::new(|| Geas {});
+
+/// Wall of Sand — level-3 evocation (wizard, XGtE), action, concentration.
+/// The caster summons a 30ft-wide, 10ft-tall wall of swirling sand at a
+/// target point within 90ft. Every enemy whose footprint sits in the
+/// 3-tile burst makes a STR save vs the caster's INT-based spell DC:
+/// pass = no effect, fail = the target is `Restrained` for the duration
+/// (the sand pins them in place). Concentration anchors the Restrained
+/// cohort so dropping concentration strips every install at once via the
+/// standard concentration-cleanup path.
+///
+/// RAW's "wall is otherwise impenetrable to vision, including darkvision"
+/// clause is not modeled (the engine has no per-wall LOS gate for spell-
+/// summoned terrain) — the load-bearing combat clause is the on-cast
+/// Restrained install. Slots between Web (lv2 DEX-save Restrained burst,
+/// concentration) and Black Tentacles (lv4 DEX-save 3d6 + Restrained burst,
+/// concentration) on the wizard's restraint ladder — distinct from Web
+/// by the STR-save lane (resists STR-heavy enemies less effectively but
+/// punishes DEX builds), distinct from Black Tentacles by the lack of
+/// damage rider and the smaller slot cost.
+pub struct WallOfSand {}
+
+impl Action for WallOfSand {
+    fn name(&self) -> &str {
+        "wall of sand"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sand", "wos", "sand-wall"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 30ft wide wall → 3-tile burst on this grid. Sits between Wall
+        // of Light's 2-tile and Maddening Darkness's 6-tile bursts.
+        TargetingSchema::Burst { radius: 3 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 90 ft RAW = 36 tiles.
+        Some(36)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Wizard (INT) — single stat for the spell DC; the spell is on
+        // the wizard list RAW so the multi-class best-of isn't needed.
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        concentration_burst_condition_only(
+            encounter,
+            caster_id,
+            point,
+            3,
+            AbilityScoreType::Strength,
+            dc,
+            "wall of sand",
+            "Wall of Sand",
+            Condition::Restrained,
+            // 10 rounds = 1 minute RAW. Concentration anchors the real
+            // lifetime — dropping concentration ends the wall before the
+            // timer expires.
+            ConditionTimer::Rounds(10),
+        )
+    }
+}
+
+pub static WALL_OF_SAND: LazyLock<WallOfSand> = LazyLock::new(|| WallOfSand {});
+
+/// Wall of Water — level-3 evocation (druid / sorcerer / wizard, XGtE),
+/// action, concentration. The caster conjures a 30ft-long, 10ft-tall wall
+/// of rushing water at a target point within 60ft. Every enemy whose
+/// footprint sits in the 3-tile burst picks up the `WindWalled` rider for
+/// the duration — ranged attacks against them have disadvantage as arrows
+/// and bolts splash off the water curtain. No save (RAW: the wall just
+/// appears — the protective effect is automatic for anyone behind it).
+/// Concentration anchors the cohort so dropping concentration ends the
+/// wall and strips every flag at once via the standard concentration-
+/// cleanup path.
+///
+/// RAW's "fire damage halved through the wall" and "cold damage can freeze
+/// it into Wall of Ice" clauses are not modeled — the engine has no per-
+/// wall damage filter and the freeze interaction would need cross-spell
+/// bookkeeping. The load-bearing combat clause is the ranged-disadvantage
+/// rider, which lets the caster's frontliners shrug off arrow / bolt
+/// barrages while the wall holds. Slots alongside Wind Wall (lv3
+/// transmutation, concentration) on the ranged-deflection ladder —
+/// distinct from Wind Wall by the burst footprint (multi-target install
+/// vs self-only on Wind Wall) and the lack of any push / breath-weapon
+/// clause.
+pub struct WallOfWater {}
+
+impl Action for WallOfWater {
+    fn name(&self) -> &str {
+        "wall of water"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["water", "wow", "water-wall"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 30ft wide wall → 3-tile burst on this grid (matches Wall of
+        // Sand's footprint at the same lv3 tier).
+        TargetingSchema::Burst { radius: 3 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft RAW = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_harmful(&self) -> bool {
+        // Wall of Water is defensively flavored — the wall imposes
+        // disadvantage on ranged attacks made *through* it, protecting
+        // whoever sits behind. The AI's heuristic for harmful spells
+        // picks targets via enemy proximity; for a wall that protects
+        // its own targets (allies in the burst), the support pipeline
+        // is the right lane, so we mark it non-harmful.
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        // No save / no damage roll — the wall's ranged-disadvantage rider
+        // is automatic for any creature caught in its footprint. We use
+        // `neutral_burst_targets` so the wall protects both teams equally
+        // (RAW: the wall doesn't discriminate — anyone behind it benefits
+        // from ranged disadvantage). The caster picks the burst point to
+        // anchor the wall between their front line and the enemy ranged
+        // back rank; allies caught in the area pick up `WindWalled` as a
+        // protective buff, enemies caught in the area pick it up as
+        // collateral (the same wall protects them when allies shoot back).
+        // Open-coded loop (rather than the concentration-burst helper)
+        // because there's no save / no damage — every target picks up the
+        // condition unconditionally.
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut conditions: Vec<(usize, Condition)> = Vec::new();
+        for tid in encounter.neutral_burst_targets(caster_id, point, 3) {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::WindWalled,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            conditions.push((tid, Condition::WindWalled));
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Wall of Water", conditions),
+        }));
+        effects
+    }
+}
+
+pub static WALL_OF_WATER: LazyLock<WallOfWater> = LazyLock::new(|| WallOfWater {});
+
+/// Compulsion — level-4 enchantment (bard, PHB), action, concentration.
+/// The caster radiates a magical compulsion in a 30ft burst centered on
+/// themselves. Every enemy whose footprint sits in the 12-tile burst makes
+/// a WIS save vs the caster's CHA-based spell DC: pass = no effect, fail =
+/// the target is `Charmed` by the caster for the duration (and the
+/// engine's existing Charmed-on-actor gate blocks them from making hostile
+/// actions against the caster). Concentration anchors the cohort so
+/// dropping concentration strips every Charmed flag (and its `charmed_by`
+/// link) at once via the standard concentration-cleanup path.
+///
+/// RAW's "use a Bonus Action on subsequent turns to designate a direction"
+/// forced-movement clause is not modeled (the engine has no per-turn
+/// forced-movement lane outside the existing push helper) — the load-
+/// bearing combat clause is the Charmed install with `charmed_by`, which
+/// turns affected enemies into "won't attack the bard" while the spell
+/// holds. Slots between Charm Monster (lv4 single-target Charmed) and
+/// Mass Suggestion (lv6 multi-target enchantment) on the bard's crowd-
+/// control ladder — distinct from Charm Monster by the burst footprint
+/// and self-centered targeting, distinct from Hypnotic Pattern (lv3 WIS-
+/// save Incapacitated burst) by the duration anchor (Charmed lingers
+/// throughout the encounter, while Hypnotic Pattern breaks on any damage).
+pub struct Compulsion {}
+
+impl Action for Compulsion {
+    fn name(&self) -> &str {
+        "compulsion"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["compel", "compulse", "cmp"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // Self-centered 30ft burst — the caster broadcasts the compulsion
+        // from their own tile. Same shape as Psychic Scream's
+        // self-centered NoArgs lane at a smaller tier.
+        TargetingSchema::NoArgs
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::SetCharmedBy;
+        // 30 ft RAW = 12 tiles. The self-centered burst targets every
+        // enemy within range — the bard's whole front rank in a typical
+        // clustered encounter.
+        const RADIUS: isize = 12;
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let center = caster.location();
+        // Bard (CHA) — single stat for the spell DC; the spell is on the
+        // bard list RAW so the multi-class best-of isn't needed.
+        let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut conditions: Vec<(usize, Condition)> = Vec::new();
+        for tid in encounter.enemy_burst_targets(caster_id, center, RADIUS) {
+            let save = encounter.roll_save_against_caster(
+                tid,
+                AbilityScoreType::Wisdom,
+                dc,
+                caster_id,
+            );
+            if save.passed() {
+                encounter.log("  compulsion: target resists the compulsion.".to_string());
+                continue;
+            }
+            encounter.log("  compulsion: target is compelled.".to_string());
+            // Mirror the Charm Person / Geas install lane — Charmed flag
+            // plus charmed_by link, so the "can't attack your charmer"
+            // gate in `action_template::validate_input` fires correctly.
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Charmed,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            effects.push(Box::new(SetCharmedBy {
+                target_id: tid,
+                charmer: Some(caster_id),
+            }));
+            conditions.push((tid, Condition::Charmed));
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Compulsion", conditions),
+        }));
+        effects
+    }
+}
+
+pub static COMPULSION: LazyLock<Compulsion> = LazyLock::new(|| Compulsion {});

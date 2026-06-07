@@ -446,6 +446,23 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::STORM_SPHERE);
     actions.push(&*crate::actions::spells::GEAS);
     actions.push(&*crate::actions::spells::MADDENING_DARKNESS);
+    // Latest wizard additions (XGtE):
+    //   - lv3 **Wall of Sand** (evocation): 3-tile burst, STR save or
+    //     Restrained for the duration (concentration-bound). The wizard's
+    //     STR-save restraint option at the lv3 slot — slots between
+    //     Web (lv2 DEX-save Restrained burst) and Black Tentacles (lv4
+    //     DEX-save 3d6 + Restrained burst) on the restraint ladder.
+    //     Distinct from Web by the STR-save lane (resists STR-heavy
+    //     enemies less well but punishes DEX builds), distinct from
+    //     Black Tentacles by the smaller slot cost and lack of damage
+    //     rider.
+    //   - lv3 **Wall of Water** (evocation, druid / sorcerer / wizard):
+    //     3-tile burst, no save / no damage — every enemy in the burst
+    //     picks up `WindWalled` for the duration (ranged-attacker
+    //     disadvantage on holders). Concentration-bound. The wizard's
+    //     ranged-defense companion to Wind Wall (lv3 self-only).
+    actions.push(&*crate::actions::spells::WALL_OF_SAND);
+    actions.push(&*crate::actions::spells::WALL_OF_WATER);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.
