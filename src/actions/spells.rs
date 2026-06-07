@@ -820,6 +820,38 @@ fn save_or_concentration_condition(
     ]
 }
 
+/// Install the canonical "target is Charmed by the caster" pair: an
+/// `ApplyCondition(Charmed, timer)` on the target plus a
+/// `SetCharmedBy` that anchors the engine's "can't attack your charmer"
+/// gate in `action_template::validate_input`. Shared by Charm Person,
+/// Charm Monster, and Geas — each of which would otherwise re-inline
+/// the same two-Box vec at the call site.
+///
+/// Timer varies per spell (Charm Person / Charm Monster: `Rounds(10)`
+/// ≈ 1 hour RAW capped to encounter-scale; Geas: `Rounds(100)` ≈ 10
+/// minutes capped from 30 days). Centralizing the install lane keeps
+/// the `charmed_by` link / `Charmed` flag in lockstep — if a future
+/// change adds e.g. a "charm aura" flag, it lands here once instead
+/// of three times.
+fn install_charmed_by(
+    target_id: usize,
+    caster_id: usize,
+    timer: ConditionTimer,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    use crate::engine::side_effects::SetCharmedBy;
+    vec![
+        Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Charmed,
+            timer,
+        }),
+        Box::new(SetCharmedBy {
+            target_id,
+            charmer: Some(caster_id),
+        }),
+    ]
+}
+
 /// Sacred Flame — cleric cantrip. Range 60ft (24 tiles), DEX save vs the
 /// caster's WIS-based spell save DC. On fail: 1d8 radiant. On success:
 /// nothing (cantrips don't half-on-save). No spell slot consumed.
@@ -3834,7 +3866,6 @@ impl Action for CharmPerson {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::SetCharmedBy;
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
@@ -3848,17 +3879,10 @@ impl Action for CharmPerson {
         if save.passed() {
             return Vec::new();
         }
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Charmed,
-                timer: ConditionTimer::Rounds(10),
-            }),
-            Box::new(SetCharmedBy {
-                target_id,
-                charmer: Some(caster_id),
-            }),
-        ]
+        // 1 hour RAW capped to encounter-scale via the shared install
+        // helper — keeps the Charmed flag + `charmed_by` link in
+        // lockstep with Charm Monster / Geas.
+        install_charmed_by(target_id, caster_id, ConditionTimer::Rounds(10))
     }
 }
 
@@ -19036,7 +19060,6 @@ impl Action for CharmMonster {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::SetCharmedBy;
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
@@ -19048,21 +19071,23 @@ impl Action for CharmMonster {
             AbilityScoreType::Wisdom,
             AbilityScoreType::Intelligence,
         ]);
-        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        // Heightened-aware save so a Sorcerer's first-target-burns
+        // disadvantage prime fires on the charm. Previously this
+        // bypassed Heightened via `roll_save` — fixed in the same
+        // sweep that factored `install_charmed_by`.
+        let save = encounter.roll_save_against_caster(
+            target_id,
+            AbilityScoreType::Wisdom,
+            dc,
+            caster_id,
+        );
         if save.passed() {
             return Vec::new();
         }
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Charmed,
-                timer: ConditionTimer::Rounds(10),
-            }),
-            Box::new(SetCharmedBy {
-                target_id,
-                charmer: Some(caster_id),
-            }),
-        ]
+        // 1 hour RAW capped to encounter-scale via the shared install
+        // helper — keeps the Charmed flag + `charmed_by` link in
+        // lockstep with Charm Person / Geas.
+        install_charmed_by(target_id, caster_id, ConditionTimer::Rounds(10))
     }
 }
 
@@ -23234,7 +23259,6 @@ impl Action for Geas {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::SetCharmedBy;
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
@@ -23259,25 +23283,12 @@ impl Action for Geas {
             return Vec::new();
         }
         encounter.log("  geas: target is bound to obey the caster.".to_string());
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Charmed,
-                // ~10 minutes of combat — long enough to cover any
-                // realistic encounter span without sitting truly
-                // permanent. RAW's 30-day timer would be effectively
-                // permanent in any combat session.
-                timer: ConditionTimer::Rounds(100),
-            }),
-            // Anchor the charm to the caster so the engine's "can't
-            // attack your charmer" enforcement (validate_input in
-            // action_template.rs) blocks hostile actions against the
-            // caster cleanly.
-            Box::new(SetCharmedBy {
-                target_id,
-                charmer: Some(caster_id),
-            }),
-        ]
+        // ~10 minutes of combat — long enough to cover any realistic
+        // encounter span without sitting truly permanent. RAW's 30-day
+        // timer would be effectively permanent in any combat session.
+        // Shares the install helper with Charm Person / Charm Monster
+        // so the `Charmed` flag + `charmed_by` link stay in lockstep.
+        install_charmed_by(target_id, caster_id, ConditionTimer::Rounds(100))
     }
 }
 
