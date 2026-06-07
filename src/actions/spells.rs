@@ -12312,7 +12312,6 @@ impl Action for DominatePerson {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::SetCharmedBy;
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
@@ -12326,32 +12325,28 @@ impl Action for DominatePerson {
         if save.passed() {
             return Vec::new();
         }
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Charmed,
-                timer: ConditionTimer::Rounds(10),
-            }) as Box<dyn ApplicableSideEffect>,
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Dominated,
-                timer: ConditionTimer::Rounds(10),
-            }),
-            Box::new(SetCharmedBy {
-                target_id,
-                charmer: Some(caster_id),
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Dominate Person",
-                    vec![
-                        (target_id, Condition::Charmed),
-                        (target_id, Condition::Dominated),
-                    ],
-                ),
-            }),
-        ]
+        // Layer Dominated on top of the standard Charmed + `charmed_by`
+        // install lane. Concentration anchors both marks so dropping
+        // concentration strips them in lockstep via the shared cleanup
+        // hook.
+        let mut effects =
+            install_charmed_by(target_id, caster_id, ConditionTimer::Rounds(10));
+        effects.push(Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Dominated,
+            timer: ConditionTimer::Rounds(10),
+        }));
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions(
+                "Dominate Person",
+                vec![
+                    (target_id, Condition::Charmed),
+                    (target_id, Condition::Dominated),
+                ],
+            ),
+        }));
+        effects
     }
 }
 
@@ -21168,7 +21163,6 @@ impl Action for DominateMonster {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::SetCharmedBy;
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
@@ -21182,32 +21176,28 @@ impl Action for DominateMonster {
         if save.passed() {
             return Vec::new();
         }
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Charmed,
-                timer: ConditionTimer::Rounds(10),
-            }) as Box<dyn ApplicableSideEffect>,
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Dominated,
-                timer: ConditionTimer::Rounds(10),
-            }),
-            Box::new(SetCharmedBy {
-                target_id,
-                charmer: Some(caster_id),
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Dominate Monster",
-                    vec![
-                        (target_id, Condition::Charmed),
-                        (target_id, Condition::Dominated),
-                    ],
-                ),
-            }),
-        ]
+        // Layer Dominated on top of the standard Charmed + `charmed_by`
+        // install lane (shared with Charm Person / Charm Monster /
+        // Geas / Dominate Person). Concentration anchors both marks so
+        // dropping concentration strips them cleanly.
+        let mut effects =
+            install_charmed_by(target_id, caster_id, ConditionTimer::Rounds(10));
+        effects.push(Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Dominated,
+            timer: ConditionTimer::Rounds(10),
+        }));
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions(
+                "Dominate Monster",
+                vec![
+                    (target_id, Condition::Charmed),
+                    (target_id, Condition::Dominated),
+                ],
+            ),
+        }));
+        effects
     }
 }
 
