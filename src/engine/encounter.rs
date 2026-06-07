@@ -137,6 +137,18 @@ const ROUND_END_SAVES: &[RoundEndSave] = &[
         save_ability: crate::engine::types::AbilityScoreType::Wisdom,
         log_verb: "tries to stop laughing:",
     },
+    // 5e Flesh to Stone — CON save at end of each turn. RAW: the target
+    // gets 3 saves before becoming permanently stone; we collapse the
+    // ladder to a single break-free save (matches the Hold Person /
+    // Hideous Laughter shape). Concentration-anchored, so the
+    // `find_concentration_owner` lookup skips non-spell petrification
+    // (Medusa Gaze, Cockatrice Bite, Basilisk) — those rely on their
+    // own short Rounds timers to expire.
+    RoundEndSave {
+        condition: Condition::Petrified,
+        save_ability: crate::engine::types::AbilityScoreType::Constitution,
+        log_verb: "strains against the stone curse:",
+    },
 ];
 
 /// Single entry in the round-end damage-over-time table. The engine
@@ -33207,6 +33219,197 @@ mod tests {
         assert!(
             saw_push,
             "Dust Devil should push at least one failed-save enemy away from the cast point"
+        );
+    }
+
+    /// Flesh to Stone: on failed CON save, target is Petrified for
+    /// ~1 minute and the caster takes concentration. The round-end CON
+    /// save break-free hook (shared with Hold Person / Hold Monster) is
+    /// exercised separately below.
+    #[test]
+    fn flesh_to_stone_petrifies_on_failed_save() {
+        use crate::actions::spells::FLESH_TO_STONE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut installed = false;
+        for seed in 0..40u64 {
+            let mut e = ei_seeded(10, 10, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let gob = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 6), 1, 0)
+                .unwrap();
+            for ef in FLESH_TO_STONE.side_effects(&mut e, wiz, Some(&vec![gob]), None, None) {
+                ef.apply(&mut e);
+            }
+            if e.actors[&gob].has_condition(Condition::Petrified)
+                && e.actors[&wiz].is_concentrating()
+            {
+                installed = true;
+                break;
+            }
+        }
+        assert!(
+            installed,
+            "Flesh to Stone should install Petrified + concentration on at least one seed"
+        );
+    }
+
+    /// Flesh to Stone's break-free hook: a target whose `Petrified` flag
+    /// is anchored to a caster's concentration gets a round-end CON save
+    /// that, on pass, removes Petrified AND drops the caster's
+    /// concentration. Routes through the shared `ROUND_END_SAVES` table.
+    #[test]
+    fn flesh_to_stone_round_end_save_can_break_petrification() {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        let mut broke_free = false;
+        for seed in 0..40u64 {
+            let mut e = ei_seeded(10, 10, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let gob = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 6), 1, 0)
+                .unwrap();
+            // Hand-install the Petrified + concentration link so the
+            // test exercises only the round-end save lane (avoids the
+            // sweep variance of FLESH_TO_STONE.side_effects's initial
+            // CON save).
+            e.actors
+                .get_mut(&gob)
+                .unwrap()
+                .add_condition(Condition::Petrified, ConditionTimer::Rounds(10));
+            e.actors.get_mut(&wiz).unwrap().start_concentration(
+                ConcentrationData::with_conditions(
+                    "Flesh to Stone",
+                    vec![(gob, Condition::Petrified)],
+                ),
+            );
+            assert!(e.actors[&gob].has_condition(Condition::Petrified));
+            assert!(e.actors[&wiz].is_concentrating());
+            e.apply_round_end_saves(gob);
+            if !e.actors[&gob].has_condition(Condition::Petrified)
+                && !e.actors[&wiz].is_concentrating()
+            {
+                broke_free = true;
+                break;
+            }
+        }
+        assert!(
+            broke_free,
+            "Flesh to Stone's round-end CON save should occasionally break the curse"
+        );
+    }
+
+    /// Non-concentration petrification (Medusa Gaze, Cockatrice Bite,
+    /// Basilisk) must NOT be removed by the round-end save hook — those
+    /// sources rely on their own short Rounds timers. The shared table's
+    /// `find_concentration_owner` lookup skips concentration-less marks.
+    #[test]
+    fn round_end_save_skips_non_concentration_petrification() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        let mut e = ei_seeded(10, 10, &[], 0);
+        let gob = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        // Petrified without concentration owner — mimics Cockatrice /
+        // Medusa / Basilisk install.
+        e.actors
+            .get_mut(&gob)
+            .unwrap()
+            .add_condition(Condition::Petrified, ConditionTimer::Rounds(3));
+        for _ in 0..3 {
+            e.apply_round_end_saves(gob);
+            assert!(
+                e.actors[&gob].has_condition(Condition::Petrified),
+                "non-concentration Petrified should survive the round-end save lane"
+            );
+        }
+    }
+
+    /// Psychic Scream: self-centered burst with INT-save for half damage
+    /// and a Stunned-on-fail rider. Verifies the caster's allies outside
+    /// the burst are spared and that at least one failed-save enemy
+    /// picks up the Stunned condition + caster concentration anchor.
+    #[test]
+    fn psychic_scream_stuns_failed_save_enemies() {
+        use crate::actions::spells::PSYCHIC_SCREAM;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut stunned = false;
+        for seed in 0..40u64 {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            // Place enemy inside the 8-tile self-centered burst.
+            let enemy = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 7), 1, 0)
+                .unwrap();
+            for ef in PSYCHIC_SCREAM.side_effects(&mut e, wiz, None, None, None) {
+                ef.apply(&mut e);
+            }
+            if e.actors.get(&enemy).is_some_and(|a| {
+                a.has_condition(Condition::Stunned) || !a.is_combat_active()
+            }) && (e.actors[&wiz].is_concentrating()
+                || e.actors.get(&enemy).map(|a| !a.is_combat_active()).unwrap_or(false))
+            {
+                stunned = true;
+                break;
+            }
+        }
+        assert!(
+            stunned,
+            "Psychic Scream should stun (or kill outright) at least one failed-save enemy across seeds"
+        );
+    }
+
+    /// Bones of the Earth: 2-tile burst, 6d6 bludgeoning DEX-save for
+    /// half + Prone on fail. Verifies (a) the burst damages enemies and
+    /// (b) at least one failed-save enemy picks up Prone across seeds.
+    #[test]
+    fn bones_of_the_earth_prones_failed_save_enemies() {
+        use crate::actions::spells::BONES_OF_THE_EARTH;
+        use crate::actors::creatures::druids::DRUID_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut proned = false;
+        for seed in 0..40u64 {
+            let mut e = ei_seeded(15, 15, &[], seed);
+            let druid = e
+                .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+                .unwrap();
+            let point = Coordinate::new(8, 8);
+            let hp_before = e.actors[&enemy].hitpoints();
+            for ef in
+                BONES_OF_THE_EARTH.side_effects(&mut e, druid, None, Some(&vec![point]), None)
+            {
+                ef.apply(&mut e);
+            }
+            // Either the enemy lost HP, or they're prone, or both.
+            if let Some(ea) = e.actors.get(&enemy) {
+                let took_damage = ea.hitpoints() < hp_before || !ea.is_combat_active();
+                let now_prone = ea.has_condition(Condition::Prone);
+                if took_damage && now_prone {
+                    proned = true;
+                    break;
+                }
+            } else {
+                // Killed outright — counts as effective.
+                proned = true;
+                break;
+            }
+        }
+        assert!(
+            proned,
+            "Bones of the Earth should knock at least one failed-save enemy prone with damage"
         );
     }
 

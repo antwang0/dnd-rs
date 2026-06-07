@@ -846,8 +846,15 @@ fn try_hold_person(
     // (action, condition the action installs) so we can avoid retargeting
     // someone already locked. Order = preference: hard lockdown beats
     // soft. New entries land in priority order.
+    //
+    // Hold Person leads despite Flesh to Stone's broader resistance
+    // envelope — Stunned lets allies chip damage through normally while
+    // Petrified grants the target wide damage resistance, slowing the
+    // kill clock. Flesh to Stone is the CON-save fallback for high-WIS
+    // brutes that shrug off Hold Person.
     const SOFT_LOCKS: &[(&str, Condition)] = &[
         ("hold person", Condition::Stunned),
+        ("flesh to stone", Condition::Petrified),
         ("sleep gaze", Condition::Asleep),
         ("cause fear", Condition::Frightened),
         ("ray of enfeeblement", Condition::Poisoned),

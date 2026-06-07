@@ -135,6 +135,20 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::THUNDER_STEP);
     actions.push(&*crate::actions::spells::SHADOW_BLADE);
     actions.push(&*crate::actions::spells::CLOUD_OF_DAGGERS);
+    // Warlock capstones:
+    //   - lv6 **Flesh to Stone** (transmutation): CON save vs the
+    //     warlock's spell DC; on fail target is Petrified for ~1 minute
+    //     (concentration-bound). Single-target lockdown lane that
+    //     complements Eyebite (WIS save, Asleep) at the same slot tier —
+    //     the warlock can pick whichever save the target is weakest at.
+    //   - lv9 **Psychic Scream** (enchantment): self-centered 8-tile
+    //     burst, 14d6 psychic INT-save for half + Stunned-on-fail. The
+    //     warlock's lv9 mass-control button — burst stuns the whole
+    //     hostile back rank in one tap, distinct from Power Word Kill
+    //     (HP-gated single-target) and Power Word Stun (HP-gated single
+    //     stun).
+    actions.push(&*crate::actions::spells::FLESH_TO_STONE);
+    actions.push(&*crate::actions::spells::PSYCHIC_SCREAM);
     CreatureTemplate {
         name: "Warlock",
         // 'L' (uppercase) — distinct from 'l' (Lich), 'W' (Wolf glyph),

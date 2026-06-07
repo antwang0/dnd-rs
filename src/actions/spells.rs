@@ -740,6 +740,57 @@ fn ally_aura_concentration_effects(
     effects
 }
 
+/// Single-target "save-or-condition with concentration" install. Routes the
+/// save through `roll_save_against_caster` so Heightened Spell metamagic
+/// can force disadvantage; on pass returns an empty effect list (the
+/// caller's `Action::execute` still pays the cost, matching RAW "spell
+/// fizzles on save"). On fail returns the canonical two-entry list:
+/// `ApplyCondition` on the target plus `StartConcentration` on the caster
+/// anchored to the same (target, condition) pair, so dropping concentration
+/// strips the condition cleanly via the existing cleanup hook.
+///
+/// Captures the recurring shape used by Phantasmal Force, Watery Sphere,
+/// Eyebite, Flesh to Stone, etc. — every "make a save or pick up one
+/// condition the caster sustains" lane collapses to a single helper call
+/// instead of re-inlining the same `if save.passed() { ... } else { ... }`
+/// block at every site. Empty `pass_log` / `fail_log` strings suppress the
+/// matching log line so silent-flavor spells (Hold Person) can opt out.
+#[allow(clippy::too_many_arguments)]
+fn save_or_concentration_condition(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    target_id: usize,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    spell_name: &'static str,
+    condition: Condition,
+    timer: ConditionTimer,
+    pass_log: &str,
+    fail_log: &str,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let save = encounter.roll_save_against_caster(target_id, save_ability, dc, caster_id);
+    if save.passed() {
+        if !pass_log.is_empty() {
+            encounter.log(pass_log.to_string());
+        }
+        return Vec::new();
+    }
+    if !fail_log.is_empty() {
+        encounter.log(fail_log.to_string());
+    }
+    vec![
+        Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition,
+            timer,
+        }),
+        Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions(spell_name, vec![(target_id, condition)]),
+        }),
+    ]
+}
+
 /// Sacred Flame — cleric cantrip. Range 60ft (24 tiles), DEX save vs the
 /// caster's WIS-based spell save DC. On fail: 1d8 radiant. On success:
 /// nothing (cantrips don't half-on-save). No spell slot consumed.
@@ -1029,10 +1080,6 @@ impl Action for HoldPerson {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::actors::actor_template::ConcentrationData;
-        use crate::conditions::{Condition, ConditionTimer};
-        use crate::engine::side_effects::{ApplyCondition, StartConcentration};
-
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
@@ -1040,33 +1087,24 @@ impl Action for HoldPerson {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
-
-        // Route through the caster-aware save helper so Heightened Spell
-        // metamagic (sorcerer) can force disadvantage on this single
-        // save-or-suck roll. Plain `roll_save` would silently bypass the
-        // prime since it has no caster context.
-        let save =
-            encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
-        if save.passed() {
-            return Vec::new();
-        }
-
         // Apply Stunned for up to 10 rounds, plus install concentration
-        // tracking so a damage-failed CON save will release the target.
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Stunned,
-                timer: ConditionTimer::Rounds(10),
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Hold Person",
-                    vec![(target_id, Condition::Stunned)],
-                ),
-            }),
-        ]
+        // tracking so the round-end WIS save (shared `ROUND_END_SAVES`
+        // table) can release the target. Helper routes the cast through
+        // `roll_save_against_caster` so Heightened Spell metamagic still
+        // fires on this single save-or-suck roll. Empty logs match the
+        // legacy silent flavor.
+        save_or_concentration_condition(
+            encounter,
+            caster_id,
+            target_id,
+            AbilityScoreType::Wisdom,
+            dc,
+            "Hold Person",
+            Condition::Stunned,
+            ConditionTimer::Rounds(10),
+            "",
+            "",
+        )
     }
 }
 
@@ -4983,26 +5021,21 @@ impl Action for HoldMonster {
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
         // Caster-aware save so the sorcerer Heightened Spell prime can
-        // force disadvantage on this single save-or-suck roll.
-        let save =
-            encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
-        if save.passed() {
-            return Vec::new();
-        }
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Stunned,
-                timer: ConditionTimer::Rounds(10),
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Hold Monster",
-                    vec![(target_id, Condition::Stunned)],
-                ),
-            }),
-        ]
+        // force disadvantage on this single save-or-suck roll. The
+        // shared helper routes through `roll_save_against_caster`
+        // automatically; empty logs match the legacy silent behavior.
+        save_or_concentration_condition(
+            encounter,
+            caster_id,
+            target_id,
+            AbilityScoreType::Wisdom,
+            dc,
+            "Hold Monster",
+            Condition::Stunned,
+            ConditionTimer::Rounds(10),
+            "",
+            "",
+        )
     }
 }
 
@@ -21992,34 +22025,21 @@ impl Action for PhantasmalForce {
             AbilityScoreType::Intelligence,
             AbilityScoreType::Charisma,
         ]);
-        let save = encounter.roll_save_against_caster(
+        save_or_concentration_condition(
+            encounter,
+            caster_id,
             target_id,
             AbilityScoreType::Intelligence,
             dc,
-            caster_id,
-        );
-        if save.passed() {
-            encounter.log("  phantasmal force: target sees through the illusion.".to_string());
-            return Vec::new();
-        }
-        encounter.log("  phantasmal force: the illusion takes hold.".to_string());
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::PhantasmalForced,
-                // 10 rounds = 1 minute RAW. Concentration anchors the
-                // real lifetime — dropping concentration ends the
-                // illusion before the timer expires.
-                timer: ConditionTimer::Rounds(10),
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Phantasmal Force",
-                    vec![(target_id, Condition::PhantasmalForced)],
-                ),
-            }),
-        ]
+            "Phantasmal Force",
+            Condition::PhantasmalForced,
+            // 10 rounds = 1 minute RAW. Concentration anchors the
+            // real lifetime — dropping concentration ends the
+            // illusion before the timer expires.
+            ConditionTimer::Rounds(10),
+            "  phantasmal force: target sees through the illusion.",
+            "  phantasmal force: the illusion takes hold.",
+        )
     }
 }
 
@@ -22209,33 +22229,20 @@ impl Action for WaterySphere {
             AbilityScoreType::Wisdom,
             AbilityScoreType::Charisma,
         ]);
-        let save = encounter.roll_save_against_caster(
+        save_or_concentration_condition(
+            encounter,
+            caster_id,
             target_id,
             AbilityScoreType::Strength,
             dc,
-            caster_id,
-        );
-        if save.passed() {
-            encounter.log("  watery sphere: target tears free of the water.".to_string());
-            return Vec::new();
-        }
-        encounter.log("  watery sphere: target is caught inside the sphere.".to_string());
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::WaterSphered,
-                // 10 rounds = 1 minute RAW. Concentration anchors the
-                // real lifetime.
-                timer: ConditionTimer::Rounds(10),
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Watery Sphere",
-                    vec![(target_id, Condition::WaterSphered)],
-                ),
-            }),
-        ]
+            "Watery Sphere",
+            Condition::WaterSphered,
+            // 10 rounds = 1 minute RAW. Concentration anchors the
+            // real lifetime.
+            ConditionTimer::Rounds(10),
+            "  watery sphere: target tears free of the water.",
+            "  watery sphere: target is caught inside the sphere.",
+        )
     }
 }
 
@@ -22611,3 +22618,312 @@ impl Action for DustDevil {
 }
 
 pub static DUST_DEVIL: LazyLock<DustDevil> = LazyLock::new(|| DustDevil {});
+
+/// Flesh to Stone — level-6 transmutation (warlock / wizard), concentration.
+/// The target makes a CON save vs the caster's spell DC. On pass: nothing.
+/// On fail: target is Petrified for `Rounds(10)` (~1 minute RAW) and the
+/// caster takes concentration anchored to the petrify mark. The target
+/// makes a fresh CON save at the end of each of their turns via the
+/// shared `ROUND_END_SAVES` table — on a pass the curse breaks and the
+/// caster's concentration drops, mirroring how Hold Person / Hold Monster
+/// route through the same hook.
+///
+/// RAW's graduated "3 saves vs 3 fails" ladder is collapsed to a single
+/// break-free path; the load-bearing combat clause is the Petrified
+/// envelope (zero movement, action-economy block, attacks have advantage,
+/// auto-fail STR/DEX saves, broad damage resistance / poison immunity).
+/// Slots between Hold Monster (lv5, WIS save, Paralyzed) and Eyebite (lv6,
+/// WIS save, Asleep) on the single-target lockdown ladder — the CON save
+/// hits low-CON casters and brutes that shrug off WIS effects.
+pub struct FleshToStone {}
+
+impl Action for FleshToStone {
+    fn name(&self) -> &str {
+        "flesh to stone"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fts", "petrify", "stone"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft RAW = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Warlock (CHA) + wizard (INT) — best-of so a multi-class caster
+        // anchors on the right stat. Mirrors the Hold Monster / Watery
+        // Sphere best-of pattern.
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+        ]);
+        save_or_concentration_condition(
+            encounter,
+            caster_id,
+            target_id,
+            AbilityScoreType::Constitution,
+            dc,
+            "Flesh to Stone",
+            Condition::Petrified,
+            // 10 rounds = 1 minute RAW. Concentration anchors the real
+            // lifetime; the round-end save can also break it early.
+            ConditionTimer::Rounds(10),
+            "  flesh to stone: target shrugs off the curse.",
+            "  flesh to stone: target's flesh hardens to stone.",
+        )
+    }
+}
+
+pub static FLESH_TO_STONE: LazyLock<FleshToStone> = LazyLock::new(|| FleshToStone {});
+
+/// Psychic Scream — level-9 enchantment (bard / sorcerer / warlock /
+/// wizard), action. The caster unleashes a telepathic howl from their
+/// location: every combat-active enemy whose footprint sits within
+/// `radius` of the caster's tile makes an INT save vs the caster's
+/// spell DC. Pass: 7d6 psychic (half damage RAW). Fail: full 14d6
+/// psychic plus Stunned for `Rounds(10)`. The Stunned target gets a
+/// WIS save at the end of each of their turns via the shared
+/// `ROUND_END_SAVES` table (Psychic Scream RAW uses INT save at end
+/// of turn; we collapse to the Hold Monster WIS-save lane since the
+/// engine's repeated-save table doesn't fork per-source).
+///
+/// Self-centered NoArgs target (the caster broadcasts the scream from
+/// their tile, no aim). Distinct from `PowerWordStun` (lv8, single-target
+/// HP-gated stun) by the mass burst clause and the damage; distinct from
+/// `Weird` (lv9, single-point WIS-save burst with Frightened) by the
+/// damage type, save ability, and Stunned vs Frightened rider. The
+/// flagship lv9 mind-spike for casters who want to crush the entire
+/// hostile back rank in one tap. Concentration-free RAW — burst-and-done.
+pub struct PsychicScream {}
+
+impl Action for PsychicScream {
+    fn name(&self) -> &str {
+        "psychic scream"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ps", "scream", "psy-scream"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // Self-centered burst — no target tile, no actor pick. The
+        // caster's own location is the center. Same shape as
+        // Thunderclap / Sword Burst at the cantrip tier, but scaled
+        // up to lv9 radius / damage.
+        TargetingSchema::NoArgs
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Psychic]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(9)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actors::actor_template::ConcentrationData;
+        // 90 ft radius RAW = 8 tiles on this 2.5ft grid (rounded down
+        // from 9; the encounter map's diagonal is ~30 tiles so 8 still
+        // sweeps most of a clustered enemy back rank).
+        const RADIUS: isize = 8;
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let center = caster.location();
+        // Bard / sorcerer / warlock (CHA) and wizard (INT) all reach for
+        // Psychic Scream RAW — best-of so a multi-class caster anchors on
+        // the right stat.
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Charisma,
+        ]);
+        let (mut effects, saves) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            center,
+            RADIUS,
+            AbilityScoreType::Intelligence,
+            dc,
+            // 14d6 psychic shared roll; halved on save via the standard
+            // SaveOutcome::HalfOnSave lane that the helper picks.
+            Dice::new(14, 6),
+            DamageType::Psychic,
+            "psychic scream",
+        );
+        // RAW: failed-save targets are also Stunned for the duration.
+        // The condition is concentration-FREE (no anchor caster) but we
+        // still want the round-end WIS-save break-free hook, which the
+        // shared `ROUND_END_SAVES` table fires only when a concentration
+        // owner exists. To get the break-free hook we anchor a dummy
+        // concentration so the target can shake out — keeps the cast
+        // self-mitigating without needing per-source forking in the
+        // round-end table. The concentration is dropped naturally when
+        // every Stunned target breaks free or the timer expires; if the
+        // caster was already concentrating on something else, that
+        // concentration is replaced (5e RAW: only one concentration at
+        // a time).
+        let conditions = push_condition_on_failed_save_for_concentration(
+            &mut effects,
+            &saves,
+            Condition::Stunned,
+            ConditionTimer::Rounds(10),
+        );
+        if !conditions.is_empty() {
+            effects.push(Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions("Psychic Scream", conditions),
+            }));
+        }
+        effects
+    }
+}
+
+pub static PSYCHIC_SCREAM: LazyLock<PsychicScream> = LazyLock::new(|| PsychicScream {});
+
+/// Bones of the Earth — level-6 transmutation (druid, XGtE), action.
+/// Six 5-ft-thick pillars of stone erupt from the ground in a 2-tile
+/// burst at a target point within 120ft. Every creature in the burst
+/// makes a DEX save vs the caster's WIS-based spell DC: pass = half,
+/// fail = full. 6d6 bludgeoning damage. The pillars themselves are
+/// not modeled (the engine has no terrain-mutation lane for
+/// per-tile pillars), but the load-bearing combat clause — the
+/// erupting damage and the "pinned between pillars" prone rider on
+/// failed saves — lands cleanly through the existing burst + Prone
+/// shape (Tidal Wave / Wall of Stone use the same install).
+///
+/// Slots between Sleet Storm (lv3, control / cover) and Earthquake
+/// (lv8, AoE Prone + difficult terrain) on the druid's earth-themed
+/// control ladder. The Prone rider on fail mirrors Wall of Stone — a
+/// big enemy line gets laid flat for a Spike Growth / Spirit Guardians
+/// follow-up. Concentration-free RAW (the pillars are physical objects
+/// that stand on their own); we model as a one-shot burst.
+pub struct BonesOfTheEarth {}
+
+impl Action for BonesOfTheEarth {
+    fn name(&self) -> &str {
+        "bones of the earth"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bones", "pillars", "bote"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 5ft pillars in a 2-tile gap → small burst footprint. Same
+        // size as Maximilian's Earthen Grasp / Catapult.
+        TargetingSchema::Burst { radius: 2 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft RAW = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Druid (WIS) — single stat for the spell DC; mirrors Sleet
+        // Storm / Spike Growth on the druid's earth-themed control lane.
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let (mut effects, saves) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            2,
+            AbilityScoreType::Dexterity,
+            dc,
+            Dice::new(6, 6),
+            DamageType::Bludgeoning,
+            "bones of the earth",
+        );
+        // RAW rider: failed-save targets are pinned between rising
+        // pillars — we collapse to Prone via the existing AoE Prone
+        // rider table (same shape Wall of Stone / Tidal Wave use).
+        push_condition_on_failed_save(
+            &mut effects,
+            &saves,
+            Condition::Prone,
+            // Prone is removed by spending half movement to stand up;
+            // the timer is a safety net so the rider doesn't dangle.
+            ConditionTimer::Rounds(10),
+        );
+        effects
+    }
+}
+
+pub static BONES_OF_THE_EARTH: LazyLock<BonesOfTheEarth> =
+    LazyLock::new(|| BonesOfTheEarth {});

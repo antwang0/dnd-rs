@@ -407,6 +407,22 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::DUST_DEVIL);
     actions.push(&*crate::actions::spells::MAELSTROM);
     actions.push(&*crate::actions::spells::OTILUKES_FREEZING_SPHERE);
+    // Wizard lockdown / capstone additions:
+    //   - lv6 **Flesh to Stone** (transmutation, PHB): CON save vs the
+    //     wizard's spell DC; on fail target is Petrified for ~1 minute
+    //     (concentration-bound, with a round-end CON save to break free
+    //     via the shared `ROUND_END_SAVES` table). The CON-save lockdown
+    //     option at the lv6 tier — slots between Hold Monster (lv5, WIS)
+    //     and Otto's Irresistible Dance (lv6, WIS) on the single-target
+    //     control ladder.
+    //   - lv9 **Psychic Scream** (enchantment, XGtE): self-centered
+    //     8-tile burst, 14d6 psychic INT-save for half + Stunned-on-fail
+    //     (with the existing round-end WIS-save break-free hook). The
+    //     wizard's lv9 mind-spike — distinct from Weird (WIS-save
+    //     Frightened) and Meteor Swarm (DEX-save fire/bludgeoning) on
+    //     the lv9 nuke ladder by save ability + stunning rider.
+    actions.push(&*crate::actions::spells::FLESH_TO_STONE);
+    actions.push(&*crate::actions::spells::PSYCHIC_SCREAM);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

@@ -217,6 +217,13 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     spike-stones / spike-growth follow-up.
     actions.push(&*crate::actions::spells::DUST_DEVIL);
     actions.push(&*crate::actions::spells::MAELSTROM);
+    // Druid earth-themed capstone — lv6 **Bones of the Earth**
+    // (transmutation, XGtE): 6d6 bludgeoning 2-tile burst, DEX-save for
+    // half + Prone on fail. Slots between Sleet Storm (lv3 control) and
+    // Earthquake (lv8 mass Prone) on the druid's earth-themed control
+    // ladder — a clean Prone-rider AoE that pairs with Spike Growth /
+    // Spirit Guardians for stacked damage on enemies caught flat.
+    actions.push(&*crate::actions::spells::BONES_OF_THE_EARTH);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

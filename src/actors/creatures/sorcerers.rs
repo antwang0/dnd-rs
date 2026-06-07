@@ -346,6 +346,11 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::DUST_DEVIL);
     actions.push(&*crate::actions::spells::MAELSTROM);
     actions.push(&*crate::actions::spells::OTILUKES_FREEZING_SPHERE);
+    // Sorcerer capstone — lv9 **Psychic Scream** (enchantment, XGtE):
+    // self-centered 8-tile burst, 14d6 psychic INT-save for half +
+    // Stunned-on-fail. The flagship lv9 mind-spike for sorcerers that
+    // pairs with Empowered Spell metamagic on the shared damage roll.
+    actions.push(&*crate::actions::spells::PSYCHIC_SCREAM);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.
