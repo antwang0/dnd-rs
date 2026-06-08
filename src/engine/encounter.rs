@@ -32085,6 +32085,84 @@ mod tests {
         );
     }
 
+    /// Scroll of Fireball excludes the caster from its own burst — the
+    /// scroll routes through `resolve_burst_save_damage` (same helper as
+    /// the spell), which exempts the caster. Centering the burst on the
+    /// reader's own tile shouldn't damage them.
+    #[test]
+    fn scroll_of_fireball_excludes_caster() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_FIREBALL_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_FIREBALL;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_FIREBALL);
+        let hp_before = e.actors[&caster].hitpoints();
+
+        let aei = ActionExecutionInfo::new(
+            &READ_FIREBALL_SCROLL,
+            caster,
+            None,
+            Some(vec![Coordinate::new(5, 5)]),
+            None,
+        );
+        e.push_action(aei);
+        e.process_stack();
+
+        assert_eq!(
+            e.actors[&caster].hitpoints(),
+            hp_before,
+            "scroll of fireball should not damage its reader"
+        );
+        assert!(
+            e.actors[&caster].items().is_empty(),
+            "scroll should be consumed even when the burst is centered on the caster"
+        );
+    }
+
+    /// Scroll of Lightning Bolt excludes the caster from its own burst.
+    /// Same shape as `scroll_of_fireball_excludes_caster`.
+    #[test]
+    fn scroll_of_lightning_bolt_excludes_caster() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_LIGHTNING_BOLT_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_LIGHTNING_BOLT;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_LIGHTNING_BOLT);
+        let hp_before = e.actors[&caster].hitpoints();
+
+        let aei = ActionExecutionInfo::new(
+            &READ_LIGHTNING_BOLT_SCROLL,
+            caster,
+            None,
+            Some(vec![Coordinate::new(5, 5)]),
+            None,
+        );
+        e.push_action(aei);
+        e.process_stack();
+
+        assert_eq!(
+            e.actors[&caster].hitpoints(),
+            hp_before,
+            "scroll of lightning bolt should not damage its reader"
+        );
+    }
+
     /// Wand of Fireballs: 8d6 fire burst, DEX save, scroll-style shape
     /// but with a larger pool. Mirrors the Cone of Cold scroll test
     /// shape.

@@ -250,7 +250,7 @@ impl Action for ReadFireballScroll {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::saves::SaveOutcome;
+        use crate::actions::action_template::resolve_burst_save_damage;
         use crate::engine::types::AbilityScoreType;
 
         let Some(&center) = target_locations.and_then(|locs| locs.first()) else {
@@ -267,20 +267,21 @@ impl Action for ReadFireballScroll {
 
         const BLAST_RADIUS: isize = 4;
         let dc: i32 = 15;
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for id in encounter.actors_in_burst(center, BLAST_RADIUS) {
-            let outcome = encounter.roll_save(id, AbilityScoreType::Dexterity, dc);
-            let final_damage = match outcome {
-                SaveOutcome::Pass => damage / 2,
-                SaveOutcome::Fail => damage,
-            };
-            effects.push(Box::new(DealDamage {
-                actor_id: id,
-                amount: final_damage,
-                damage_type: DamageType::Fire,
-            }));
-        }
-        effects
+        // Route through the shared burst helper so evasion / Careful
+        // Spell / Heightened Spell shielding all fire through one
+        // chokepoint AND the caster is excluded from their own burst —
+        // matches Cone of Cold / Wand of Fireballs and the spell-side
+        // Fireball cast.
+        resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            center,
+            BLAST_RADIUS,
+            AbilityScoreType::Dexterity,
+            dc,
+            damage,
+            DamageType::Fire,
+        )
     }
 }
 
@@ -696,7 +697,7 @@ impl Action for ReadLightningBoltScroll {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::saves::SaveOutcome;
+        use crate::actions::action_template::resolve_burst_save_damage;
         use crate::engine::types::AbilityScoreType;
 
         let Some(&center) = target_locations.and_then(|locs| locs.first()) else {
@@ -711,20 +712,21 @@ impl Action for ReadLightningBoltScroll {
 
         const BLAST_RADIUS: isize = 2;
         let dc: i32 = 15;
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for id in encounter.actors_in_burst(center, BLAST_RADIUS) {
-            let outcome = encounter.roll_save(id, AbilityScoreType::Dexterity, dc);
-            let final_damage = match outcome {
-                SaveOutcome::Pass => damage / 2,
-                SaveOutcome::Fail => damage,
-            };
-            effects.push(Box::new(DealDamage {
-                actor_id: id,
-                amount: final_damage,
-                damage_type: DamageType::Lightning,
-            }));
-        }
-        effects
+        // Same shared-helper routing as the Fireball scroll: evasion /
+        // Careful Spell / Heightened Spell shielding all fire through
+        // one chokepoint, and the caster is excluded from their own
+        // burst (the inline loop here used to include them, hitting the
+        // caster with their own lightning).
+        resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            center,
+            BLAST_RADIUS,
+            AbilityScoreType::Dexterity,
+            dc,
+            damage,
+            DamageType::Lightning,
+        )
     }
 }
 
