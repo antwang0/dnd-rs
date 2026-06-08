@@ -7,9 +7,128 @@ use crate::{
         dice::Dice,
         encounter::EncounterInstance,
         side_effects::{ApplicableSideEffect, DealDamage, Heal, Resource},
-        types::{Coordinate, DamageType},
+        types::{AbilityScoreType, Coordinate, DamageType},
     },
 };
+
+/// Config struct for "burst damage with a save for half" consumable
+/// items — the shared shape behind Scroll of Fireball / Cone of Cold /
+/// Lightning Bolt and the Wand of Fireballs / Lightning Bolts. Each
+/// static instance encodes a single item's per-cast configuration; the
+/// `Action` impl below routes through `resolve_burst_save_damage` so
+/// evasion / Careful Spell / Heightened Spell shielding all flow
+/// through the same chokepoint as the spell-side equivalents AND the
+/// caster is excluded from their own burst.
+///
+/// Adding a new burst-save scroll / wand is a one-static declaration —
+/// no new `Action` impl needed. Drops the ~75 lines per item the
+/// previous one-struct-per-scroll approach required.
+pub struct BurstSaveDamageItem {
+    /// Player-facing action name (e.g. "read fireball scroll"). Returned
+    /// from `Action::name`.
+    pub action_name: &'static str,
+    /// Picker aliases for the action (e.g. ["fireball", "scroll"]).
+    /// Returned from `Action::aliases`.
+    pub action_aliases: &'static [&'static str],
+    /// Inventory item name to gate validate / consume on (e.g.
+    /// "Scroll of Fireball"). Must match the item's `name` field.
+    pub item_name: &'static str,
+    /// Log line prefix (e.g. "scroll of fireball"). The log row reads
+    /// `  {log_label}: {count}d{faces} = {n} damage`.
+    pub log_label: &'static str,
+    /// Damage dice (e.g. 6d6, 8d6, 8d8). Rolled once and shared across
+    /// every target in the burst — matches the spell-side AoE pattern.
+    pub dice: Dice,
+    /// Damage type (e.g. Fire, Cold, Lightning). Folded into the
+    /// per-target `DealDamage` side-effect emitted by
+    /// `resolve_burst_save_damage`.
+    pub damage_type: DamageType,
+    /// Save ability for the burst (e.g. DEX for Fireball / Lightning
+    /// Bolt; CON for Cone of Cold).
+    pub save: AbilityScoreType,
+    /// Save DC (typically 15 for SRD scrolls / wands).
+    pub dc: i32,
+    /// Burst radius in tiles (e.g. 4 for Fireball, 2 for Lightning Bolt,
+    /// 6 for Cone of Cold).
+    pub radius: isize,
+    /// Maximum reach in tiles for the targeting picker (e.g. 60 for
+    /// Fireball's 150 ft, 40 for Lightning Bolt's 100 ft).
+    pub reach: isize,
+}
+
+impl Action for BurstSaveDamageItem {
+    fn name(&self) -> &str {
+        self.action_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.action_aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst {
+            radius: self.radius,
+        }
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.reach)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![self.damage_type]
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, self.item_name)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actions::action_template::resolve_burst_save_damage;
+
+        let Some(&center) = target_locations.and_then(|locs| locs.first()) else {
+            return Vec::new();
+        };
+        if !consume_caster_item(encounter, caster_id, self.item_name) {
+            return Vec::new();
+        }
+
+        let damage = encounter.roll(&self.dice);
+        encounter.log(format!(
+            "  {}: {}d{} = {} damage",
+            self.log_label, self.dice.count, self.dice.faces, damage
+        ));
+
+        resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            center,
+            self.radius,
+            self.save,
+            self.dc,
+            damage,
+            self.damage_type,
+        )
+    }
+}
 
 const POTION_OF_HEALING_NAME: &str = "Potion of Healing";
 const POTION_OF_GREATER_HEALING_NAME: &str = "Potion of Greater Healing";
@@ -203,89 +322,22 @@ impl Action for DrinkGreaterHealingPotion {
 
 pub static DRINK_GREATER_HEALING_POTION: DrinkGreaterHealingPotion = DrinkGreaterHealingPotion {};
 
-/// Read a Scroll of Fireball: pick a target tile, every actor whose
-/// footprint touches the burst takes 6d6 fire on a failed DEX save vs
-/// DC 15, half on success. Consumes the scroll. No spell-slot cost
-/// (the scroll *is* the slot).
-pub struct ReadFireballScroll {}
-
-impl Action for ReadFireballScroll {
-    fn name(&self) -> &str {
-        "read fireball scroll"
-    }
-
-    fn aliases(&self) -> Vec<&str> {
-        vec!["fireball", "scroll"]
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
-    }
-
-    fn reach_tiles(&self) -> Option<isize> {
-        // 150 ft range — well past any current map.
-        Some(60)
-    }
-
-    fn requires_los(&self) -> bool {
-        true
-    }
-
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        caster_holds(encounter, caster_id, SCROLL_OF_FIREBALL_NAME)
-    }
-
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::actions::action_template::resolve_burst_save_damage;
-        use crate::engine::types::AbilityScoreType;
-
-        let Some(&center) = target_locations.and_then(|locs| locs.first()) else {
-            return Vec::new();
-        };
-        if !consume_caster_item(encounter, caster_id, SCROLL_OF_FIREBALL_NAME) {
-            return Vec::new();
-        }
-
-        // Roll damage once and share across the burst so everyone in the
-        // blast takes the same number — matches Sacred Burst's pattern.
-        let damage = encounter.roll(&Dice::new(6, 6));
-        encounter.log(format!("  scroll of fireball: 6d6 = {} damage", damage));
-
-        const BLAST_RADIUS: isize = 4;
-        let dc: i32 = 15;
-        // Route through the shared burst helper so evasion / Careful
-        // Spell / Heightened Spell shielding all fire through one
-        // chokepoint AND the caster is excluded from their own burst —
-        // matches Cone of Cold / Wand of Fireballs and the spell-side
-        // Fireball cast.
-        resolve_burst_save_damage(
-            encounter,
-            caster_id,
-            center,
-            BLAST_RADIUS,
-            AbilityScoreType::Dexterity,
-            dc,
-            damage,
-            DamageType::Fire,
-        )
-    }
-}
-
-pub static READ_FIREBALL_SCROLL: ReadFireballScroll = ReadFireballScroll {};
+/// Scroll of Fireball: 6d6 fire DEX-save burst centered on a target tile.
+/// Fires through the shared `BurstSaveDamageItem` impl — see that struct
+/// for the routing through `resolve_burst_save_damage`.
+pub static READ_FIREBALL_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+    action_name: "read fireball scroll",
+    action_aliases: &["fireball", "scroll"],
+    item_name: SCROLL_OF_FIREBALL_NAME,
+    log_label: "scroll of fireball",
+    dice: Dice::new(6, 6),
+    damage_type: DamageType::Fire,
+    save: AbilityScoreType::Dexterity,
+    dc: 15,
+    radius: 4,
+    // 150 ft range — well past any current map.
+    reach: 60,
+};
 
 /// Read a Scroll of Magic Missile: spend an Action to fire 3 darts at one
 /// enemy in line-of-sight (range 30 tiles). Each dart deals 1d4+1 force.
@@ -655,82 +707,21 @@ pub static DRINK_POTION_OF_INVISIBILITY: DrinkPotionOfInvisibility =
 
 const SCROLL_OF_LIGHTNING_BOLT_NAME: &str = "Scroll of Lightning Bolt";
 
-pub struct ReadLightningBoltScroll {}
-
-impl Action for ReadLightningBoltScroll {
-    fn name(&self) -> &str {
-        "read lightning bolt scroll"
-    }
-
-    fn aliases(&self) -> Vec<&str> {
-        vec!["lb scroll", "lightning scroll"]
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 2 }
-    }
-
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(40)
-    }
-
-    fn requires_los(&self) -> bool {
-        true
-    }
-
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        caster_holds(encounter, caster_id, SCROLL_OF_LIGHTNING_BOLT_NAME)
-    }
-
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::actions::action_template::resolve_burst_save_damage;
-        use crate::engine::types::AbilityScoreType;
-
-        let Some(&center) = target_locations.and_then(|locs| locs.first()) else {
-            return Vec::new();
-        };
-        if !consume_caster_item(encounter, caster_id, SCROLL_OF_LIGHTNING_BOLT_NAME) {
-            return Vec::new();
-        }
-
-        let damage = encounter.roll(&Dice::new(8, 6));
-        encounter.log(format!("  scroll of lightning bolt: 8d6 = {} damage", damage));
-
-        const BLAST_RADIUS: isize = 2;
-        let dc: i32 = 15;
-        // Same shared-helper routing as the Fireball scroll: evasion /
-        // Careful Spell / Heightened Spell shielding all fire through
-        // one chokepoint, and the caster is excluded from their own
-        // burst (the inline loop here used to include them, hitting the
-        // caster with their own lightning).
-        resolve_burst_save_damage(
-            encounter,
-            caster_id,
-            center,
-            BLAST_RADIUS,
-            AbilityScoreType::Dexterity,
-            dc,
-            damage,
-            DamageType::Lightning,
-        )
-    }
-}
-
-pub static READ_LIGHTNING_BOLT_SCROLL: ReadLightningBoltScroll = ReadLightningBoltScroll {};
+/// Scroll of Lightning Bolt: 8d6 lightning DEX-save burst. Tighter
+/// radius (2 tiles) than the Fireball scroll, longer reach. Fires
+/// through the shared `BurstSaveDamageItem` impl.
+pub static READ_LIGHTNING_BOLT_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+    action_name: "read lightning bolt scroll",
+    action_aliases: &["lb scroll", "lightning scroll"],
+    item_name: SCROLL_OF_LIGHTNING_BOLT_NAME,
+    log_label: "scroll of lightning bolt",
+    dice: Dice::new(8, 6),
+    damage_type: DamageType::Lightning,
+    save: AbilityScoreType::Dexterity,
+    dc: 15,
+    radius: 2,
+    reach: 40,
+};
 
 /// Read a Scroll of Cure Wounds: touch one ally (or self) for 2d8+2
 /// healing. Mirrors the Cure Wounds spell at level 1 (2d8 base scaling
@@ -1027,88 +1018,25 @@ pub static WEAR_BOOTS_OF_SPEED: WearBootsOfSpeed = WearBootsOfSpeed {};
 const SCROLL_OF_CONE_OF_COLD_NAME: &str = "Scroll of Cone of Cold";
 const WAND_OF_MAGIC_MISSILES_NAME: &str = "Wand of Magic Missiles";
 
-/// Read a Scroll of Cone of Cold — pick a target tile, every actor whose
-/// footprint touches the burst takes 8d8 cold on a failed CON save vs
-/// DC 15, half on success. Consumes the scroll on use. Mirrors the
-/// Fireball / Lightning Bolt scrolls' shape with a different element,
-/// save ability, and damage profile (CON instead of DEX; bigger d8 pool).
-/// Routes through `resolve_burst_save_damage` so evasion / Careful Spell
-/// / Heightened Spell shielding all fire through the same chokepoint.
-pub struct ReadConeOfColdScroll {}
-
-impl Action for ReadConeOfColdScroll {
-    fn name(&self) -> &str {
-        "read cone of cold scroll"
-    }
-
-    fn aliases(&self) -> Vec<&str> {
-        vec!["coc scroll", "cone scroll"]
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        // Match the spell's 6-tile burst approximation of the 60-ft cone.
-        TargetingSchema::Burst { radius: 6 }
-    }
-
-    fn reach_tiles(&self) -> Option<isize> {
-        // Self-cone in RAW; we cap the picker at the cone's reach (60 ft
-        // = 24 tiles) so the targeting reticle doesn't drop across the
-        // whole map. Mirrors `CONE_OF_COLD::reach_tiles`.
-        Some(24)
-    }
-
-    fn requires_los(&self) -> bool {
-        true
-    }
-
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        caster_holds(encounter, caster_id, SCROLL_OF_CONE_OF_COLD_NAME)
-    }
-
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::actions::action_template::resolve_burst_save_damage;
-        use crate::engine::types::AbilityScoreType;
-
-        let Some(&center) = target_locations.and_then(|locs| locs.first()) else {
-            return Vec::new();
-        };
-        if !consume_caster_item(encounter, caster_id, SCROLL_OF_CONE_OF_COLD_NAME) {
-            return Vec::new();
-        }
-
-        let damage = encounter.roll(&Dice::new(8, 8));
-        encounter.log(format!("  scroll of cone of cold: 8d8 = {} damage", damage));
-
-        const BLAST_RADIUS: isize = 6;
-        let dc: i32 = 15;
-        resolve_burst_save_damage(
-            encounter,
-            caster_id,
-            center,
-            BLAST_RADIUS,
-            AbilityScoreType::Constitution,
-            dc,
-            damage,
-            DamageType::Cold,
-        )
-    }
-}
-
-pub static READ_CONE_OF_COLD_SCROLL: ReadConeOfColdScroll = ReadConeOfColdScroll {};
+/// Scroll of Cone of Cold: 8d8 cold CON-save burst (mirrors the
+/// `CONE_OF_COLD` spell's 6-tile burst approximation of the 60-ft cone).
+/// Distinct from the Fireball / Lightning Bolt scrolls in its save
+/// ability (CON, not DEX) and damage tier (d8 pool, not d6).
+pub static READ_CONE_OF_COLD_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+    action_name: "read cone of cold scroll",
+    action_aliases: &["coc scroll", "cone scroll"],
+    item_name: SCROLL_OF_CONE_OF_COLD_NAME,
+    log_label: "scroll of cone of cold",
+    dice: Dice::new(8, 8),
+    damage_type: DamageType::Cold,
+    save: AbilityScoreType::Constitution,
+    dc: 15,
+    radius: 6,
+    // Self-cone in RAW; we cap the picker at the cone's reach (60 ft
+    // = 24 tiles) so the targeting reticle doesn't drop across the
+    // whole map. Mirrors `CONE_OF_COLD::reach_tiles`.
+    reach: 24,
+};
 
 /// Use a Wand of Magic Missiles — fire 5 force-damage darts at one enemy
 /// in line-of-sight (range 30 tiles). Each dart deals 1d4+1 force.
@@ -1361,164 +1289,37 @@ impl Action for DrinkPotionOfClimbing {
 
 pub static DRINK_POTION_OF_CLIMBING: DrinkPotionOfClimbing = DrinkPotionOfClimbing {};
 
-/// Use a Wand of Fireballs — single-use 8d6 fire burst. Mirrors the
-/// `READ_FIREBALL_SCROLL` shape (DEX save vs DC 15, halve on pass) but
-/// with a bigger damage pool — the wand sits at the level-4 cast tier
-/// versus the scroll's level-3 baseline. 5e RAW: the wand has 7 charges
-/// and casts at level 3 (+1 per extra charge); we collapse to a single
-/// 8d6 cast for the engine's charge-less loot model. Routes through
-/// `resolve_burst_save_damage` so evasion / Careful Spell / Heightened
-/// Spell shielding all fire through the same chokepoint.
-pub struct UseWandOfFireballs {}
-
-impl Action for UseWandOfFireballs {
-    fn name(&self) -> &str {
-        "use wand of fireballs"
-    }
-
-    fn aliases(&self) -> Vec<&str> {
-        vec!["fireballs", "fireball wand"]
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
-    }
-
-    fn reach_tiles(&self) -> Option<isize> {
-        // 150 ft = 60 tiles, matching the Fireball scroll.
-        Some(60)
-    }
-
-    fn requires_los(&self) -> bool {
-        true
-    }
-
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        caster_holds(encounter, caster_id, WAND_OF_FIREBALLS_NAME)
-    }
-
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::actions::action_template::resolve_burst_save_damage;
-        use crate::engine::types::AbilityScoreType;
-
-        let Some(&center) = target_locations.and_then(|locs| locs.first()) else {
-            return Vec::new();
-        };
-        if !consume_caster_item(encounter, caster_id, WAND_OF_FIREBALLS_NAME) {
-            return Vec::new();
-        }
-
-        let damage = encounter.roll(&Dice::new(8, 6));
-        encounter.log(format!("  wand of fireballs: 8d6 = {} damage", damage));
-
-        const BLAST_RADIUS: isize = 4;
-        let dc: i32 = 15;
-        resolve_burst_save_damage(
-            encounter,
-            caster_id,
-            center,
-            BLAST_RADIUS,
-            AbilityScoreType::Dexterity,
-            dc,
-            damage,
-            DamageType::Fire,
-        )
-    }
-}
-
-pub static USE_WAND_OF_FIREBALLS: UseWandOfFireballs = UseWandOfFireballs {};
+/// Wand of Fireballs: 8d6 fire DEX-save burst. Sits a tier above the
+/// Fireball scroll (6d6) — same shape, bigger pool. 5e RAW: 7 charges
+/// at level 3 (+1 per extra charge); we collapse to a single 8d6 cast
+/// per the engine's charge-less loot model.
+pub static USE_WAND_OF_FIREBALLS: BurstSaveDamageItem = BurstSaveDamageItem {
+    action_name: "use wand of fireballs",
+    action_aliases: &["fireballs", "fireball wand"],
+    item_name: WAND_OF_FIREBALLS_NAME,
+    log_label: "wand of fireballs",
+    dice: Dice::new(8, 6),
+    damage_type: DamageType::Fire,
+    save: AbilityScoreType::Dexterity,
+    dc: 15,
+    radius: 4,
+    reach: 60,
+};
 
 const WAND_OF_LIGHTNING_BOLTS_NAME: &str = "Wand of Lightning Bolts";
 
-/// Use a Wand of Lightning Bolts — single-use 10d6 lightning burst (DEX
-/// save vs DC 15, half on pass). Sits a tier above the
-/// `SCROLL_OF_LIGHTNING_BOLT` (8d6) — same shape, bigger payload.
-/// Mirrors `USE_WAND_OF_FIREBALLS` for the lightning lane. Routes
-/// through `resolve_burst_save_damage` so evasion / Careful Spell /
-/// Heightened Spell shielding all fire through the same chokepoint.
-pub struct UseWandOfLightningBolts {}
-
-impl Action for UseWandOfLightningBolts {
-    fn name(&self) -> &str {
-        "use wand of lightning bolts"
-    }
-
-    fn aliases(&self) -> Vec<&str> {
-        vec!["lightning wand", "lb wand"]
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 2 }
-    }
-
-    fn reach_tiles(&self) -> Option<isize> {
-        // 100 ft = 40 tiles, matching the Lightning Bolt scroll.
-        Some(40)
-    }
-
-    fn requires_los(&self) -> bool {
-        true
-    }
-
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        caster_holds(encounter, caster_id, WAND_OF_LIGHTNING_BOLTS_NAME)
-    }
-
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::actions::action_template::resolve_burst_save_damage;
-        use crate::engine::types::AbilityScoreType;
-
-        let Some(&center) = target_locations.and_then(|locs| locs.first()) else {
-            return Vec::new();
-        };
-        if !consume_caster_item(encounter, caster_id, WAND_OF_LIGHTNING_BOLTS_NAME) {
-            return Vec::new();
-        }
-
-        let damage = encounter.roll(&Dice::new(10, 6));
-        encounter.log(format!("  wand of lightning bolts: 10d6 = {} damage", damage));
-
-        const BLAST_RADIUS: isize = 2;
-        let dc: i32 = 15;
-        resolve_burst_save_damage(
-            encounter,
-            caster_id,
-            center,
-            BLAST_RADIUS,
-            AbilityScoreType::Dexterity,
-            dc,
-            damage,
-            DamageType::Lightning,
-        )
-    }
-}
-
-pub static USE_WAND_OF_LIGHTNING_BOLTS: UseWandOfLightningBolts = UseWandOfLightningBolts {};
+/// Wand of Lightning Bolts: 10d6 lightning DEX-save burst. Sits a tier
+/// above the Lightning Bolt scroll (8d6) — same shape, bigger pool.
+/// Sibling to `USE_WAND_OF_FIREBALLS` for the lightning lane.
+pub static USE_WAND_OF_LIGHTNING_BOLTS: BurstSaveDamageItem = BurstSaveDamageItem {
+    action_name: "use wand of lightning bolts",
+    action_aliases: &["lightning wand", "lb wand"],
+    item_name: WAND_OF_LIGHTNING_BOLTS_NAME,
+    log_label: "wand of lightning bolts",
+    dice: Dice::new(10, 6),
+    damage_type: DamageType::Lightning,
+    save: AbilityScoreType::Dexterity,
+    dc: 15,
+    radius: 2,
+    reach: 40,
+};
