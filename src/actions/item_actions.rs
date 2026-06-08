@@ -1185,3 +1185,257 @@ impl Action for UseWandOfMagicMissiles {
 }
 
 pub static USE_WAND_OF_MAGIC_MISSILES: UseWandOfMagicMissiles = UseWandOfMagicMissiles {};
+
+const POTION_OF_FLYING_NAME: &str = "Potion of Flying";
+const POTION_OF_CLIMBING_NAME: &str = "Potion of Climbing";
+const WAND_OF_FIREBALLS_NAME: &str = "Wand of Fireballs";
+
+/// Drink a Potion of Flying — action; grants the holder the Flying
+/// condition for 10 rounds (≈1 minute RAW, vs the 1-hour RAW timer; we
+/// collapse to combat-scale per the engine's existing potion timer
+/// envelope). Single-use; consumes one Potion of Flying from inventory.
+/// Pairs with the existing Flying condition (which the Fly spell already
+/// installs) so the AC / disadvantage-to-ranged-attackers / speed bump
+/// flows through the same accessors a normal Fly cast does.
+pub struct DrinkPotionOfFlying {}
+
+impl Action for DrinkPotionOfFlying {
+    fn name(&self) -> &str {
+        "drink potion of flying"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fly", "flying"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !caster_holds(encounter, caster_id, POTION_OF_FLYING_NAME) {
+            return false;
+        }
+        // Reject when the holder is already Flying — installing on top
+        // would just refresh the timer and burn the potion for the same
+        // mechanical effect. Mirrors Boots of Speed's "already Hasted"
+        // gate.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.has_condition(crate::conditions::Condition::Flying))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::ApplyCondition;
+        if !consume_caster_item(encounter, caster_id, POTION_OF_FLYING_NAME) {
+            return Vec::new();
+        }
+        let name = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.name().to_string())
+            .unwrap_or_default();
+        encounter.log(format!("{} drinks a potion of flying.", name));
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::Flying,
+            timer: ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static DRINK_POTION_OF_FLYING: DrinkPotionOfFlying = DrinkPotionOfFlying {};
+
+/// Drink a Potion of Climbing — bonus action; grants the holder the
+/// `SpiderClimbing` condition for 10 rounds. Pairs with the existing
+/// Spider Climb spell condition so the +12-tile speed bump flows through
+/// the same accessor. Bonus-action cost (cheaper than the Flying
+/// potion's Action cost) since climbing is a lesser mobility
+/// envelope than full flight.
+pub struct DrinkPotionOfClimbing {}
+
+impl Action for DrinkPotionOfClimbing {
+    fn name(&self) -> &str {
+        "drink potion of climbing"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["climb", "climbing"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !caster_holds(encounter, caster_id, POTION_OF_CLIMBING_NAME) {
+            return false;
+        }
+        // Same "already up" gate as Potion of Flying / Boots of Speed:
+        // re-drinking on top of an active climb refreshes the timer and
+        // wastes the consumable.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.has_condition(crate::conditions::Condition::SpiderClimbing))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::ApplyCondition;
+        if !consume_caster_item(encounter, caster_id, POTION_OF_CLIMBING_NAME) {
+            return Vec::new();
+        }
+        let name = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.name().to_string())
+            .unwrap_or_default();
+        encounter.log(format!("{} drinks a potion of climbing.", name));
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::SpiderClimbing,
+            timer: ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static DRINK_POTION_OF_CLIMBING: DrinkPotionOfClimbing = DrinkPotionOfClimbing {};
+
+/// Use a Wand of Fireballs — single-use 8d6 fire burst. Mirrors the
+/// `READ_FIREBALL_SCROLL` shape (DEX save vs DC 15, halve on pass) but
+/// with a bigger damage pool — the wand sits at the level-4 cast tier
+/// versus the scroll's level-3 baseline. 5e RAW: the wand has 7 charges
+/// and casts at level 3 (+1 per extra charge); we collapse to a single
+/// 8d6 cast for the engine's charge-less loot model. Routes through
+/// `resolve_burst_save_damage` so evasion / Careful Spell / Heightened
+/// Spell shielding all fire through the same chokepoint.
+pub struct UseWandOfFireballs {}
+
+impl Action for UseWandOfFireballs {
+    fn name(&self) -> &str {
+        "use wand of fireballs"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fireballs", "fireball wand"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        // 150 ft = 60 tiles, matching the Fireball scroll.
+        Some(60)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, WAND_OF_FIREBALLS_NAME)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actions::action_template::resolve_burst_save_damage;
+        use crate::engine::types::AbilityScoreType;
+
+        let Some(&center) = target_locations.and_then(|locs| locs.first()) else {
+            return Vec::new();
+        };
+        if !consume_caster_item(encounter, caster_id, WAND_OF_FIREBALLS_NAME) {
+            return Vec::new();
+        }
+
+        let damage = encounter.roll(&Dice::new(8, 6));
+        encounter.log(format!("  wand of fireballs: 8d6 = {} damage", damage));
+
+        const BLAST_RADIUS: isize = 4;
+        let dc: i32 = 15;
+        resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            center,
+            BLAST_RADIUS,
+            AbilityScoreType::Dexterity,
+            dc,
+            damage,
+            DamageType::Fire,
+        )
+    }
+}
+
+pub static USE_WAND_OF_FIREBALLS: UseWandOfFireballs = UseWandOfFireballs {};

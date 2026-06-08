@@ -32085,6 +32085,150 @@ mod tests {
         );
     }
 
+    /// Wand of Fireballs: 8d6 fire burst, DEX save, scroll-style shape
+    /// but with a larger pool. Mirrors the Cone of Cold scroll test
+    /// shape.
+    #[test]
+    fn wand_of_fireballs_damages_burst_and_consumes() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::USE_WAND_OF_FIREBALLS;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::items::item_template::WAND_OF_FIREBALLS;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let z1 = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        let z2 = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(9, 9), 1, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .pickup_item(&WAND_OF_FIREBALLS);
+        let z1_hp = e.actors[&z1].hitpoints();
+        let z2_hp = e.actors[&z2].hitpoints();
+
+        let aei = ActionExecutionInfo::new(
+            &USE_WAND_OF_FIREBALLS,
+            caster,
+            None,
+            Some(vec![Coordinate::new(8, 8)]),
+            None,
+        );
+        assert!(aei.validate(&e), "wand in inventory + LOS to center");
+        e.push_action(aei);
+        e.process_stack();
+
+        let z1_after = e.actors.get(&z1).map(|a| a.hitpoints()).unwrap_or(0);
+        let z2_after = e.actors.get(&z2).map(|a| a.hitpoints()).unwrap_or(0);
+        assert!(
+            z1_after < z1_hp || z2_after < z2_hp,
+            "wand of fireballs should have damaged at least one zombie"
+        );
+        assert!(
+            e.actors[&caster].items().is_empty(),
+            "wand should be consumed on use"
+        );
+    }
+
+    /// Potion of Flying: drinking installs the Flying condition and
+    /// consumes the potion. The condition's timer is 10 rounds.
+    #[test]
+    fn potion_of_flying_installs_flying_and_consumes() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::DRINK_POTION_OF_FLYING;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::POTION_OF_FLYING;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let caster = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .pickup_item(&POTION_OF_FLYING);
+
+        let aei = ActionExecutionInfo::new(&DRINK_POTION_OF_FLYING, caster, None, None, None);
+        assert!(aei.validate(&e), "potion in inventory");
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(
+            e.actors[&caster].has_condition(Condition::Flying),
+            "Flying condition should install after drinking"
+        );
+        assert!(
+            e.actors[&caster].items().is_empty(),
+            "potion should be consumed on use"
+        );
+    }
+
+    /// Potion of Flying: re-drinking while already Flying is rejected
+    /// (the validator gate prevents wasting the consumable).
+    #[test]
+    fn potion_of_flying_rejected_if_already_flying() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::DRINK_POTION_OF_FLYING;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::items::item_template::POTION_OF_FLYING;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let caster = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&caster).unwrap();
+        actor.pickup_item(&POTION_OF_FLYING);
+        actor.add_condition(Condition::Flying, ConditionTimer::Rounds(10));
+
+        let aei = ActionExecutionInfo::new(&DRINK_POTION_OF_FLYING, caster, None, None, None);
+        assert!(
+            !aei.validate(&e),
+            "validator should reject re-drinking when Flying is already up"
+        );
+    }
+
+    /// Potion of Climbing: drinking installs SpiderClimbing and consumes
+    /// the potion. Bonus-action cost.
+    #[test]
+    fn potion_of_climbing_installs_spider_climbing_and_consumes() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::DRINK_POTION_OF_CLIMBING;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::POTION_OF_CLIMBING;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let caster = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .pickup_item(&POTION_OF_CLIMBING);
+
+        let aei = ActionExecutionInfo::new(&DRINK_POTION_OF_CLIMBING, caster, None, None, None);
+        assert!(aei.validate(&e), "potion in inventory");
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(
+            e.actors[&caster].has_condition(Condition::SpiderClimbing),
+            "SpiderClimbing should install after drinking"
+        );
+        assert!(
+            e.actors[&caster].items().is_empty(),
+            "potion should be consumed on use"
+        );
+    }
+
     /// 5e Wild Magic Surge wiring: the `Action::execute` chokepoint
     /// forwards the spell-slot level sniffed off the cost vec into the
     /// surge trigger. We verify the path end-to-end by casting Magic

@@ -519,6 +519,42 @@ pub static WAND_OF_MAGIC_MISSILES: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Wand of Fireballs — single-use 8d6 fire burst (Action, 60-ft range,
+/// 4-tile radius, DEX save vs DC 15 for half). Sits a tier above the
+/// `SCROLL_OF_FIREBALL` (6d6) — same shape, bigger payload. The wand
+/// is consumed after one click; no charges tracked.
+pub static WAND_OF_FIREBALLS: Item = Item {
+    name: "Wand of Fireballs",
+    glyph: 'F',
+    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_FIREBALLS),
+    ..Item::DEFAULTS
+};
+
+/// Potion of Flying — Action; grants the holder the `Flying` condition
+/// for 10 rounds (≈1 minute RAW combat-scaled). Re-uses the existing
+/// Flying condition so the +24-tile speed bump and ranged-attack
+/// deflection flow through the same accessors a normal Fly cast does.
+/// Single-use consumable.
+pub static POTION_OF_FLYING: Item = Item {
+    name: "Potion of Flying",
+    glyph: '^',
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_FLYING),
+    ..Item::DEFAULTS
+};
+
+/// Potion of Climbing — Bonus Action; grants the holder the
+/// `SpiderClimbing` condition for 10 rounds. Cheaper / lesser mobility
+/// envelope than Potion of Flying (Action cost, full flight). Re-uses
+/// the Spider Climb condition so the +12-tile speed bump flows through
+/// the same accessor a normal Spider Climb cast does. Single-use
+/// consumable.
+pub static POTION_OF_CLIMBING: Item = Item {
+    name: "Potion of Climbing",
+    glyph: '*',
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_CLIMBING),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -593,4 +629,12 @@ pub static LOOT_POOL: &[&Item] = &[
     // Missiles' 5-dart payload sits above the 3-dart scroll tier.
     &SCROLL_OF_CONE_OF_COLD,
     &WAND_OF_MAGIC_MISSILES,
+    // Wand of Fireballs sits one tier above SCROLL_OF_FIREBALL: 8d6
+    // versus 6d6, same shape, larger payload.
+    &WAND_OF_FIREBALLS,
+    // Mobility potions — Flying is the premium full-flight envelope,
+    // Climbing is the cheaper bonus-action variant. Single entries each
+    // since mobility buffs are situationally strong (kiting / chasing).
+    &POTION_OF_FLYING,
+    &POTION_OF_CLIMBING,
 ];
