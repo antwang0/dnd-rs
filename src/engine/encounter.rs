@@ -33754,6 +33754,74 @@ mod tests {
         );
     }
 
+    /// Pearl of Power: a caster who has spent a level-1 slot can crush
+    /// the pearl as a bonus action to refund the slot. Single-use — the
+    /// pearl is removed from inventory whether or not the refund lands
+    /// (mirrors the rest of the consumable lane). Verifies the slot
+    /// returns to its template max and the pearl is consumed.
+    #[test]
+    fn pearl_of_power_restores_a_level_one_slot() {
+        use crate::actions::action_template::Action;
+        use crate::actions::item_actions::USE_PEARL_OF_POWER;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::PEARL_OF_POWER;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Spend a level-1 slot and pocket the pearl.
+        let pre = e.actors[&wiz].spell_slot_manager.spell_slots(1);
+        assert!(pre.max_spell_slots > 0, "wizard should have lvl-1 slots");
+        e.actors.get_mut(&wiz).unwrap().spell_slot_manager.consume_spell_slot(1);
+        e.actors.get_mut(&wiz).unwrap().pickup_item(&PEARL_OF_POWER);
+        let after_spend = e.actors[&wiz].spell_slot_manager.spell_slots(1);
+        assert_eq!(after_spend.spell_slots, pre.spell_slots - 1);
+
+        // Use the pearl — bonus action, restores the slot, consumes the item.
+        let action: &dyn Action = &USE_PEARL_OF_POWER;
+        for ef in action.side_effects(&mut e, wiz, None, None, None) {
+            ef.apply(&mut e);
+        }
+        let after = e.actors[&wiz].spell_slot_manager.spell_slots(1);
+        assert_eq!(after.spell_slots, pre.spell_slots, "slot should be restored");
+        assert!(
+            !e.actors[&wiz].has_item_named("Pearl of Power"),
+            "pearl should be consumed on use"
+        );
+    }
+
+    /// Boots of Speed: bonus-action consumable that installs `Hasted`
+    /// for 10 rounds and removes the boots from inventory. Verifies the
+    /// condition installs and the item is consumed.
+    #[test]
+    fn boots_of_speed_install_hasted_and_consume() {
+        use crate::actions::action_template::Action;
+        use crate::actions::item_actions::WEAR_BOOTS_OF_SPEED;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::BOOTS_OF_SPEED;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&fighter).unwrap().pickup_item(&BOOTS_OF_SPEED);
+        assert!(!e.actors[&fighter].has_condition(Condition::Hasted));
+
+        let action: &dyn Action = &WEAR_BOOTS_OF_SPEED;
+        for ef in action.side_effects(&mut e, fighter, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&fighter].has_condition(Condition::Hasted),
+            "boots should install Hasted"
+        );
+        assert!(
+            !e.actors[&fighter].has_item_named("Boots of Speed"),
+            "boots should be consumed on use"
+        );
+    }
+
     /// Seeded sibling of `ei_with_terrain` — same hand-crafted terrain
     /// shape but the encounter's RNG is initialized from `seed` so callers
     /// can sweep seeds for probabilistic assertions while keeping a

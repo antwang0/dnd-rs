@@ -824,3 +824,200 @@ impl Action for ReadCureWoundsScroll {
 }
 
 pub static READ_CURE_WOUNDS_SCROLL: ReadCureWoundsScroll = ReadCureWoundsScroll {};
+
+const PEARL_OF_POWER_NAME: &str = "Pearl of Power";
+const BOOTS_OF_SPEED_NAME: &str = "Boots of Speed";
+
+/// Use a Pearl of Power: spend a bonus action to restore one expended
+/// level-1 spell slot, then consume the pearl. 5e RAW: "as an action,
+/// restore one expended spell slot of level 3 or lower"; we collapse
+/// the slot tier to level-1 since most engine casters lean on the
+/// level-1 slot for their bread-and-butter spells, and bump the
+/// action-economy cost down to a bonus action so a caster can pearl-
+/// up and still spend the slot on the same turn. Single-use: removed
+/// from inventory on hit. Validate rejects the action when no level-1
+/// slot has been spent — burning the pearl on a no-op would waste
+/// the only consumable in the actor's caster lane.
+pub struct UsePearlOfPower {}
+
+impl Action for UsePearlOfPower {
+    fn name(&self) -> &str {
+        "use pearl of power"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pearl", "pop"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !caster_holds(encounter, caster_id, PEARL_OF_POWER_NAME) {
+            return false;
+        }
+        // Reject the use when the actor has no spent level-1 slot to
+        // restore — pearling up to refund a slot they didn't spend is
+        // a no-op and would just burn the consumable. The check folds
+        // through the slot manager so a future "no level-1 slots ever"
+        // caster (e.g. cantrip-only build) is gated the same way.
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        let info = actor.spell_slot_manager.spell_slots(1);
+        info.max_spell_slots > 0 && info.spell_slots < info.max_spell_slots
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if !consume_caster_item(encounter, caster_id, PEARL_OF_POWER_NAME) {
+            return Vec::new();
+        }
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            let name = actor.name().to_string();
+            let restored = actor.spell_slot_manager.restore_spell_slot(1, 1);
+            if restored {
+                encounter.log(format!(
+                    "{} crushes a pearl of power; a level-1 slot returns.",
+                    name
+                ));
+            } else {
+                encounter.log(format!(
+                    "{} crushes a pearl of power — but the slot was already full.",
+                    name
+                ));
+            }
+        }
+        Vec::new()
+    }
+}
+
+pub static USE_PEARL_OF_POWER: UsePearlOfPower = UsePearlOfPower {};
+
+/// Wear (activate) Boots of Speed: bonus action; gain the `Hasted`
+/// condition (+2 AC, advantage on DEX saves, doubled walking speed)
+/// for 10 rounds. Single-use consumable — the boots are "spent" after
+/// one click and removed from inventory. 5e RAW: 10 minutes per long
+/// rest; we cap to combat-scale (10 rounds ≈ 1 minute) and drop the
+/// rest cycle since the engine doesn't model multi-encounter rest.
+/// Re-uses the Haste condition so the AC / DEX-save / speed bundle
+/// flows through the same accessors a normal Haste cast does.
+pub struct WearBootsOfSpeed {}
+
+impl Action for WearBootsOfSpeed {
+    fn name(&self) -> &str {
+        "wear boots of speed"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["boots", "speedboots"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !caster_holds(encounter, caster_id, BOOTS_OF_SPEED_NAME) {
+            return false;
+        }
+        // Reject when the holder is already Hasted — installing on top
+        // would just refresh the timer and burn the boots for the same
+        // mechanical effect. Lets the validator silently no-op the use
+        // until the existing Haste drops.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.has_condition(crate::conditions::Condition::Hasted))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::ApplyCondition;
+        if !consume_caster_item(encounter, caster_id, BOOTS_OF_SPEED_NAME) {
+            return Vec::new();
+        }
+        let name = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.name().to_string())
+            .unwrap_or_default();
+        encounter.log(format!(
+            "{} taps the heels of the boots of speed; everything blurs.",
+            name
+        ));
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::Hasted,
+            timer: ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static WEAR_BOOTS_OF_SPEED: WearBootsOfSpeed = WearBootsOfSpeed {};

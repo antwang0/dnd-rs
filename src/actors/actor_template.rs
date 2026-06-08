@@ -1230,6 +1230,15 @@ impl ActorInstance {
         if condition_resistance {
             amt /= 2;
         }
+        // Item-granted resistance (Brooch of Shielding → force, Boots
+        // of the Winterlands → cold). Honors the same "one halving"
+        // rule — only fires if neither template-level nor condition-
+        // based resistance has already halved the amount. Empty
+        // `damage_resistances` on every loot-pool item makes this a
+        // cheap walk for the common case.
+        if !template_resisted && !condition_resistance && self.item_resistance_to(dt) {
+            amt /= 2;
+        }
         amt
     }
 
@@ -1435,7 +1444,7 @@ impl ActorInstance {
     /// timer; `UntilStartOfNextTurn` is treated as the shortest possible
     /// duration. Returns true if the condition was newly added.
     pub fn add_condition(&mut self, c: Condition, timer: ConditionTimer) -> bool {
-        if self.condition_immunities.contains(&c) || self.dynamic_immunity_to(c) {
+        if self.effectively_immune_to_condition(c) {
             return false;
         }
         let is_new = !self.conditions.contains_key(&c);
@@ -1464,17 +1473,47 @@ impl ActorInstance {
         self.condition_immunities.contains(&c)
     }
 
-    /// Combines template-level (`is_immune_to_condition`) and dynamic
-    /// (`dynamic_immunity_to`) immunity gates. Mirrors the install-side
-    /// gate in `add_condition` — if both bail on installing the
-    /// condition, this helper returns true. Use this from any
-    /// "should I bother targeting them?" prune (AI heuristics, spell
-    /// validators, AoE early-pruning) so dynamic immunities (Halfling
-    /// Brave's Frightened, Fey Ancestry's Charmed / Asleep, Heroic's
-    /// Frightened, MindBlanked's Charmed) are honored alongside the
-    /// static template immunities.
+    /// True if any item the actor is carrying grants immunity to `c`.
+    /// Item-granted immunities (Necklace of Adaptation → Poisoned, Ring
+    /// of Free Action → Paralyzed / Restrained / Grappled) fold in here
+    /// so the install gate doesn't have to know about specific item
+    /// names. Read by `add_condition` and `effectively_immune_to_condition`
+    /// alongside the template / dynamic immunity lanes.
+    pub fn item_immunity_to(&self, c: Condition) -> bool {
+        self.items
+            .iter()
+            .any(|i| i.condition_immunities.contains(&c))
+    }
+
+    /// True if any item the actor is carrying grants resistance to
+    /// damage of type `dt`. Walks the `damage_resistances` slice on each
+    /// carried item — trinkets like the Brooch of Shielding (force) and
+    /// Boots of the Winterlands (cold) fall out without code changes at
+    /// the damage site. Read by `effective_damage` alongside template
+    /// and condition-based resistance, honoring the 5e "one halving"
+    /// stacking rule (item resistance is skipped when another source
+    /// has already halved).
+    pub fn item_resistance_to(&self, dt: DamageType) -> bool {
+        self.items
+            .iter()
+            .any(|i| i.damage_resistances.contains(&dt))
+    }
+
+    /// Combines template-level (`is_immune_to_condition`), dynamic
+    /// (`dynamic_immunity_to`), and item-granted (`item_immunity_to`)
+    /// immunity gates. Mirrors the install-side gate in `add_condition`
+    /// — if all three bail on installing the condition, this helper
+    /// returns true. Use this from any "should I bother targeting them?"
+    /// prune (AI heuristics, spell validators, AoE early-pruning) so
+    /// dynamic immunities (Halfling Brave's Frightened, Fey Ancestry's
+    /// Charmed / Asleep, Heroic's Frightened, MindBlanked's Charmed) and
+    /// trinket immunities (Necklace of Adaptation's Poisoned, Ring of
+    /// Free Action's Paralyzed / Restrained / Grappled) are honored
+    /// alongside the static template immunities.
     pub fn effectively_immune_to_condition(&self, c: Condition) -> bool {
-        self.condition_immunities.contains(&c) || self.dynamic_immunity_to(c)
+        self.condition_immunities.contains(&c)
+            || self.dynamic_immunity_to(c)
+            || self.item_immunity_to(c)
     }
 
     pub fn remove_condition(&mut self, c: Condition) -> bool {
@@ -2590,6 +2629,99 @@ mod tests {
             s.effective_damage(20, DamageType::Fire),
             10,
             "two resistance sources should halve only once (5e stacking rule)"
+        );
+    }
+
+    #[test]
+    fn necklace_of_adaptation_blocks_poisoned() {
+        // Fighter has no template-level poison immunity — a clean
+        // baseline for the necklace's install-gate contribution.
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        assert!(
+            f.add_condition(Condition::Poisoned, ConditionTimer::Rounds(10)),
+            "fighter has no template-level poison immunity"
+        );
+        f.remove_condition(Condition::Poisoned);
+        // Necklace of Adaptation blocks the install.
+        f.pickup_item(&crate::items::item_template::NECKLACE_OF_ADAPTATION);
+        assert!(
+            !f.add_condition(Condition::Poisoned, ConditionTimer::Rounds(10)),
+            "necklace of adaptation should block poison install"
+        );
+        assert!(!f.has_condition(Condition::Poisoned));
+        // Sanity check: the AoE-prune helper agrees.
+        assert!(f.effectively_immune_to_condition(Condition::Poisoned));
+    }
+
+    #[test]
+    fn ring_of_free_action_blocks_paralysis_and_restraint() {
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        f.pickup_item(&crate::items::item_template::RING_OF_FREE_ACTION);
+        assert!(
+            !f.add_condition(Condition::Paralyzed, ConditionTimer::Permanent),
+            "ring should block paralysis"
+        );
+        assert!(
+            !f.add_condition(Condition::Restrained, ConditionTimer::Permanent),
+            "ring should block restraint"
+        );
+        assert!(
+            !f.add_condition(Condition::Grappled, ConditionTimer::Permanent),
+            "ring should block grapple"
+        );
+        // Removing the ring restores normal install behavior.
+        f.remove_item_by_name("Ring of Free Action");
+        assert!(
+            f.add_condition(Condition::Paralyzed, ConditionTimer::Permanent),
+            "without the ring, paralysis installs normally"
+        );
+    }
+
+    #[test]
+    fn stone_of_good_luck_grants_save_and_ac_bonus() {
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        let base_save = f.total_item_bonuses().save;
+        let base_ac = f.total_item_bonuses().ac;
+        f.pickup_item(&crate::items::item_template::STONE_OF_GOOD_LUCK);
+        assert_eq!(f.total_item_bonuses().save, base_save + 1);
+        assert_eq!(f.total_item_bonuses().ac, base_ac + 1);
+    }
+
+    #[test]
+    fn brooch_of_shielding_halves_force_damage() {
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        // Baseline force damage.
+        assert_eq!(f.effective_damage(20, DamageType::Force), 20);
+        f.pickup_item(&crate::items::item_template::BROOCH_OF_SHIELDING);
+        // Brooch halves force damage.
+        assert_eq!(f.effective_damage(20, DamageType::Force), 10);
+        // Other damage types still flow at full.
+        assert_eq!(f.effective_damage(20, DamageType::Slashing), 20);
+    }
+
+    #[test]
+    fn boots_of_the_winterlands_halve_cold_damage() {
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        assert_eq!(f.effective_damage(20, DamageType::Cold), 20);
+        f.pickup_item(&crate::items::item_template::BOOTS_OF_THE_WINTERLANDS);
+        assert_eq!(f.effective_damage(20, DamageType::Cold), 10);
+        // Force damage is unaffected.
+        assert_eq!(f.effective_damage(20, DamageType::Force), 20);
+    }
+
+    #[test]
+    fn item_resistance_respects_one_halving_rule() {
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        // Install a condition-based blanket resistance (Stoneskin).
+        f.add_condition(Condition::DamageResistant, ConditionTimer::Rounds(10));
+        assert_eq!(f.effective_damage(20, DamageType::Force), 10);
+        // Adding the brooch on top must not double-halve — 5e stacking
+        // rule: only one halving applies per damage instance.
+        f.pickup_item(&crate::items::item_template::BROOCH_OF_SHIELDING);
+        assert_eq!(
+            f.effective_damage(20, DamageType::Force),
+            10,
+            "item resistance must not stack with condition resistance"
         );
     }
 }
