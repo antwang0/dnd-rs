@@ -32214,6 +32214,63 @@ mod tests {
         );
     }
 
+    /// Wand of Lightning Bolts: 10d6 lightning burst, DEX save. Same
+    /// shape as the wand of fireballs but larger pool and lightning
+    /// type. Caster is excluded from the burst (the shared helper
+    /// enforces this).
+    #[test]
+    fn wand_of_lightning_bolts_damages_burst_and_consumes() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::USE_WAND_OF_LIGHTNING_BOLTS;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::items::item_template::WAND_OF_LIGHTNING_BOLTS;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let z1 = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .pickup_item(&WAND_OF_LIGHTNING_BOLTS);
+        let z1_hp = e.actors[&z1].hitpoints();
+        let caster_hp = e.actors[&caster].hitpoints();
+
+        let aei = ActionExecutionInfo::new(
+            &USE_WAND_OF_LIGHTNING_BOLTS,
+            caster,
+            None,
+            Some(vec![Coordinate::new(8, 8)]),
+            None,
+        );
+        assert!(aei.validate(&e), "wand in inventory + LOS to center");
+        e.push_action(aei);
+        e.process_stack();
+
+        let z1_after = e.actors.get(&z1).map(|a| a.hitpoints()).unwrap_or(0);
+        assert!(
+            z1_after < z1_hp,
+            "wand of lightning bolts should have damaged the zombie"
+        );
+        // Caster sits outside the 2-tile burst (caster at (2,2), center
+        // at (8,8)) — even without the shared-helper caster-exclusion
+        // they'd be safe. But check that the caster's HP is unchanged
+        // as a sanity check.
+        assert_eq!(
+            e.actors[&caster].hitpoints(),
+            caster_hp,
+            "caster outside the burst takes no damage"
+        );
+        assert!(
+            e.actors[&caster].items().is_empty(),
+            "wand should be consumed on use"
+        );
+    }
+
     /// Potion of Flying: drinking installs the Flying condition and
     /// consumes the potion. The condition's timer is 10 rounds.
     #[test]

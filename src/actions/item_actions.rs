@@ -1441,3 +1441,84 @@ impl Action for UseWandOfFireballs {
 }
 
 pub static USE_WAND_OF_FIREBALLS: UseWandOfFireballs = UseWandOfFireballs {};
+
+const WAND_OF_LIGHTNING_BOLTS_NAME: &str = "Wand of Lightning Bolts";
+
+/// Use a Wand of Lightning Bolts — single-use 10d6 lightning burst (DEX
+/// save vs DC 15, half on pass). Sits a tier above the
+/// `SCROLL_OF_LIGHTNING_BOLT` (8d6) — same shape, bigger payload.
+/// Mirrors `USE_WAND_OF_FIREBALLS` for the lightning lane. Routes
+/// through `resolve_burst_save_damage` so evasion / Careful Spell /
+/// Heightened Spell shielding all fire through the same chokepoint.
+pub struct UseWandOfLightningBolts {}
+
+impl Action for UseWandOfLightningBolts {
+    fn name(&self) -> &str {
+        "use wand of lightning bolts"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["lightning wand", "lb wand"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 2 }
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        // 100 ft = 40 tiles, matching the Lightning Bolt scroll.
+        Some(40)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, WAND_OF_LIGHTNING_BOLTS_NAME)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actions::action_template::resolve_burst_save_damage;
+        use crate::engine::types::AbilityScoreType;
+
+        let Some(&center) = target_locations.and_then(|locs| locs.first()) else {
+            return Vec::new();
+        };
+        if !consume_caster_item(encounter, caster_id, WAND_OF_LIGHTNING_BOLTS_NAME) {
+            return Vec::new();
+        }
+
+        let damage = encounter.roll(&Dice::new(10, 6));
+        encounter.log(format!("  wand of lightning bolts: 10d6 = {} damage", damage));
+
+        const BLAST_RADIUS: isize = 2;
+        let dc: i32 = 15;
+        resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            center,
+            BLAST_RADIUS,
+            AbilityScoreType::Dexterity,
+            dc,
+            damage,
+            DamageType::Lightning,
+        )
+    }
+}
+
+pub static USE_WAND_OF_LIGHTNING_BOLTS: UseWandOfLightningBolts = UseWandOfLightningBolts {};

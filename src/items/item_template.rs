@@ -530,6 +530,17 @@ pub static WAND_OF_FIREBALLS: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Wand of Lightning Bolts — single-use 10d6 lightning burst (Action,
+/// 100-ft range, 2-tile radius, DEX save vs DC 15 for half). Sits a tier
+/// above `SCROLL_OF_LIGHTNING_BOLT` (8d6) — same shape, bigger payload.
+/// Sibling to `WAND_OF_FIREBALLS` for the lightning lane.
+pub static WAND_OF_LIGHTNING_BOLTS: Item = Item {
+    name: "Wand of Lightning Bolts",
+    glyph: 'Z',
+    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_LIGHTNING_BOLTS),
+    ..Item::DEFAULTS
+};
+
 /// Potion of Flying — Action; grants the holder the `Flying` condition
 /// for 10 rounds (≈1 minute RAW combat-scaled). Re-uses the existing
 /// Flying condition so the +24-tile speed bump and ranged-attack
@@ -629,9 +640,10 @@ pub static LOOT_POOL: &[&Item] = &[
     // Missiles' 5-dart payload sits above the 3-dart scroll tier.
     &SCROLL_OF_CONE_OF_COLD,
     &WAND_OF_MAGIC_MISSILES,
-    // Wand of Fireballs sits one tier above SCROLL_OF_FIREBALL: 8d6
-    // versus 6d6, same shape, larger payload.
+    // Wand of Fireballs / Lightning Bolts sit one tier above their
+    // scroll counterparts: 8d6 fire vs 6d6, 10d6 lightning vs 8d6.
     &WAND_OF_FIREBALLS,
+    &WAND_OF_LIGHTNING_BOLTS,
     // Mobility potions — Flying is the premium full-flight envelope,
     // Climbing is the cheaper bonus-action variant. Single entries each
     // since mobility buffs are situationally strong (kiting / chasing).
