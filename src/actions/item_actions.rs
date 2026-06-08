@@ -1190,6 +1190,28 @@ pub static USE_WAND_OF_LIGHTNING_BOLTS: BurstSaveDamageItem = BurstSaveDamageIte
     reach: 40,
 };
 
+const SCROLL_OF_SHATTER_NAME: &str = "Scroll of Shatter";
+
+/// Scroll of Shatter: 3d8 thunder CON-save burst. Fills the "thunder
+/// damage scroll" niche — alongside Fireball (fire), Lightning Bolt
+/// (lightning), and Cone of Cold (cold). 5e Shatter is a level-2 spell;
+/// the scroll fires at its baseline 3d8 RAW. Tight 2-tile radius (vs the
+/// Fireball scroll's 4) keeps the thunder lane in the "small but loud"
+/// envelope.
+pub static READ_SHATTER_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+    action_name: "read shatter scroll",
+    action_aliases: &["shatter", "shatter scroll"],
+    item_name: SCROLL_OF_SHATTER_NAME,
+    log_label: "scroll of shatter",
+    dice: Dice::new(3, 8),
+    damage_type: DamageType::Thunder,
+    save: AbilityScoreType::Constitution,
+    dc: 15,
+    radius: 2,
+    // 60 ft range = 24 tiles, matching the spell's reach.
+    reach: 24,
+};
+
 const WAND_OF_CONE_OF_COLD_NAME: &str = "Wand of Cone of Cold";
 
 /// Wand of Cone of Cold: 10d8 cold CON-save burst. Sits a tier above

@@ -599,6 +599,17 @@ pub static WAND_OF_CONE_OF_COLD: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Scroll of Shatter — single-use 3d8 thunder CON-save burst (Action,
+/// 2-tile radius). Fills the thunder lane in the burst-damage scroll
+/// family — alongside Fireball (fire), Lightning Bolt (lightning), and
+/// Cone of Cold (cold).
+pub static SCROLL_OF_SHATTER: Item = Item {
+    name: "Scroll of Shatter",
+    glyph: 't',
+    on_use: Some(&crate::actions::item_actions::READ_SHATTER_SCROLL),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -693,4 +704,7 @@ pub static LOOT_POOL: &[&Item] = &[
     // Wand of Cone of Cold rounds out the burst-wand trio (fire /
     // lightning / cold), all at the "scroll + 1 tier" pool size.
     &WAND_OF_CONE_OF_COLD,
+    // Scroll of Shatter fills the thunder lane in the scroll family
+    // alongside fire / lightning / cold.
+    &SCROLL_OF_SHATTER,
 ];
