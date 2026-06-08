@@ -2,11 +2,12 @@ use std::collections::HashSet;
 
 use crate::{
     actions::action_template::{Action, TargetingSchema, bonus_action_only, first_target_id},
+    conditions::{Condition, ConditionTimer},
     engine::{
         action_overrides::ActionOverride,
         dice::Dice,
         encounter::EncounterInstance,
-        side_effects::{ApplicableSideEffect, DealDamage, Heal, Resource},
+        side_effects::{ApplicableSideEffect, ApplyCondition, DealDamage, Heal, Resource},
         types::{AbilityScoreType, Coordinate, DamageType},
     },
 };
@@ -130,6 +131,229 @@ impl Action for BurstSaveDamageItem {
     }
 }
 
+/// Config struct for "self-targeted healing potion" consumables — the
+/// shared shape behind Potion of Healing / Potion of Greater Healing
+/// (and any future single-target heal potion). Each static instance
+/// encodes the dice / flat bonus / cost; the `Action` impl below pops
+/// the item from inventory and emits a `Heal` side-effect.
+///
+/// Adding a new heal potion is a one-static declaration — no new
+/// `Action` impl needed.
+pub struct SelfHealItem {
+    /// Player-facing action name (e.g. "drink healing potion").
+    pub action_name: &'static str,
+    /// Picker aliases (e.g. ["potion", "drink"]).
+    pub action_aliases: &'static [&'static str],
+    /// Inventory item name to gate validate / consume on.
+    pub item_name: &'static str,
+    /// Log line prefix (e.g. "potion of healing"). The row reads
+    /// `  {log_label}: {count}d{faces}({raw})+{flat_bonus} = {amount} HP`.
+    pub log_label: &'static str,
+    /// Healing dice (e.g. 2d4, 4d4).
+    pub dice: Dice,
+    /// Flat bonus added to the rolled dice (e.g. +2 for Healing,
+    /// +4 for Greater Healing).
+    pub flat_bonus: i32,
+    /// `true` ⇒ Bonus Action cost; `false` ⇒ Action cost. Greater
+    /// Healing is a bonus action (the wounded martial can drink AND
+    /// swing in one turn); Healing is a full Action.
+    pub bonus_action: bool,
+}
+
+impl Action for SelfHealItem {
+    fn name(&self) -> &str {
+        self.action_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.action_aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn is_heal(&self) -> bool {
+        true
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        if self.bonus_action {
+            bonus_action_only()
+        } else {
+            vec![Resource::Action]
+        }
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, self.item_name)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let raw = encounter.roll(&self.dice) as i32;
+        let amount = (raw + self.flat_bonus).max(1) as u32;
+        // Pop the potion *now* — validate confirmed it was carried; the
+        // consume-first ordering keeps inventory consistent even if the
+        // heal fails (e.g. caster died mid-stack).
+        if !consume_caster_item(encounter, caster_id, self.item_name) {
+            return Vec::new();
+        }
+        encounter.log(format!(
+            "  {}: {}d{}({}){:+} = {} HP",
+            self.log_label, self.dice.count, self.dice.faces, raw, self.flat_bonus, amount
+        ));
+        vec![Box::new(Heal {
+            actor_id: caster_id,
+            amount,
+        })]
+    }
+}
+
+/// Config struct for "self-installs a single condition" consumable items
+/// — the shared shape behind Potion of Invisibility / Potion of Flying /
+/// Potion of Climbing / Boots of Speed. Each static instance encodes the
+/// target condition and timer; the `Action` impl below consumes the item
+/// and queues an `ApplyCondition` side-effect.
+///
+/// Adding a new self-condition consumable is a one-static declaration —
+/// no new `Action` impl needed.
+pub struct SelfConditionItem {
+    /// Player-facing action name (e.g. "drink potion of flying").
+    pub action_name: &'static str,
+    /// Picker aliases (e.g. ["fly", "flying"]).
+    pub action_aliases: &'static [&'static str],
+    /// Inventory item name to gate validate / consume on.
+    pub item_name: &'static str,
+    /// Full log line emitted on use (e.g. "Fighter drinks a potion of
+    /// flying."). The `{actor}` placeholder is substituted with the
+    /// caster's name; no other formatting is performed.
+    pub log_text: &'static str,
+    /// Condition to install on the holder.
+    pub condition: Condition,
+    /// Timer for the install (typically `Rounds(10)` for combat-scale
+    /// potion buffs).
+    pub timer: ConditionTimer,
+    /// `true` ⇒ Bonus Action cost; `false` ⇒ Action cost.
+    pub bonus_action: bool,
+    /// If `true`, the validator rejects when the condition is already
+    /// up — prevents the consumable from being wasted on a no-op timer
+    /// refresh. Use `false` for installs where the player explicitly
+    /// might want to refresh (rare).
+    pub reject_when_active: bool,
+}
+
+impl Action for SelfConditionItem {
+    fn name(&self) -> &str {
+        self.action_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.action_aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        if self.bonus_action {
+            bonus_action_only()
+        } else {
+            vec![Resource::Action]
+        }
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !caster_holds(encounter, caster_id, self.item_name) {
+            return false;
+        }
+        if self.reject_when_active
+            && encounter
+                .actors
+                .get(&caster_id)
+                .is_some_and(|a| a.has_condition(self.condition))
+        {
+            return false;
+        }
+        true
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if !consume_caster_item(encounter, caster_id, self.item_name) {
+            return Vec::new();
+        }
+        let name = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.name().to_string())
+            .unwrap_or_default();
+        encounter.log(self.log_text.replace("{actor}", &name));
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: self.condition,
+            timer: self.timer,
+        })]
+    }
+}
+
 const POTION_OF_HEALING_NAME: &str = "Potion of Healing";
 const POTION_OF_GREATER_HEALING_NAME: &str = "Potion of Greater Healing";
 const ANTITOXIN_NAME: &str = "Antitoxin";
@@ -176,151 +400,32 @@ fn consume_caster_item(
         .is_some_and(|a| a.remove_item_by_name(item_name))
 }
 
-/// Drink a Potion of Healing. Self-targeted, costs an Action, heals
-/// 2d4+2 and removes one potion from inventory. The validate hook
-/// rejects the action if the caster has no potion left (so a duplicate
-/// "drink" entry with zero stock can't fire), and the side-effects
-/// step pops one potion before the Heal applies.
-pub struct DrinkHealingPotion {}
+/// Potion of Healing — 2d4+2 self-heal, Action. Fires through the shared
+/// `SelfHealItem` impl: validate confirms the potion is in inventory,
+/// side-effect rolls dice, pops the potion, and emits a `Heal`.
+pub static DRINK_HEALING_POTION: SelfHealItem = SelfHealItem {
+    action_name: "drink healing potion",
+    action_aliases: &["potion", "drink"],
+    item_name: POTION_OF_HEALING_NAME,
+    log_label: "potion of healing",
+    dice: Dice::new(2, 4),
+    flat_bonus: 2,
+    bonus_action: false,
+};
 
-impl Action for DrinkHealingPotion {
-    fn name(&self) -> &str {
-        "drink healing potion"
-    }
-
-    fn aliases(&self) -> Vec<&str> {
-        vec!["potion", "drink"]
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-
-    fn is_harmful(&self) -> bool {
-        false
-    }
-
-    fn is_heal(&self) -> bool {
-        true
-    }
-
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        caster_holds(encounter, caster_id, POTION_OF_HEALING_NAME)
-    }
-
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let raw = encounter.roll(&Dice::new(2, 4)) as i32;
-        let amount = (raw + 2).max(1) as u32;
-        // Pop the potion *now* — if the action was queued, validate
-        // already confirmed at least one was carried, and consuming
-        // before the Heal side-effect runs keeps inventory consistent
-        // even if the heal somehow fails (e.g. caster died mid-stack).
-        if !consume_caster_item(encounter, caster_id, POTION_OF_HEALING_NAME) {
-            return Vec::new();
-        }
-        encounter.log(format!(
-            "  potion of healing: 2d4({}){:+} = {} HP",
-            raw, 2, amount
-        ));
-        vec![Box::new(Heal {
-            actor_id: caster_id,
-            amount,
-        })]
-    }
-}
-
-pub static DRINK_HEALING_POTION: DrinkHealingPotion = DrinkHealingPotion {};
-
-/// Drink a Potion of Greater Healing. Self-targeted, costs an Action,
-/// heals 4d4+4. Same lifecycle as the standard healing potion (validate
-/// requires the item in inventory; remove on use).
-pub struct DrinkGreaterHealingPotion {}
-
-impl Action for DrinkGreaterHealingPotion {
-    fn name(&self) -> &str {
-        "drink greater healing potion"
-    }
-
-    fn aliases(&self) -> Vec<&str> {
-        vec!["potion+", "drink+"]
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-
-    fn is_harmful(&self) -> bool {
-        false
-    }
-
-    fn is_heal(&self) -> bool {
-        true
-    }
-
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        // Greater Healing is a bonus action — distinct from the regular
-        // Healing Potion's full Action cost. Lets a wounded martial drink
-        // and still swing in the same turn.
-        vec![Resource::BonusAction]
-    }
-
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        caster_holds(encounter, caster_id, POTION_OF_GREATER_HEALING_NAME)
-    }
-
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let raw = encounter.roll(&Dice::new(4, 4)) as i32;
-        let amount = (raw + 4).max(1) as u32;
-        if !consume_caster_item(encounter, caster_id, POTION_OF_GREATER_HEALING_NAME) {
-            return Vec::new();
-        }
-        encounter.log(format!(
-            "  potion of greater healing: 4d4({})+4 = {} HP",
-            raw, amount
-        ));
-        vec![Box::new(Heal {
-            actor_id: caster_id,
-            amount,
-        })]
-    }
-}
-
-pub static DRINK_GREATER_HEALING_POTION: DrinkGreaterHealingPotion = DrinkGreaterHealingPotion {};
+/// Potion of Greater Healing — 4d4+4 self-heal, Bonus Action. Same
+/// shape as the regular healing potion but a bigger pool and cheaper
+/// action-economy cost (a wounded martial can drink AND swing on the
+/// same turn).
+pub static DRINK_GREATER_HEALING_POTION: SelfHealItem = SelfHealItem {
+    action_name: "drink greater healing potion",
+    action_aliases: &["potion+", "drink+"],
+    item_name: POTION_OF_GREATER_HEALING_NAME,
+    log_label: "potion of greater healing",
+    dice: Dice::new(4, 4),
+    flat_bonus: 4,
+    bonus_action: true,
+};
 
 /// Scroll of Fireball: 6d6 fire DEX-save burst centered on a target tile.
 /// Fires through the shared `BurstSaveDamageItem` impl — see that struct
@@ -636,74 +741,18 @@ impl Action for DrinkPotionOfHeroism {
 
 pub static DRINK_POTION_OF_HEROISM: DrinkPotionOfHeroism = DrinkPotionOfHeroism {};
 
-/// Drink a Potion of Invisibility: action; gain the Invisible condition
-/// for 10 rounds (a flat duration close to RAW's "1 hour or until you
-/// attack/cast"). The Invisible condition gives the holder advantage on
-/// their next attack and imposes disadvantage on attackers, with the
-/// flag dropping on attack via the standard `breaks_on_attack`
-/// concentration-style hook (we use a Rounds timer here since the
-/// potion isn't a concentration spell — the attack-clear semantics
-/// live elsewhere for spell Invisibility). Single-use; consumes one
-/// Potion of Invisibility from inventory.
-pub struct DrinkPotionOfInvisibility {}
-
-impl Action for DrinkPotionOfInvisibility {
-    fn name(&self) -> &str {
-        "drink potion of invisibility"
-    }
-
-    fn aliases(&self) -> Vec<&str> {
-        vec!["invisibility", "invis"]
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-
-    fn is_harmful(&self) -> bool {
-        false
-    }
-
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        caster_holds(encounter, caster_id, POTION_OF_INVISIBILITY_NAME)
-    }
-
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::conditions::{Condition, ConditionTimer};
-        use crate::engine::side_effects::ApplyCondition;
-        if !consume_caster_item(encounter, caster_id, POTION_OF_INVISIBILITY_NAME) {
-            return Vec::new();
-        }
-        let name = encounter
-            .actors
-            .get(&caster_id)
-            .map(|a| a.name().to_string())
-            .unwrap_or_default();
-        encounter.log(format!("{} drinks a potion of invisibility.", name));
-        vec![Box::new(ApplyCondition {
-            actor_id: caster_id,
-            condition: Condition::Invisible,
-            timer: ConditionTimer::Rounds(10),
-        })]
-    }
-}
-
-pub static DRINK_POTION_OF_INVISIBILITY: DrinkPotionOfInvisibility =
-    DrinkPotionOfInvisibility {};
+/// Potion of Invisibility — Action; installs the Invisible condition for
+/// 10 rounds. Fires through the shared `SelfConditionItem` impl.
+pub static DRINK_POTION_OF_INVISIBILITY: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of invisibility",
+    action_aliases: &["invisibility", "invis"],
+    item_name: POTION_OF_INVISIBILITY_NAME,
+    log_text: "{actor} drinks a potion of invisibility.",
+    condition: Condition::Invisible,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    reject_when_active: false,
+};
 
 const SCROLL_OF_LIGHTNING_BOLT_NAME: &str = "Scroll of Lightning Bolt";
 
@@ -920,100 +969,21 @@ impl Action for UsePearlOfPower {
 
 pub static USE_PEARL_OF_POWER: UsePearlOfPower = UsePearlOfPower {};
 
-/// Wear (activate) Boots of Speed: bonus action; gain the `Hasted`
-/// condition (+2 AC, advantage on DEX saves, doubled walking speed)
-/// for 10 rounds. Single-use consumable — the boots are "spent" after
-/// one click and removed from inventory. 5e RAW: 10 minutes per long
-/// rest; we cap to combat-scale (10 rounds ≈ 1 minute) and drop the
-/// rest cycle since the engine doesn't model multi-encounter rest.
-/// Re-uses the Haste condition so the AC / DEX-save / speed bundle
-/// flows through the same accessors a normal Haste cast does.
-pub struct WearBootsOfSpeed {}
-
-impl Action for WearBootsOfSpeed {
-    fn name(&self) -> &str {
-        "wear boots of speed"
-    }
-
-    fn aliases(&self) -> Vec<&str> {
-        vec!["boots", "speedboots"]
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-
-    fn is_harmful(&self) -> bool {
-        false
-    }
-
-    fn deals_damage(&self) -> bool {
-        false
-    }
-
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        bonus_action_only()
-    }
-
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        if !caster_holds(encounter, caster_id, BOOTS_OF_SPEED_NAME) {
-            return false;
-        }
-        // Reject when the holder is already Hasted — installing on top
-        // would just refresh the timer and burn the boots for the same
-        // mechanical effect. Lets the validator silently no-op the use
-        // until the existing Haste drops.
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| !a.has_condition(crate::conditions::Condition::Hasted))
-    }
-
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::conditions::{Condition, ConditionTimer};
-        use crate::engine::side_effects::ApplyCondition;
-        if !consume_caster_item(encounter, caster_id, BOOTS_OF_SPEED_NAME) {
-            return Vec::new();
-        }
-        let name = encounter
-            .actors
-            .get(&caster_id)
-            .map(|a| a.name().to_string())
-            .unwrap_or_default();
-        encounter.log(format!(
-            "{} taps the heels of the boots of speed; everything blurs.",
-            name
-        ));
-        vec![Box::new(ApplyCondition {
-            actor_id: caster_id,
-            condition: Condition::Hasted,
-            timer: ConditionTimer::Rounds(10),
-        })]
-    }
-}
-
-pub static WEAR_BOOTS_OF_SPEED: WearBootsOfSpeed = WearBootsOfSpeed {};
+/// Boots of Speed — Bonus Action; installs the `Hasted` condition for 10
+/// rounds (+2 AC, advantage on DEX saves, doubled walking speed). Single-
+/// use consumable. Re-uses the Haste condition so the AC / DEX-save /
+/// speed bundle flows through the same accessors a normal Haste cast
+/// does. Fires through the shared `SelfConditionItem` impl.
+pub static WEAR_BOOTS_OF_SPEED: SelfConditionItem = SelfConditionItem {
+    action_name: "wear boots of speed",
+    action_aliases: &["boots", "speedboots"],
+    item_name: BOOTS_OF_SPEED_NAME,
+    log_text: "{actor} taps the heels of the boots of speed; everything blurs.",
+    condition: Condition::Hasted,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: true,
+    reject_when_active: true,
+};
 
 const SCROLL_OF_CONE_OF_COLD_NAME: &str = "Scroll of Cone of Cold";
 const WAND_OF_MAGIC_MISSILES_NAME: &str = "Wand of Magic Missiles";
@@ -1120,174 +1090,34 @@ const POTION_OF_FLYING_NAME: &str = "Potion of Flying";
 const POTION_OF_CLIMBING_NAME: &str = "Potion of Climbing";
 const WAND_OF_FIREBALLS_NAME: &str = "Wand of Fireballs";
 
-/// Drink a Potion of Flying — action; grants the holder the Flying
-/// condition for 10 rounds (≈1 minute RAW, vs the 1-hour RAW timer; we
-/// collapse to combat-scale per the engine's existing potion timer
-/// envelope). Single-use; consumes one Potion of Flying from inventory.
-/// Pairs with the existing Flying condition (which the Fly spell already
-/// installs) so the AC / disadvantage-to-ranged-attackers / speed bump
-/// flows through the same accessors a normal Fly cast does.
-pub struct DrinkPotionOfFlying {}
+/// Potion of Flying — Action; installs `Flying` for 10 rounds. Re-uses
+/// the spell-side Flying condition (AC / disadvantage-to-ranged-attackers
+/// / speed bump). Rejects re-drink when already flying so the consumable
+/// isn't burned on a no-op timer refresh.
+pub static DRINK_POTION_OF_FLYING: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of flying",
+    action_aliases: &["fly", "flying"],
+    item_name: POTION_OF_FLYING_NAME,
+    log_text: "{actor} drinks a potion of flying.",
+    condition: Condition::Flying,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    reject_when_active: true,
+};
 
-impl Action for DrinkPotionOfFlying {
-    fn name(&self) -> &str {
-        "drink potion of flying"
-    }
-
-    fn aliases(&self) -> Vec<&str> {
-        vec!["fly", "flying"]
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-
-    fn is_harmful(&self) -> bool {
-        false
-    }
-
-    fn deals_damage(&self) -> bool {
-        false
-    }
-
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        if !caster_holds(encounter, caster_id, POTION_OF_FLYING_NAME) {
-            return false;
-        }
-        // Reject when the holder is already Flying — installing on top
-        // would just refresh the timer and burn the potion for the same
-        // mechanical effect. Mirrors Boots of Speed's "already Hasted"
-        // gate.
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| !a.has_condition(crate::conditions::Condition::Flying))
-    }
-
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::conditions::{Condition, ConditionTimer};
-        use crate::engine::side_effects::ApplyCondition;
-        if !consume_caster_item(encounter, caster_id, POTION_OF_FLYING_NAME) {
-            return Vec::new();
-        }
-        let name = encounter
-            .actors
-            .get(&caster_id)
-            .map(|a| a.name().to_string())
-            .unwrap_or_default();
-        encounter.log(format!("{} drinks a potion of flying.", name));
-        vec![Box::new(ApplyCondition {
-            actor_id: caster_id,
-            condition: Condition::Flying,
-            timer: ConditionTimer::Rounds(10),
-        })]
-    }
-}
-
-pub static DRINK_POTION_OF_FLYING: DrinkPotionOfFlying = DrinkPotionOfFlying {};
-
-/// Drink a Potion of Climbing — bonus action; grants the holder the
-/// `SpiderClimbing` condition for 10 rounds. Pairs with the existing
-/// Spider Climb spell condition so the +12-tile speed bump flows through
-/// the same accessor. Bonus-action cost (cheaper than the Flying
-/// potion's Action cost) since climbing is a lesser mobility
-/// envelope than full flight.
-pub struct DrinkPotionOfClimbing {}
-
-impl Action for DrinkPotionOfClimbing {
-    fn name(&self) -> &str {
-        "drink potion of climbing"
-    }
-
-    fn aliases(&self) -> Vec<&str> {
-        vec!["climb", "climbing"]
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-
-    fn is_harmful(&self) -> bool {
-        false
-    }
-
-    fn deals_damage(&self) -> bool {
-        false
-    }
-
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        bonus_action_only()
-    }
-
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        if !caster_holds(encounter, caster_id, POTION_OF_CLIMBING_NAME) {
-            return false;
-        }
-        // Same "already up" gate as Potion of Flying / Boots of Speed:
-        // re-drinking on top of an active climb refreshes the timer and
-        // wastes the consumable.
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| !a.has_condition(crate::conditions::Condition::SpiderClimbing))
-    }
-
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::conditions::{Condition, ConditionTimer};
-        use crate::engine::side_effects::ApplyCondition;
-        if !consume_caster_item(encounter, caster_id, POTION_OF_CLIMBING_NAME) {
-            return Vec::new();
-        }
-        let name = encounter
-            .actors
-            .get(&caster_id)
-            .map(|a| a.name().to_string())
-            .unwrap_or_default();
-        encounter.log(format!("{} drinks a potion of climbing.", name));
-        vec![Box::new(ApplyCondition {
-            actor_id: caster_id,
-            condition: Condition::SpiderClimbing,
-            timer: ConditionTimer::Rounds(10),
-        })]
-    }
-}
-
-pub static DRINK_POTION_OF_CLIMBING: DrinkPotionOfClimbing = DrinkPotionOfClimbing {};
+/// Potion of Climbing — Bonus Action; installs `SpiderClimbing` for 10
+/// rounds. Cheaper / lesser mobility envelope than Potion of Flying.
+/// Re-uses the Spider Climb spell condition.
+pub static DRINK_POTION_OF_CLIMBING: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of climbing",
+    action_aliases: &["climb", "climbing"],
+    item_name: POTION_OF_CLIMBING_NAME,
+    log_text: "{actor} drinks a potion of climbing.",
+    condition: Condition::SpiderClimbing,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: true,
+    reject_when_active: true,
+};
 
 /// Wand of Fireballs: 8d6 fire DEX-save burst. Sits a tier above the
 /// Fireball scroll (6d6) — same shape, bigger pool. 5e RAW: 7 charges
