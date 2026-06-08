@@ -32271,6 +32271,136 @@ mod tests {
         );
     }
 
+    /// Potion of Superior Healing: 8d4+8 self-heal, Action cost. Tops
+    /// the healing-potion tier. Mirrors the Greater Healing test shape.
+    #[test]
+    fn potion_of_superior_healing_heals_full_pool() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::DRINK_SUPERIOR_HEALING_POTION;
+        use crate::items::item_template::POTION_OF_SUPERIOR_HEALING;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(2, 2),
+                0,
+                0,
+            )
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        let max = actor.max_hitpoints();
+        actor.take_damage(max - 1);
+        actor.pickup_item(&POTION_OF_SUPERIOR_HEALING);
+        assert_eq!(e.actors[&id].hitpoints(), 1);
+
+        let aei =
+            ActionExecutionInfo::new(&DRINK_SUPERIOR_HEALING_POTION, id, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+
+        let after = e.actors[&id].hitpoints();
+        // 8d4 lands in 8..=32, +8 = 16..=40. Even the floor of 16 is well
+        // above the Healing potion's 4..=10. Assert a strict lower bound
+        // that beats the Greater Healing tier (4d4+4 = 8..=20).
+        assert!(
+            after >= 1 + 16,
+            "superior healing should heal at least 16 HP (got {} → {})",
+            1,
+            after
+        );
+        assert!(
+            e.actors[&id].items().is_empty(),
+            "potion should be consumed"
+        );
+    }
+
+    /// Potion of Stoneskin: installs `DamageResistant` for 10 rounds
+    /// (halves all incoming damage). Mirrors the Stoneskin spell envelope.
+    #[test]
+    fn potion_of_stoneskin_installs_damage_resistant_and_consumes() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::DRINK_POTION_OF_STONESKIN;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::POTION_OF_STONESKIN;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let caster = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .pickup_item(&POTION_OF_STONESKIN);
+
+        // Before: 20 fire damage lands at full.
+        assert_eq!(e.actors[&caster].effective_damage(20, DamageType::Fire), 20);
+
+        let aei = ActionExecutionInfo::new(&DRINK_POTION_OF_STONESKIN, caster, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(
+            e.actors[&caster].has_condition(Condition::DamageResistant),
+            "DamageResistant should install after drinking"
+        );
+        // After: same 20 fire damage halves to 10.
+        assert_eq!(e.actors[&caster].effective_damage(20, DamageType::Fire), 10);
+        assert!(
+            e.actors[&caster].items().is_empty(),
+            "potion should be consumed"
+        );
+    }
+
+    /// Wand of Cone of Cold: 10d8 cold CON-save burst. Same shape as
+    /// the cone-of-cold scroll but a larger pool. Mirrors the wand of
+    /// fireballs / lightning bolts test envelope.
+    #[test]
+    fn wand_of_cone_of_cold_damages_burst_and_consumes() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::USE_WAND_OF_CONE_OF_COLD;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::items::item_template::WAND_OF_CONE_OF_COLD;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let z1 = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .pickup_item(&WAND_OF_CONE_OF_COLD);
+        let z1_hp = e.actors[&z1].hitpoints();
+
+        let aei = ActionExecutionInfo::new(
+            &USE_WAND_OF_CONE_OF_COLD,
+            caster,
+            None,
+            Some(vec![Coordinate::new(8, 8)]),
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+
+        let z1_after = e.actors.get(&z1).map(|a| a.hitpoints()).unwrap_or(0);
+        assert!(
+            z1_after < z1_hp,
+            "wand of cone of cold should damage the zombie"
+        );
+        assert!(
+            e.actors[&caster].items().is_empty(),
+            "wand should be consumed"
+        );
+    }
+
     /// Potion of Flying: drinking installs the Flying condition and
     /// consumes the potion. The condition's timer is 10 rounds.
     #[test]

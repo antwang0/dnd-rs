@@ -566,6 +566,39 @@ pub static POTION_OF_CLIMBING: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Potion of Superior Healing — Action; 8d4+8 self-heal. Top of the
+/// healing-potion tier: Healing (2d4+2) → Greater (4d4+4) → Superior
+/// (8d4+8). 5e RAW also has a Supreme (10d4+20) tier — we stop at
+/// Superior for the loot pool. Single-use consumable.
+pub static POTION_OF_SUPERIOR_HEALING: Item = Item {
+    name: "Potion of Superior Healing",
+    glyph: 'X',
+    on_use: Some(&crate::actions::item_actions::DRINK_SUPERIOR_HEALING_POTION),
+    ..Item::DEFAULTS
+};
+
+/// Potion of Stoneskin — Action; installs `DamageResistant` for 10
+/// rounds (halve all incoming damage). Mirrors the Stoneskin spell's
+/// envelope (the spell installs the same condition). Single-use
+/// consumable.
+pub static POTION_OF_STONESKIN: Item = Item {
+    name: "Potion of Stoneskin",
+    glyph: 'T',
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_STONESKIN),
+    ..Item::DEFAULTS
+};
+
+/// Wand of Cone of Cold — single-use 10d8 cold CON-save burst (Action,
+/// 6-tile radius). Sits a tier above `SCROLL_OF_CONE_OF_COLD` (8d8) —
+/// same shape, bigger pool. Top-of-pool burst-wand entry alongside the
+/// fire / lightning wand siblings.
+pub static WAND_OF_CONE_OF_COLD: Item = Item {
+    name: "Wand of Cone of Cold",
+    glyph: 'Q',
+    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_CONE_OF_COLD),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -649,4 +682,15 @@ pub static LOOT_POOL: &[&Item] = &[
     // since mobility buffs are situationally strong (kiting / chasing).
     &POTION_OF_FLYING,
     &POTION_OF_CLIMBING,
+    // Superior Healing — top-tier consumable heal. Single entry weights
+    // it below the regular Potion of Healing (3 entries) — it's a
+    // premium drop.
+    &POTION_OF_SUPERIOR_HEALING,
+    // Stoneskin — premium defensive consumable; halves all damage for
+    // 10 rounds. Single entry — same tier as the premium passive
+    // trinkets.
+    &POTION_OF_STONESKIN,
+    // Wand of Cone of Cold rounds out the burst-wand trio (fire /
+    // lightning / cold), all at the "scroll + 1 tier" pool size.
+    &WAND_OF_CONE_OF_COLD,
 ];

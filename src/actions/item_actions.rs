@@ -754,6 +754,42 @@ pub static DRINK_POTION_OF_INVISIBILITY: SelfConditionItem = SelfConditionItem {
     reject_when_active: false,
 };
 
+const POTION_OF_SUPERIOR_HEALING_NAME: &str = "Potion of Superior Healing";
+const POTION_OF_STONESKIN_NAME: &str = "Potion of Stoneskin";
+
+/// Potion of Superior Healing — 8d4+8 self-heal, Action. Top of the
+/// healing-potion tier in this engine (Healing 2d4+2, Greater 4d4+4,
+/// Superior 8d4+8). 5e RAW has a 10d4+20 Supreme tier above this; we
+/// stop at Superior for the loot pool. Bonus-action cost would
+/// trivialize action-economy at this payload tier, so the Superior
+/// variant stays at full Action.
+pub static DRINK_SUPERIOR_HEALING_POTION: SelfHealItem = SelfHealItem {
+    action_name: "drink superior healing potion",
+    action_aliases: &["potion++", "drink++"],
+    item_name: POTION_OF_SUPERIOR_HEALING_NAME,
+    log_label: "potion of superior healing",
+    dice: Dice::new(8, 4),
+    flat_bonus: 8,
+    bonus_action: false,
+};
+
+/// Potion of Stoneskin — Action; installs `DamageResistant` for 10
+/// rounds (halve all incoming damage). 5e RAW: the Stoneskin spell is
+/// resistant to bludgeoning / piercing / slashing only; we model via the
+/// engine's blanket `DamageResistant` condition (the same one Stoneskin
+/// the spell installs) so the potion delivers the spell's exact
+/// envelope. Single-use; rejects re-drink when the buff is already up.
+pub static DRINK_POTION_OF_STONESKIN: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of stoneskin",
+    action_aliases: &["stoneskin", "stone"],
+    item_name: POTION_OF_STONESKIN_NAME,
+    log_text: "{actor} drinks a potion of stoneskin; their skin hardens.",
+    condition: Condition::DamageResistant,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    reject_when_active: true,
+};
+
 const SCROLL_OF_LIGHTNING_BOLT_NAME: &str = "Scroll of Lightning Bolt";
 
 /// Scroll of Lightning Bolt: 8d6 lightning DEX-save burst. Tighter
@@ -1152,4 +1188,24 @@ pub static USE_WAND_OF_LIGHTNING_BOLTS: BurstSaveDamageItem = BurstSaveDamageIte
     dc: 15,
     radius: 2,
     reach: 40,
+};
+
+const WAND_OF_CONE_OF_COLD_NAME: &str = "Wand of Cone of Cold";
+
+/// Wand of Cone of Cold: 10d8 cold CON-save burst. Sits a tier above
+/// the Cone of Cold scroll (8d8) — same shape, bigger pool. Top-of-pool
+/// burst-wand entry alongside Wand of Fireballs (8d6 fire) and Wand of
+/// Lightning Bolts (10d6 lightning). Mirrors `READ_CONE_OF_COLD_SCROLL`'s
+/// CON-save / 6-tile burst footprint.
+pub static USE_WAND_OF_CONE_OF_COLD: BurstSaveDamageItem = BurstSaveDamageItem {
+    action_name: "use wand of cone of cold",
+    action_aliases: &["coc wand", "cone wand"],
+    item_name: WAND_OF_CONE_OF_COLD_NAME,
+    log_label: "wand of cone of cold",
+    dice: Dice::new(10, 8),
+    damage_type: DamageType::Cold,
+    save: AbilityScoreType::Constitution,
+    dc: 15,
+    radius: 6,
+    reach: 24,
 };
