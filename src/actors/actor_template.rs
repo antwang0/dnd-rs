@@ -1208,6 +1208,14 @@ impl ActorInstance {
         if dt == DamageType::Psychic && self.has_condition(Condition::MindBlanked) {
             return 0;
         }
+        // Item-granted immunity (Periapt of Proof against Poison →
+        // poison, Ring of Mind Shielding → psychic). Folded in next to
+        // the template / condition immunity sources above — no "one
+        // halving" stacking concern since immunity short-circuits the
+        // pipeline before any resistance roll fires.
+        if self.item_immunity_to_damage(dt) {
+            return 0;
+        }
         // 5e Dwarven Resilience: resistance to poison damage. Folds into
         // the same template-resistance lane below so the 5e "only one
         // halving" rule still holds when a creature has resilience AND
@@ -1497,6 +1505,20 @@ impl ActorInstance {
         self.items
             .iter()
             .any(|i| i.damage_resistances.contains(&dt))
+    }
+
+    /// True if any item the actor is carrying grants outright immunity
+    /// to damage of type `dt`. Walks the `damage_immunities` slice on
+    /// each carried item — trinkets like the Periapt of Proof against
+    /// Poison (poison) and Ring of Mind Shielding (psychic) zero
+    /// incoming damage through `effective_damage` without code changes
+    /// at the damage site. Immunity wins over everything (no "one
+    /// halving" stacking concern), so this fires before resistance
+    /// rolls.
+    pub fn item_immunity_to_damage(&self, dt: DamageType) -> bool {
+        self.items
+            .iter()
+            .any(|i| i.damage_immunities.contains(&dt))
     }
 
     /// Combines template-level (`is_immune_to_condition`), dynamic
@@ -2707,6 +2729,77 @@ mod tests {
         assert_eq!(f.effective_damage(20, DamageType::Cold), 10);
         // Force damage is unaffected.
         assert_eq!(f.effective_damage(20, DamageType::Force), 20);
+    }
+
+    #[test]
+    fn periapt_of_proof_against_poison_zeros_damage_and_blocks_condition() {
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        // Baseline: fighter has no template-level poison immunity.
+        assert_eq!(f.effective_damage(20, DamageType::Poison), 20);
+        assert!(
+            f.add_condition(Condition::Poisoned, ConditionTimer::Rounds(10)),
+            "fighter has no template-level poison immunity"
+        );
+        f.remove_condition(Condition::Poisoned);
+        // Periapt zeroes poison damage AND blocks the Poisoned install
+        // in one trinket — both lanes wired through the new fields.
+        f.pickup_item(&crate::items::item_template::PERIAPT_OF_PROOF_AGAINST_POISON);
+        assert_eq!(
+            f.effective_damage(20, DamageType::Poison),
+            0,
+            "periapt should zero poison damage"
+        );
+        assert!(
+            !f.add_condition(Condition::Poisoned, ConditionTimer::Rounds(10)),
+            "periapt should block the Poisoned install"
+        );
+        // Other damage types still flow at full.
+        assert_eq!(f.effective_damage(20, DamageType::Slashing), 20);
+        assert!(f.effectively_immune_to_condition(Condition::Poisoned));
+    }
+
+    #[test]
+    fn ring_of_mind_shielding_zeros_psychic_and_blocks_charm() {
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        assert_eq!(f.effective_damage(20, DamageType::Psychic), 20);
+        f.pickup_item(&crate::items::item_template::RING_OF_MIND_SHIELDING);
+        assert_eq!(
+            f.effective_damage(20, DamageType::Psychic),
+            0,
+            "ring of mind shielding should zero psychic damage"
+        );
+        assert!(
+            !f.add_condition(Condition::Charmed, ConditionTimer::Rounds(10)),
+            "ring of mind shielding should block the Charmed install"
+        );
+        // Frightened still installs — the ring guards the Charmed lane
+        // only, not the broader "mental" cohort.
+        assert!(f.add_condition(Condition::Frightened, ConditionTimer::Rounds(10)));
+    }
+
+    #[test]
+    fn item_immunity_short_circuits_resistance_lane() {
+        // 5e: immunity zeroes damage outright. Even with a condition-
+        // based resistance source active, the immunity lane wins and
+        // the resistance halving never runs (no compound /2/0 path).
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        f.add_condition(Condition::DamageResistant, ConditionTimer::Rounds(10));
+        f.pickup_item(&crate::items::item_template::PERIAPT_OF_PROOF_AGAINST_POISON);
+        assert_eq!(
+            f.effective_damage(20, DamageType::Poison),
+            0,
+            "item immunity should short-circuit before resistance halving"
+        );
+    }
+
+    #[test]
+    fn robe_of_the_archmagi_grants_ac_and_save_bonus() {
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        let base_save = f.total_item_bonuses().save;
+        let base_ac = f.total_item_bonuses().ac;
+        f.pickup_item(&crate::items::item_template::ROBE_OF_THE_ARCHMAGI);
+        assert_eq!(f.total_item_bonuses().save, base_save + 2);
+        assert_eq!(f.total_item_bonuses().ac, base_ac + 2);
     }
 
     #[test]

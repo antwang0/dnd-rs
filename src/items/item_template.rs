@@ -62,6 +62,14 @@ pub struct Item {
     /// re-halve damage that's already been halved by a template or
     /// condition source. Empty for items without typed resistance.
     pub damage_resistances: &'static [crate::engine::types::DamageType],
+    /// Damage types the wearer is fully immune to while carrying this
+    /// item. Folded into `ActorInstance::effective_damage` so trinkets
+    /// like the Periapt of Proof against Poison (poison-immune) zero
+    /// incoming damage through the same lane that already handles
+    /// template-level immunity. Immunity wins over everything: an item
+    /// immunity short-circuits the damage pipeline before resistance /
+    /// vulnerability rolls fire. Empty for items without typed immunity.
+    pub damage_immunities: &'static [crate::engine::types::DamageType],
 }
 
 pub static RING_OF_PROTECTION: Item = Item {
@@ -76,6 +84,7 @@ pub static RING_OF_PROTECTION: Item = Item {
     on_use: None,
     condition_immunities: &[],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 pub static BOOTS_OF_STRIDING: Item = Item {
@@ -90,6 +99,7 @@ pub static BOOTS_OF_STRIDING: Item = Item {
     on_use: None,
     condition_immunities: &[],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 pub static CLOAK_OF_RESISTANCE: Item = Item {
@@ -104,6 +114,7 @@ pub static CLOAK_OF_RESISTANCE: Item = Item {
     on_use: None,
     condition_immunities: &[],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 pub static AMULET_OF_HEALTH: Item = Item {
@@ -118,6 +129,7 @@ pub static AMULET_OF_HEALTH: Item = Item {
     on_use: None,
     condition_immunities: &[],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 /// Headband of Insight — minor caster-flavor trinket. +1 save bonus,
@@ -135,6 +147,7 @@ pub static HEADBAND_OF_INSIGHT: Item = Item {
     on_use: None,
     condition_immunities: &[],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 /// Bracers of Defense — light AC bump. Cheaper loot than Ring of
@@ -152,6 +165,7 @@ pub static BRACERS_OF_DEFENSE: Item = Item {
     on_use: None,
     condition_immunities: &[],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 pub static POTION_OF_HEALING: Item = Item {
@@ -166,6 +180,7 @@ pub static POTION_OF_HEALING: Item = Item {
     on_use: Some(&crate::actions::item_actions::DRINK_HEALING_POTION),
     condition_immunities: &[],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 pub static POTION_OF_GREATER_HEALING: Item = Item {
@@ -180,6 +195,7 @@ pub static POTION_OF_GREATER_HEALING: Item = Item {
     on_use: Some(&crate::actions::item_actions::DRINK_GREATER_HEALING_POTION),
     condition_immunities: &[],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 pub static SCROLL_OF_FIREBALL: Item = Item {
@@ -194,6 +210,7 @@ pub static SCROLL_OF_FIREBALL: Item = Item {
     on_use: Some(&crate::actions::item_actions::READ_FIREBALL_SCROLL),
     condition_immunities: &[],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 pub static SCROLL_OF_MAGIC_MISSILE: Item = Item {
@@ -208,6 +225,7 @@ pub static SCROLL_OF_MAGIC_MISSILE: Item = Item {
     on_use: Some(&crate::actions::item_actions::READ_MAGIC_MISSILE_SCROLL),
     condition_immunities: &[],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 /// Cloak of Protection — premium passive trinket. +1 AC AND +1 to all
@@ -225,6 +243,7 @@ pub static CLOAK_OF_PROTECTION: Item = Item {
     on_use: None,
     condition_immunities: &[],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 /// Shield — passive +2 AC, no save bonus. Classic light-armor pairing
@@ -242,6 +261,7 @@ pub static SHIELD: Item = Item {
     on_use: None,
     condition_immunities: &[],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 /// Antitoxin — single-use consumable. Drinking removes the Poisoned
@@ -260,6 +280,7 @@ pub static ANTITOXIN: Item = Item {
     on_use: Some(&crate::actions::item_actions::DRINK_ANTITOXIN),
     condition_immunities: &[],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 /// Potion of Speed — bonus action; gain an extra Action this turn plus
@@ -277,6 +298,7 @@ pub static POTION_OF_SPEED: Item = Item {
     on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_SPEED),
     condition_immunities: &[],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 /// Potion of Heroism — bonus action; grants 10 temp HP and the Heroic
@@ -295,6 +317,7 @@ pub static POTION_OF_HEROISM: Item = Item {
     on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_HEROISM),
     condition_immunities: &[],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 /// Potion of Invisibility — action; grants the Invisible condition for
@@ -313,6 +336,7 @@ pub static POTION_OF_INVISIBILITY: Item = Item {
     on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_INVISIBILITY),
     condition_immunities: &[],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 /// Periapt of Wound Closure — +5 max HP passive trinket. Thematic
@@ -329,6 +353,7 @@ pub static PERIAPT_OF_WOUND_CLOSURE: Item = Item {
     on_use: None,
     condition_immunities: &[],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 /// Gauntlets of Ogre Power — +1 AC from the reinforced plates on the
@@ -346,6 +371,7 @@ pub static GAUNTLETS_OF_OGRE_POWER: Item = Item {
     on_use: None,
     condition_immunities: &[],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 /// Scroll of Lightning Bolt — one-shot 8d6 lightning burst along a
@@ -362,6 +388,7 @@ pub static SCROLL_OF_LIGHTNING_BOLT: Item = Item {
     on_use: Some(&crate::actions::item_actions::READ_LIGHTNING_BOLT_SCROLL),
     condition_immunities: &[],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 /// Scroll of Cure Wounds — single-target touch heal (2d8+2 HP). Fills
@@ -380,6 +407,7 @@ pub static SCROLL_OF_CURE_WOUNDS: Item = Item {
     on_use: Some(&crate::actions::item_actions::READ_CURE_WOUNDS_SCROLL),
     condition_immunities: &[],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 /// Stone of Good Luck (Luckstone) — premium passive trinket. +1 to all
@@ -403,6 +431,7 @@ pub static STONE_OF_GOOD_LUCK: Item = Item {
     on_use: None,
     condition_immunities: &[],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 /// Necklace of Adaptation — passive trinket. Grants immunity to the
@@ -424,6 +453,7 @@ pub static NECKLACE_OF_ADAPTATION: Item = Item {
     on_use: None,
     condition_immunities: &[crate::conditions::Condition::Poisoned],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 /// Ring of Free Action — passive trinket. The wearer ignores
@@ -451,6 +481,7 @@ pub static RING_OF_FREE_ACTION: Item = Item {
         crate::conditions::Condition::Grappled,
     ],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 /// Pearl of Power — caster-flavored consumable. Bonus action: restore
@@ -474,6 +505,7 @@ pub static PEARL_OF_POWER: Item = Item {
     on_use: Some(&crate::actions::item_actions::USE_PEARL_OF_POWER),
     condition_immunities: &[],
     damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 /// Brooch of Shielding — passive trinket. Grants resistance to force
@@ -496,6 +528,7 @@ pub static BROOCH_OF_SHIELDING: Item = Item {
     on_use: None,
     condition_immunities: &[],
     damage_resistances: &[crate::engine::types::DamageType::Force],
+    damage_immunities: &[],
 };
 
 /// Boots of the Winterlands — passive trinket. Grants resistance to
@@ -516,6 +549,7 @@ pub static BOOTS_OF_THE_WINTERLANDS: Item = Item {
     on_use: None,
     condition_immunities: &[],
     damage_resistances: &[crate::engine::types::DamageType::Cold],
+    damage_immunities: &[],
 };
 
 /// Boots of Speed — bonus action: gain the `Hasted` condition for 10
@@ -538,6 +572,81 @@ pub static BOOTS_OF_SPEED: Item = Item {
     on_use: Some(&crate::actions::item_actions::WEAR_BOOTS_OF_SPEED),
     condition_immunities: &[],
     damage_resistances: &[],
+    damage_immunities: &[],
+};
+
+/// Periapt of Proof against Poison — passive trinket. Grants the wearer
+/// immunity to poison damage AND immunity to the Poisoned condition.
+/// 5e RAW: "you are immune to poison damage and the poisoned condition."
+/// Strictly stronger than Necklace of Adaptation (which only covers the
+/// condition half) — sits as a single rare entry in the loot pool. Uses
+/// both the `damage_immunities` lane (zeroes poison damage in
+/// `effective_damage`) and the `condition_immunities` lane (blocks the
+/// Poisoned install in `add_condition`) so the two halves flow through
+/// the same chokepoints that already handle every other source.
+pub static PERIAPT_OF_PROOF_AGAINST_POISON: Item = Item {
+    name: "Periapt of Proof against Poison",
+    glyph: 'y',
+    bonuses: ItemBonuses {
+        ac: 0,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: None,
+    condition_immunities: &[crate::conditions::Condition::Poisoned],
+    damage_resistances: &[],
+    damage_immunities: &[crate::engine::types::DamageType::Poison],
+};
+
+/// Ring of Mind Shielding — passive trinket. Grants the wearer immunity
+/// to the Charmed condition (mind-control protection) and to psychic
+/// damage (mental shielding extends to direct thought-attacks). 5e RAW:
+/// "you are immune to magic that allows other creatures to read your
+/// thoughts, determine whether you are lying, know your alignment, or
+/// know your creature type" — we collapse the divination clauses onto
+/// the load-bearing combat clauses (Charmed-immunity for the mental-
+/// control half, Psychic-damage immunity for the thought-attack half),
+/// since the engine has no divination subsystem. Pairs cleanly with
+/// Periapt of Proof against Poison in the rare-trinket tier — same
+/// dual-lane shape, different damage type / condition pair.
+pub static RING_OF_MIND_SHIELDING: Item = Item {
+    name: "Ring of Mind Shielding",
+    glyph: 'M',
+    bonuses: ItemBonuses {
+        ac: 0,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: None,
+    condition_immunities: &[crate::conditions::Condition::Charmed],
+    damage_resistances: &[],
+    damage_immunities: &[crate::engine::types::DamageType::Psychic],
+};
+
+/// Robe of the Archmagi — premium passive caster trinket. +2 AC and +2
+/// to all saves, a strict upgrade on the Cloak of Protection (+1/+1).
+/// 5e RAW: also grants advantage on saves vs spells and a spell save DC
+/// bump — we collapse those clauses onto the load-bearing flat +2 save
+/// bonus since the engine routes most save modifiers through the same
+/// `ItemBonuses.save` lane. The +2 AC half is the unarmored-defense
+/// equivalent for casters who don't wear heavy armor. Top-of-pool loot
+/// — strictly stronger than every other passive trinket, so it sits as
+/// a single low-weight entry.
+pub static ROBE_OF_THE_ARCHMAGI: Item = Item {
+    name: "Robe of the Archmagi",
+    glyph: 'R',
+    bonuses: ItemBonuses {
+        ac: 2,
+        max_hp: 0,
+        speed: 0,
+        save: 2,
+    },
+    on_use: None,
+    condition_immunities: &[],
+    damage_resistances: &[],
+    damage_immunities: &[],
 };
 
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
@@ -589,4 +698,14 @@ pub static LOOT_POOL: &[&Item] = &[
     // pipeline rather than the AC / save lanes.
     &BROOCH_OF_SHIELDING,
     &BOOTS_OF_THE_WINTERLANDS,
+    // Typed-immunity trinkets — single low-weight entries since
+    // immunity is strictly stronger than resistance and these double
+    // up as condition-immunity sources too. Both ride the new
+    // `damage_immunities` lane.
+    &PERIAPT_OF_PROOF_AGAINST_POISON,
+    &RING_OF_MIND_SHIELDING,
+    // Premium caster trinket — top of the passive tier, single entry
+    // by design. Strictly dominates Cloak of Protection (+1/+1) and
+    // Ring of Protection (+1/+1).
+    &ROBE_OF_THE_ARCHMAGI,
 ];

@@ -3437,6 +3437,10 @@ fn try_step_away_from_threats(
 /// Healing Hands, Cure Wounds) and a no-target call for `NoArgs` schemas
 /// (Second Wind, potions). Picks the first validating heal — action-list
 /// order means high-value class features land before consumables.
+///
+/// Walks `available_actions()` (template + carried-consumable) so an
+/// AI actor who picked up a healing potion or a cure-wounds scroll on a
+/// previous turn actually drinks / reads it when wounded.
 fn try_self_heal(
     encounter: &EncounterInstance,
     actor_id: usize,
@@ -3449,7 +3453,7 @@ fn try_self_heal(
     if (actor.hitpoints() as f32) / (max_hp as f32) >= 0.5 {
         return None;
     }
-    for &action in &actor.actions {
+    for action in actor.available_actions() {
         if !action.is_heal() {
             continue;
         }
@@ -5181,6 +5185,47 @@ mod tests {
             aei.action().name(),
             "lunging attack",
             "lunge should not fire when target is already in melee reach"
+        );
+    }
+
+    /// Wounded fighter who has already burned Second Wind but is
+    /// carrying a Potion of Healing should drink the potion via
+    /// `available_actions()` — exercises the AI walking the
+    /// template+items action set rather than `actor.actions` alone.
+    #[test]
+    fn ai_drinks_healing_potion_when_second_wind_spent() {
+        use crate::actions::class_features::SECOND_WIND_TAG;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::POTION_OF_HEALING;
+        let mut e = empty_arena();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Burn the template-level heal features (Second Wind, Rally) so
+        // the consumable lane is the only heal left, then drop the
+        // fighter below 50% so the heal pipeline triggers.
+        {
+            use crate::actions::class_features::RALLY_TAG;
+            let a = e.actors.get_mut(&fighter).unwrap();
+            assert!(a.spend_feature(SECOND_WIND_TAG));
+            a.spend_feature(RALLY_TAG);
+            a.pickup_item(&POTION_OF_HEALING);
+            let max = a.max_hitpoints();
+            a.take_damage(max - 1);
+        }
+
+        let ai = SimpleAi;
+        let decision = ai.decide(&e, fighter);
+        let ControllerDecision::Act(aei) = decision else {
+            panic!("expected an action");
+        };
+        assert_eq!(
+            aei.action().name(),
+            "drink healing potion",
+            "AI should reach for the carried potion once Second Wind is burned"
         );
     }
 
