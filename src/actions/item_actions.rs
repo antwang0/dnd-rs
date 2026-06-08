@@ -1021,3 +1021,167 @@ impl Action for WearBootsOfSpeed {
 }
 
 pub static WEAR_BOOTS_OF_SPEED: WearBootsOfSpeed = WearBootsOfSpeed {};
+
+const SCROLL_OF_CONE_OF_COLD_NAME: &str = "Scroll of Cone of Cold";
+const WAND_OF_MAGIC_MISSILES_NAME: &str = "Wand of Magic Missiles";
+
+/// Read a Scroll of Cone of Cold — pick a target tile, every actor whose
+/// footprint touches the burst takes 8d8 cold on a failed CON save vs
+/// DC 15, half on success. Consumes the scroll on use. Mirrors the
+/// Fireball / Lightning Bolt scrolls' shape with a different element,
+/// save ability, and damage profile (CON instead of DEX; bigger d8 pool).
+/// Routes through `resolve_burst_save_damage` so evasion / Careful Spell
+/// / Heightened Spell shielding all fire through the same chokepoint.
+pub struct ReadConeOfColdScroll {}
+
+impl Action for ReadConeOfColdScroll {
+    fn name(&self) -> &str {
+        "read cone of cold scroll"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["coc scroll", "cone scroll"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        // Match the spell's 6-tile burst approximation of the 60-ft cone.
+        TargetingSchema::Burst { radius: 6 }
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        // Self-cone in RAW; we cap the picker at the cone's reach (60 ft
+        // = 24 tiles) so the targeting reticle doesn't drop across the
+        // whole map. Mirrors `CONE_OF_COLD::reach_tiles`.
+        Some(24)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, SCROLL_OF_CONE_OF_COLD_NAME)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actions::action_template::resolve_burst_save_damage;
+        use crate::engine::types::AbilityScoreType;
+
+        let Some(&center) = target_locations.and_then(|locs| locs.first()) else {
+            return Vec::new();
+        };
+        if !consume_caster_item(encounter, caster_id, SCROLL_OF_CONE_OF_COLD_NAME) {
+            return Vec::new();
+        }
+
+        let damage = encounter.roll(&Dice::new(8, 8));
+        encounter.log(format!("  scroll of cone of cold: 8d8 = {} damage", damage));
+
+        const BLAST_RADIUS: isize = 6;
+        let dc: i32 = 15;
+        resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            center,
+            BLAST_RADIUS,
+            AbilityScoreType::Constitution,
+            dc,
+            damage,
+            DamageType::Cold,
+        )
+    }
+}
+
+pub static READ_CONE_OF_COLD_SCROLL: ReadConeOfColdScroll = ReadConeOfColdScroll {};
+
+/// Use a Wand of Magic Missiles — fire 5 force-damage darts at one enemy
+/// in line-of-sight (range 30 tiles). Each dart deals 1d4+1 force.
+/// Auto-hit, no save. Mirrors `READ_MAGIC_MISSILE_SCROLL` (3 darts) — the
+/// wand sits at a higher payload tier. Single-use consumable per the
+/// engine's charge-less loot model; the wand is removed on use.
+pub struct UseWandOfMagicMissiles {}
+
+impl Action for UseWandOfMagicMissiles {
+    fn name(&self) -> &str {
+        "use wand of magic missiles"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wand", "mm wand"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(30)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, WAND_OF_MAGIC_MISSILES_NAME)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        if !consume_caster_item(encounter, caster_id, WAND_OF_MAGIC_MISSILES_NAME) {
+            return Vec::new();
+        }
+        let mut total = 0u32;
+        let mut rolls = [0u32; 5];
+        for r in rolls.iter_mut() {
+            *r = encounter.roll(&Dice::new(1, 4));
+            total = total.saturating_add(*r + 1);
+        }
+        encounter.log(format!(
+            "  wand of magic missiles: 5*(1d4+1) [{}, {}, {}, {}, {}] = {} force",
+            rolls[0] + 1,
+            rolls[1] + 1,
+            rolls[2] + 1,
+            rolls[3] + 1,
+            rolls[4] + 1,
+            total
+        ));
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: total,
+            damage_type: DamageType::Force,
+        })]
+    }
+}
+
+pub static USE_WAND_OF_MAGIC_MISSILES: UseWandOfMagicMissiles = UseWandOfMagicMissiles {};

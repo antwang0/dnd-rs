@@ -2817,4 +2817,67 @@ mod tests {
             "item resistance must not stack with condition resistance"
         );
     }
+
+    #[test]
+    fn elemental_resistance_rings_halve_their_damage_type() {
+        // The four-element resistance ring family (fire / cold / acid /
+        // lightning) all ride the same `damage_resistances` lane. One
+        // table-driven test sanity-checks each entry's typed halving
+        // and confirms non-matching types still flow at full.
+        use crate::items::item_template::{
+            RING_OF_ACID_RESISTANCE, RING_OF_COLD_RESISTANCE, RING_OF_FIRE_RESISTANCE,
+            RING_OF_LIGHTNING_RESISTANCE,
+        };
+        let cases: &[(&crate::items::item_template::Item, DamageType)] = &[
+            (&RING_OF_FIRE_RESISTANCE, DamageType::Fire),
+            (&RING_OF_COLD_RESISTANCE, DamageType::Cold),
+            (&RING_OF_ACID_RESISTANCE, DamageType::Acid),
+            (&RING_OF_LIGHTNING_RESISTANCE, DamageType::Lightning),
+        ];
+        for (item, dt) in cases {
+            let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+            assert_eq!(
+                f.effective_damage(20, *dt),
+                20,
+                "{} baseline should not have resistance",
+                item.name
+            );
+            f.pickup_item(item);
+            assert_eq!(
+                f.effective_damage(20, *dt),
+                10,
+                "{} should halve {} damage",
+                item.name,
+                dt
+            );
+            // A non-matching elemental type still lands at full — the
+            // resistance is single-type.
+            let unrelated = match dt {
+                DamageType::Fire => DamageType::Cold,
+                _ => DamageType::Fire,
+            };
+            assert_eq!(
+                f.effective_damage(20, unrelated),
+                20,
+                "{} should not halve {} damage",
+                item.name,
+                unrelated
+            );
+        }
+    }
+
+    #[test]
+    fn elemental_resistance_rings_respect_one_halving_rule() {
+        // Stacking with a condition-based resistance source must still
+        // halve only once. Mirrors `item_resistance_respects_one_halving_rule`
+        // for the elemental-ring family.
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        f.add_condition(Condition::DamageResistant, ConditionTimer::Rounds(10));
+        f.pickup_item(&crate::items::item_template::RING_OF_FIRE_RESISTANCE);
+        assert_eq!(
+            f.effective_damage(20, DamageType::Fire),
+            10,
+            "ring + condition resistance must not stack into /4"
+        );
+    }
 }

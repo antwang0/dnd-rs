@@ -14,6 +14,20 @@ pub struct ItemBonuses {
     pub save: i32,
 }
 
+impl ItemBonuses {
+    /// All-zero baseline. Use as the tail of a struct-update literal so
+    /// an item that only bumps one stat doesn't enumerate the three zero
+    /// fields — `ItemBonuses { ac: 1, ..ItemBonuses::ZERO }` reads cleaner
+    /// than the four-field literal. Const-evaluable so static items can
+    /// build off it.
+    pub const ZERO: ItemBonuses = ItemBonuses {
+        ac: 0,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    };
+}
+
 impl std::ops::Add for ItemBonuses {
     type Output = ItemBonuses;
     fn add(self, other: ItemBonuses) -> ItemBonuses {
@@ -32,7 +46,7 @@ impl std::ops::Add for ItemBonuses {
 /// passive bonuses today — if a future item needs both, it just sets
 /// both fields. Items are referenced via `&'static Item` so cloning an
 /// inventory is cheap and definitions stay single-sourced.
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Item {
     pub name: &'static str,
     /// Map glyph for ground rendering. Convention: a single visible ASCII
@@ -72,64 +86,52 @@ pub struct Item {
     pub damage_immunities: &'static [crate::engine::types::DamageType],
 }
 
+impl Item {
+    /// All-empty / no-op defaults for the rare fields. Use as the tail of
+    /// a struct-update literal (`Item { name: "...", ..Item::DEFAULTS }`)
+    /// so items that don't grant condition immunities / damage
+    /// resistances / immunities don't have to repeat the three empty-slice
+    /// fields at every definition. `name`, `glyph`, and `bonuses` should
+    /// always be overridden — the defaults here are just type-correct
+    /// placeholders so the struct literal is total. Const-evaluable so it
+    /// works in `static` initializers.
+    pub const DEFAULTS: Item = Item {
+        name: "",
+        glyph: ' ',
+        bonuses: ItemBonuses::ZERO,
+        on_use: None,
+        condition_immunities: &[],
+        damage_resistances: &[],
+        damage_immunities: &[],
+    };
+}
+
 pub static RING_OF_PROTECTION: Item = Item {
     name: "Ring of Protection",
     glyph: '=',
-    bonuses: ItemBonuses {
-        ac: 1,
-        max_hp: 0,
-        speed: 0,
-        save: 1,
-    },
-    on_use: None,
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    bonuses: ItemBonuses { ac: 1, save: 1, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
 };
 
 pub static BOOTS_OF_STRIDING: Item = Item {
     name: "Boots of Striding",
     glyph: 'b',
-    bonuses: ItemBonuses {
-        ac: 0,
-        max_hp: 0,
-        speed: 10,
-        save: 0,
-    },
-    on_use: None,
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    bonuses: ItemBonuses { speed: 10, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
 };
 
 pub static CLOAK_OF_RESISTANCE: Item = Item {
     name: "Cloak of Resistance",
     glyph: 'c',
-    bonuses: ItemBonuses {
-        ac: 0,
-        max_hp: 0,
-        speed: 0,
-        save: 2,
-    },
-    on_use: None,
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    bonuses: ItemBonuses { save: 2, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
 };
 
 pub static AMULET_OF_HEALTH: Item = Item {
     name: "Amulet of Health",
     glyph: 'a',
-    bonuses: ItemBonuses {
-        ac: 0,
-        max_hp: 10,
-        speed: 0,
-        save: 0,
-    },
-    on_use: None,
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    bonuses: ItemBonuses { max_hp: 10, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
 };
 
 /// Headband of Insight — minor caster-flavor trinket. +1 save bonus,
@@ -138,16 +140,8 @@ pub static AMULET_OF_HEALTH: Item = Item {
 pub static HEADBAND_OF_INSIGHT: Item = Item {
     name: "Headband of Insight",
     glyph: 'h',
-    bonuses: ItemBonuses {
-        ac: 0,
-        max_hp: 0,
-        speed: 0,
-        save: 1,
-    },
-    on_use: None,
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    bonuses: ItemBonuses { save: 1, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
 };
 
 /// Bracers of Defense — light AC bump. Cheaper loot than Ring of
@@ -156,76 +150,36 @@ pub static HEADBAND_OF_INSIGHT: Item = Item {
 pub static BRACERS_OF_DEFENSE: Item = Item {
     name: "Bracers of Defense",
     glyph: 'B',
-    bonuses: ItemBonuses {
-        ac: 1,
-        max_hp: 0,
-        speed: 0,
-        save: 0,
-    },
-    on_use: None,
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    bonuses: ItemBonuses { ac: 1, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
 };
 
 pub static POTION_OF_HEALING: Item = Item {
     name: "Potion of Healing",
     glyph: 'p',
-    bonuses: ItemBonuses {
-        ac: 0,
-        max_hp: 0,
-        speed: 0,
-        save: 0,
-    },
     on_use: Some(&crate::actions::item_actions::DRINK_HEALING_POTION),
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    ..Item::DEFAULTS
 };
 
 pub static POTION_OF_GREATER_HEALING: Item = Item {
     name: "Potion of Greater Healing",
     glyph: 'P',
-    bonuses: ItemBonuses {
-        ac: 0,
-        max_hp: 0,
-        speed: 0,
-        save: 0,
-    },
     on_use: Some(&crate::actions::item_actions::DRINK_GREATER_HEALING_POTION),
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    ..Item::DEFAULTS
 };
 
 pub static SCROLL_OF_FIREBALL: Item = Item {
     name: "Scroll of Fireball",
     glyph: 's',
-    bonuses: ItemBonuses {
-        ac: 0,
-        max_hp: 0,
-        speed: 0,
-        save: 0,
-    },
     on_use: Some(&crate::actions::item_actions::READ_FIREBALL_SCROLL),
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    ..Item::DEFAULTS
 };
 
 pub static SCROLL_OF_MAGIC_MISSILE: Item = Item {
     name: "Scroll of Magic Missile",
     glyph: 'm',
-    bonuses: ItemBonuses {
-        ac: 0,
-        max_hp: 0,
-        speed: 0,
-        save: 0,
-    },
     on_use: Some(&crate::actions::item_actions::READ_MAGIC_MISSILE_SCROLL),
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    ..Item::DEFAULTS
 };
 
 /// Cloak of Protection — premium passive trinket. +1 AC AND +1 to all
@@ -234,16 +188,8 @@ pub static SCROLL_OF_MAGIC_MISSILE: Item = Item {
 pub static CLOAK_OF_PROTECTION: Item = Item {
     name: "Cloak of Protection",
     glyph: 'C',
-    bonuses: ItemBonuses {
-        ac: 1,
-        max_hp: 0,
-        speed: 0,
-        save: 1,
-    },
-    on_use: None,
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    bonuses: ItemBonuses { ac: 1, save: 1, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
 };
 
 /// Shield — passive +2 AC, no save bonus. Classic light-armor pairing
@@ -252,16 +198,8 @@ pub static CLOAK_OF_PROTECTION: Item = Item {
 pub static SHIELD: Item = Item {
     name: "Shield",
     glyph: 'S',
-    bonuses: ItemBonuses {
-        ac: 2,
-        max_hp: 0,
-        speed: 0,
-        save: 0,
-    },
-    on_use: None,
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    bonuses: ItemBonuses { ac: 2, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
 };
 
 /// Antitoxin — single-use consumable. Drinking removes the Poisoned
@@ -271,16 +209,8 @@ pub static SHIELD: Item = Item {
 pub static ANTITOXIN: Item = Item {
     name: "Antitoxin",
     glyph: 'A',
-    bonuses: ItemBonuses {
-        ac: 0,
-        max_hp: 0,
-        speed: 0,
-        save: 0,
-    },
     on_use: Some(&crate::actions::item_actions::DRINK_ANTITOXIN),
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    ..Item::DEFAULTS
 };
 
 /// Potion of Speed — bonus action; gain an extra Action this turn plus
@@ -289,16 +219,8 @@ pub static ANTITOXIN: Item = Item {
 pub static POTION_OF_SPEED: Item = Item {
     name: "Potion of Speed",
     glyph: '!',
-    bonuses: ItemBonuses {
-        ac: 0,
-        max_hp: 0,
-        speed: 0,
-        save: 0,
-    },
     on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_SPEED),
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    ..Item::DEFAULTS
 };
 
 /// Potion of Heroism — bonus action; grants 10 temp HP and the Heroic
@@ -308,16 +230,8 @@ pub static POTION_OF_SPEED: Item = Item {
 pub static POTION_OF_HEROISM: Item = Item {
     name: "Potion of Heroism",
     glyph: 'H',
-    bonuses: ItemBonuses {
-        ac: 0,
-        max_hp: 0,
-        speed: 0,
-        save: 0,
-    },
     on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_HEROISM),
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    ..Item::DEFAULTS
 };
 
 /// Potion of Invisibility — action; grants the Invisible condition for
@@ -327,16 +241,8 @@ pub static POTION_OF_HEROISM: Item = Item {
 pub static POTION_OF_INVISIBILITY: Item = Item {
     name: "Potion of Invisibility",
     glyph: 'i',
-    bonuses: ItemBonuses {
-        ac: 0,
-        max_hp: 0,
-        speed: 0,
-        save: 0,
-    },
     on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_INVISIBILITY),
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    ..Item::DEFAULTS
 };
 
 /// Periapt of Wound Closure — +5 max HP passive trinket. Thematic
@@ -344,16 +250,8 @@ pub static POTION_OF_INVISIBILITY: Item = Item {
 pub static PERIAPT_OF_WOUND_CLOSURE: Item = Item {
     name: "Periapt of Wound Closure",
     glyph: '+',
-    bonuses: ItemBonuses {
-        ac: 0,
-        max_hp: 5,
-        speed: 0,
-        save: 0,
-    },
-    on_use: None,
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    bonuses: ItemBonuses { max_hp: 5, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
 };
 
 /// Gauntlets of Ogre Power — +1 AC from the reinforced plates on the
@@ -362,16 +260,8 @@ pub static PERIAPT_OF_WOUND_CLOSURE: Item = Item {
 pub static GAUNTLETS_OF_OGRE_POWER: Item = Item {
     name: "Gauntlets of Ogre Power",
     glyph: 'G',
-    bonuses: ItemBonuses {
-        ac: 1,
-        max_hp: 5,
-        speed: 0,
-        save: 0,
-    },
-    on_use: None,
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    bonuses: ItemBonuses { ac: 1, max_hp: 5, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
 };
 
 /// Scroll of Lightning Bolt — one-shot 8d6 lightning burst along a
@@ -379,16 +269,8 @@ pub static GAUNTLETS_OF_OGRE_POWER: Item = Item {
 pub static SCROLL_OF_LIGHTNING_BOLT: Item = Item {
     name: "Scroll of Lightning Bolt",
     glyph: 'l',
-    bonuses: ItemBonuses {
-        ac: 0,
-        max_hp: 0,
-        speed: 0,
-        save: 0,
-    },
     on_use: Some(&crate::actions::item_actions::READ_LIGHTNING_BOLT_SCROLL),
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    ..Item::DEFAULTS
 };
 
 /// Scroll of Cure Wounds — single-target touch heal (2d8+2 HP). Fills
@@ -398,16 +280,8 @@ pub static SCROLL_OF_LIGHTNING_BOLT: Item = Item {
 pub static SCROLL_OF_CURE_WOUNDS: Item = Item {
     name: "Scroll of Cure Wounds",
     glyph: 'w',
-    bonuses: ItemBonuses {
-        ac: 0,
-        max_hp: 0,
-        speed: 0,
-        save: 0,
-    },
     on_use: Some(&crate::actions::item_actions::READ_CURE_WOUNDS_SCROLL),
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    ..Item::DEFAULTS
 };
 
 /// Stone of Good Luck (Luckstone) — premium passive trinket. +1 to all
@@ -422,16 +296,8 @@ pub static SCROLL_OF_CURE_WOUNDS: Item = Item {
 pub static STONE_OF_GOOD_LUCK: Item = Item {
     name: "Stone of Good Luck",
     glyph: 'L',
-    bonuses: ItemBonuses {
-        ac: 1,
-        max_hp: 0,
-        speed: 0,
-        save: 1,
-    },
-    on_use: None,
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    bonuses: ItemBonuses { ac: 1, save: 1, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
 };
 
 /// Necklace of Adaptation — passive trinket. Grants immunity to the
@@ -444,16 +310,8 @@ pub static STONE_OF_GOOD_LUCK: Item = Item {
 pub static NECKLACE_OF_ADAPTATION: Item = Item {
     name: "Necklace of Adaptation",
     glyph: 'n',
-    bonuses: ItemBonuses {
-        ac: 0,
-        max_hp: 0,
-        speed: 0,
-        save: 0,
-    },
-    on_use: None,
     condition_immunities: &[crate::conditions::Condition::Poisoned],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    ..Item::DEFAULTS
 };
 
 /// Ring of Free Action — passive trinket. The wearer ignores
@@ -468,20 +326,12 @@ pub static NECKLACE_OF_ADAPTATION: Item = Item {
 pub static RING_OF_FREE_ACTION: Item = Item {
     name: "Ring of Free Action",
     glyph: 'r',
-    bonuses: ItemBonuses {
-        ac: 0,
-        max_hp: 0,
-        speed: 0,
-        save: 0,
-    },
-    on_use: None,
     condition_immunities: &[
         crate::conditions::Condition::Paralyzed,
         crate::conditions::Condition::Restrained,
         crate::conditions::Condition::Grappled,
     ],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    ..Item::DEFAULTS
 };
 
 /// Pearl of Power — caster-flavored consumable. Bonus action: restore
@@ -496,16 +346,8 @@ pub static RING_OF_FREE_ACTION: Item = Item {
 pub static PEARL_OF_POWER: Item = Item {
     name: "Pearl of Power",
     glyph: 'q',
-    bonuses: ItemBonuses {
-        ac: 0,
-        max_hp: 0,
-        speed: 0,
-        save: 0,
-    },
     on_use: Some(&crate::actions::item_actions::USE_PEARL_OF_POWER),
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    ..Item::DEFAULTS
 };
 
 /// Brooch of Shielding — passive trinket. Grants resistance to force
@@ -519,16 +361,8 @@ pub static PEARL_OF_POWER: Item = Item {
 pub static BROOCH_OF_SHIELDING: Item = Item {
     name: "Brooch of Shielding",
     glyph: 'k',
-    bonuses: ItemBonuses {
-        ac: 0,
-        max_hp: 0,
-        speed: 0,
-        save: 0,
-    },
-    on_use: None,
-    condition_immunities: &[],
     damage_resistances: &[crate::engine::types::DamageType::Force],
-    damage_immunities: &[],
+    ..Item::DEFAULTS
 };
 
 /// Boots of the Winterlands — passive trinket. Grants resistance to
@@ -540,16 +374,8 @@ pub static BROOCH_OF_SHIELDING: Item = Item {
 pub static BOOTS_OF_THE_WINTERLANDS: Item = Item {
     name: "Boots of the Winterlands",
     glyph: 'W',
-    bonuses: ItemBonuses {
-        ac: 0,
-        max_hp: 0,
-        speed: 0,
-        save: 0,
-    },
-    on_use: None,
-    condition_immunities: &[],
     damage_resistances: &[crate::engine::types::DamageType::Cold],
-    damage_immunities: &[],
+    ..Item::DEFAULTS
 };
 
 /// Boots of Speed — bonus action: gain the `Hasted` condition for 10
@@ -563,16 +389,8 @@ pub static BOOTS_OF_THE_WINTERLANDS: Item = Item {
 pub static BOOTS_OF_SPEED: Item = Item {
     name: "Boots of Speed",
     glyph: 'V',
-    bonuses: ItemBonuses {
-        ac: 0,
-        max_hp: 0,
-        speed: 0,
-        save: 0,
-    },
     on_use: Some(&crate::actions::item_actions::WEAR_BOOTS_OF_SPEED),
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    ..Item::DEFAULTS
 };
 
 /// Periapt of Proof against Poison — passive trinket. Grants the wearer
@@ -587,16 +405,9 @@ pub static BOOTS_OF_SPEED: Item = Item {
 pub static PERIAPT_OF_PROOF_AGAINST_POISON: Item = Item {
     name: "Periapt of Proof against Poison",
     glyph: 'y',
-    bonuses: ItemBonuses {
-        ac: 0,
-        max_hp: 0,
-        speed: 0,
-        save: 0,
-    },
-    on_use: None,
     condition_immunities: &[crate::conditions::Condition::Poisoned],
-    damage_resistances: &[],
     damage_immunities: &[crate::engine::types::DamageType::Poison],
+    ..Item::DEFAULTS
 };
 
 /// Ring of Mind Shielding — passive trinket. Grants the wearer immunity
@@ -613,16 +424,9 @@ pub static PERIAPT_OF_PROOF_AGAINST_POISON: Item = Item {
 pub static RING_OF_MIND_SHIELDING: Item = Item {
     name: "Ring of Mind Shielding",
     glyph: 'M',
-    bonuses: ItemBonuses {
-        ac: 0,
-        max_hp: 0,
-        speed: 0,
-        save: 0,
-    },
-    on_use: None,
     condition_immunities: &[crate::conditions::Condition::Charmed],
-    damage_resistances: &[],
     damage_immunities: &[crate::engine::types::DamageType::Psychic],
+    ..Item::DEFAULTS
 };
 
 /// Robe of the Archmagi — premium passive caster trinket. +2 AC and +2
@@ -637,16 +441,82 @@ pub static RING_OF_MIND_SHIELDING: Item = Item {
 pub static ROBE_OF_THE_ARCHMAGI: Item = Item {
     name: "Robe of the Archmagi",
     glyph: 'R',
-    bonuses: ItemBonuses {
-        ac: 2,
-        max_hp: 0,
-        speed: 0,
-        save: 2,
-    },
-    on_use: None,
-    condition_immunities: &[],
-    damage_resistances: &[],
-    damage_immunities: &[],
+    bonuses: ItemBonuses { ac: 2, save: 2, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
+};
+
+/// Ring of Fire Resistance — passive trinket. Grants resistance to fire
+/// damage while worn. 5e RAW: "you have resistance to fire damage." Sits
+/// in the same "single-typed-resistance ring" tier as Brooch of Shielding
+/// (force) and Boots of the Winterlands (cold) — distinct entries per
+/// elemental type let the loot table cover a spread of common AoE
+/// damage profiles without piling every resistance onto a single
+/// overloaded slot.
+pub static RING_OF_FIRE_RESISTANCE: Item = Item {
+    name: "Ring of Fire Resistance",
+    glyph: 'f',
+    damage_resistances: &[crate::engine::types::DamageType::Fire],
+    ..Item::DEFAULTS
+};
+
+/// Ring of Cold Resistance — passive trinket. Grants resistance to cold
+/// damage while worn. Mirror of `RING_OF_FIRE_RESISTANCE` for the cold
+/// damage type. Sibling to `BOOTS_OF_THE_WINTERLANDS` (also cold
+/// resistance), but the ring is the loot slot that doesn't compete with
+/// the boots' speed bonus / movement-bonus tier.
+pub static RING_OF_COLD_RESISTANCE: Item = Item {
+    name: "Ring of Cold Resistance",
+    glyph: 'o',
+    damage_resistances: &[crate::engine::types::DamageType::Cold],
+    ..Item::DEFAULTS
+};
+
+/// Ring of Acid Resistance — passive trinket. Grants resistance to acid
+/// damage while worn. Slots into the elemental-resistance ring family
+/// next to fire / cold / lightning so the loot pool spreads coverage
+/// over the four classic burst-damage elements.
+pub static RING_OF_ACID_RESISTANCE: Item = Item {
+    name: "Ring of Acid Resistance",
+    glyph: 'd',
+    damage_resistances: &[crate::engine::types::DamageType::Acid],
+    ..Item::DEFAULTS
+};
+
+/// Ring of Lightning Resistance — passive trinket. Grants resistance to
+/// lightning damage while worn. Final entry in the four-element ring
+/// family (fire / cold / acid / lightning).
+pub static RING_OF_LIGHTNING_RESISTANCE: Item = Item {
+    name: "Ring of Lightning Resistance",
+    glyph: 'g',
+    damage_resistances: &[crate::engine::types::DamageType::Lightning],
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Cone of Cold — single-use 8d8 cold-damage burst. 60-foot
+/// cone in RAW; we model as a 6-tile-radius burst centered on the target
+/// tile (matching the `CONE_OF_COLD` spell's burst approximation). All
+/// actors in the area make a CON save vs DC 15; pass halves, fail takes
+/// full. The scroll consumes on use; no spell slot.
+pub static SCROLL_OF_CONE_OF_COLD: Item = Item {
+    name: "Scroll of Cone of Cold",
+    glyph: 'O',
+    on_use: Some(&crate::actions::item_actions::READ_CONE_OF_COLD_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Wand of Magic Missiles — single-use 5-dart variant of the Magic
+/// Missile spell. Each dart deals 1d4+1 force damage at one enemy in
+/// line-of-sight (range 30 tiles), auto-hit / no save. Mirrors
+/// `SCROLL_OF_MAGIC_MISSILE` (which fires 3 darts) — the wand is the
+/// upgraded loot slot. 5e RAW: the wand has 7 charges and casts at level
+/// 1-3; we collapse to a single-shot consumable for the engine's
+/// charge-less loot model, sized at the level-2 cast (5 darts) so it
+/// lands between the scroll's 3 darts and a level-3 wizard's 5 darts.
+pub static WAND_OF_MAGIC_MISSILES: Item = Item {
+    name: "Wand of Magic Missiles",
+    glyph: 'D',
+    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_MAGIC_MISSILES),
+    ..Item::DEFAULTS
 };
 
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
@@ -708,4 +578,19 @@ pub static LOOT_POOL: &[&Item] = &[
     // by design. Strictly dominates Cloak of Protection (+1/+1) and
     // Ring of Protection (+1/+1).
     &ROBE_OF_THE_ARCHMAGI,
+    // Elemental-resistance ring family — single low-weight entry per
+    // element so the loot table covers the four classic burst-damage
+    // types (fire / cold / acid / lightning) without over-skewing the
+    // pool toward typed-resistance loot.
+    &RING_OF_FIRE_RESISTANCE,
+    &RING_OF_COLD_RESISTANCE,
+    &RING_OF_ACID_RESISTANCE,
+    &RING_OF_LIGHTNING_RESISTANCE,
+    // Single-use AoE scrolls / wands — same weight as the Fireball /
+    // Lightning Bolt scrolls so casters have a roughly even shot at a
+    // big burst regardless of element. Cone of Cold's 8d8 cold tier sits
+    // above the 6d6 Fireball / 8d6 Lightning Bolt tier; Wand of Magic
+    // Missiles' 5-dart payload sits above the 3-dart scroll tier.
+    &SCROLL_OF_CONE_OF_COLD,
+    &WAND_OF_MAGIC_MISSILES,
 ];
