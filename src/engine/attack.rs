@@ -263,13 +263,15 @@ pub fn resolve_attack_outcome(
     } else {
         0
     };
-    // Fold in the carried-item `damage_bonus` lane (`+1 Weapon`, Bracers
-    // of Archery, …). Added once per swing — crits already double the
-    // dice but the modifier (action's `damage_bonus` + item bonus) is
-    // added once per RAW. Picked up at this site so weapon AND spell
-    // attacks both see the bonus through the same chokepoint.
-    let item_damage_bonus = encounter.caster_item_damage_bonus(p.caster_id);
-    let total_damage_bonus = p.damage_bonus + item_damage_bonus;
+    // Fold in the caster-side flat damage bonuses: item-passive
+    // (`+1 Weapon`, Bracers of Archery) and spell-installed
+    // (Magic Weapon, Elemental Weapon). Added once per swing — crits
+    // already double the dice but the modifier (action's
+    // `damage_bonus` + caster damage buff) is added once per RAW.
+    // Picked up at this site so weapon AND spell attacks both see
+    // the bonus through the same chokepoint.
+    let caster_damage_buff = encounter.caster_damage_buffs(p.caster_id);
+    let total_damage_bonus = p.damage_bonus + caster_damage_buff;
     let mut damage = (raw_damage + crit_extra + brutal_extra + total_damage_bonus).max(0) as u32;
     if is_crit {
         encounter.log(format!(

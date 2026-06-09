@@ -762,6 +762,25 @@ impl ApplicableSideEffect for AdjustSaveBuff {
     }
 }
 
+/// Same shape as `AdjustAttackBuff` but for the damage-roll buff lane.
+/// Used by Magic Weapon / Elemental Weapon-style spells that install a
+/// flat `+N damage` buff alongside their attack buff. Pair with
+/// concentration registration so the buff drops cleanly when the spell
+/// ends; negative deltas remove the buff on cleanup.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct AdjustDamageBuff {
+    pub actor_id: usize,
+    pub delta: i32,
+}
+
+impl ApplicableSideEffect for AdjustDamageBuff {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        if let Some(actor) = ei.get_actor(self.actor_id) {
+            actor.add_damage_bonus_buff(self.delta);
+        }
+    }
+}
+
 /// Forced-movement direction relative to an anchor point. `Toward` pulls
 /// the actor closer (Thorn Whip, Telekinesis pull); `Away` pushes them
 /// outward (Thunderwave, Repelling Blast). Both stop early when the actor

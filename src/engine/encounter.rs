@@ -2624,15 +2624,18 @@ impl EncounterInstance {
             .unwrap_or((0, 0))
     }
 
-    /// Sum of every carried-item `damage_bonus` for the caster — the +N
-    /// half of a `+N weapon`-style loot trinket. Folded into the damage-
-    /// roll site in `engine::attack` and the spell-attack chokepoint so
-    /// both lanes pick up the bonus once per swing. Missing actor returns
-    /// 0. Symmetric with `caster_attack_buffs` on the to-hit lane.
-    pub fn caster_item_damage_bonus(&self, caster_id: usize) -> i32 {
+    /// Sum the caster-side flat damage-roll bonuses that ride every
+    /// damage roll (weapon or spell): the item-passive `damage_bonus`
+    /// lane (`+1 Weapon` / Bracers of Archery) and the spell-installed
+    /// `damage_bonus_buff` lane (Magic Weapon / Elemental Weapon).
+    /// Folded at the damage-roll site in `engine::attack` and the
+    /// spell-attack chokepoint so a single chokepoint handles every
+    /// flat damage source. Missing actor returns 0. Symmetric with
+    /// `caster_attack_buffs` on the to-hit lane.
+    pub fn caster_damage_buffs(&self, caster_id: usize) -> i32 {
         self.actors
             .get(&caster_id)
-            .map(|a| a.item_damage_bonus())
+            .map(|a| a.item_damage_bonus() + a.damage_bonus_buff())
             .unwrap_or(0)
     }
 
@@ -3559,6 +3562,11 @@ impl EncounterInstance {
         for (target_id, delta) in data.save_buffs {
             if let Some(target) = self.actors.get_mut(&target_id) {
                 target.add_save_bonus_buff(-delta);
+            }
+        }
+        for (target_id, delta) in data.damage_buffs {
+            if let Some(target) = self.actors.get_mut(&target_id) {
+                target.add_damage_bonus_buff(-delta);
             }
         }
     }
@@ -6713,7 +6721,7 @@ mod tests {
     #[test]
     fn weapon_plus_one_folds_into_item_damage_bonus() {
         // Symmetric to the to-hit check above: the item's +1 damage half
-        // must show up via `caster_item_damage_bonus`, which is the
+        // must show up via `caster_damage_buffs`, which is the
         // chokepoint `engine::attack` and spell-attack read at the damage-
         // roll site. Bracers of Archery (attack 0 / damage +2) is the
         // disjoint counter-test — the bracers must NOT bump the attack
@@ -6729,16 +6737,16 @@ mod tests {
                 0,
             )
             .unwrap();
-        let base_dmg = e.caster_item_damage_bonus(id);
+        let base_dmg = e.caster_damage_buffs(id);
         e.actors.get_mut(&id).unwrap().pickup_item(&WEAPON_PLUS_ONE);
-        assert_eq!(e.caster_item_damage_bonus(id), base_dmg + 1);
+        assert_eq!(e.caster_damage_buffs(id), base_dmg + 1);
         // Bracers add +2 damage but no attack bump.
         let (pre_buff, _) = e.caster_attack_buffs(id);
         e.actors
             .get_mut(&id)
             .unwrap()
             .pickup_item(&BRACERS_OF_ARCHERY);
-        assert_eq!(e.caster_item_damage_bonus(id), base_dmg + 3);
+        assert_eq!(e.caster_damage_buffs(id), base_dmg + 3);
         let (post_buff, _) = e.caster_attack_buffs(id);
         assert_eq!(
             post_buff, pre_buff,
@@ -6751,7 +6759,7 @@ mod tests {
     /// fighter over many seeds. Verifies the attack-bonus AND damage-bonus
     /// lanes both fire through `resolve_attack_outcome` — the lanes
     /// integration-tested at the chokepoint above (`caster_attack_buffs`
-    /// / `caster_item_damage_bonus`) flowing all the way to the dealt-
+    /// / `caster_damage_buffs`) flowing all the way to the dealt-
     /// damage tally a real attack returns.
     #[test]
     fn weapon_plus_one_increases_dealt_damage_over_baseline() {
@@ -16782,8 +16790,11 @@ mod tests {
 
     #[test]
     fn magic_weapon_buff_reverts_on_concentration_drop() {
-        // Magic Weapon installs a +1 attack buff and ends concentration.
-        // Dropping concentration must roll back the buff exactly.
+        // Magic Weapon installs +1 attack AND +1 damage buffs and ends
+        // concentration. Dropping concentration must roll back BOTH
+        // halves exactly — verifies the symmetric attack-buff +
+        // damage-buff lanes both flow through the same ConcentrationData
+        // rollback path.
         use crate::actions::spells::MAGIC_WEAPON;
         use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -16794,7 +16805,8 @@ mod tests {
         let ally = e
             .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(4, 3), 0, 0)
             .unwrap();
-        let baseline = e.actors[&ally].attack_bonus_buff();
+        let base_attack = e.actors[&ally].attack_bonus_buff();
+        let base_damage = e.actors[&ally].damage_bonus_buff();
         let target_ids = vec![ally];
         let effects = MAGIC_WEAPON.side_effects(&mut e, wizard, Some(&target_ids), None, None);
         for eff in effects {
@@ -16802,14 +16814,53 @@ mod tests {
         }
         assert_eq!(
             e.actors[&ally].attack_bonus_buff(),
-            baseline + 1,
+            base_attack + 1,
             "magic weapon should grant a +1 attack buff"
+        );
+        assert_eq!(
+            e.actors[&ally].damage_bonus_buff(),
+            base_damage + 1,
+            "magic weapon should grant a +1 damage buff (RAW)"
         );
         e.drop_concentration(wizard);
         assert_eq!(
             e.actors[&ally].attack_bonus_buff(),
-            baseline,
-            "dropping concentration should roll back the buff"
+            base_attack,
+            "dropping concentration should roll back the attack buff"
+        );
+        assert_eq!(
+            e.actors[&ally].damage_bonus_buff(),
+            base_damage,
+            "dropping concentration should roll back the damage buff"
+        );
+    }
+
+    #[test]
+    fn caster_damage_buffs_folds_item_and_spell_lanes() {
+        // The caster_damage_buffs chokepoint sums both lanes: passive
+        // item `damage_bonus` and spell-installed `damage_bonus_buff`.
+        // Verifies a fighter carrying a +1 Weapon plus a +1 damage buff
+        // shows the +2 damage total (+1 from each lane).
+        use crate::engine::side_effects::AdjustDamageBuff;
+        use crate::items::item_template::WEAPON_PLUS_ONE;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(2, 2),
+                0,
+                0,
+            )
+            .unwrap();
+        let base = e.caster_damage_buffs(id);
+        e.actors.get_mut(&id).unwrap().pickup_item(&WEAPON_PLUS_ONE);
+        assert_eq!(e.caster_damage_buffs(id), base + 1, "item lane alone");
+        AdjustDamageBuff { actor_id: id, delta: 1 }.apply(&mut e);
+        assert_eq!(
+            e.caster_damage_buffs(id),
+            base + 2,
+            "spell + item lanes should sum"
         );
     }
 

@@ -102,6 +102,10 @@ pub struct ConcentrationData {
     /// Attack-roll buff deltas to roll back on drop.
     pub attack_buffs: Vec<(usize, i32)>,
     pub save_buffs: Vec<(usize, i32)>,
+    /// Damage-roll buff deltas to roll back on drop. Mirrors `attack_buffs`
+    /// for the damage lane (Magic Weapon's `+1` damage, Elemental Weapon's
+    /// `+1/+2/+3` flame, etc.).
+    pub damage_buffs: Vec<(usize, i32)>,
     /// 5e: making an attack ends Invisibility but not Greater Invisibility.
     /// Set true for concentration data whose effect ends when the caster
     /// makes any attack roll (clear_attack_advantage_riders consumes it).
@@ -136,6 +140,7 @@ impl ConcentrationData {
             conditions,
             attack_buffs: Vec::new(),
             save_buffs: Vec::new(),
+            damage_buffs: Vec::new(),
             breaks_on_attack: false,
         }
     }
@@ -485,6 +490,13 @@ pub struct ActorInstance {
     /// `Blessed` condition flag for stacking flexibility.
     attack_bonus_buff: i32,
     save_bonus_buff: i32,
+    /// Spell-installed flat damage-roll bonus (Magic Weapon, Elemental
+    /// Weapon). Symmetric with `attack_bonus_buff` on the to-hit lane —
+    /// concentration installs delta via `AdjustDamageBuff` and rolls it
+    /// back on drop. Independent of `ItemBonuses.damage_bonus` (which is
+    /// the passive carried-item lane); both sources sum at the damage-
+    /// roll site via `caster_damage_buffs`.
+    damage_bonus_buff: i32,
     /// Sneak Attack guard — true if the rogue has spent their once-per-turn
     /// sneak this turn. Cleared at turn-start by `reset_for_new_round`.
     sneak_attack_used: bool,
@@ -668,6 +680,7 @@ impl ActorInstance {
             features_max: ct.features.clone(),
             attack_bonus_buff: 0,
             save_bonus_buff: 0,
+            damage_bonus_buff: 0,
             sneak_attack_used: false,
             help_grants: HashMap::new(),
             regen_per_round: ct.regen_per_round,
@@ -1131,6 +1144,7 @@ impl ActorInstance {
         self.concentration = None;
         self.attack_bonus_buff = 0;
         self.save_bonus_buff = 0;
+        self.damage_bonus_buff = 0;
         self.features_remaining = self.features_max.clone();
         self.indomitable_pending = false;
         self.legendary_resistance_remaining = self.legendary_resistance_max;
@@ -1946,12 +1960,23 @@ impl ActorInstance {
         self.save_bonus_buff
     }
 
+    /// Spell-installed flat damage-roll buff (Magic Weapon, Elemental
+    /// Weapon). Folded into every damage roll via `caster_damage_buffs`
+    /// alongside the item-side `damage_bonus` lane.
+    pub fn damage_bonus_buff(&self) -> i32 {
+        self.damage_bonus_buff
+    }
+
     pub fn add_attack_bonus_buff(&mut self, delta: i32) {
         self.attack_bonus_buff += delta;
     }
 
     pub fn add_save_bonus_buff(&mut self, delta: i32) {
         self.save_bonus_buff += delta;
+    }
+
+    pub fn add_damage_bonus_buff(&mut self, delta: i32) {
+        self.damage_bonus_buff += delta;
     }
 
     pub fn remaining_movement(&self) -> f32 {

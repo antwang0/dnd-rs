@@ -224,11 +224,12 @@ fn spell_attack_outcome(
     }
     let dmg = encounter.roll(&damage_dice) as i32;
     let crit_extra = if is_crit { encounter.roll(&damage_dice) as i32 } else { 0 };
-    // Fold in the carried-item `damage_bonus` lane so spell attacks see
-    // the same `+N weapon` damage half that weapon swings get via
-    // `engine::attack`. Read through the shared encounter helper.
-    let item_damage_bonus = encounter.caster_item_damage_bonus(caster_id);
-    let total_damage_bonus = damage_bonus + item_damage_bonus;
+    // Fold in the caster-side flat damage bonuses (item-passive +
+    // spell-installed buff) so spell attacks see the same `+N weapon`
+    // damage half that weapon swings get via `engine::attack`. Read
+    // through the shared encounter helper.
+    let caster_damage_buff = encounter.caster_damage_buffs(caster_id);
+    let total_damage_bonus = damage_bonus + caster_damage_buff;
     let total_dmg = (dmg + crit_extra + total_damage_bonus).max(0) as u32;
     encounter.log(format!(
         "  {}: {}({}){} = {} {:?}{}",
@@ -1508,6 +1509,7 @@ impl Action for Bless {
                 conditions,
                 attack_buffs,
                 save_buffs,
+                damage_buffs: Vec::new(),
                 breaks_on_attack: false,
             },
         }));
@@ -1736,6 +1738,7 @@ impl Action for ShieldOfFaith {
                     conditions: vec![(target_id, Condition::ShieldOfFaith)],
                     attack_buffs: Vec::new(),
                     save_buffs: Vec::new(),
+                    damage_buffs: Vec::new(),
                     breaks_on_attack: false,
                 },
             }),
@@ -1812,6 +1815,7 @@ impl Action for CauseFear {
                     conditions: vec![(target_id, Condition::Frightened)],
                     attack_buffs: Vec::new(),
                     save_buffs: Vec::new(),
+                    damage_buffs: Vec::new(),
                     breaks_on_attack: false,
                 },
             }),
@@ -4440,11 +4444,10 @@ pub static FIREBALL: LazyLock<Fireball> = LazyLock::new(|| Fireball {});
 
 /// Magic Weapon — level-2 transmutation, concentration up to 1 hour.
 /// Touch a single weapon-wielding ally; their attack rolls and damage
-/// gain a flat +1 bonus for the duration. We track the buff as an
-/// `attack_bonus_buff` delta installed via concentration so dropping
-/// concentration cleans up automatically. The damage-half of the buff is
-/// lumped into the same +1 attack buff for now (the engine doesn't have
-/// a separate damage-roll buff lane). Targeting is touch (1 tile reach).
+/// gain a flat +1 bonus for the duration. We track each half on its own
+/// concentration-managed ledger: `attack_bonus_buff` for the to-hit
+/// half, `damage_bonus_buff` for the damage half. Both drop cleanly
+/// when concentration ends. Targeting is touch (1 tile reach).
 pub struct MagicWeapon {}
 
 impl Action for MagicWeapon {
@@ -4487,16 +4490,22 @@ impl Action for MagicWeapon {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::AdjustAttackBuff;
+        use crate::engine::side_effects::{AdjustAttackBuff, AdjustDamageBuff};
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        // Install a +1 attack buff and register it on the concentration
-        // so dropping the spell rolls back the bonus on the right actor.
+        // Install +1 attack AND +1 damage buffs, registering both on the
+        // concentration so dropping the spell rolls back each delta on
+        // the right actor.
         let mut data = ConcentrationData::new("Magic Weapon");
         data.attack_buffs.push((target_id, 1));
+        data.damage_buffs.push((target_id, 1));
         vec![
             Box::new(AdjustAttackBuff {
+                actor_id: target_id,
+                delta: 1,
+            }),
+            Box::new(AdjustDamageBuff {
                 actor_id: target_id,
                 delta: 1,
             }),
