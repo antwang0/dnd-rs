@@ -224,14 +224,19 @@ fn spell_attack_outcome(
     }
     let dmg = encounter.roll(&damage_dice) as i32;
     let crit_extra = if is_crit { encounter.roll(&damage_dice) as i32 } else { 0 };
-    let total_dmg = (dmg + crit_extra + damage_bonus).max(0) as u32;
+    // Fold in the carried-item `damage_bonus` lane so spell attacks see
+    // the same `+N weapon` damage half that weapon swings get via
+    // `engine::attack`. Read through the shared encounter helper.
+    let item_damage_bonus = encounter.caster_item_damage_bonus(caster_id);
+    let total_damage_bonus = damage_bonus + item_damage_bonus;
+    let total_dmg = (dmg + crit_extra + total_damage_bonus).max(0) as u32;
     encounter.log(format!(
         "  {}: {}({}){} = {} {:?}{}",
         action_name,
         damage_dice,
         dmg,
-        if damage_bonus != 0 {
-            format!("{:+}", damage_bonus)
+        if total_damage_bonus != 0 {
+            format!("{:+}", total_damage_bonus)
         } else {
             String::new()
         },

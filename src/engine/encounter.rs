@@ -2607,11 +2607,33 @@ impl EncounterInstance {
     /// Bardic Inspiration's +3). Returns (install_buff, condition_buff)
     /// — two lanes so callers can keep the log breakdown if they want
     /// to. Missing actor returns `(0, 0)`.
+    ///
+    /// The install-buff lane also folds in the carried-item
+    /// `attack_bonus` (`+1 Weapon`, Bracers of Archery, Ioun Stone of
+    /// Mastery, …) so a single chokepoint handles every flat to-hit
+    /// source. Mirrors `item_save_bonus`'s seat in `roll_save`.
     pub fn caster_attack_buffs(&self, caster_id: usize) -> (i32, i32) {
         self.actors
             .get(&caster_id)
-            .map(|a| (a.attack_bonus_buff(), a.condition_attack_bonus()))
+            .map(|a| {
+                (
+                    a.attack_bonus_buff() + a.item_attack_bonus(),
+                    a.condition_attack_bonus(),
+                )
+            })
             .unwrap_or((0, 0))
+    }
+
+    /// Sum of every carried-item `damage_bonus` for the caster — the +N
+    /// half of a `+N weapon`-style loot trinket. Folded into the damage-
+    /// roll site in `engine::attack` and the spell-attack chokepoint so
+    /// both lanes pick up the bonus once per swing. Missing actor returns
+    /// 0. Symmetric with `caster_attack_buffs` on the to-hit lane.
+    pub fn caster_item_damage_bonus(&self, caster_id: usize) -> i32 {
+        self.actors
+            .get(&caster_id)
+            .map(|a| a.item_damage_bonus())
+            .unwrap_or(0)
     }
 
     pub fn bless_bane_attack_die(&mut self, actor_id: usize) -> (i32, String) {
@@ -6661,6 +6683,128 @@ mod tests {
         assert_eq!(actor.armor_class(), base_ac + 1);
         assert!((actor.speed() - (base_speed + 10.0)).abs() < f32::EPSILON);
         assert_eq!(actor.max_hitpoints(), base_hp + 10);
+    }
+
+    #[test]
+    fn weapon_plus_one_folds_into_caster_attack_buffs() {
+        // Sanity-check that the item-side `attack_bonus` lane is wired
+        // through `caster_attack_buffs`: a `+1 Weapon` should bump the
+        // install-buff half of the return tuple by +1, without touching
+        // the condition lane. This is the chokepoint both weapon and
+        // spell attacks read at roll time.
+        use crate::items::item_template::WEAPON_PLUS_ONE;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(2, 2),
+                0,
+                0,
+            )
+            .unwrap();
+        let (base_buff, base_cond) = e.caster_attack_buffs(id);
+        e.actors.get_mut(&id).unwrap().pickup_item(&WEAPON_PLUS_ONE);
+        let (post_buff, post_cond) = e.caster_attack_buffs(id);
+        assert_eq!(post_buff, base_buff + 1, "weapon +1 should bump install buff");
+        assert_eq!(post_cond, base_cond, "weapon +1 must not touch the condition lane");
+    }
+
+    #[test]
+    fn weapon_plus_one_folds_into_item_damage_bonus() {
+        // Symmetric to the to-hit check above: the item's +1 damage half
+        // must show up via `caster_item_damage_bonus`, which is the
+        // chokepoint `engine::attack` and spell-attack read at the damage-
+        // roll site. Bracers of Archery (attack 0 / damage +2) is the
+        // disjoint counter-test — the bracers must NOT bump the attack
+        // lane in `caster_attack_buffs`.
+        use crate::items::item_template::{BRACERS_OF_ARCHERY, WEAPON_PLUS_ONE};
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(2, 2),
+                0,
+                0,
+            )
+            .unwrap();
+        let base_dmg = e.caster_item_damage_bonus(id);
+        e.actors.get_mut(&id).unwrap().pickup_item(&WEAPON_PLUS_ONE);
+        assert_eq!(e.caster_item_damage_bonus(id), base_dmg + 1);
+        // Bracers add +2 damage but no attack bump.
+        let (pre_buff, _) = e.caster_attack_buffs(id);
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .pickup_item(&BRACERS_OF_ARCHERY);
+        assert_eq!(e.caster_item_damage_bonus(id), base_dmg + 3);
+        let (post_buff, _) = e.caster_attack_buffs(id);
+        assert_eq!(
+            post_buff, pre_buff,
+            "bracers of archery must NOT bump the attack lane"
+        );
+    }
+
+    /// End-to-end: a fighter holding a `+1 Weapon` deals visibly more
+    /// damage and lands more swings against a skeleton than a baseline
+    /// fighter over many seeds. Verifies the attack-bonus AND damage-bonus
+    /// lanes both fire through `resolve_attack_outcome` — the lanes
+    /// integration-tested at the chokepoint above (`caster_attack_buffs`
+    /// / `caster_item_damage_bonus`) flowing all the way to the dealt-
+    /// damage tally a real attack returns.
+    #[test]
+    fn weapon_plus_one_increases_dealt_damage_over_baseline() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+        use crate::items::item_template::WEAPON_PLUS_ONE;
+
+        let trials = 400u64;
+        let run = |with_weapon: bool| -> u32 {
+            let mut sum: u32 = 0;
+            for seed in 0..trials {
+                let mut e = ei_with_terrain(15, 15, &[]);
+                e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+                let attacker = e
+                    .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                    .unwrap();
+                let target = e
+                    .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                    .unwrap();
+                if with_weapon {
+                    e.actors
+                        .get_mut(&attacker)
+                        .unwrap()
+                        .pickup_item(&WEAPON_PLUS_ONE);
+                }
+                let (_, dealt) = resolve_attack_outcome(
+                    &mut e,
+                    AttackParams {
+                        caster_id: attacker,
+                        target_id: target,
+                        action_name: "longsword",
+                        attack_bonus: 5,
+                        damage_dice: Dice::new(1, 8),
+                        damage_bonus: 3,
+                        damage_type: DamageType::Slashing,
+                        is_melee: true,
+                        long_range: None,
+                        is_spell: false,
+                    },
+                );
+                sum = sum.saturating_add(dealt);
+            }
+            sum
+        };
+        let baseline = run(false);
+        let buffed = run(true);
+        assert!(
+            buffed > baseline,
+            "weapon +1 should out-damage baseline (+1 {} vs base {})",
+            buffed,
+            baseline
+        );
     }
 
     #[test]

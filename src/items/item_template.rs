@@ -12,6 +12,22 @@ pub struct ItemBonuses {
     pub speed: i32,
     /// Flat bonus added to every saving throw modifier.
     pub save: i32,
+    /// Flat bonus added to every attack roll the holder makes (weapon
+    /// and spell attacks alike — folded into `caster_attack_buffs` so
+    /// the install-side `attack_bonus_buff` lane is shared with item
+    /// passives). Matches the `+1 weapon` / Bracers of Archery loot
+    /// archetype. 5e RAW: a +1 weapon adds to both attack AND damage
+    /// rolls — we ride the attack half here; the damage half lives on
+    /// `damage_bonus` below so weapon swings AND spell attacks both
+    /// see the bonus once (no double-dipping). 0 by default — most
+    /// trinkets leave this alone.
+    pub attack_bonus: i32,
+    /// Flat bonus added to every damage roll the holder lands on a hit
+    /// (weapon and spell attacks alike). Used by `+1 weapon`-style items
+    /// to grant the RAW "+N to attack AND damage" pair. Read at the
+    /// damage-roll site in `engine::attack` / `spells.rs`'s spell-attack
+    /// chokepoint. 0 by default.
+    pub damage_bonus: i32,
 }
 
 impl ItemBonuses {
@@ -25,6 +41,8 @@ impl ItemBonuses {
         max_hp: 0,
         speed: 0,
         save: 0,
+        attack_bonus: 0,
+        damage_bonus: 0,
     };
 }
 
@@ -36,6 +54,8 @@ impl std::ops::Add for ItemBonuses {
             max_hp: self.max_hp + other.max_hp,
             speed: self.speed + other.speed,
             save: self.save + other.save,
+            attack_bonus: self.attack_bonus + other.attack_bonus,
+            damage_bonus: self.damage_bonus + other.damage_bonus,
         }
     }
 }
@@ -702,6 +722,88 @@ pub static SCROLL_OF_MASS_HEALING_WORD: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// +1 Weapon — passive trinket. Grants +1 to attack rolls AND +1 to
+/// damage rolls while carried. 5e RAW: a magical weapon adds the bonus
+/// to both attack and damage with that weapon; we abstract over the
+/// weapon-vs-weapon binding (the engine doesn't model weapon ownership
+/// beyond "this swing came from this actor") and have the trinket
+/// modify every attack the holder makes — weapon swings AND spell
+/// attacks alike. Sits in the loot pool as the common "magical weapon"
+/// archetype; the +2 and +3 tiers stack the same fields linearly.
+pub static WEAPON_PLUS_ONE: Item = Item {
+    name: "+1 Weapon",
+    glyph: '/',
+    bonuses: ItemBonuses {
+        attack_bonus: 1,
+        damage_bonus: 1,
+        ..ItemBonuses::ZERO
+    },
+    ..Item::DEFAULTS
+};
+
+/// +2 Weapon — passive trinket. Premium tier of the magical-weapon
+/// loot ladder: +2 attack AND +2 damage on every swing. Single-entry
+/// in the loot pool (one notch above the common +1 tier).
+pub static WEAPON_PLUS_TWO: Item = Item {
+    name: "+2 Weapon",
+    glyph: '\\',
+    bonuses: ItemBonuses {
+        attack_bonus: 2,
+        damage_bonus: 2,
+        ..ItemBonuses::ZERO
+    },
+    ..Item::DEFAULTS
+};
+
+/// Bracers of Archery — passive trinket. RAW: +2 to damage rolls with
+/// longbows / shortbows. The engine doesn't yet split swings by weapon
+/// type, so we collapse the gate to "all damage rolls" (a small over-
+/// tune: a melee fighter wearing the bracers picks up the bonus too,
+/// but the loot tier still slots between Weapon +1 (+1/+1) and Weapon
+/// +2 (+2/+2) at a useful niche). The attack-bonus stays 0 — the
+/// bracers explicitly don't grant a to-hit bump RAW.
+pub static BRACERS_OF_ARCHERY: Item = Item {
+    name: "Bracers of Archery",
+    glyph: 'Y',
+    bonuses: ItemBonuses {
+        damage_bonus: 2,
+        ..ItemBonuses::ZERO
+    },
+    ..Item::DEFAULTS
+};
+
+/// Ioun Stone of Mastery — passive trinket. RAW (DMG): "your proficiency
+/// bonus increases by 1 while you have this stone." We collapse the
+/// proficiency-bump clause onto the load-bearing attack lane: +1 attack
+/// AND +1 save (the two rolls that proficiency-bonus most consequentially
+/// drives). Distinct loot tier from `+1 Weapon` since this also stacks
+/// the save bonus rather than the damage bonus — caster-flavored.
+pub static IOUN_STONE_OF_MASTERY: Item = Item {
+    name: "Ioun Stone of Mastery",
+    glyph: 'J',
+    bonuses: ItemBonuses {
+        attack_bonus: 1,
+        save: 1,
+        ..ItemBonuses::ZERO
+    },
+    ..Item::DEFAULTS
+};
+
+/// Sentinel Shield — passive trinket. RAW (XGtE): "you have advantage on
+/// initiative rolls and Wisdom (Perception) checks." We don't model
+/// initiative or perception checks at this granularity, so we collapse
+/// the trait onto a defensive AC bump (+1, matching the shield slot) and
+/// a +1 save bonus (the "alert" half of the trinket). Same numeric profile
+/// as Ring of Protection but a different in-fiction flavor — gives the
+/// loot pool another low-tier defensive trinket without sliding in a
+/// straight Ring of Protection duplicate.
+pub static SENTINEL_SHIELD: Item = Item {
+    name: "Sentinel Shield",
+    glyph: '#',
+    bonuses: ItemBonuses { ac: 1, save: 1, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -820,4 +922,23 @@ pub static LOOT_POOL: &[&Item] = &[
     // entry; complements the single-target Cure Wounds scroll for
     // multi-ally emergency healing.
     &SCROLL_OF_MASS_HEALING_WORD,
+    // Magical weapon ladder — +1 sits at common weight (mirroring
+    // Cloak of Resistance / Ring of Protection); +2 is single-entry
+    // premium. Both grant +N attack AND +N damage on every swing so
+    // the loot tier slots cleanly between trinkets (defensive) and
+    // burst scrolls (offensive).
+    &WEAPON_PLUS_ONE,
+    &WEAPON_PLUS_ONE,
+    &WEAPON_PLUS_TWO,
+    // Bracers of Archery — +2 damage trinket. Same weight as the
+    // single-element resistance rings; sits as an offensive-niche
+    // trinket alongside the defensive AC / save bumps.
+    &BRACERS_OF_ARCHERY,
+    // Ioun Stone of Mastery — caster-flavored +1/+1 (attack/save) trinket.
+    // Sits alongside Stone of Good Luck (+1/+1 AC/save) and the Cloak of
+    // Protection (+1/+1 AC/save) as a third "+1 to two stats" passive.
+    &IOUN_STONE_OF_MASTERY,
+    // Sentinel Shield — low-tier defensive trinket. Same weight as the
+    // generic Ring of Protection / Cloak of Protection siblings.
+    &SENTINEL_SHIELD,
 ];

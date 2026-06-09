@@ -1081,7 +1081,7 @@ impl ActorInstance {
     pub fn total_item_bonuses(&self) -> ItemBonuses {
         self.items
             .iter()
-            .fold(ItemBonuses::default(), |acc, it| acc + it.bonuses)
+            .fold(ItemBonuses::ZERO, |acc, it| acc + it.bonuses)
     }
 
     pub fn items(&self) -> &[&'static Item] {
@@ -1868,6 +1868,22 @@ impl ActorInstance {
 
     pub fn item_save_bonus(&self) -> i32 {
         self.total_item_bonuses().save
+    }
+
+    /// Sum of every carried item's `attack_bonus` field. Folded into the
+    /// caster-side attack-roll buff lane via
+    /// `EncounterInstance::caster_attack_buffs` so weapon swings AND spell
+    /// attacks both pick up the passive without the call sites re-summing
+    /// the inventory. Symmetric with `item_save_bonus` on the save lane.
+    pub fn item_attack_bonus(&self) -> i32 {
+        self.total_item_bonuses().attack_bonus
+    }
+
+    /// Sum of every carried item's `damage_bonus` field. Folded into the
+    /// damage-roll site in `engine::attack` / spell-attack chokepoint so
+    /// `+N weapon`-style items pick up their +N damage half once per swing.
+    pub fn item_damage_bonus(&self) -> i32 {
+        self.total_item_bonuses().damage_bonus
     }
 
     /// Flat to-hit bonus contributed only by *conditions* whose dice
@@ -2879,5 +2895,65 @@ mod tests {
             10,
             "ring + condition resistance must not stack into /4"
         );
+    }
+
+    #[test]
+    fn weapon_plus_one_grants_attack_and_damage_bonus() {
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        let base_attack = f.item_attack_bonus();
+        let base_damage = f.item_damage_bonus();
+        f.pickup_item(&crate::items::item_template::WEAPON_PLUS_ONE);
+        assert_eq!(f.item_attack_bonus(), base_attack + 1);
+        assert_eq!(f.item_damage_bonus(), base_damage + 1);
+    }
+
+    #[test]
+    fn weapon_plus_two_grants_two_attack_and_two_damage() {
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        f.pickup_item(&crate::items::item_template::WEAPON_PLUS_TWO);
+        assert_eq!(f.item_attack_bonus(), 2);
+        assert_eq!(f.item_damage_bonus(), 2);
+    }
+
+    #[test]
+    fn bracers_of_archery_grants_damage_only() {
+        // RAW: bracers grant +2 damage on bow attacks. Engine collapses
+        // the gate to "all damage rolls" but the attack lane stays 0.
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        f.pickup_item(&crate::items::item_template::BRACERS_OF_ARCHERY);
+        assert_eq!(f.item_attack_bonus(), 0, "bracers should not bump to-hit");
+        assert_eq!(f.item_damage_bonus(), 2, "bracers should bump damage by 2");
+    }
+
+    #[test]
+    fn ioun_stone_of_mastery_grants_attack_and_save_bonus() {
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        let base_attack = f.item_attack_bonus();
+        let base_save = f.total_item_bonuses().save;
+        f.pickup_item(&crate::items::item_template::IOUN_STONE_OF_MASTERY);
+        assert_eq!(f.item_attack_bonus(), base_attack + 1);
+        assert_eq!(f.total_item_bonuses().save, base_save + 1);
+    }
+
+    #[test]
+    fn sentinel_shield_grants_ac_and_save_bonus() {
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        let base_ac = f.total_item_bonuses().ac;
+        let base_save = f.total_item_bonuses().save;
+        f.pickup_item(&crate::items::item_template::SENTINEL_SHIELD);
+        assert_eq!(f.total_item_bonuses().ac, base_ac + 1);
+        assert_eq!(f.total_item_bonuses().save, base_save + 1);
+    }
+
+    #[test]
+    fn weapon_bonus_items_stack_linearly() {
+        // Two `+1 Weapon`s sum to +2/+2 — sanity-check that the per-item
+        // sum in `total_item_bonuses` honors the attack/damage lanes
+        // alongside the existing AC/save/speed lanes.
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        f.pickup_item(&crate::items::item_template::WEAPON_PLUS_ONE);
+        f.pickup_item(&crate::items::item_template::WEAPON_PLUS_ONE);
+        assert_eq!(f.item_attack_bonus(), 2);
+        assert_eq!(f.item_damage_bonus(), 2);
     }
 }
