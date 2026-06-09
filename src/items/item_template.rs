@@ -804,6 +804,110 @@ pub static SENTINEL_SHIELD: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// +3 Weapon — passive trinket. Top tier of the magical-weapon loot
+/// ladder: +3 attack AND +3 damage on every swing. Single-entry rare
+/// drop sitting one notch above `WEAPON_PLUS_TWO`. The numbers stack
+/// linearly with the `attack_bonus_buff` / `damage_bonus_buff` lanes
+/// the lower tiers already ride, so no new code paths fire.
+pub static WEAPON_PLUS_THREE: Item = Item {
+    name: "+3 Weapon",
+    glyph: '|',
+    bonuses: ItemBonuses {
+        attack_bonus: 3,
+        damage_bonus: 3,
+        ..ItemBonuses::ZERO
+    },
+    ..Item::DEFAULTS
+};
+
+/// Belt of Giant Strength — passive trinket. 5e RAW: sets the wearer's
+/// STR score to a fixed value (19 for Hill Giant, 25 for Storm Giant);
+/// the engine doesn't model overwriting ability scores, so we collapse
+/// the STR-set clause onto the load-bearing combat effects of a STR
+/// bump: +2 damage on every swing (STR mod's typical +3 → +5 shift) and
+/// +10 max HP (the CON-adjacent vitality the belt represents). Distinct
+/// from `GAUNTLETS_OF_OGRE_POWER` (+1 AC / +5 HP) — the belt's damage
+/// rider is the offensive niche; the gauntlets sit on the defensive lane.
+pub static BELT_OF_GIANT_STRENGTH: Item = Item {
+    name: "Belt of Giant Strength",
+    glyph: '~',
+    bonuses: ItemBonuses {
+        damage_bonus: 2,
+        max_hp: 10,
+        ..ItemBonuses::ZERO
+    },
+    ..Item::DEFAULTS
+};
+
+/// Potion of Supreme Healing — Action; 10d4+20 self-heal. Top of the
+/// healing-potion tier: Healing (2d4+2) → Greater (4d4+4) → Superior
+/// (8d4+8) → Supreme (10d4+20). Matches 5e RAW. Single-use consumable.
+pub static POTION_OF_SUPREME_HEALING: Item = Item {
+    name: "Potion of Supreme Healing",
+    glyph: '%',
+    on_use: Some(&crate::actions::item_actions::DRINK_SUPREME_HEALING_POTION),
+    ..Item::DEFAULTS
+};
+
+/// Potion of Mage Armor — Action; installs `MageArmored` for 10 rounds
+/// (AC floor of 13 + DEX). Single-use consumable. The Mage Armor spell
+/// is a level-1 abjuration; the potion bypasses the spell-slot cost so
+/// non-casters can dip into the buff. Rejects re-drink while the buff is
+/// up so the consumable isn't burned on a no-op timer refresh.
+pub static POTION_OF_MAGE_ARMOR: Item = Item {
+    name: "Potion of Mage Armor",
+    glyph: 'N',
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_MAGE_ARMOR),
+    ..Item::DEFAULTS
+};
+
+/// Potion of Blur — Action; installs `Blurred` for 10 rounds (attacks
+/// against the holder have disadvantage). Single-use consumable. The
+/// Blur spell is a level-2 concentration; the potion bypasses
+/// concentration so the holder can stack it on top of an existing
+/// concentration buff. Sits in the loot pool as a defensive consumable
+/// alongside Potion of Invisibility / Potion of Stoneskin.
+pub static POTION_OF_BLUR: Item = Item {
+    name: "Potion of Blur",
+    glyph: '?',
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_BLUR),
+    ..Item::DEFAULTS
+};
+
+/// Greater Wand of Magic Missiles — 7-dart variant of the Magic Missile
+/// spell. Top of the MM loot ladder: Scroll (3 darts) → Wand (5 darts)
+/// → Greater Wand (7 darts). Matches the RAW level-4 upcast. Single-use
+/// consumable. Fires through the shared `MagicMissileItem` impl.
+pub static GREATER_WAND_OF_MAGIC_MISSILES: Item = Item {
+    name: "Greater Wand of Magic Missiles",
+    glyph: '>',
+    on_use: Some(&crate::actions::item_actions::USE_GREATER_WAND_OF_MAGIC_MISSILES),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Burning Hands — single-use 3d6 fire DEX-save burst (Action,
+/// 2-tile radius). Fills the entry-level fire-burst niche in the scroll
+/// family — distinct from the rare Scroll of Fireball (6d6). Mirrors
+/// the BURNING_HANDS spell at level 1.
+pub static SCROLL_OF_BURNING_HANDS: Item = Item {
+    name: "Scroll of Burning Hands",
+    glyph: '&',
+    on_use: Some(&crate::actions::item_actions::READ_BURNING_HANDS_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Thunderwave — single-use 2d8 thunder CON-save burst (Action,
+/// 2-tile radius). Fills the thunder lane at the cheap loot tier
+/// alongside the rare Scroll of Shatter (3d8). Mirrors the THUNDERWAVE
+/// spell at level 1, minus the push rider (the shared BurstSaveDamageItem
+/// helper doesn't fork into push follow-ups).
+pub static SCROLL_OF_THUNDERWAVE: Item = Item {
+    name: "Scroll of Thunderwave",
+    glyph: '@',
+    on_use: Some(&crate::actions::item_actions::READ_THUNDERWAVE_SCROLL),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -941,4 +1045,27 @@ pub static LOOT_POOL: &[&Item] = &[
     // Sentinel Shield — low-tier defensive trinket. Same weight as the
     // generic Ring of Protection / Cloak of Protection siblings.
     &SENTINEL_SHIELD,
+    // +3 Weapon — top tier of the magical-weapon ladder. Single-entry
+    // rare drop, paired with the existing +1 (common, weight 2) and
+    // +2 (single entry) tiers.
+    &WEAPON_PLUS_THREE,
+    // Belt of Giant Strength — offensive bruiser trinket: +damage and
+    // +max-HP. Single low-weight entry alongside Gauntlets of Ogre
+    // Power.
+    &BELT_OF_GIANT_STRENGTH,
+    // Supreme Healing — rarest tier of the healing-potion ladder.
+    // Single low-weight entry above Superior Healing (also single).
+    &POTION_OF_SUPREME_HEALING,
+    // Caster-flavored buff potions. Same weight as the Stoneskin /
+    // Invisibility tier — defensive consumables for low-AC casters.
+    &POTION_OF_MAGE_ARMOR,
+    &POTION_OF_BLUR,
+    // Greater Wand of Magic Missiles — top tier of the MM ladder
+    // (3-dart scroll → 5-dart wand → 7-dart greater wand).
+    &GREATER_WAND_OF_MAGIC_MISSILES,
+    // Entry-level burst scrolls — fire / thunder lane at the common
+    // weight tier (one notch below the Fireball / Lightning Bolt
+    // scrolls in damage payload).
+    &SCROLL_OF_BURNING_HANDS,
+    &SCROLL_OF_THUNDERWAVE,
 ];

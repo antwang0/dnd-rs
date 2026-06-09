@@ -1053,8 +1053,11 @@ fn try_geas(encounter: &EncounterInstance, actor_id: usize) -> Option<ActionExec
 /// least one combat-active ally (otherwise the buff is wasted on solo).
 /// Mage Armor self-buff — only worth casting once. The MageArmored
 /// condition has a long timer, so we suppress repeat casts by checking
-/// for it. Validates spell-slot availability via the action's own
-/// `validate_input`, so this also gracefully no-ops when out of slots.
+/// for it. Tries the spell first (slot-cost, no inventory drain); falls
+/// back to the Potion of Mage Armor if the caster is carrying one (loot
+/// consumable, drinkable by non-casters). Validates spell-slot
+/// availability via the action's own `validate_input`, so this also
+/// gracefully no-ops when out of slots.
 fn try_self_buff_mage_armor(
     encounter: &EncounterInstance,
     actor_id: usize,
@@ -1063,7 +1066,11 @@ fn try_self_buff_mage_armor(
     if actor.has_condition(Condition::MageArmored) {
         return None;
     }
+    // Prefer the spell — it's reusable across encounters (slot-based)
+    // and doesn't burn an inventory slot. Fall back to the potion if
+    // the caster has no Mage Armor spell or the slot is spent.
     try_self_action(encounter, actor_id, "mage armor")
+        .or_else(|| try_self_action_inc_items(encounter, actor_id, "drink potion of mage armor"))
 }
 
 /// Armor of Agathys — warlock signature 1st-level abjuration. Pre-buff
@@ -2644,6 +2651,28 @@ fn try_self_action(
     action_name: &str,
 ) -> Option<ActionExecutionInfo> {
     let action = encounter.actors.get(&actor_id)?.find_action(action_name)?;
+    let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
+    aei.validate(encounter).then_some(aei)
+}
+
+/// Same as `try_self_action`, but searches `available_actions()` —
+/// the template-action list plus one entry per carried consumable item —
+/// instead of just the template list. Used by self-buff heuristics that
+/// want to fall back to a Potion of X consumable when the matching
+/// spell isn't on the caster's template (e.g. a fighter drinking a
+/// Potion of Mage Armor). The slower lookup (`available_actions` rebuilds
+/// the dedup vec each call) is fine since this fires once per turn at
+/// most through the AI pipeline.
+fn try_self_action_inc_items(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    action_name: &str,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let action = actor
+        .available_actions()
+        .into_iter()
+        .find(|a| a.name() == action_name)?;
     let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
     aei.validate(encounter).then_some(aei)
 }
@@ -6363,5 +6392,38 @@ mod tests {
             cap,
             "saturate at cap"
         );
+    }
+
+    /// AI mage-armor fallback: a non-caster (fighter) carrying a Potion of
+    /// Mage Armor drinks it via `try_self_buff_mage_armor`. Confirms the
+    /// `try_self_action_inc_items` fallback searches `available_actions()`,
+    /// which surfaces inventory-granted actions a `find_action` lookup
+    /// would miss.
+    #[test]
+    fn ai_drinks_potion_of_mage_armor_when_no_spell() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::POTION_OF_MAGE_ARMOR;
+
+        let mut e = empty_arena();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Spawn a far-off enemy so the fighter isn't in melee range
+        // (the kite / focus-fire branches in front of the buff lane
+        // need to skip cleanly so the mage-armor branch can fire).
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(25, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .pickup_item(&POTION_OF_MAGE_ARMOR);
+
+        // The fighter doesn't know the Mage Armor spell, so the
+        // spell-path inside `try_self_buff_mage_armor` returns None
+        // — the potion fallback should drive the decision.
+        let aei =
+            super::try_self_buff_mage_armor(&e, fighter).expect("expected the potion fallback");
+        assert_eq!(aei.action().name(), "drink potion of mage armor");
     }
 }

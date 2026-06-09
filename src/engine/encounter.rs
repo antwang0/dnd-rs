@@ -32689,6 +32689,292 @@ mod tests {
         );
     }
 
+    /// Potion of Supreme Healing: drinking heals the full 10d4+20 pool.
+    /// Floor of 30 (10+20) is well above Superior Healing's 16-floor
+    /// (8d4+8).
+    #[test]
+    fn potion_of_supreme_healing_heals_full_pool() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::DRINK_SUPREME_HEALING_POTION;
+        use crate::items::item_template::POTION_OF_SUPREME_HEALING;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(2, 2),
+                0,
+                0,
+            )
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        let max = actor.max_hitpoints();
+        actor.take_damage(max - 1);
+        actor.pickup_item(&POTION_OF_SUPREME_HEALING);
+        assert_eq!(e.actors[&id].hitpoints(), 1);
+
+        let aei = ActionExecutionInfo::new(&DRINK_SUPREME_HEALING_POTION, id, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+
+        let after = e.actors[&id].hitpoints();
+        // 10d4 lands in 10..=40, +20 = 30..=60. Floor of 30 means the
+        // fighter's HP cap (typically below 30 at low levels) is hit —
+        // assert the heal at least reached max HP, which proves the
+        // 10d4+20 pool fired.
+        let max_hp = e.actors[&id].max_hitpoints();
+        assert_eq!(
+            after, max_hp,
+            "supreme healing should top off HP (got {}, max {})",
+            after, max_hp
+        );
+        assert!(
+            e.actors[&id].items().is_empty(),
+            "potion should be consumed"
+        );
+    }
+
+    /// Potion of Mage Armor: drinking installs `MageArmored` and consumes
+    /// the potion. The condition's timer is 10 rounds. AC floor of
+    /// `13 + DEX-mod` lifts the wearer's AC if their base is lower.
+    #[test]
+    fn potion_of_mage_armor_installs_condition_and_consumes() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::DRINK_POTION_OF_MAGE_ARMOR;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::POTION_OF_MAGE_ARMOR;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let caster = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .pickup_item(&POTION_OF_MAGE_ARMOR);
+
+        let aei = ActionExecutionInfo::new(&DRINK_POTION_OF_MAGE_ARMOR, caster, None, None, None);
+        assert!(aei.validate(&e), "potion in inventory");
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(
+            e.actors[&caster].has_condition(Condition::MageArmored),
+            "MageArmored should install after drinking"
+        );
+        assert!(
+            e.actors[&caster].items().is_empty(),
+            "potion should be consumed on use"
+        );
+    }
+
+    /// Potion of Mage Armor: re-drinking while already MageArmored is
+    /// rejected — the validator gate prevents wasting the consumable.
+    #[test]
+    fn potion_of_mage_armor_rejected_if_already_armored() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::DRINK_POTION_OF_MAGE_ARMOR;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::items::item_template::POTION_OF_MAGE_ARMOR;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let caster = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&caster).unwrap();
+        actor.pickup_item(&POTION_OF_MAGE_ARMOR);
+        actor.add_condition(Condition::MageArmored, ConditionTimer::Rounds(10));
+
+        let aei = ActionExecutionInfo::new(&DRINK_POTION_OF_MAGE_ARMOR, caster, None, None, None);
+        assert!(
+            !aei.validate(&e),
+            "validator should reject re-drinking when MageArmored is already up"
+        );
+    }
+
+    /// Potion of Blur: drinking installs `Blurred` and consumes the potion.
+    #[test]
+    fn potion_of_blur_installs_blurred_and_consumes() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::DRINK_POTION_OF_BLUR;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::POTION_OF_BLUR;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let caster = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .pickup_item(&POTION_OF_BLUR);
+
+        let aei = ActionExecutionInfo::new(&DRINK_POTION_OF_BLUR, caster, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(
+            e.actors[&caster].has_condition(Condition::Blurred),
+            "Blurred should install after drinking"
+        );
+        assert!(
+            e.actors[&caster].items().is_empty(),
+            "potion should be consumed on use"
+        );
+    }
+
+    /// Greater Wand of Magic Missiles: 7 darts of 1d4+1 force damage at
+    /// one target, auto-hit, no save. Top of the MM loot ladder. Each
+    /// dart rolls 2..=5 force damage, so 7 darts deal at least 14 (worst
+    /// case all 1s rolled) and at most 35 (all 4s) — we assert the floor.
+    #[test]
+    fn greater_wand_of_magic_missiles_damages_target_and_consumes() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::USE_GREATER_WAND_OF_MAGIC_MISSILES;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::items::item_template::GREATER_WAND_OF_MAGIC_MISSILES;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let caster = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 8), 1, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .pickup_item(&GREATER_WAND_OF_MAGIC_MISSILES);
+        let before = e.actors[&target].hitpoints();
+
+        let aei = ActionExecutionInfo::new(
+            &USE_GREATER_WAND_OF_MAGIC_MISSILES,
+            caster,
+            Some(vec![target]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+
+        let hp_after = e.actors.get(&target).map(|a| a.hitpoints()).unwrap_or(0);
+        let dealt = before.saturating_sub(hp_after);
+        // 7 darts × 1d4+1 = min 14, max 35. The zombie may die early —
+        // allow the floor of either ≥14 or the zombie is dead (hp_after = 0).
+        assert!(
+            dealt >= 14 || hp_after == 0,
+            "should deal at least 14 force damage (got {} → {})",
+            before,
+            hp_after
+        );
+        assert!(
+            e.actors[&caster].items().is_empty(),
+            "wand should be consumed on use"
+        );
+    }
+
+    /// Scroll of Burning Hands: 3d6 fire DEX-save burst. Tests the
+    /// shared `BurstSaveDamageItem` impl handles the burst targeting
+    /// and consumes the scroll.
+    #[test]
+    fn scroll_of_burning_hands_damages_burst_and_consumes() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_BURNING_HANDS_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_BURNING_HANDS;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let caster = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_BURNING_HANDS);
+        let before = e.actors[&target].hitpoints();
+
+        let aei = ActionExecutionInfo::new(
+            &READ_BURNING_HANDS_SCROLL,
+            caster,
+            None,
+            Some(vec![Coordinate::new(5, 5)]),
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+
+        let after = e.actors[&target].hitpoints();
+        // 3d6 = 3..=18; pass = half = at least 1. Floor: 1 damage.
+        assert!(
+            after < before,
+            "burning hands burst should damage the zombie"
+        );
+        assert!(
+            e.actors[&caster].items().is_empty(),
+            "scroll should be consumed on use"
+        );
+    }
+
+    /// +3 Weapon: passive trinket grants +3 to attack AND +3 to damage
+    /// on every swing. Mirrors the +1 Weapon test envelope — confirms
+    /// the bonuses fold through `caster_attack_buffs` / `caster_damage_buffs`.
+    #[test]
+    fn weapon_plus_three_folds_into_caster_buffs() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::WEAPON_PLUS_THREE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Before: no item bonuses.
+        let (atk_before, _) = e.caster_attack_buffs(id);
+        let dmg_before = e.caster_damage_buffs(id);
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .pickup_item(&WEAPON_PLUS_THREE);
+        let (atk_after, _) = e.caster_attack_buffs(id);
+        let dmg_after = e.caster_damage_buffs(id);
+        assert_eq!(atk_after - atk_before, 3, "+3 weapon should add +3 attack");
+        assert_eq!(dmg_after - dmg_before, 3, "+3 weapon should add +3 damage");
+    }
+
+    /// Belt of Giant Strength: passive trinket grants +max_hp and +damage.
+    /// Confirms the bonuses flow through the item_bonuses aggregator.
+    #[test]
+    fn belt_of_giant_strength_grants_hp_and_damage_buffs() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::BELT_OF_GIANT_STRENGTH;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let hp_before = e.actors[&id].max_hitpoints();
+        let dmg_before = e.caster_damage_buffs(id);
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .pickup_item(&BELT_OF_GIANT_STRENGTH);
+        let hp_after = e.actors[&id].max_hitpoints();
+        let dmg_after = e.caster_damage_buffs(id);
+        assert_eq!(hp_after - hp_before, 10, "belt should add +10 max HP");
+        assert_eq!(dmg_after - dmg_before, 2, "belt should add +2 damage");
+    }
+
     /// 5e Wild Magic Surge wiring: the `Action::execute` chokepoint
     /// forwards the spell-slot level sniffed off the cost vec into the
     /// surge trigger. We verify the path end-to-end by casting Magic

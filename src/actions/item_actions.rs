@@ -1377,3 +1377,113 @@ impl Action for ReadMassHealingWordScroll {
 
 pub static READ_MASS_HEALING_WORD_SCROLL: ReadMassHealingWordScroll =
     ReadMassHealingWordScroll {};
+
+const POTION_OF_SUPREME_HEALING_NAME: &str = "Potion of Supreme Healing";
+const POTION_OF_MAGE_ARMOR_NAME: &str = "Potion of Mage Armor";
+const POTION_OF_BLUR_NAME: &str = "Potion of Blur";
+const GREATER_WAND_OF_MAGIC_MISSILES_NAME: &str = "Greater Wand of Magic Missiles";
+const SCROLL_OF_BURNING_HANDS_NAME: &str = "Scroll of Burning Hands";
+const SCROLL_OF_THUNDERWAVE_NAME: &str = "Scroll of Thunderwave";
+
+/// Potion of Supreme Healing — 10d4+20 self-heal, Action. Top tier of the
+/// healing-potion ladder, matching 5e RAW. Sits above Potion of Superior
+/// Healing (8d4+8) for the rare drop slot. Fires through the shared
+/// `SelfHealItem` impl.
+pub static DRINK_SUPREME_HEALING_POTION: SelfHealItem = SelfHealItem {
+    action_name: "drink supreme healing potion",
+    action_aliases: &["potion+++", "drink+++"],
+    item_name: POTION_OF_SUPREME_HEALING_NAME,
+    log_label: "potion of supreme healing",
+    dice: Dice::new(10, 4),
+    flat_bonus: 20,
+    bonus_action: false,
+};
+
+/// Potion of Mage Armor — Action; installs `MageArmored` for 10 rounds
+/// (AC floor of 13 + DEX modifier). 5e RAW spell duration is 8 hours;
+/// we collapse to the engine's combat-scale 10-round envelope. Single-
+/// use consumable; rejects re-drink when the buff is already up so the
+/// potion isn't burned on a no-op timer refresh. Routes through the
+/// shared `SelfConditionItem` impl.
+pub static DRINK_POTION_OF_MAGE_ARMOR: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of mage armor",
+    action_aliases: &["ma potion", "mage armor potion"],
+    item_name: POTION_OF_MAGE_ARMOR_NAME,
+    log_text: "{actor} drinks a potion of mage armor; an arcane shell forms.",
+    condition: Condition::MageArmored,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    reject_when_active: true,
+};
+
+/// Potion of Blur — Action; installs `Blurred` for 10 rounds (attacks
+/// against the holder have disadvantage). Single-use consumable. 5e RAW:
+/// the Blur spell is concentration; the potion bypasses concentration so
+/// the holder can stack it on top of an existing concentration buff.
+/// Rejects re-drink when the buff is already up.
+pub static DRINK_POTION_OF_BLUR: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of blur",
+    action_aliases: &["blur potion", "blur"],
+    item_name: POTION_OF_BLUR_NAME,
+    log_text: "{actor} drinks a potion of blur; their outline wavers.",
+    condition: Condition::Blurred,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    reject_when_active: true,
+};
+
+/// Greater Wand of Magic Missiles — 7 darts of 1d4+1 force each, auto-hit,
+/// no save. Top of the Magic Missile loot ladder: Scroll (3 darts) →
+/// Wand (5 darts) → Greater Wand (7 darts). Matches the RAW upcast at
+/// level 4. Fires through the shared `MagicMissileItem` impl.
+pub static USE_GREATER_WAND_OF_MAGIC_MISSILES: MagicMissileItem = MagicMissileItem {
+    action_name: "use greater wand of magic missiles",
+    action_aliases: &["mm wand+", "wand+"],
+    item_name: GREATER_WAND_OF_MAGIC_MISSILES_NAME,
+    log_label: "greater wand of magic missiles",
+    darts: 7,
+    reach: 30,
+};
+
+/// Scroll of Burning Hands — 3d6 fire DEX-save burst, 2-tile radius.
+/// Single-use consumable. Mirrors the `BURNING_HANDS` spell's envelope at
+/// the level-1 baseline (3d6). Fills the entry-level fire-burst niche
+/// between the cantrip Fire Bolt and the Fireball scroll (6d6) in the
+/// loot pool. Fires through the shared `BurstSaveDamageItem` impl.
+pub static READ_BURNING_HANDS_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+    action_name: "read burning hands scroll",
+    action_aliases: &["bh scroll", "hands scroll"],
+    item_name: SCROLL_OF_BURNING_HANDS_NAME,
+    log_label: "scroll of burning hands",
+    dice: Dice::new(3, 6),
+    damage_type: DamageType::Fire,
+    save: AbilityScoreType::Dexterity,
+    dc: 15,
+    radius: 2,
+    // 15 ft cone in RAW; capped to 6 tiles for the picker since the
+    // burst origin is the cone's far edge.
+    reach: 6,
+};
+
+/// Scroll of Thunderwave — 2d8 thunder CON-save burst, 2-tile radius.
+/// Single-use consumable. Mirrors the `THUNDERWAVE` spell's damage roll
+/// at the level-1 baseline; the scroll variant drops the RAW push rider
+/// (the helper-shared `BurstSaveDamageItem` doesn't fork into a push
+/// follow-up — that lives on the spell-side custom impl). Sits in the
+/// loot pool as the cheap thunder-burst entry, distinct from the rare
+/// Scroll of Shatter (3d8) and matching the thunder lane's "small but
+/// loud" envelope.
+pub static READ_THUNDERWAVE_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+    action_name: "read thunderwave scroll",
+    action_aliases: &["tw scroll", "thunderwave scroll"],
+    item_name: SCROLL_OF_THUNDERWAVE_NAME,
+    log_label: "scroll of thunderwave",
+    dice: Dice::new(2, 8),
+    damage_type: DamageType::Thunder,
+    save: AbilityScoreType::Constitution,
+    dc: 15,
+    radius: 2,
+    // 15 ft cube self-centered in RAW; we cap at the picker reach for
+    // safety (caster picks the cube's center). 6 tiles ≈ 15 ft.
+    reach: 6,
+};
