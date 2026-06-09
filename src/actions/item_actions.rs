@@ -444,18 +444,38 @@ pub static READ_FIREBALL_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
     reach: 60,
 };
 
-/// Read a Scroll of Magic Missile: spend an Action to fire 3 darts at one
-/// enemy in line-of-sight (range 30 tiles). Each dart deals 1d4+1 force.
-/// Auto-hit, no save. The scroll is consumed regardless of outcome.
-pub struct ReadMagicMissileScroll {}
+/// Config struct for "Magic Missile auto-hit dart volley" consumables —
+/// the shared shape behind Scroll of Magic Missile and Wand of Magic
+/// Missiles. Each static instance encodes the dart count; the `Action`
+/// impl below rolls 1d4+1 force damage per dart against the single
+/// target. Auto-hit, no save, no attack roll — pure reliability.
+///
+/// Adding a new variant (e.g. Staff of Magic Missiles) is a one-static
+/// declaration — no new `Action` impl needed. Drops the ~70-line
+/// duplicate per-item that the per-struct approach required.
+pub struct MagicMissileItem {
+    /// Player-facing action name (e.g. "read magic missile scroll").
+    pub action_name: &'static str,
+    /// Picker aliases.
+    pub action_aliases: &'static [&'static str],
+    /// Inventory item name to gate validate / consume on.
+    pub item_name: &'static str,
+    /// Log line prefix (e.g. "scroll of magic missile"). The row reads
+    /// `  {log_label}: N*(1d4+1) [r1, r2, ...] = {total} force`.
+    pub log_label: &'static str,
+    /// Number of darts to fire (3 for the scroll, 5 for the wand).
+    pub darts: u32,
+    /// Maximum reach in tiles for the targeting picker (30 = 150 ft RAW).
+    pub reach: isize,
+}
 
-impl Action for ReadMagicMissileScroll {
+impl Action for MagicMissileItem {
     fn name(&self) -> &str {
-        "read magic missile scroll"
+        self.action_name
     }
 
     fn aliases(&self) -> Vec<&str> {
-        vec!["mm scroll", "missile scroll"]
+        self.action_aliases.to_vec()
     }
 
     fn targeting_schema(&self) -> TargetingSchema {
@@ -463,11 +483,15 @@ impl Action for ReadMagicMissileScroll {
     }
 
     fn reach_tiles(&self) -> Option<isize> {
-        Some(30)
+        Some(self.reach)
     }
 
     fn requires_los(&self) -> bool {
         true
+    }
+
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Force]
     }
 
     fn custom_validate_input(
@@ -478,7 +502,7 @@ impl Action for ReadMagicMissileScroll {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        caster_holds(encounter, caster_id, SCROLL_OF_MAGIC_MISSILE_NAME)
+        caster_holds(encounter, caster_id, self.item_name)
     }
 
     fn side_effects(
@@ -492,20 +516,21 @@ impl Action for ReadMagicMissileScroll {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        if !consume_caster_item(encounter, caster_id, SCROLL_OF_MAGIC_MISSILE_NAME) {
+        if !consume_caster_item(encounter, caster_id, self.item_name) {
             return Vec::new();
         }
         let mut total = 0u32;
-        let mut rolls = [0u32; 3];
-        for r in rolls.iter_mut() {
-            *r = encounter.roll(&Dice::new(1, 4));
-            total = total.saturating_add(*r + 1);
+        let mut roll_strs: Vec<String> = Vec::with_capacity(self.darts as usize);
+        for _ in 0..self.darts {
+            let r = encounter.roll(&Dice::new(1, 4));
+            roll_strs.push((r + 1).to_string());
+            total = total.saturating_add(r + 1);
         }
         encounter.log(format!(
-            "  scroll of magic missile: 3*(1d4+1) [{}, {}, {}] = {} force",
-            rolls[0] + 1,
-            rolls[1] + 1,
-            rolls[2] + 1,
+            "  {}: {}*(1d4+1) [{}] = {} force",
+            self.log_label,
+            self.darts,
+            roll_strs.join(", "),
             total
         ));
         vec![Box::new(DealDamage {
@@ -516,7 +541,16 @@ impl Action for ReadMagicMissileScroll {
     }
 }
 
-pub static READ_MAGIC_MISSILE_SCROLL: ReadMagicMissileScroll = ReadMagicMissileScroll {};
+/// Scroll of Magic Missile — 3 darts of 1d4+1 force each, auto-hit, no
+/// save. Fires through the shared `MagicMissileItem` impl.
+pub static READ_MAGIC_MISSILE_SCROLL: MagicMissileItem = MagicMissileItem {
+    action_name: "read magic missile scroll",
+    action_aliases: &["mm scroll", "missile scroll"],
+    item_name: SCROLL_OF_MAGIC_MISSILE_NAME,
+    log_label: "scroll of magic missile",
+    darts: 3,
+    reach: 30,
+};
 
 /// Drink an Antitoxin: removes the Poisoned condition and grants a flat
 /// +5 save bonus until the next long rest (5e abstracts this as
@@ -904,27 +938,39 @@ impl Action for ReadCureWoundsScroll {
 pub static READ_CURE_WOUNDS_SCROLL: ReadCureWoundsScroll = ReadCureWoundsScroll {};
 
 const PEARL_OF_POWER_NAME: &str = "Pearl of Power";
+const GREATER_PEARL_OF_POWER_NAME: &str = "Greater Pearl of Power";
+const SUPREME_PEARL_OF_POWER_NAME: &str = "Supreme Pearl of Power";
 const BOOTS_OF_SPEED_NAME: &str = "Boots of Speed";
 
-/// Use a Pearl of Power: spend a bonus action to restore one expended
-/// level-1 spell slot, then consume the pearl. 5e RAW: "as an action,
-/// restore one expended spell slot of level 3 or lower"; we collapse
-/// the slot tier to level-1 since most engine casters lean on the
-/// level-1 slot for their bread-and-butter spells, and bump the
-/// action-economy cost down to a bonus action so a caster can pearl-
-/// up and still spend the slot on the same turn. Single-use: removed
-/// from inventory on hit. Validate rejects the action when no level-1
-/// slot has been spent — burning the pearl on a no-op would waste
-/// the only consumable in the actor's caster lane.
-pub struct UsePearlOfPower {}
+/// Config struct for "single-use spell-slot refund" consumables — the
+/// shared shape behind Pearl of Power and its Greater / Supreme tiers.
+/// Each static instance encodes which slot level it refunds; the `Action`
+/// impl below validates that the holder has a spent slot at that level,
+/// pops the pearl, and restores one slot.
+///
+/// Adding a new pearl tier (e.g. a level-4 Archmage's Pearl) is a one-
+/// static declaration — no new `Action` impl needed.
+pub struct PearlOfPowerItem {
+    /// Player-facing action name (e.g. "use pearl of power").
+    pub action_name: &'static str,
+    /// Picker aliases (e.g. ["pearl", "pop"]).
+    pub action_aliases: &'static [&'static str],
+    /// Inventory item name to gate validate / consume on (e.g.
+    /// "Pearl of Power").
+    pub item_name: &'static str,
+    /// Spell-slot level to refund (1, 2, 3, ...). The validate path
+    /// rejects when the holder has no spent slot at this level; the
+    /// side-effect builder restores exactly one slot at this level.
+    pub slot_level: u32,
+}
 
-impl Action for UsePearlOfPower {
+impl Action for PearlOfPowerItem {
     fn name(&self) -> &str {
-        "use pearl of power"
+        self.action_name
     }
 
     fn aliases(&self) -> Vec<&str> {
-        vec!["pearl", "pop"]
+        self.action_aliases.to_vec()
     }
 
     fn targeting_schema(&self) -> TargetingSchema {
@@ -958,18 +1004,19 @@ impl Action for UsePearlOfPower {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        if !caster_holds(encounter, caster_id, PEARL_OF_POWER_NAME) {
+        if !caster_holds(encounter, caster_id, self.item_name) {
             return false;
         }
-        // Reject the use when the actor has no spent level-1 slot to
-        // restore — pearling up to refund a slot they didn't spend is
-        // a no-op and would just burn the consumable. The check folds
-        // through the slot manager so a future "no level-1 slots ever"
-        // caster (e.g. cantrip-only build) is gated the same way.
+        // Reject the use when the actor has no spent slot at this level
+        // to restore — pearling up to refund a slot they didn't spend
+        // is a no-op and would just burn the consumable. The check folds
+        // through the slot manager so a caster with no slots at this
+        // tier (e.g. a Greater Pearl in a level-1-only build) is gated
+        // the same way.
         let Some(actor) = encounter.actors.get(&caster_id) else {
             return false;
         };
-        let info = actor.spell_slot_manager.spell_slots(1);
+        let info = actor.spell_slot_manager.spell_slots(self.slot_level);
         info.max_spell_slots > 0 && info.spell_slots < info.max_spell_slots
     }
 
@@ -981,21 +1028,26 @@ impl Action for UsePearlOfPower {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        if !consume_caster_item(encounter, caster_id, PEARL_OF_POWER_NAME) {
+        if !consume_caster_item(encounter, caster_id, self.item_name) {
             return Vec::new();
         }
         if let Some(actor) = encounter.actors.get_mut(&caster_id) {
             let name = actor.name().to_string();
-            let restored = actor.spell_slot_manager.restore_spell_slot(1, 1);
+            let restored = actor
+                .spell_slot_manager
+                .restore_spell_slot(self.slot_level, 1);
             if restored {
                 encounter.log(format!(
-                    "{} crushes a pearl of power; a level-1 slot returns.",
-                    name
+                    "{} crushes a {}; a level-{} slot returns.",
+                    name,
+                    self.item_name.to_lowercase(),
+                    self.slot_level
                 ));
             } else {
                 encounter.log(format!(
-                    "{} crushes a pearl of power — but the slot was already full.",
-                    name
+                    "{} crushes a {} — but the slot was already full.",
+                    name,
+                    self.item_name.to_lowercase()
                 ));
             }
         }
@@ -1003,7 +1055,38 @@ impl Action for UsePearlOfPower {
     }
 }
 
-pub static USE_PEARL_OF_POWER: UsePearlOfPower = UsePearlOfPower {};
+/// Pearl of Power — bonus action; restore one expended level-1 spell
+/// slot. Fires through the shared `PearlOfPowerItem` impl. 5e RAW
+/// refunds a slot of level 3 or lower; the engine ladders the loot
+/// table through three pearl tiers instead so the per-tier item carries
+/// the slot-level it refunds explicitly.
+pub static USE_PEARL_OF_POWER: PearlOfPowerItem = PearlOfPowerItem {
+    action_name: "use pearl of power",
+    action_aliases: &["pearl", "pop"],
+    item_name: PEARL_OF_POWER_NAME,
+    slot_level: 1,
+};
+
+/// Greater Pearl of Power — bonus action; restore one expended level-2
+/// spell slot. Sits a tier above the regular Pearl in the loot pool.
+/// Fires through the shared `PearlOfPowerItem` impl.
+pub static USE_GREATER_PEARL_OF_POWER: PearlOfPowerItem = PearlOfPowerItem {
+    action_name: "use greater pearl of power",
+    action_aliases: &["pearl+", "pop+"],
+    item_name: GREATER_PEARL_OF_POWER_NAME,
+    slot_level: 2,
+};
+
+/// Supreme Pearl of Power — bonus action; restore one expended level-3
+/// spell slot. Top of the pearl ladder; matches the RAW pearl's
+/// "level 3 or lower" envelope. Fires through the shared
+/// `PearlOfPowerItem` impl.
+pub static USE_SUPREME_PEARL_OF_POWER: PearlOfPowerItem = PearlOfPowerItem {
+    action_name: "use supreme pearl of power",
+    action_aliases: &["pearl++", "pop++"],
+    item_name: SUPREME_PEARL_OF_POWER_NAME,
+    slot_level: 3,
+};
 
 /// Boots of Speed — Bonus Action; installs the `Hasted` condition for 10
 /// rounds (+2 AC, advantage on DEX saves, doubled walking speed). Single-
@@ -1044,83 +1127,17 @@ pub static READ_CONE_OF_COLD_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
     reach: 24,
 };
 
-/// Use a Wand of Magic Missiles — fire 5 force-damage darts at one enemy
-/// in line-of-sight (range 30 tiles). Each dart deals 1d4+1 force.
-/// Auto-hit, no save. Mirrors `READ_MAGIC_MISSILE_SCROLL` (3 darts) — the
-/// wand sits at a higher payload tier. Single-use consumable per the
-/// engine's charge-less loot model; the wand is removed on use.
-pub struct UseWandOfMagicMissiles {}
-
-impl Action for UseWandOfMagicMissiles {
-    fn name(&self) -> &str {
-        "use wand of magic missiles"
-    }
-
-    fn aliases(&self) -> Vec<&str> {
-        vec!["wand", "mm wand"]
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(30)
-    }
-
-    fn requires_los(&self) -> bool {
-        true
-    }
-
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        caster_holds(encounter, caster_id, WAND_OF_MAGIC_MISSILES_NAME)
-    }
-
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        if !consume_caster_item(encounter, caster_id, WAND_OF_MAGIC_MISSILES_NAME) {
-            return Vec::new();
-        }
-        let mut total = 0u32;
-        let mut rolls = [0u32; 5];
-        for r in rolls.iter_mut() {
-            *r = encounter.roll(&Dice::new(1, 4));
-            total = total.saturating_add(*r + 1);
-        }
-        encounter.log(format!(
-            "  wand of magic missiles: 5*(1d4+1) [{}, {}, {}, {}, {}] = {} force",
-            rolls[0] + 1,
-            rolls[1] + 1,
-            rolls[2] + 1,
-            rolls[3] + 1,
-            rolls[4] + 1,
-            total
-        ));
-        vec![Box::new(DealDamage {
-            actor_id: target_id,
-            amount: total,
-            damage_type: DamageType::Force,
-        })]
-    }
-}
-
-pub static USE_WAND_OF_MAGIC_MISSILES: UseWandOfMagicMissiles = UseWandOfMagicMissiles {};
+/// Wand of Magic Missiles — 5 darts of 1d4+1 force each, auto-hit, no
+/// save. Sits a tier above the 3-dart scroll. Fires through the shared
+/// `MagicMissileItem` impl.
+pub static USE_WAND_OF_MAGIC_MISSILES: MagicMissileItem = MagicMissileItem {
+    action_name: "use wand of magic missiles",
+    action_aliases: &["wand", "mm wand"],
+    item_name: WAND_OF_MAGIC_MISSILES_NAME,
+    log_label: "wand of magic missiles",
+    darts: 5,
+    reach: 30,
+};
 
 const POTION_OF_FLYING_NAME: &str = "Potion of Flying";
 const POTION_OF_CLIMBING_NAME: &str = "Potion of Climbing";
@@ -1231,3 +1248,132 @@ pub static USE_WAND_OF_CONE_OF_COLD: BurstSaveDamageItem = BurstSaveDamageItem {
     radius: 6,
     reach: 24,
 };
+
+const SCROLL_OF_MASS_HEALING_WORD_NAME: &str = "Scroll of Mass Healing Word";
+
+/// Read a Scroll of Mass Healing Word: bonus action; heal up to 6 nearest
+/// allies (combat-active or dying) within 60 ft (24 tiles) of the caster
+/// for 1d4+3 HP each. Mirrors the `MASS_HEALING_WORD` spell's envelope at
+/// a fixed +3 caster-mod stand-in (the scroll has no caster-ability tie;
+/// +3 sits between the level-1 cleric's WIS-mod and a high-level cleric's
+/// WIS-mod for the typical reader). Touch-range targets the caster's
+/// own footprint as the center — no explicit target needed. Single-use
+/// consumable.
+pub struct ReadMassHealingWordScroll {}
+
+impl Action for ReadMassHealingWordScroll {
+    fn name(&self) -> &str {
+        "read mass healing word scroll"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mhw scroll", "mass-heal scroll"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn is_heal(&self) -> bool {
+        true
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, SCROLL_OF_MASS_HEALING_WORD_NAME)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        if !consume_caster_item(encounter, caster_id, SCROLL_OF_MASS_HEALING_WORD_NAME) {
+            return Vec::new();
+        }
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let caster_team = caster.team();
+        let caster_loc = caster.location();
+        let caster_size = get_tiles_from_size(caster.size());
+        let raw = encounter.roll(&Dice::new(1, 4)) as i32;
+        // Flat +3 stand-in for the spell's caster WIS modifier. The
+        // scroll is a fixed magic item with no caster-ability tie; +3
+        // sits between a level-1 cleric's WIS-mod (+2) and a high-level
+        // cleric's WIS-mod (+5) for the typical reader.
+        let amount = (raw + 3).max(1) as u32;
+        encounter.log(format!(
+            "  scroll of mass healing word: 1d4({})+3 = {} HP each",
+            raw, amount
+        ));
+        const RANGE_TILES: isize = 24;
+        const MAX_TARGETS: usize = 6;
+        let mut candidates: Vec<(isize, usize)> = encounter
+            .actors
+            .iter()
+            .filter_map(|(id, a)| {
+                if a.team() != caster_team {
+                    return None;
+                }
+                if !a.is_combat_active() && !a.is_dying() {
+                    return None;
+                }
+                let dist = footprint_chebyshev(
+                    caster_loc,
+                    caster_size,
+                    a.location(),
+                    get_tiles_from_size(a.size()),
+                );
+                if dist > RANGE_TILES {
+                    return None;
+                }
+                Some((dist, *id))
+            })
+            .collect();
+        candidates.sort_unstable();
+        candidates.truncate(MAX_TARGETS);
+        candidates
+            .into_iter()
+            .map(|(_, id)| {
+                Box::new(Heal {
+                    actor_id: id,
+                    amount,
+                }) as Box<dyn ApplicableSideEffect>
+            })
+            .collect()
+    }
+}
+
+pub static READ_MASS_HEALING_WORD_SCROLL: ReadMassHealingWordScroll =
+    ReadMassHealingWordScroll {};

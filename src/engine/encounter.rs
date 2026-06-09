@@ -34366,6 +34366,207 @@ mod tests {
         );
     }
 
+    /// Greater Pearl of Power: refunds a level-2 slot instead of the
+    /// regular Pearl's level-1. Verifies the parameterized
+    /// `PearlOfPowerItem` config picks up the right slot tier and
+    /// rejects when no level-2 slot is spent (no-op guard).
+    #[test]
+    fn greater_pearl_of_power_restores_a_level_two_slot() {
+        use crate::actions::action_template::Action;
+        use crate::actions::item_actions::USE_GREATER_PEARL_OF_POWER;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::GREATER_PEARL_OF_POWER;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let pre = e.actors[&wiz].spell_slot_manager.spell_slots(2);
+        assert!(pre.max_spell_slots > 0, "wizard should have lvl-2 slots");
+        e.actors.get_mut(&wiz).unwrap().pickup_item(&GREATER_PEARL_OF_POWER);
+
+        // Validate gate: with no level-2 slot spent, the pearl rejects.
+        let action: &dyn Action = &USE_GREATER_PEARL_OF_POWER;
+        assert!(
+            !action.validate_input(&e, wiz, None, None, None),
+            "no-op pearl use should be rejected when all slots are full"
+        );
+
+        // Spend a level-2 slot so the pearl has work to do.
+        e.actors.get_mut(&wiz).unwrap().spell_slot_manager.consume_spell_slot(2);
+        let after_spend = e.actors[&wiz].spell_slot_manager.spell_slots(2);
+        assert_eq!(after_spend.spell_slots, pre.spell_slots - 1);
+
+        // Fire the side-effects; verify the slot returns and the pearl
+        // is consumed.
+        for ef in action.side_effects(&mut e, wiz, None, None, None) {
+            ef.apply(&mut e);
+        }
+        let after = e.actors[&wiz].spell_slot_manager.spell_slots(2);
+        assert_eq!(
+            after.spell_slots, pre.spell_slots,
+            "level-2 slot should be restored"
+        );
+        assert!(
+            !e.actors[&wiz].has_item_named("Greater Pearl of Power"),
+            "greater pearl should be consumed on use"
+        );
+    }
+
+    /// Supreme Pearl of Power: refunds a level-3 slot. Mirror of the
+    /// Greater Pearl test; verifies the top tier in the pearl ladder.
+    #[test]
+    fn supreme_pearl_of_power_restores_a_level_three_slot() {
+        use crate::actions::action_template::Action;
+        use crate::actions::item_actions::USE_SUPREME_PEARL_OF_POWER;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::SUPREME_PEARL_OF_POWER;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let pre = e.actors[&wiz].spell_slot_manager.spell_slots(3);
+        assert!(pre.max_spell_slots > 0, "wizard should have lvl-3 slots");
+        e.actors.get_mut(&wiz).unwrap().spell_slot_manager.consume_spell_slot(3);
+        e.actors.get_mut(&wiz).unwrap().pickup_item(&SUPREME_PEARL_OF_POWER);
+
+        let action: &dyn Action = &USE_SUPREME_PEARL_OF_POWER;
+        for ef in action.side_effects(&mut e, wiz, None, None, None) {
+            ef.apply(&mut e);
+        }
+        let after = e.actors[&wiz].spell_slot_manager.spell_slots(3);
+        assert_eq!(
+            after.spell_slots, pre.spell_slots,
+            "level-3 slot should be restored"
+        );
+        assert!(
+            !e.actors[&wiz].has_item_named("Supreme Pearl of Power"),
+            "supreme pearl should be consumed on use"
+        );
+    }
+
+    /// Ring of Poison Resistance: passive trinket; the wearer takes half
+    /// poison damage. Mirrors the existing elemental-resistance ring
+    /// tests for the four classic burst types.
+    #[test]
+    fn ring_of_poison_resistance_halves_poison_damage() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::types::DamageType;
+        use crate::items::item_template::RING_OF_POISON_RESISTANCE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .pickup_item(&RING_OF_POISON_RESISTANCE);
+        let before = e.actors[&fighter].hitpoints();
+        crate::engine::side_effects::DealDamage {
+            actor_id: fighter,
+            amount: 10,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        let after = e.actors[&fighter].hitpoints();
+        assert_eq!(
+            before - after,
+            5,
+            "ring of poison resistance should halve incoming poison damage"
+        );
+    }
+
+    /// Ring of Radiant / Necrotic / Thunder / Psychic Resistance: same
+    /// resistance shape as the poison ring; this folds the four siblings
+    /// into one parameterized table-driven check so the loot pool's
+    /// resistance lane is covered end-to-end.
+    #[test]
+    fn secondary_resistance_rings_halve_damage() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::types::DamageType;
+        use crate::items::item_template::{
+            Item, RING_OF_NECROTIC_RESISTANCE, RING_OF_PSYCHIC_RESISTANCE,
+            RING_OF_RADIANT_RESISTANCE, RING_OF_THUNDER_RESISTANCE,
+        };
+
+        let cases: &[(&'static Item, DamageType)] = &[
+            (&RING_OF_RADIANT_RESISTANCE, DamageType::Radiant),
+            (&RING_OF_NECROTIC_RESISTANCE, DamageType::Necrotic),
+            (&RING_OF_THUNDER_RESISTANCE, DamageType::Thunder),
+            (&RING_OF_PSYCHIC_RESISTANCE, DamageType::Psychic),
+        ];
+        for (ring, dtype) in cases {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let f = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            e.actors.get_mut(&f).unwrap().pickup_item(ring);
+            let before = e.actors[&f].hitpoints();
+            crate::engine::side_effects::DealDamage {
+                actor_id: f,
+                amount: 10,
+                damage_type: *dtype,
+            }
+            .apply(&mut e);
+            let dealt = before - e.actors[&f].hitpoints();
+            assert_eq!(
+                dealt, 5,
+                "{} should halve incoming {:?} damage",
+                ring.name, dtype
+            );
+        }
+    }
+
+    /// Scroll of Mass Healing Word: bonus-action consumable that heals
+    /// up to 6 nearest allies in 60 ft for 1d4+3. Verifies that the
+    /// scroll heals the caster, heals at least one nearby ally, and
+    /// is removed from inventory.
+    #[test]
+    fn scroll_of_mass_healing_word_heals_allies_and_consumes() {
+        use crate::actions::action_template::Action;
+        use crate::actions::item_actions::READ_MASS_HEALING_WORD_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_MASS_HEALING_WORD;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        // Wound both lightly so the heal has something to do but neither
+        // drops to dying / dead.
+        e.actors.get_mut(&cleric).unwrap().take_damage(2);
+        e.actors.get_mut(&ally).unwrap().take_damage(2);
+        let cleric_hp_before = e.actors[&cleric].hitpoints();
+        let ally_hp_before = e.actors[&ally].hitpoints();
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_MASS_HEALING_WORD);
+
+        let action: &dyn Action = &READ_MASS_HEALING_WORD_SCROLL;
+        for ef in action.side_effects(&mut e, cleric, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&cleric].hitpoints() > cleric_hp_before,
+            "scroll should heal the reader"
+        );
+        assert!(
+            e.actors[&ally].hitpoints() > ally_hp_before,
+            "scroll should heal the nearby ally"
+        );
+        assert!(
+            !e.actors[&cleric].has_item_named("Scroll of Mass Healing Word"),
+            "scroll should be consumed on use"
+        );
+    }
+
     /// Boots of Speed: bonus-action consumable that installs `Hasted`
     /// for 10 rounds and removes the boots from inventory. Verifies the
     /// condition installs and the item is consumed.

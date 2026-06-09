@@ -337,16 +337,35 @@ pub static RING_OF_FREE_ACTION: Item = Item {
 /// Pearl of Power — caster-flavored consumable. Bonus action: restore
 /// one expended level-1 spell slot to the holder, then the pearl is
 /// consumed. 5e RAW: "once per long rest, restore one expended spell
-/// slot of level 3 or lower" — we collapse the tier to level-1 for
-/// simplicity (most caster impls in the engine spend level-1 slots for
-/// their cantrip-adjacent options), and drop the long-rest gate in
-/// favor of one-shot consumption since the engine doesn't model
-/// multi-encounter rest cycles. Pairs with the new `USE_PEARL_OF_POWER`
-/// action.
+/// slot of level 3 or lower" — we ladder the loot pool through three
+/// pearl tiers instead (level-1 / level-2 / level-3 refunds), trading
+/// the single-RAW-pearl for three distinct rolls. Drops the long-rest
+/// gate in favor of one-shot consumption since the engine doesn't
+/// model multi-encounter rest cycles.
 pub static PEARL_OF_POWER: Item = Item {
     name: "Pearl of Power",
     glyph: 'q',
     on_use: Some(&crate::actions::item_actions::USE_PEARL_OF_POWER),
+    ..Item::DEFAULTS
+};
+
+/// Greater Pearl of Power — refunds one expended level-2 spell slot.
+/// Sibling to `PEARL_OF_POWER` (level-1 refund); same one-shot envelope
+/// but a higher tier. Fires through the shared `PearlOfPowerItem` impl.
+pub static GREATER_PEARL_OF_POWER: Item = Item {
+    name: "Greater Pearl of Power",
+    glyph: 'E',
+    on_use: Some(&crate::actions::item_actions::USE_GREATER_PEARL_OF_POWER),
+    ..Item::DEFAULTS
+};
+
+/// Supreme Pearl of Power — refunds one expended level-3 spell slot.
+/// Top of the pearl ladder; matches the RAW pearl's "level 3 or lower"
+/// envelope. Same one-shot envelope as the lesser tiers.
+pub static SUPREME_PEARL_OF_POWER: Item = Item {
+    name: "Supreme Pearl of Power",
+    glyph: 'I',
+    on_use: Some(&crate::actions::item_actions::USE_SUPREME_PEARL_OF_POWER),
     ..Item::DEFAULTS
 };
 
@@ -492,6 +511,65 @@ pub static RING_OF_LIGHTNING_RESISTANCE: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Ring of Poison Resistance — passive trinket. Grants resistance to
+/// poison damage while worn. Distinct from the Periapt of Proof
+/// against Poison (immunity + Poisoned-condition-immune) — this is the
+/// resistance-tier counterpart at a different weight in the loot pool.
+/// Slots into the typed-resistance ring family alongside fire / cold /
+/// acid / lightning.
+pub static RING_OF_POISON_RESISTANCE: Item = Item {
+    name: "Ring of Poison Resistance",
+    glyph: 'j',
+    damage_resistances: &[crate::engine::types::DamageType::Poison],
+    ..Item::DEFAULTS
+};
+
+/// Ring of Radiant Resistance — passive trinket. Grants resistance to
+/// radiant damage while worn. Useful against celestial / cleric burst
+/// (Spirit Guardians, Sacred Burst, Sunburst). Slots into the typed-
+/// resistance ring family alongside the elemental rings.
+pub static RING_OF_RADIANT_RESISTANCE: Item = Item {
+    name: "Ring of Radiant Resistance",
+    glyph: 'u',
+    damage_resistances: &[crate::engine::types::DamageType::Radiant],
+    ..Item::DEFAULTS
+};
+
+/// Ring of Necrotic Resistance — passive trinket. Grants resistance to
+/// necrotic damage while worn. Counterpart to the Radiant ring — useful
+/// against undead drain attacks and wizard necromancy bursts (Blight,
+/// Circle of Death). Slots into the typed-resistance ring family.
+pub static RING_OF_NECROTIC_RESISTANCE: Item = Item {
+    name: "Ring of Necrotic Resistance",
+    glyph: 'e',
+    damage_resistances: &[crate::engine::types::DamageType::Necrotic],
+    ..Item::DEFAULTS
+};
+
+/// Ring of Thunder Resistance — passive trinket. Grants resistance to
+/// thunder damage while worn. Useful against Shatter / Thunderwave /
+/// Thunder Step bursts. Slots into the typed-resistance ring family
+/// alongside the elemental rings.
+pub static RING_OF_THUNDER_RESISTANCE: Item = Item {
+    name: "Ring of Thunder Resistance",
+    glyph: 'v',
+    damage_resistances: &[crate::engine::types::DamageType::Thunder],
+    ..Item::DEFAULTS
+};
+
+/// Ring of Psychic Resistance — passive trinket. Grants resistance to
+/// psychic damage while worn. Distinct from the Ring of Mind Shielding
+/// (which is full Psychic immunity + Charmed-immunity) — this is the
+/// resistance-tier counterpart at a different loot weight. Useful
+/// against Mind Sliver / Psychic Scream / Phantasmal-style mental
+/// bursts.
+pub static RING_OF_PSYCHIC_RESISTANCE: Item = Item {
+    name: "Ring of Psychic Resistance",
+    glyph: 'x',
+    damage_resistances: &[crate::engine::types::DamageType::Psychic],
+    ..Item::DEFAULTS
+};
+
 /// Scroll of Cone of Cold — single-use 8d8 cold-damage burst. 60-foot
 /// cone in RAW; we model as a 6-tile-radius burst centered on the target
 /// tile (matching the `CONE_OF_COLD` spell's burst approximation). All
@@ -610,6 +688,20 @@ pub static SCROLL_OF_SHATTER: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Scroll of Mass Healing Word — single-use ally-aura heal. Bonus action;
+/// heal up to 6 nearest allies (combat-active or dying) within 60 ft
+/// (24 tiles) of the reader for 1d4+3 HP each. Fires through the
+/// `READ_MASS_HEALING_WORD_SCROLL` action, which mirrors the
+/// `MASS_HEALING_WORD` spell's envelope at a fixed +3 caster-mod
+/// stand-in. Sits in the loot pool as the multi-target counterpart to
+/// the single-target Scroll of Cure Wounds.
+pub static SCROLL_OF_MASS_HEALING_WORD: Item = Item {
+    name: "Scroll of Mass Healing Word",
+    glyph: 'z',
+    on_use: Some(&crate::actions::item_actions::READ_MASS_HEALING_WORD_SCROLL),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -677,6 +769,16 @@ pub static LOOT_POOL: &[&Item] = &[
     &RING_OF_COLD_RESISTANCE,
     &RING_OF_ACID_RESISTANCE,
     &RING_OF_LIGHTNING_RESISTANCE,
+    // Secondary-resistance ring family — covers the remaining damage
+    // types the engine actually fires (poison / radiant / necrotic /
+    // thunder / psychic). Same single-entry weighting as the elemental
+    // four so the loot pool spreads coverage across every burst type
+    // without piling weight onto any single resistance source.
+    &RING_OF_POISON_RESISTANCE,
+    &RING_OF_RADIANT_RESISTANCE,
+    &RING_OF_NECROTIC_RESISTANCE,
+    &RING_OF_THUNDER_RESISTANCE,
+    &RING_OF_PSYCHIC_RESISTANCE,
     // Single-use AoE scrolls / wands — same weight as the Fireball /
     // Lightning Bolt scrolls so casters have a roughly even shot at a
     // big burst regardless of element. Cone of Cold's 8d8 cold tier sits
@@ -707,4 +809,15 @@ pub static LOOT_POOL: &[&Item] = &[
     // Scroll of Shatter fills the thunder lane in the scroll family
     // alongside fire / lightning / cold.
     &SCROLL_OF_SHATTER,
+    // Pearl-of-Power ladder — three tiers of spell-slot refunds. Single
+    // entries each since slot-refund consumables are situationally
+    // strong (the Supreme Pearl refunds a level-3 slot worth far more
+    // than the base Pearl). Sits one tier above Boots of Speed in the
+    // caster-consumable lane.
+    &GREATER_PEARL_OF_POWER,
+    &SUPREME_PEARL_OF_POWER,
+    // Mass Healing Word scroll — bonus-action ally aura heal. Single
+    // entry; complements the single-target Cure Wounds scroll for
+    // multi-ally emergency healing.
+    &SCROLL_OF_MASS_HEALING_WORD,
 ];
