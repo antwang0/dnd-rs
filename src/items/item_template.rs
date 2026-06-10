@@ -32,10 +32,10 @@ pub struct ItemBonuses {
 
 impl ItemBonuses {
     /// All-zero baseline. Use as the tail of a struct-update literal so
-    /// an item that only bumps one stat doesn't enumerate the three zero
+    /// an item that only bumps one stat doesn't enumerate the other zero
     /// fields — `ItemBonuses { ac: 1, ..ItemBonuses::ZERO }` reads cleaner
-    /// than the four-field literal. Const-evaluable so static items can
-    /// build off it.
+    /// than spelling out every neutral field. Const-evaluable so static
+    /// items can build off it.
     pub const ZERO: ItemBonuses = ItemBonuses {
         ac: 0,
         max_hp: 0,
@@ -908,6 +908,60 @@ pub static SCROLL_OF_THUNDERWAVE: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Wand of Web — single-use 4-tile burst, DEX save vs DC 15, fail =
+/// Restrained for 10 rounds. 5e RAW: 7 charges casting the Web spell;
+/// we collapse to a one-shot fire-and-forget cast — no concentration,
+/// no charges tracked, no allies caught in the strands (the wand uses
+/// the player-friendly enemy-burst lane like every other harmful
+/// consumable). Fills the Restrained-installer niche in the loot pool
+/// next to the burst-damage scrolls / wands.
+pub static WAND_OF_WEB: Item = Item {
+    name: "Wand of Web",
+    glyph: '$',
+    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_WEB),
+    ..Item::DEFAULTS
+};
+
+/// Pipes of Haunting — single-use 4-tile burst, WIS save vs DC 13,
+/// fail = Frightened for 10 rounds. 5e RAW: 30-ft cone fear-burst with
+/// 3 charges; we collapse to a one-shot envelope. Lower DC (13 vs the
+/// usual 15) reflects the "low-tier mood music" flavor — pairs with the
+/// rarer Wand of Fear (also Frightened, DC 15, single-target) so the
+/// loot pool covers the Frightened lane at two tiers.
+pub static PIPES_OF_HAUNTING: Item = Item {
+    name: "Pipes of Haunting",
+    glyph: '(',
+    on_use: Some(&crate::actions::item_actions::PLAY_PIPES_OF_HAUNTING),
+    ..Item::DEFAULTS
+};
+
+/// Wand of Paralysis — single-use single-target, CON save vs DC 15,
+/// fail = Paralyzed for 10 rounds. 5e RAW: 7 charges firing a line of
+/// paralysis at one creature; we collapse to a one-shot beam — no
+/// charges tracked. Paralyzed is one of the engine's hardest CC
+/// envelopes (zero movement, action economy blocked, auto-fail
+/// STR/DEX saves, melee crits land automatically), so the consumable
+/// sits in the rare half of the loot pool.
+pub static WAND_OF_PARALYSIS: Item = Item {
+    name: "Wand of Paralysis",
+    glyph: ')',
+    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_PARALYSIS),
+    ..Item::DEFAULTS
+};
+
+/// Wand of Fear — single-use single-target, WIS save vs DC 15, fail =
+/// Frightened for 10 rounds. 5e RAW: 7 charges casting Fear (a 30-ft
+/// cone) at level 3; we collapse to a single-target single-use cast.
+/// Distinct from Pipes of Haunting (same condition, wider burst, lower
+/// DC) — the wand is the "hard single-target fear" niche, the pipes
+/// cover the "soft area fear" niche.
+pub static WAND_OF_FEAR: Item = Item {
+    name: "Wand of Fear",
+    glyph: '[',
+    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_FEAR),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -1068,4 +1122,14 @@ pub static LOOT_POOL: &[&Item] = &[
     // scrolls in damage payload).
     &SCROLL_OF_BURNING_HANDS,
     &SCROLL_OF_THUNDERWAVE,
+    // Crowd-control consumables — burst save-or-condition wands fill
+    // the CC niche alongside the burst-damage scrolls / wands. Single
+    // entry per item; the Restrained / Frightened / Paralyzed lanes
+    // are all situationally strong (a paralyzed boss is effectively
+    // free damage for the rest of the party), so the loot pool keeps
+    // them rare.
+    &WAND_OF_WEB,
+    &PIPES_OF_HAUNTING,
+    &WAND_OF_PARALYSIS,
+    &WAND_OF_FEAR,
 ];

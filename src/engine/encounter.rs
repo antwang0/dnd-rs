@@ -32500,7 +32500,7 @@ mod tests {
         // above the Healing potion's 4..=10. Assert a strict lower bound
         // that beats the Greater Healing tier (4d4+4 = 8..=20).
         assert!(
-            after >= 1 + 16,
+            after > 16,
             "superior healing should heal at least 16 HP (got {} → {})",
             1,
             after
@@ -32973,6 +32973,238 @@ mod tests {
         let dmg_after = e.caster_damage_buffs(id);
         assert_eq!(hp_after - hp_before, 10, "belt should add +10 max HP");
         assert_eq!(dmg_after - dmg_before, 2, "belt should add +2 damage");
+    }
+
+    /// Wand of Web: burst, DEX save vs DC 15, fail = Restrained for 10
+    /// rounds. We seed-sweep so probabilistic save outcomes don't make
+    /// the assertion flaky — across enough seeds at least one zombie
+    /// fails the DEX save and ends up Restrained. The wand is consumed
+    /// on use either way.
+    #[test]
+    fn wand_of_web_installs_restrained_on_failed_save() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::USE_WAND_OF_WEB;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::WAND_OF_WEB;
+
+        let trials = 50u64;
+        let mut any_restrained = false;
+        for seed in 0..trials {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let caster = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let z1 = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+                .unwrap();
+            let z2 = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(9, 9), 1, 1)
+                .unwrap();
+            e.actors
+                .get_mut(&caster)
+                .unwrap()
+                .pickup_item(&WAND_OF_WEB);
+            let aei = ActionExecutionInfo::new(
+                &USE_WAND_OF_WEB,
+                caster,
+                None,
+                Some(vec![Coordinate::new(8, 8)]),
+                None,
+            );
+            assert!(aei.validate(&e), "wand in inventory + LOS to center");
+            e.push_action(aei);
+            e.process_stack();
+
+            assert!(
+                e.actors[&caster].items().is_empty(),
+                "wand should be consumed on use (seed {})",
+                seed
+            );
+            if e.actors[&z1].has_condition(Condition::Restrained)
+                || e.actors[&z2].has_condition(Condition::Restrained)
+            {
+                any_restrained = true;
+                break;
+            }
+        }
+        assert!(
+            any_restrained,
+            "wand of web never installed Restrained across {} seeds — save-or-condition path broken?",
+            trials
+        );
+    }
+
+    /// Wand of Web: caster's allies are spared from the burst. We place
+    /// an ally in the radius and confirm they never acquire Restrained
+    /// regardless of save outcome (the `enemy_burst_targets` filter
+    /// short-circuits before the save roll fires).
+    #[test]
+    fn wand_of_web_spares_allies() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::USE_WAND_OF_WEB;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::WAND_OF_WEB;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 8), 0, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .pickup_item(&WAND_OF_WEB);
+        let aei = ActionExecutionInfo::new(
+            &USE_WAND_OF_WEB,
+            caster,
+            None,
+            Some(vec![Coordinate::new(8, 8)]),
+            None,
+        );
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            !e.actors[&ally].has_condition(Condition::Restrained),
+            "ally inside burst should not be Restrained — wand uses the enemy-burst lane"
+        );
+    }
+
+    /// Wand of Web: without the wand in inventory, the action rejects
+    /// at validate. Same shape as the other consumable-rejection tests.
+    #[test]
+    fn wand_of_web_rejects_without_wand() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::USE_WAND_OF_WEB;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let caster = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let aei = ActionExecutionInfo::new(
+            &USE_WAND_OF_WEB,
+            caster,
+            None,
+            Some(vec![Coordinate::new(8, 8)]),
+            None,
+        );
+        assert!(
+            !aei.validate(&e),
+            "no wand in inventory should fail validate"
+        );
+    }
+
+    /// Wand of Paralysis: single-target, CON save vs DC 15, fail =
+    /// Paralyzed for 10 rounds. Seed-swept so the probabilistic save
+    /// path lands at least one Paralyzed install across the trials.
+    /// The wand is consumed on every use regardless.
+    #[test]
+    fn wand_of_paralysis_installs_paralyzed_on_failed_save() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::USE_WAND_OF_PARALYSIS;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::WAND_OF_PARALYSIS;
+
+        let trials = 50u64;
+        let mut any_paralyzed = false;
+        for seed in 0..trials {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let caster = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let zombie = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&caster)
+                .unwrap()
+                .pickup_item(&WAND_OF_PARALYSIS);
+            let aei = ActionExecutionInfo::new(
+                &USE_WAND_OF_PARALYSIS,
+                caster,
+                Some(vec![zombie]),
+                None,
+                None,
+            );
+            assert!(aei.validate(&e), "wand in inventory + target in range");
+            e.push_action(aei);
+            e.process_stack();
+            assert!(
+                e.actors[&caster].items().is_empty(),
+                "wand should be consumed on use (seed {})",
+                seed
+            );
+            if e.actors[&zombie].has_condition(Condition::Paralyzed) {
+                any_paralyzed = true;
+                break;
+            }
+        }
+        assert!(
+            any_paralyzed,
+            "wand of paralysis never installed Paralyzed across {} seeds — single-save path broken?",
+            trials
+        );
+    }
+
+    /// Pipes of Haunting: burst, WIS save vs DC 13, fail = Frightened
+    /// for 10 rounds. Centered on a tile near a Fighter target —
+    /// zombies are immune to Frightened in 5e (and so wouldn't be a
+    /// useful test target here). Seed-swept to handle probabilistic
+    /// saves.
+    #[test]
+    fn pipes_of_haunting_install_frightened_on_failed_save() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::PLAY_PIPES_OF_HAUNTING;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::PIPES_OF_HAUNTING;
+
+        let trials = 50u64;
+        let mut any_frightened = false;
+        for seed in 0..trials {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let caster = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 7), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&caster)
+                .unwrap()
+                .pickup_item(&PIPES_OF_HAUNTING);
+            let aei = ActionExecutionInfo::new(
+                &PLAY_PIPES_OF_HAUNTING,
+                caster,
+                None,
+                Some(vec![Coordinate::new(7, 7)]),
+                None,
+            );
+            assert!(aei.validate(&e));
+            e.push_action(aei);
+            e.process_stack();
+            assert!(
+                e.actors[&caster].items().is_empty(),
+                "pipes should be consumed on use (seed {})",
+                seed
+            );
+            if e.actors[&enemy].has_condition(Condition::Frightened) {
+                any_frightened = true;
+                break;
+            }
+        }
+        assert!(
+            any_frightened,
+            "pipes never installed Frightened across {} seeds — burst-save-condition path broken?",
+            trials
+        );
     }
 
     /// 5e Wild Magic Surge wiring: the `Action::execute` chokepoint
@@ -34479,7 +34711,7 @@ mod tests {
 
     /// Storm Sphere: 4-tile burst, 2d6 bludgeoning STR save (none-on-save)
     /// + `WindBlasted` rider on fail (concentration-bound). Verifies the
-    /// rider lands AND the caster picks up concentration on the cohort.
+    ///   rider lands AND the caster picks up concentration on the cohort.
     #[test]
     fn storm_sphere_blasts_failed_save_enemies_and_anchors_concentration() {
         use crate::actions::spells::STORM_SPHERE;

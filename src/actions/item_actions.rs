@@ -1487,3 +1487,319 @@ pub static READ_THUNDERWAVE_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
     // safety (caster picks the cube's center). 6 tiles ≈ 15 ft.
     reach: 6,
 };
+
+/// Config struct for "burst save-or-condition" consumable items — the
+/// shared shape behind Wand of Web (Restrained), Pipes of Haunting
+/// (Frightened), and any future area-control consumable that hits a
+/// tile with a save-or-suck install instead of damage. Each static
+/// instance encodes a single item's per-cast configuration; the `Action`
+/// impl below sweeps every combat-active enemy inside the burst,
+/// routes each save through `roll_save_against_caster` (so Heightened
+/// Spell metamagic still bites the first save) and queues an
+/// `ApplyCondition` on every failed save.
+///
+/// Mirrors `BurstSaveDamageItem` for the CC half of the consumable
+/// envelope. Adding a new variant (e.g. a Wand of Sleet that spams
+/// Prone on a DEX save) is a one-static declaration — no new `Action`
+/// impl needed. Enemy-only filtering matches the player-friendly
+/// design of every other harmful item: the player's allies caught in
+/// the burst zone never make a save, mirroring `enemy_burst_targets`'s
+/// "spare the friendly side" envelope.
+pub struct BurstSaveConditionItem {
+    /// Player-facing action name (e.g. "use wand of web").
+    pub action_name: &'static str,
+    /// Picker aliases (e.g. ["web", "wand of web"]).
+    pub action_aliases: &'static [&'static str],
+    /// Inventory item name to gate validate / consume on.
+    pub item_name: &'static str,
+    /// Full log line emitted on use. The `{actor}` placeholder is
+    /// substituted with the caster's name; no other formatting is
+    /// performed.
+    pub log_text: &'static str,
+    /// Save ability for the burst (e.g. DEX for Web, WIS for Haunting).
+    pub save: AbilityScoreType,
+    /// Save DC (typically 15 for SRD scrolls / wands).
+    pub dc: i32,
+    /// Burst radius in tiles.
+    pub radius: isize,
+    /// Maximum reach in tiles for the targeting picker.
+    pub reach: isize,
+    /// Condition to install on a failed save.
+    pub condition: Condition,
+    /// Timer for the install (typically `Rounds(10)` for combat-scale
+    /// CC consumables — ~1 minute RAW).
+    pub timer: ConditionTimer,
+}
+
+impl Action for BurstSaveConditionItem {
+    fn name(&self) -> &str {
+        self.action_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.action_aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst {
+            radius: self.radius,
+        }
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.reach)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn deals_damage(&self) -> bool {
+        // Pure crowd-control — no HP loss. Keeps the AI's focus-fire
+        // pipeline from picking these over actual damage attacks.
+        false
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, self.item_name)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(center) = target_locations.and_then(|locs| locs.first()).copied() else {
+            return Vec::new();
+        };
+        if !consume_caster_item(encounter, caster_id, self.item_name) {
+            return Vec::new();
+        }
+        let name = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.name().to_string())
+            .unwrap_or_default();
+        encounter.log(self.log_text.replace("{actor}", &name));
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        // Enemy-only burst — consistent with the "player-friendly
+        // consumable" stance of every other harmful item in the pool.
+        // The AI's `try_attack_aoe` heuristic already filters tiles that
+        // catch allies; this lets the player aim through their own line
+        // without burning the consumable on allies that pass / fail RAW.
+        for tid in encounter.enemy_burst_targets(caster_id, center, self.radius) {
+            let save =
+                encounter.roll_save_against_caster(tid, self.save, self.dc, caster_id);
+            if !save.passed() {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: tid,
+                    condition: self.condition,
+                    timer: self.timer,
+                }));
+            }
+        }
+        effects
+    }
+}
+
+/// Config struct for "single-target save-or-condition" consumable items
+/// — the shared shape behind Wand of Paralysis (Paralyzed) and any
+/// future single-target wand whose effect is a save-or-suck install
+/// instead of damage. Mirrors `MagicMissileItem` (single-target damage
+/// volley) for the CC half of the wand-style consumable envelope.
+///
+/// Adding a new variant (e.g. a Wand of Sleep that installs `Asleep`
+/// on a single target) is a one-static declaration — no new `Action`
+/// impl needed.
+pub struct SingleSaveConditionItem {
+    /// Player-facing action name (e.g. "use wand of paralysis").
+    pub action_name: &'static str,
+    /// Picker aliases.
+    pub action_aliases: &'static [&'static str],
+    /// Inventory item name to gate validate / consume on.
+    pub item_name: &'static str,
+    /// Full log line emitted on use. The `{actor}` placeholder is
+    /// substituted with the caster's name; no other formatting is
+    /// performed.
+    pub log_text: &'static str,
+    /// Save ability (e.g. CON for Paralysis, WIS for Fear).
+    pub save: AbilityScoreType,
+    /// Save DC (typically 15 for SRD wands).
+    pub dc: i32,
+    /// Maximum reach in tiles for the targeting picker.
+    pub reach: isize,
+    /// Condition to install on a failed save.
+    pub condition: Condition,
+    /// Timer for the install.
+    pub timer: ConditionTimer,
+}
+
+impl Action for SingleSaveConditionItem {
+    fn name(&self) -> &str {
+        self.action_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.action_aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.reach)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, self.item_name)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        if !consume_caster_item(encounter, caster_id, self.item_name) {
+            return Vec::new();
+        }
+        let name = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.name().to_string())
+            .unwrap_or_default();
+        encounter.log(self.log_text.replace("{actor}", &name));
+        let save =
+            encounter.roll_save_against_caster(target_id, self.save, self.dc, caster_id);
+        if save.passed() {
+            return Vec::new();
+        }
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: self.condition,
+            timer: self.timer,
+        })]
+    }
+}
+
+const WAND_OF_WEB_NAME: &str = "Wand of Web";
+const PIPES_OF_HAUNTING_NAME: &str = "Pipes of Haunting";
+const WAND_OF_PARALYSIS_NAME: &str = "Wand of Paralysis";
+const WAND_OF_FEAR_NAME: &str = "Wand of Fear";
+
+/// Wand of Web — Action; 4-tile burst, DEX save vs DC 15, fail =
+/// Restrained for 10 rounds. Single-use consumable. Mirrors the
+/// `WEB` spell's burst envelope at a fixed save DC (the wand has no
+/// caster-ability tie). 5e RAW: 7 charges casting the Web spell; we
+/// collapse to a single-use fire-and-forget cast — no concentration,
+/// no charges tracked. Fires through the shared
+/// `BurstSaveConditionItem` impl.
+pub static USE_WAND_OF_WEB: BurstSaveConditionItem = BurstSaveConditionItem {
+    action_name: "use wand of web",
+    action_aliases: &["web", "web wand"],
+    item_name: WAND_OF_WEB_NAME,
+    log_text: "{actor} flicks the wand of web; sticky strands erupt.",
+    save: AbilityScoreType::Dexterity,
+    dc: 15,
+    radius: 4,
+    // 60 ft range RAW; 24 tiles in the 2.5ft grid.
+    reach: 24,
+    condition: Condition::Restrained,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Pipes of Haunting — Action; 4-tile burst, WIS save vs DC 13, fail =
+/// Frightened for 10 rounds. Single-use consumable. 5e RAW: 30-ft cone
+/// fear-burst, 3 charges; we collapse to a one-shot cast with the same
+/// shape as the other burst-save consumables. Pairs with the Wand of
+/// Fear single-target variant — Pipes covers the "soft area fear"
+/// niche, the wand covers the "hard single-target fear" niche. Fires
+/// through the shared `BurstSaveConditionItem` impl.
+pub static PLAY_PIPES_OF_HAUNTING: BurstSaveConditionItem = BurstSaveConditionItem {
+    action_name: "play pipes of haunting",
+    action_aliases: &["pipes", "haunt"],
+    item_name: PIPES_OF_HAUNTING_NAME,
+    log_text: "{actor} plays the pipes of haunting; a mournful dirge fills the air.",
+    save: AbilityScoreType::Wisdom,
+    dc: 13,
+    radius: 4,
+    // 30 ft cone RAW; 12 tiles in the 2.5ft grid.
+    reach: 12,
+    condition: Condition::Frightened,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Wand of Paralysis — Action; single-target line, CON save vs DC 15,
+/// fail = Paralyzed for 10 rounds. Single-use consumable. 5e RAW: 7
+/// charges firing a 60-ft line of paralysis at one creature; we
+/// collapse to a single-use beam cast — no charges tracked. Paralyzed
+/// is one of the engine's hardest CC envelopes (zero movement, action
+/// economy blocked, auto-fail STR/DEX saves, melee crits land
+/// automatically), so the consumable sits in the rare half of the
+/// loot pool. Fires through the shared `SingleSaveConditionItem` impl.
+pub static USE_WAND_OF_PARALYSIS: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "use wand of paralysis",
+    action_aliases: &["paralysis", "paralyze"],
+    item_name: WAND_OF_PARALYSIS_NAME,
+    log_text: "{actor} aims the wand of paralysis; a chill beam lances out.",
+    save: AbilityScoreType::Constitution,
+    dc: 15,
+    // 60 ft range RAW; 24 tiles in the 2.5ft grid.
+    reach: 24,
+    condition: Condition::Paralyzed,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Wand of Fear — Action; single-target, WIS save vs DC 15, fail =
+/// Frightened for 10 rounds. Single-use consumable. 5e RAW: 7 charges
+/// casting Fear (a 30-ft cone) at level 3; we collapse to a single-
+/// target single-use cast — no charges, no cone. Distinct from the
+/// Pipes of Haunting (also Frightened) by save ability (WIS) — actually
+/// the same — but the wand is single-target / harder DC (15 vs 13) so
+/// it lands cleanly on a tougher target where the pipes' wider burst
+/// might miss several saves. Fires through the shared
+/// `SingleSaveConditionItem` impl.
+pub static USE_WAND_OF_FEAR: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "use wand of fear",
+    action_aliases: &["fear", "fear wand"],
+    item_name: WAND_OF_FEAR_NAME,
+    log_text: "{actor} brandishes the wand of fear; shadows lengthen.",
+    save: AbilityScoreType::Wisdom,
+    dc: 15,
+    // 60 ft range RAW; 24 tiles in the 2.5ft grid.
+    reach: 24,
+    condition: Condition::Frightened,
+    timer: ConditionTimer::Rounds(10),
+};
