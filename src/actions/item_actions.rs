@@ -1871,6 +1871,8 @@ const ARCHMAGE_PEARL_OF_POWER_NAME: &str = "Archmage Pearl of Power";
 const POTION_OF_SANCTUARY_NAME: &str = "Potion of Sanctuary";
 const WAND_OF_CURE_WOUNDS_NAME: &str = "Wand of Cure Wounds";
 const SCROLL_OF_HEALING_WORD_NAME: &str = "Scroll of Healing Word";
+const POTION_OF_GROWTH_NAME: &str = "Potion of Growth";
+const WAND_OF_GREATER_HEALING_NAME: &str = "Wand of Greater Healing";
 
 /// Scroll of Hold Person — Action; single-target, WIS save vs DC 13,
 /// fail = Paralyzed for 10 rounds. 5e RAW: level-2 enchantment with
@@ -2049,4 +2051,39 @@ pub static READ_HEALING_WORD_SCROLL: SingleTargetHealItem = SingleTargetHealItem
     // 60 ft range RAW; 24 tiles in the 2.5ft grid.
     reach: 24,
     bonus_action: true,
+};
+
+/// Potion of Growth — Action; installs `Enlarged` for 10 rounds
+/// (+1d4 weapon damage rider, size bump). 5e RAW: 1d4-hour duration
+/// matching the Enlarge spell's "use enlarge twin" envelope; we
+/// collapse to the combat-scale 10-round timer every other buff
+/// consumable rides. Single-use; rejects re-drink when already
+/// Enlarged so the consumable isn't burned on a no-op timer refresh.
+/// Fires through the shared `SelfConditionItem` impl.
+pub static DRINK_POTION_OF_GROWTH: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of growth",
+    action_aliases: &["growth", "enlarge"],
+    item_name: POTION_OF_GROWTH_NAME,
+    log_text: "{actor} drinks a potion of growth; their frame surges in size.",
+    condition: Condition::Enlarged,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    reject_when_active: true,
+};
+
+/// Wand of Greater Healing — Action; touch (1-tile) ally heal for
+/// 4d8+4. Sits a tier above the Wand of Cure Wounds (3d8+3) and the
+/// Scroll of Cure Wounds (2d8+2). 5e RAW: 7 charges casting Cure
+/// Wounds at level 4 (4d8); we collapse to a single 4d8+4 cast for
+/// the engine's charge-less loot model. Fires through the shared
+/// `SingleTargetHealItem` impl.
+pub static USE_WAND_OF_GREATER_HEALING: SingleTargetHealItem = SingleTargetHealItem {
+    action_name: "use wand of greater healing",
+    action_aliases: &["cw wand+", "cure wand+"],
+    item_name: WAND_OF_GREATER_HEALING_NAME,
+    log_label: "wand of greater healing",
+    dice: Dice::new(4, 8),
+    flat_bonus: 4,
+    reach: 1,
+    bonus_action: false,
 };

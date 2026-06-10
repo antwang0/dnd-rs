@@ -1071,6 +1071,30 @@ pub static SCROLL_OF_HEALING_WORD: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Potion of Growth — Action; installs `Enlarged` for 10 rounds
+/// (+1d4 weapon damage rider, size bump). 5e RAW: 1d4-hour duration;
+/// we collapse to the combat-scale 10-round timer every other buff
+/// consumable rides. Sibling to Belt of Giant Strength on the
+/// offensive bruiser lane — the belt is a passive +2 damage / +10 HP,
+/// the potion is a single-shot +1d4 damage rider on hits.
+pub static POTION_OF_GROWTH: Item = Item {
+    name: "Potion of Growth",
+    glyph: '<',
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_GROWTH),
+    ..Item::DEFAULTS
+};
+
+/// Wand of Greater Healing — Action; touch ally heal for 4d8+4. Top
+/// tier of the single-target ally-heal ladder: Scroll of Cure Wounds
+/// (2d8+2) → Wand of Cure Wounds (3d8+3) → Wand of Greater Healing
+/// (4d8+4).
+pub static WAND_OF_GREATER_HEALING: Item = Item {
+    name: "Wand of Greater Healing",
+    glyph: 'K',
+    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_GREATER_HEALING),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -1270,4 +1294,11 @@ pub static LOOT_POOL: &[&Item] = &[
     // long-reach kite-heal niche at BA cost.
     &WAND_OF_CURE_WOUNDS,
     &SCROLL_OF_HEALING_WORD,
+    // Potion of Growth — Enlarged buff consumable on the offensive
+    // bruiser lane. Single low-weight entry alongside the other
+    // size-mod trinkets (Belt of Giant Strength).
+    &POTION_OF_GROWTH,
+    // Wand of Greater Healing — top tier of the single-target ally
+    // heal ladder (2d8+2 scroll → 3d8+3 wand → 4d8+4 greater wand).
+    &WAND_OF_GREATER_HEALING,
 ];
