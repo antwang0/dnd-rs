@@ -2071,6 +2071,25 @@ pub static DRINK_POTION_OF_GROWTH: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
 };
 
+/// Potion of Longstrider — Bonus Action; installs `Longstriding` for
+/// 100 rounds (≈ 10 minutes, matching the Longstrider spell's effective
+/// duration in this engine). +10 ft speed for one ally / self.
+/// Bonus-action cost — same envelope as Boots of Speed / Potion of
+/// Flying — so the holder can drink AND move on the same turn.
+/// Routes through the shared `SelfConditionItem` impl.
+pub static DRINK_POTION_OF_LONGSTRIDER: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of longstrider",
+    action_aliases: &["longstrider", "longstride", "ls-potion"],
+    item_name: POTION_OF_LONGSTRIDER_NAME,
+    log_text: "{actor} drinks a potion of longstrider; their stride lengthens.",
+    condition: Condition::Longstriding,
+    timer: ConditionTimer::Rounds(100),
+    bonus_action: true,
+    reject_when_active: true,
+};
+
+const POTION_OF_LONGSTRIDER_NAME: &str = "Potion of Longstrider";
+
 /// Wand of Greater Healing — Action; touch (1-tile) ally heal for
 /// 4d8+4. Sits a tier above the Wand of Cure Wounds (3d8+3) and the
 /// Scroll of Cure Wounds (2d8+2). 5e RAW: 7 charges casting Cure

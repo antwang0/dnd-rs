@@ -23307,6 +23307,186 @@ mod tests {
         );
     }
 
+    /// Longstrider: installs the Longstriding condition on the target
+    /// and bumps speed by +10 ft (4 tiles) for 100 rounds (≈ 1 hour).
+    /// No concentration — the caster doesn't hold a concentration mark.
+    #[test]
+    fn longstrider_boosts_speed_no_concentration() {
+        use crate::actions::spells::LONGSTRIDER;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        let base_speed = e.actors[&ally].speed();
+        let tv = vec![ally];
+        let effs = LONGSTRIDER.side_effects(&mut e, wiz, Some(&tv), None, None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&ally].has_condition(Condition::Longstriding),
+            "Longstrider should apply the Longstriding condition"
+        );
+        assert!(
+            (e.actors[&ally].speed() - (base_speed + 10.0)).abs() < f32::EPSILON,
+            "Longstrider should add +10 ft: {} → {}",
+            base_speed,
+            e.actors[&ally].speed()
+        );
+        assert!(
+            !e.actors[&wiz].is_concentrating(),
+            "Longstrider doesn't require concentration"
+        );
+    }
+
+    /// Longstrider refuses to land on a hostile target — even though
+    /// the picker UI shouldn't offer it, the side-effect builder
+    /// guards against hostile aim as a safety net.
+    #[test]
+    fn longstrider_rejects_hostile_target() {
+        use crate::actions::spells::LONGSTRIDER;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        let tv = vec![enemy];
+        let effs = LONGSTRIDER.side_effects(&mut e, wiz, Some(&tv), None, None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&enemy].has_condition(Condition::Longstriding),
+            "Longstrider must not buff a hostile target"
+        );
+    }
+
+    /// Expeditious Retreat: self-buff that adds +30 ft and starts
+    /// concentration on the caster. Dropping concentration removes
+    /// the buff cleanly.
+    #[test]
+    fn expeditious_retreat_self_buffs_with_concentration() {
+        use crate::actions::spells::EXPEDITIOUS_RETREAT;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base_speed = e.actors[&wiz].speed();
+        let effs = EXPEDITIOUS_RETREAT.side_effects(&mut e, wiz, None, None, None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&wiz].has_condition(Condition::ExpeditiouslyRetreating),
+            "Expeditious Retreat should apply the ExpeditiouslyRetreating condition"
+        );
+        assert!(
+            (e.actors[&wiz].speed() - (base_speed + 30.0)).abs() < f32::EPSILON,
+            "Expeditious Retreat should add +30 ft: {} → {}",
+            base_speed,
+            e.actors[&wiz].speed()
+        );
+        assert!(
+            e.actors[&wiz].is_concentrating(),
+            "Expeditious Retreat is concentration-bound"
+        );
+        e.drop_concentration(wiz);
+        assert!(
+            !e.actors[&wiz].has_condition(Condition::ExpeditiouslyRetreating),
+            "dropping concentration should strip ExpeditiouslyRetreating"
+        );
+        assert!(
+            (e.actors[&wiz].speed() - base_speed).abs() < f32::EPSILON,
+            "speed should return to base when concentration drops"
+        );
+    }
+
+    /// Speed buffs from different conditions stack: Longstrider (+10),
+    /// Spider Climb (+30), and Fly (+60) compose additively via the
+    /// shared `condition_speed_bonus` chokepoint.
+    #[test]
+    fn speed_buff_conditions_stack_additively() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base = e.actors[&wiz].speed();
+        e.actors
+            .get_mut(&wiz)
+            .unwrap()
+            .add_condition(Condition::Longstriding, ConditionTimer::Rounds(10));
+        assert!(
+            (e.actors[&wiz].speed() - (base + 10.0)).abs() < f32::EPSILON,
+            "Longstriding alone adds +10"
+        );
+        e.actors
+            .get_mut(&wiz)
+            .unwrap()
+            .add_condition(Condition::SpiderClimbing, ConditionTimer::Rounds(10));
+        assert!(
+            (e.actors[&wiz].speed() - (base + 10.0 + 30.0)).abs() < f32::EPSILON,
+            "Longstriding + SpiderClimbing add +40"
+        );
+        e.actors
+            .get_mut(&wiz)
+            .unwrap()
+            .add_condition(Condition::Flying, ConditionTimer::Rounds(10));
+        assert!(
+            (e.actors[&wiz].speed() - (base + 10.0 + 30.0 + 60.0)).abs() < f32::EPSILON,
+            "Longstriding + SpiderClimbing + Flying add +100"
+        );
+    }
+
+    /// Earthbind: on a failed STR save, strips both Flying and
+    /// InvestedInWind from the target, reducing their speed back to base.
+    #[test]
+    fn earthbind_grounds_flying_target() {
+        use crate::actions::spells::EARTHBIND;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        let mut grounded = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+                .unwrap();
+            // Pre-buff the goblin with Flying so Earthbind has something
+            // to strip.
+            e.actors
+                .get_mut(&g)
+                .unwrap()
+                .add_condition(Condition::Flying, ConditionTimer::Rounds(10));
+            assert!(e.actors[&g].has_condition(Condition::Flying));
+            let tv = vec![g];
+            let effs = EARTHBIND.side_effects(&mut e, wiz, Some(&tv), None, None);
+            for ef in effs {
+                ef.apply(&mut e);
+            }
+            if !e.actors[&g].has_condition(Condition::Flying) {
+                grounded = true;
+                break;
+            }
+        }
+        assert!(grounded, "earthbind never landed across 30 attempts");
+    }
+
     /// Levitate: lifts a failed-save target (Lifted condition zeros
     /// movement) and installs concentration on the caster.
     #[test]

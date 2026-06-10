@@ -72,6 +72,11 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // pre-empt loses some flavor but slots cleanly into the action
     // pipeline without a reaction-trigger framework.
     actions.push(&*CUTTING_WORDS);
+    // lv1 **Longstrider** (transmutation): touch +10 ft speed for 1 hour,
+    // no concentration. Bard's pre-combat ally mobility buff — pairs
+    // cleanly with Bardic Inspiration's accuracy bump and the bard's
+    // role as the party's tempo-setter.
+    actions.push(&*crate::actions::spells::LONGSTRIDER);
     CreatureTemplate {
         name: "Bard",
         glyph: 'B',

@@ -156,6 +156,16 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     Stun (lv8 single-target HP-gated). Pairs cleanly with the
     //     warlock's CHA-anchored DC and the lv8 slot in the chassis.
     actions.push(&*crate::actions::spells::MADDENING_DARKNESS);
+    // Mobility / utility additions (RAW warlock list):
+    //   - lv1 **Expeditious Retreat**: bonus-action self-buff that grants
+    //     +30 ft speed for 10 rounds, concentration. Kiting tool that
+    //     pairs with the warlock's at-will Eldritch Blast — drink the
+    //     buff, then plink from extended range.
+    //   - lv2 **Earthbind** (XGtE): single-target STR-save ground; strips
+    //     `Flying` / `InvestedInWind` on a failed save. Warlock's anti-
+    //     air control option.
+    actions.push(&*crate::actions::spells::EXPEDITIOUS_RETREAT);
+    actions.push(&*crate::actions::spells::EARTHBIND);
     CreatureTemplate {
         name: "Warlock",
         // 'L' (uppercase) — distinct from 'l' (Lich), 'W' (Wolf glyph),

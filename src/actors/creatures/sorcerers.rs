@@ -367,6 +367,17 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // (multi-target), but Subtle Spell shines through it (Counterspell
     // can't catch a no-component wall).
     actions.push(&*crate::actions::spells::WALL_OF_WATER);
+    // Mobility / utility additions (RAW sorcerer list):
+    //   - lv1 **Expeditious Retreat**: bonus-action self-buff that grants
+    //     +30 ft speed for 10 rounds, concentration. The sorcerer's clutch
+    //     kiting tool that pairs with Misty Step / Dimension Door for the
+    //     full repositioning trio.
+    //   - lv2 **Earthbind** (XGtE): single-target STR-save ground; strips
+    //     `Flying` / `InvestedInWind` on a failed save. Sorcerer's anti-
+    //     air option that pairs nicely with Heightened Spell on a single
+    //     flying boss.
+    actions.push(&*crate::actions::spells::EXPEDITIOUS_RETREAT);
+    actions.push(&*crate::actions::spells::EARTHBIND);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

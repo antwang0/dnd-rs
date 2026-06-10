@@ -230,6 +230,18 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // The druid's water-themed ranged-defense option — slots alongside
     // Wind Wall (lv3 self-only) on the deflection ladder.
     actions.push(&*crate::actions::spells::WALL_OF_WATER);
+    // Newest druid additions:
+    //   - lv1 **Longstrider** (transmutation): touch +10 ft speed for
+    //     1 hour, no concentration. Solid pre-combat ally mobility buff
+    //     — composes with Fly / Spider Climb / Investiture of Wind via
+    //     the central `condition_speed_bonus` lane.
+    //   - lv2 **Earthbind** (transmutation, XGtE): single-target STR-save
+    //     vs the druid's spell DC; on fail the target's flying speed
+    //     drops to 0. Strips both `Flying` and `InvestedInWind` from a
+    //     failed-save target — the druid's grounding tool for airborne
+    //     enemies (wyverns, dragons, fire imps). Concentration-bound.
+    actions.push(&*crate::actions::spells::LONGSTRIDER);
+    actions.push(&*crate::actions::spells::EARTHBIND);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

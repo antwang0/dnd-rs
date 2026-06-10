@@ -1079,6 +1079,26 @@ pub enum Condition {
     /// caster; dropping concentration ends the storm and strips the
     /// flag from every failed-save target at once.
     WindBlasted,
+    /// Longstriding (5e Longstrider spell, level-1 transmutation,
+    /// no concentration). The target's speed increases by 10 ft for 1
+    /// hour. We route the +10 ft (= +4 tiles) through the central
+    /// `condition_speed_bonus` lane so the bump composes cleanly with
+    /// Fly / Spider Climb / Expeditious Retreat. Long timer (~100 rounds
+    /// = 10 minutes engine time, plenty for any encounter); no
+    /// concentration means the buff sits durably across multiple
+    /// encounters in the same long rest. Joins `is_dispellable_buff`
+    /// so Dispel Magic can rip the speed boost cleanly.
+    Longstriding,
+    /// Expeditiously Retreating (5e Expeditious Retreat spell, level-1
+    /// transmutation, concentration). The caster's speed jumps by 30 ft
+    /// (the spell RAW lets the caster Dash as a bonus action; we collapse
+    /// the action-economy half into a flat +30 ft speed bump so the kiting
+    /// payoff matches a typical caster's first Dash). Routed through
+    /// `condition_speed_bonus` alongside Longstriding for one chokepoint.
+    /// Concentration-bound on the caster; dropping concentration ends the
+    /// burst. Joins `is_dispellable_buff` so Dispel Magic / Counterspell
+    /// can rip it.
+    ExpeditiouslyRetreating,
 }
 
 impl Condition {
@@ -1225,6 +1245,8 @@ impl Condition {
             Condition::WaterSphered => "trapped in a watery sphere",
             Condition::InvestedInWind => "invested with wind",
             Condition::WindBlasted => "wind-blasted",
+            Condition::Longstriding => "longstriding",
+            Condition::ExpeditiouslyRetreating => "expeditiously retreating",
         }
     }
 
@@ -1333,6 +1355,8 @@ impl Condition {
                 | Condition::CunningStrikeDaze
                 | Condition::DistractingAttacking
                 | Condition::Purified
+                | Condition::Longstriding
+                | Condition::ExpeditiouslyRetreating
         )
     }
 

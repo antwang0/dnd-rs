@@ -1095,6 +1095,17 @@ pub static WAND_OF_GREATER_HEALING: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Potion of Longstrider — Bonus-Action consumable that installs
+/// `Longstriding` (+10 ft speed) for 100 rounds. Mirrors the
+/// Longstrider spell's effect for non-casters; cheap-tier mobility
+/// consumable alongside Potion of Climbing.
+pub static POTION_OF_LONGSTRIDER: Item = Item {
+    name: "Potion of Longstrider",
+    glyph: '>',
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_LONGSTRIDER),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -1301,4 +1312,8 @@ pub static LOOT_POOL: &[&Item] = &[
     // Wand of Greater Healing — top tier of the single-target ally
     // heal ladder (2d8+2 scroll → 3d8+3 wand → 4d8+4 greater wand).
     &WAND_OF_GREATER_HEALING,
+    // Potion of Longstrider — cheap mobility consumable. Same low-weight
+    // tier as Potion of Climbing; +10 ft for the encounter. Bonus-action
+    // drink so it doesn't compete with the holder's main turn budget.
+    &POTION_OF_LONGSTRIDER,
 ];

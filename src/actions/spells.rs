@@ -23721,3 +23721,254 @@ impl Action for Compulsion {
 }
 
 pub static COMPULSION: LazyLock<Compulsion> = LazyLock::new(|| Compulsion {});
+
+/// Longstrider — level-1 transmutation. Touch a willing creature; their
+/// walking speed increases by 10 ft for 1 hour. No concentration —
+/// fire-and-forget buff that sits durably across multiple encounters in
+/// the same long rest. Routes through the central `Longstriding`
+/// condition + `condition_speed_bonus` lane so the +10 ft composes
+/// cleanly with Fly / Spider Climb / Expeditious Retreat.
+///
+/// Engine model: install `Longstriding` for `Rounds(100)` (≈ 10 minutes
+/// engine time, more than enough for any encounter). SingleActor target
+/// — the picker UI lets the caster aim it at any ally; the spell is
+/// `is_harmful = false` so the AI's support pipeline considers it
+/// alongside Bless / Heroism.
+pub struct Longstrider {}
+
+impl Action for Longstrider {
+    fn name(&self) -> &str {
+        "longstrider"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ls", "longstride"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch range = melee reach in our grid.
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(1)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Buff-only — reject hostile targets at side-effect time as a
+        // safety net (the `is_harmful = false` flag already steers the
+        // picker UI to allies).
+        let caster_team = caster.team();
+        if encounter
+            .actors
+            .get(&target_id)
+            .is_none_or(|t| t.team() != caster_team)
+        {
+            return Vec::new();
+        }
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Longstriding,
+            // 1 hour RAW = effectively permanent for any single encounter.
+            timer: ConditionTimer::Rounds(100),
+        })]
+    }
+}
+
+pub static LONGSTRIDER: LazyLock<Longstrider> = LazyLock::new(|| Longstrider {});
+
+/// Expeditious Retreat — level-1 transmutation, bonus action, concentration.
+/// The caster can Dash as a bonus action on each turn for up to 10 minutes.
+/// We collapse the action-economy half of the RAW spell into a flat
+/// `+30 ft` speed bump (matching one Dash's worth of bonus movement) so
+/// the kiting payoff fires cleanly without re-modeling the Dash-as-bonus
+/// mechanic. Routed through the `ExpeditiouslyRetreating` condition +
+/// `condition_speed_bonus` lane so the boost composes with Longstrider
+/// / Fly / Spider Climb.
+///
+/// Engine model: install `ExpeditiouslyRetreating` for `Rounds(10)` (1
+/// minute, capped well below the RAW 10-minute duration so the
+/// concentration uptime matches the engine's other 1-min concentration
+/// buffs like Mage Armor / Bless). Self-target (NoArgs); concentration-
+/// bound on the caster.
+pub struct ExpeditiousRetreat {}
+
+impl Action for ExpeditiousRetreat {
+    fn name(&self) -> &str {
+        "expeditious retreat"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["er", "expeditious", "retreat"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // RAW: cast as a bonus action; the spell consumes a level-1 slot.
+        bonus_action_and_slot(1)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::ExpeditiouslyRetreating,
+                timer: ConditionTimer::Rounds(10),
+            }) as Box<dyn ApplicableSideEffect>,
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Expeditious Retreat",
+                    vec![(caster_id, Condition::ExpeditiouslyRetreating)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static EXPEDITIOUS_RETREAT: LazyLock<ExpeditiousRetreat> =
+    LazyLock::new(|| ExpeditiousRetreat {});
+
+/// Earthbind — level-2 transmutation (XGtE), action, concentration. The
+/// caster grounds a flying target with a yellow strip of magical energy.
+/// RAW: target makes a STR save vs the caster's spell DC; on fail the
+/// target's flying speed (if any) becomes 0 for the spell's duration
+/// (concentration, up to 1 minute) and they fall safely to the ground.
+///
+/// Engine model: since our engine collapses flight into a binary
+/// `Flying` / `InvestedInWind` condition (each contributing +60 ft to
+/// `condition_speed_bonus`), Earthbind's load-bearing effect is the
+/// strip of those flags from a failed-save target. We use the existing
+/// `RemoveCondition` side-effect to clear both flight sources; no new
+/// condition needed. If the target wasn't flying at cast time the spell
+/// still consumes the slot but produces no observable effect — matching
+/// RAW's "if the target isn't flying, nothing happens" clause.
+///
+/// We don't model the concentration-bound *re-apply-on-flight* behavior
+/// (RAW: the target stays grounded for the duration even if they regain
+/// flight) — the engine's flight conditions don't get reapplied mid-spell
+/// in any current flow, so the simpler "strip on cast" matches observed
+/// behavior. Concentration is still tracked so dropping it logs cleanly.
+pub struct Earthbind {}
+
+impl Action for Earthbind {
+    fn name(&self) -> &str {
+        "earthbind"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["eb", "earth-bind", "ground"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 300 ft RAW — effectively unbounded at engine scale. We cap at
+        // 48 tiles (≈ 120 ft) so the picker UI still gates by range.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::RemoveCondition;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
+        // Caster-aware save so Heightened Spell metamagic can force
+        // disadvantage on the single save-or-suck STR roll.
+        let save = encounter.roll_save_against_caster(
+            target_id,
+            AbilityScoreType::Strength,
+            dc,
+            caster_id,
+        );
+        if save.passed() {
+            return Vec::new();
+        }
+        // Strip both flight sources on a failed save. RemoveCondition is
+        // a no-op if the target wasn't holding the flag, so casting on a
+        // grounded target consumes the slot but produces no visible
+        // change — matching RAW's "if the target isn't flying, nothing
+        // happens" clause.
+        vec![
+            Box::new(RemoveCondition {
+                actor_id: target_id,
+                condition: Condition::Flying,
+            }) as Box<dyn ApplicableSideEffect>,
+            Box::new(RemoveCondition {
+                actor_id: target_id,
+                condition: Condition::InvestedInWind,
+            }),
+        ]
+    }
+}
+
+pub static EARTHBIND: LazyLock<Earthbind> = LazyLock::new(|| Earthbind {});

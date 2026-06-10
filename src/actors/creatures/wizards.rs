@@ -463,6 +463,23 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     ranged-defense companion to Wind Wall (lv3 self-only).
     actions.push(&*crate::actions::spells::WALL_OF_SAND);
     actions.push(&*crate::actions::spells::WALL_OF_WATER);
+    // Latest mobility / utility additions:
+    //   - lv1 **Longstrider** (transmutation): touch +10 ft speed for
+    //     1 hour, no concentration. Fills the wizard's pre-combat
+    //     mobility lane — composes with Fly / Spider Climb / Investiture
+    //     of Wind via the central `condition_speed_bonus` lane.
+    //   - lv1 **Expeditious Retreat** (transmutation): bonus-action
+    //     self-buff that grants +30 ft speed for 10 rounds, concentration.
+    //     Distinct from Longstrider by the action-economy cost (bonus
+    //     action vs full action) and the larger / shorter / concentration-
+    //     bound boost — the kiting tool for clutch repositioning.
+    //   - lv2 **Earthbind** (transmutation, XGtE): single-target STR-save
+    //     vs the wizard's spell DC; on fail the target's flying speed
+    //     drops to 0. Wizard's grounding tool for airborne enemies that
+    //     the lv2 evocation lane otherwise lacks.
+    actions.push(&*crate::actions::spells::LONGSTRIDER);
+    actions.push(&*crate::actions::spells::EXPEDITIOUS_RETREAT);
+    actions.push(&*crate::actions::spells::EARTHBIND);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

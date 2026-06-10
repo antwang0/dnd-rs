@@ -61,6 +61,12 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // alongside Spike Growth / Hunter's Mark.
     actions.push(&*crate::actions::spells::PASS_WITHOUT_TRACE);
     actions.push(&*crate::actions::spells::ABSORB_ELEMENTS);
+    // lv1 **Longstrider**: ranger half-caster pickup. Touch +10 ft speed
+    // for 1 hour, no concentration. Pairs cleanly with the ranger's
+    // Hunter's Mark + longbow kite — the ranger pre-buffs themselves /
+    // an ally before the engagement and the speed boost composes with
+    // any later Pass Without Trace / Spider Climb stack.
+    actions.push(&*crate::actions::spells::LONGSTRIDER);
     CreatureTemplate {
         name: "Ranger",
         glyph: 'R',

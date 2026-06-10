@@ -1839,34 +1839,7 @@ impl ActorInstance {
 
     pub fn speed(&self) -> f32 {
         let bonus = self.total_item_bonuses().speed as f32;
-        // 5e Fly spell: the target gains a flying speed equal to its
-        // walking speed (we approximate with +60ft so the buff is a
-        // meaningful kiting boost rather than a no-op for fast actors).
-        // Applied additively before the Haste / Slow factor so haste-fly
-        // doubles the larger number — matching the "Haste doubles your
-        // speed" RAW phrasing.
-        // Both the Fly spell and Investiture of Wind grant the holder a
-        // 60ft flying speed RAW; either condition flips the same +60 bonus
-        // (the two don't stack — they're separate concentration spells the
-        // caster can't both maintain, but the gate honors whichever is up).
-        let fly = if self.has_condition(Condition::Flying)
-            || self.has_condition(Condition::InvestedInWind)
-        {
-            60.0
-        } else {
-            0.0
-        };
-        // 5e Spider Climb: climbing speed equal to walking speed. We
-        // approximate with a flat +30ft bump (half of Fly's +60ft) so
-        // the level-2 spell offers a meaningful kiting boost without
-        // dwarfing the level-3 Fly. Applied additively next to Fly so a
-        // creature with both buffs picks up the stack.
-        let climb = if self.has_condition(Condition::SpiderClimbing) {
-            30.0
-        } else {
-            0.0
-        };
-        let raw = (self.base_speed + bonus + fly + climb).max(0.0);
+        let raw = (self.base_speed + bonus + self.condition_speed_bonus()).max(0.0);
         // 5e Haste doubles speed; Slow halves it. If both happen to be
         // active (e.g. cross-cast), they cancel back to base — applying
         // the factor multiplicatively keeps the math symmetric.
@@ -1878,6 +1851,44 @@ impl ActorInstance {
             factor *= 0.5;
         }
         raw * factor
+    }
+
+    /// Sum of all flat speed bonuses contributed by active conditions. One
+    /// chokepoint so a new speed-buff condition (Longstrider, Expeditious
+    /// Retreat, Fly, Spider Climb, Investiture of Wind, …) lands as a
+    /// one-line entry instead of an ad-hoc branch in `speed()`.
+    ///
+    /// 5e RAW values:
+    ///   - Fly / Investiture of Wind: +60 ft (flying speed equal to walking)
+    ///   - Spider Climb: +30 ft (climbing speed; we don't model 3D terrain
+    ///     so the bonus surfaces as a flat repositioning boost)
+    ///   - Longstrider: +10 ft (1-hour transmutation buff)
+    ///   - Expeditious Retreat: +30 ft (Dash-as-bonus collapsed to a flat
+    ///     speed bump, concentration-bound)
+    ///
+    /// Returned in feet so it composes with `base_speed` / item bonuses
+    /// before the Haste / Slow multiplicative factor in `speed()`.
+    pub fn condition_speed_bonus(&self) -> f32 {
+        let mut bonus = 0.0_f32;
+        // Both the Fly spell and Investiture of Wind grant the holder a
+        // 60ft flying speed RAW; the two don't stack — they're separate
+        // concentration spells the caster can't both maintain, but the
+        // gate honors whichever is up.
+        if self.has_condition(Condition::Flying)
+            || self.has_condition(Condition::InvestedInWind)
+        {
+            bonus += 60.0;
+        }
+        if self.has_condition(Condition::SpiderClimbing) {
+            bonus += 30.0;
+        }
+        if self.has_condition(Condition::Longstriding) {
+            bonus += 10.0;
+        }
+        if self.has_condition(Condition::ExpeditiouslyRetreating) {
+            bonus += 30.0;
+        }
+        bonus
     }
 
     pub fn item_save_bonus(&self) -> i32 {
