@@ -962,6 +962,115 @@ pub static WAND_OF_FEAR: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Scroll of Hold Person — single-use single-target, WIS save vs DC 13,
+/// fail = Paralyzed for 10 rounds. 5e RAW: level-2 enchantment with
+/// concentration / re-save each turn; the scroll collapses to the
+/// fixed 10-round paralysis envelope every other CC consumable rides.
+/// Entry-level CC scroll alongside Pipes of Haunting (DC 13 burst
+/// Frightened) — the scroll is the single-target hard-CC niche at the
+/// cheap tier.
+pub static SCROLL_OF_HOLD_PERSON: Item = Item {
+    name: "Scroll of Hold Person",
+    glyph: ']',
+    on_use: Some(&crate::actions::item_actions::READ_HOLD_PERSON_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Hold Monster — single-use single-target, WIS save vs DC 15,
+/// fail = Paralyzed for 10 rounds. Sits a tier above Scroll of Hold
+/// Person (DC 13, 24-tile reach) — same shape, harder DC, longer reach
+/// (90 ft RAW).
+pub static SCROLL_OF_HOLD_MONSTER: Item = Item {
+    name: "Scroll of Hold Monster",
+    glyph: '{',
+    on_use: Some(&crate::actions::item_actions::READ_HOLD_MONSTER_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Wand of Confusion — single-use 4-tile burst, WIS save vs DC 15,
+/// fail = Confused for 10 rounds (disadvantage on attacks AND no
+/// reactions). 5e RAW: level-4 enchantment, 90-ft range / 10-ft cube,
+/// concentration; we collapse to a single-shot fire-and-forget cast.
+/// Top-of-pool burst CC alongside Wand of Paralysis — the confusion
+/// wand trades single-target lockdown for a wider soft-CC blanket.
+pub static WAND_OF_CONFUSION: Item = Item {
+    name: "Wand of Confusion",
+    glyph: '}',
+    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_CONFUSION),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Hypnotic Pattern — single-use 4-tile burst, WIS save vs
+/// DC 14, fail = Incapacitated for 10 rounds. 5e RAW: level-3 illusion,
+/// 120-ft range / 30-ft cube, concentration; we collapse to a single-
+/// shot fire-and-forget cast. Mid-tier burst CC between Pipes of
+/// Haunting (DC 13 Frightened) and Wand of Confusion (DC 15 Confused).
+pub static SCROLL_OF_HYPNOTIC_PATTERN: Item = Item {
+    name: "Scroll of Hypnotic Pattern",
+    glyph: '`',
+    on_use: Some(&crate::actions::item_actions::READ_HYPNOTIC_PATTERN_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Vitriolic Sphere — single-use 10d4 acid DEX-save burst,
+/// 4-tile radius. Fills the acid lane in the burst-damage scroll family
+/// alongside Fireball (fire), Lightning Bolt (lightning), Cone of Cold
+/// (cold), and Shatter (thunder).
+pub static SCROLL_OF_VITRIOLIC_SPHERE: Item = Item {
+    name: "Scroll of Vitriolic Sphere",
+    glyph: ':',
+    on_use: Some(&crate::actions::item_actions::READ_VITRIOLIC_SPHERE_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Archmage Pearl of Power — bonus action; restore one expended level-4
+/// spell slot. Top of the pearl ladder above Supreme Pearl of Power
+/// (level-3 refund). 5e RAW pearls cap at level-3 slots; we extend the
+/// ladder to cover the level-4 slot tier as the rarest-tier caster
+/// consumable.
+pub static ARCHMAGE_PEARL_OF_POWER: Item = Item {
+    name: "Archmage Pearl of Power",
+    glyph: ';',
+    on_use: Some(&crate::actions::item_actions::USE_ARCHMAGE_PEARL_OF_POWER),
+    ..Item::DEFAULTS
+};
+
+/// Potion of Sanctuary — Bonus Action; installs `Sanctuary` for 10
+/// rounds. 5e RAW: the spell is level-1 abjuration, bonus action, on a
+/// willing target; the potion collapses to a self-only envelope. The
+/// buff routes hostile actions against the drinker through a WIS save
+/// vs the source's DC (silently no-ops on fail) and drops the moment
+/// the drinker themselves attacks or casts a damaging spell.
+pub static POTION_OF_SANCTUARY: Item = Item {
+    name: "Potion of Sanctuary",
+    glyph: ',',
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_SANCTUARY),
+    ..Item::DEFAULTS
+};
+
+/// Wand of Cure Wounds — Action; touch (1-tile) ally heal for 3d8+3.
+/// Sits a tier above the Scroll of Cure Wounds (2d8+2) — same shape,
+/// bigger pool. 5e RAW: 7 charges casting Cure Wounds at level 1-3;
+/// we collapse to a single 3d8 cast for the engine's charge-less loot
+/// model.
+pub static WAND_OF_CURE_WOUNDS: Item = Item {
+    name: "Wand of Cure Wounds",
+    glyph: '"',
+    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_CURE_WOUNDS),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Healing Word — Bonus Action; ranged ally heal for 1d4+3
+/// at 24-tile reach. 5e RAW: level-1 evocation, bonus action, 60-ft
+/// range. Pairs with the touch-range Scroll of Cure Wounds — the
+/// healing-word scroll trades payload for reach and action economy.
+pub static SCROLL_OF_HEALING_WORD: Item = Item {
+    name: "Scroll of Healing Word",
+    glyph: '\'',
+    on_use: Some(&crate::actions::item_actions::READ_HEALING_WORD_SCROLL),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -1132,4 +1241,33 @@ pub static LOOT_POOL: &[&Item] = &[
     &PIPES_OF_HAUNTING,
     &WAND_OF_PARALYSIS,
     &WAND_OF_FEAR,
+    // Hold Person / Monster scrolls — single-target Paralyzed at the
+    // cheap (DC 13, 24-tile) and rare (DC 15, 36-tile) tiers. Sibling
+    // to the Wand of Paralysis (DC 15, 24-tile) — the scroll variants
+    // cover the entry-level lockdown niche and the long-reach niche
+    // respectively.
+    &SCROLL_OF_HOLD_PERSON,
+    &SCROLL_OF_HOLD_MONSTER,
+    // Burst CC scrolls — Hypnotic Pattern (Incapacitated DC 14) and
+    // Wand of Confusion (Confused DC 15). Fill the mid- and top-tier
+    // burst CC slots between Pipes of Haunting (Frightened DC 13) and
+    // the single-target Wand of Paralysis.
+    &SCROLL_OF_HYPNOTIC_PATTERN,
+    &WAND_OF_CONFUSION,
+    // Vitriolic Sphere scroll — acid lane in the burst-damage scroll
+    // family, sized between Fireball (6d6) and Cone of Cold (8d8).
+    &SCROLL_OF_VITRIOLIC_SPHERE,
+    // Archmage Pearl of Power — top of the pearl ladder, single entry
+    // since level-4 slot refunds are the rarest tier.
+    &ARCHMAGE_PEARL_OF_POWER,
+    // Potion of Sanctuary — defensive consumable; routes hostile
+    // actions through a WIS save until the holder swings back. Single
+    // entry alongside the other defensive potions (Mage Armor, Blur).
+    &POTION_OF_SANCTUARY,
+    // Cure Wounds wand + Healing Word scroll — round out the single-
+    // target ally-heal slot. Wand sits a tier above the scroll
+    // (3d8+3 vs 2d8+2 touch); the Healing Word scroll covers the
+    // long-reach kite-heal niche at BA cost.
+    &WAND_OF_CURE_WOUNDS,
+    &SCROLL_OF_HEALING_WORD,
 ];

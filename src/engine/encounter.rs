@@ -33207,6 +33207,392 @@ mod tests {
         );
     }
 
+    /// Scroll of Hold Person: single-target WIS save vs DC 13, fail =
+    /// Paralyzed for 10 rounds. Mirrors the wand_of_paralysis test
+    /// (single-save lane) but at the cheaper scroll DC. The bottom-tier
+    /// CC scroll should still land on a Zombie (no WIS proficiency, no
+    /// charm-immunity) across enough seeds.
+    #[test]
+    fn scroll_of_hold_person_installs_paralyzed_on_failed_save() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_HOLD_PERSON_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::SCROLL_OF_HOLD_PERSON;
+
+        let trials = 50u64;
+        let mut any_paralyzed = false;
+        for seed in 0..trials {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let caster = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let zombie = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&caster)
+                .unwrap()
+                .pickup_item(&SCROLL_OF_HOLD_PERSON);
+            let aei = ActionExecutionInfo::new(
+                &READ_HOLD_PERSON_SCROLL,
+                caster,
+                Some(vec![zombie]),
+                None,
+                None,
+            );
+            assert!(aei.validate(&e));
+            e.push_action(aei);
+            e.process_stack();
+            assert!(
+                e.actors[&caster].items().is_empty(),
+                "scroll should be consumed (seed {})",
+                seed
+            );
+            if e.actors[&zombie].has_condition(Condition::Paralyzed) {
+                any_paralyzed = true;
+                break;
+            }
+        }
+        assert!(
+            any_paralyzed,
+            "scroll of hold person never installed Paralyzed across {} seeds",
+            trials
+        );
+    }
+
+    /// Wand of Confusion: 4-tile burst, WIS save vs DC 15, fail =
+    /// Confused for 10 rounds. Seed-swept so the probabilistic save
+    /// path lands at least once.
+    #[test]
+    fn wand_of_confusion_installs_confused_on_failed_save() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::USE_WAND_OF_CONFUSION;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::WAND_OF_CONFUSION;
+
+        let trials = 50u64;
+        let mut any_confused = false;
+        for seed in 0..trials {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let caster = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 7), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&caster)
+                .unwrap()
+                .pickup_item(&WAND_OF_CONFUSION);
+            let aei = ActionExecutionInfo::new(
+                &USE_WAND_OF_CONFUSION,
+                caster,
+                None,
+                Some(vec![Coordinate::new(7, 7)]),
+                None,
+            );
+            assert!(aei.validate(&e));
+            e.push_action(aei);
+            e.process_stack();
+            assert!(
+                e.actors[&caster].items().is_empty(),
+                "wand should be consumed (seed {})",
+                seed
+            );
+            if e.actors[&enemy].has_condition(Condition::Confused) {
+                any_confused = true;
+                break;
+            }
+        }
+        assert!(
+            any_confused,
+            "wand of confusion never installed Confused across {} seeds",
+            trials
+        );
+    }
+
+    /// Scroll of Vitriolic Sphere: 10d4 acid DEX-save burst. Exercises
+    /// the burst-damage scroll lane on the acid damage type. Mirrors the
+    /// Scroll of Cone of Cold test — confirms the scroll consumes on use
+    /// and the burst deals acid damage to enemies in the radius (caster
+    /// is exempt per `resolve_burst_save_damage`). Uses a beefy fighter
+    /// as the target so the burst doesn't kill the actor and drop them
+    /// out of `actors` before the post-cast check fires.
+    #[test]
+    fn scroll_of_vitriolic_sphere_damages_burst_and_consumes() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_VITRIOLIC_SPHERE_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_VITRIOLIC_SPHERE;
+
+        let trials = 30u64;
+        let mut any_dealt_damage = false;
+        for seed in 0..trials {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let caster = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 7), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&caster)
+                .unwrap()
+                .pickup_item(&SCROLL_OF_VITRIOLIC_SPHERE);
+            let target_hp_before = e.actors[&target].hitpoints();
+            let aei = ActionExecutionInfo::new(
+                &READ_VITRIOLIC_SPHERE_SCROLL,
+                caster,
+                None,
+                Some(vec![Coordinate::new(7, 7)]),
+                None,
+            );
+            assert!(aei.validate(&e));
+            e.push_action(aei);
+            e.process_stack();
+            assert!(
+                e.actors[&caster].items().is_empty(),
+                "scroll should be consumed (seed {})",
+                seed
+            );
+            // Target should have taken some damage (full on a failed save
+            // or half on a passed save — both > 0). 10d4 rolls at least
+            // 10, so even half is observable.
+            let after = e
+                .actors
+                .get(&target)
+                .map(|a| a.hitpoints())
+                .unwrap_or(0);
+            if after < target_hp_before {
+                any_dealt_damage = true;
+                break;
+            }
+        }
+        assert!(
+            any_dealt_damage,
+            "scroll of vitriolic sphere never dealt damage across {} seeds",
+            trials
+        );
+    }
+
+    /// Archmage Pearl of Power: bonus action; refunds one expended
+    /// level-4 spell slot. Validates the pearl-ladder extension —
+    /// without an expended level-4 slot the validator rejects (no
+    /// no-op consumption), with one expended slot the action restores
+    /// it and consumes the pearl.
+    #[test]
+    fn archmage_pearl_of_power_refunds_level_four_slot() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::USE_ARCHMAGE_PEARL_OF_POWER;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::ARCHMAGE_PEARL_OF_POWER;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Hand the wizard the pearl. Without a spent level-4 slot, the
+        // validate path rejects — the consumable shouldn't burn on a no-op.
+        e.actors
+            .get_mut(&wizard)
+            .unwrap()
+            .pickup_item(&ARCHMAGE_PEARL_OF_POWER);
+        let aei = ActionExecutionInfo::new(
+            &USE_ARCHMAGE_PEARL_OF_POWER,
+            wizard,
+            None,
+            None,
+            None,
+        );
+        assert!(
+            !aei.validate(&e),
+            "should reject when no level-4 slot has been expended"
+        );
+
+        // Burn one level-4 slot, then the pearl validates and the
+        // restore lands.
+        let wizard_actor = e.actors.get_mut(&wizard).unwrap();
+        assert!(wizard_actor.spell_slot_manager.spell_slots(4).max_spell_slots > 0);
+        let initial = wizard_actor.spell_slot_manager.spell_slots(4).spell_slots;
+        wizard_actor.spell_slot_manager.consume_spell_slot(4);
+        let after_burn = e.actors[&wizard].spell_slot_manager.spell_slots(4).spell_slots;
+        assert_eq!(after_burn, initial - 1);
+        assert!(aei.validate(&e));
+
+        e.push_action(aei);
+        e.process_stack();
+        let after = e.actors[&wizard].spell_slot_manager.spell_slots(4).spell_slots;
+        assert_eq!(after, initial, "pearl should restore the spent slot");
+        assert!(
+            e.actors[&wizard].items().is_empty(),
+            "pearl should be consumed on use"
+        );
+    }
+
+    /// Wand of Cure Wounds: touch-range ally heal at 3d8+3. Mirrors
+    /// the Scroll of Cure Wounds test — confirms the shared
+    /// `SingleTargetHealItem` impl handles the higher-tier variant
+    /// (3d8+3 vs 2d8+2) with no per-item code path.
+    #[test]
+    fn wand_of_cure_wounds_heals_adjacent_ally_and_consumes() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::USE_WAND_OF_CURE_WOUNDS;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::WAND_OF_CURE_WOUNDS;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let healer = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&healer)
+            .unwrap()
+            .pickup_item(&WAND_OF_CURE_WOUNDS);
+        let ally_max = e.actors[&ally].max_hitpoints();
+        e.actors.get_mut(&ally).unwrap().take_damage(ally_max - 1);
+        assert_eq!(e.actors[&ally].hitpoints(), 1);
+
+        let aei = ActionExecutionInfo::new(
+            &USE_WAND_OF_CURE_WOUNDS,
+            healer,
+            Some(vec![ally]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(
+            e.actors[&ally].hitpoints() > 1,
+            "ally should have been healed"
+        );
+        // 3d8+3 always rolls at least 6 — bigger than the 2d8+2 scroll's
+        // minimum of 4. Use this as a basic floor check.
+        assert!(
+            e.actors[&ally].hitpoints() > 6,
+            "wand should heal at least 3d8+3 = 6 HP (got {} from base 1)",
+            e.actors[&ally].hitpoints()
+        );
+        assert!(
+            e.actors[&healer].items().is_empty(),
+            "wand should be consumed on use"
+        );
+    }
+
+    /// Scroll of Healing Word: bonus action, 24-tile range, 1d4+3 ally
+    /// heal. Exercises the long-reach + bonus-action knobs on
+    /// `SingleTargetHealItem` — confirms a ranged scroll can heal an
+    /// ally across the map.
+    #[test]
+    fn scroll_of_healing_word_heals_distant_ally_at_range() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_HEALING_WORD_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_HEALING_WORD;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let healer = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Place ally 8 tiles away — well outside touch range (1) but
+        // inside the scroll's 24-tile reach. Without the longer reach
+        // knob, the scroll would reject at validate.
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 2), 0, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&healer)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_HEALING_WORD);
+        let ally_max = e.actors[&ally].max_hitpoints();
+        e.actors.get_mut(&ally).unwrap().take_damage(ally_max - 1);
+        assert_eq!(e.actors[&ally].hitpoints(), 1);
+
+        let aei = ActionExecutionInfo::new(
+            &READ_HEALING_WORD_SCROLL,
+            healer,
+            Some(vec![ally]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e), "ranged ally heal should validate at 8 tiles");
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            e.actors[&ally].hitpoints() > 1,
+            "ranged ally heal should have landed"
+        );
+        assert!(
+            e.actors[&healer].items().is_empty(),
+            "scroll should be consumed"
+        );
+    }
+
+    /// Potion of Sanctuary: bonus action; self-installs Sanctuary for
+    /// 10 rounds. Mirrors the other self-condition consumable tests
+    /// (e.g. Potion of Mage Armor) — confirms the install lands and
+    /// the consumable rejects re-drink when already up so the potion
+    /// isn't burned on a no-op refresh.
+    #[test]
+    fn potion_of_sanctuary_installs_sanctuary_and_rejects_refresh() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::DRINK_POTION_OF_SANCTUARY;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::POTION_OF_SANCTUARY;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Hand the fighter two potions so the refresh-reject path has
+        // a second consumable to (correctly) refuse.
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .pickup_item(&POTION_OF_SANCTUARY);
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .pickup_item(&POTION_OF_SANCTUARY);
+        let aei = ActionExecutionInfo::new(
+            &DRINK_POTION_OF_SANCTUARY,
+            fighter,
+            None,
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&fighter].has_condition(Condition::Sanctuary));
+        // One potion consumed; the second should now reject (the buff
+        // is already up — refresh would waste the consumable).
+        assert_eq!(
+            e.actors[&fighter].items().len(),
+            1,
+            "first drink should consume one potion"
+        );
+        let refresh = ActionExecutionInfo::new(
+            &DRINK_POTION_OF_SANCTUARY,
+            fighter,
+            None,
+            None,
+            None,
+        );
+        assert!(
+            !refresh.validate(&e),
+            "drinking again while Sanctified should reject"
+        );
+    }
+
     /// 5e Wild Magic Surge wiring: the `Action::execute` chokepoint
     /// forwards the spell-slot level sniffed off the cost vec into the
     /// surge trigger. We verify the path end-to-end by casting Magic

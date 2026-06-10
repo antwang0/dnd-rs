@@ -842,26 +842,48 @@ pub static READ_LIGHTNING_BOLT_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem
     reach: 40,
 };
 
-/// Read a Scroll of Cure Wounds: touch one ally (or self) for 2d8+2
-/// healing. Mirrors the Cure Wounds spell at level 1 (2d8 base scaling
-/// is closer to a level-2 upcast — we err on the generous side because
-/// scroll loot is rare and the spell with WIS-mod can already roll
-/// higher in caster hands). Touch range, costs an Action, consumes the
-/// scroll. Like the Magic Missile scroll, no spell-slot cost — the
-/// scroll *is* the slot. The validate path also requires the caster to
-/// actually need healing OR be standing next to a wounded ally; the
-/// "touch range" gate is enforced via `reach_tiles`. The heal targets
-/// the actor at the target id, so a SingleActor schema is used to
-/// surface both self-healing and ally-healing in the picker.
-pub struct ReadCureWoundsScroll {}
+/// Config struct for "single-target heal" consumable items — the shared
+/// shape behind Scroll of Cure Wounds (touch, 2d8+2) and any future
+/// ally-targetable healing scroll / wand at varying tiers. Each static
+/// instance encodes the per-cast dice / flat bonus / reach / cost; the
+/// `Action` impl below pops the item from inventory and emits a `Heal`
+/// side-effect against the picked target. Mirrors `SelfHealItem` for the
+/// ally-targetable lane (the self-only potion family sits on the other
+/// side).
+///
+/// Adding a new variant (e.g. Wand of Cure Wounds at 3d8+3) is a one-
+/// static declaration — no new `Action` impl needed.
+pub struct SingleTargetHealItem {
+    /// Player-facing action name (e.g. "read cure wounds scroll").
+    pub action_name: &'static str,
+    /// Picker aliases (e.g. ["cw scroll", "cure scroll"]).
+    pub action_aliases: &'static [&'static str],
+    /// Inventory item name to gate validate / consume on.
+    pub item_name: &'static str,
+    /// Log line prefix (e.g. "scroll of cure wounds"). The row reads
+    /// `  {log_label}: {count}d{faces}({raw}){:+flat} = {amount} HP`.
+    pub log_label: &'static str,
+    /// Healing dice (e.g. 2d8 for Cure Wounds scroll).
+    pub dice: Dice,
+    /// Flat bonus added to the rolled dice. Stand-in for the spell's
+    /// caster-ability modifier — the scroll has no caster-ability tie,
+    /// so a fixed value keeps the expected total comparable across
+    /// readers (a +2 ≈ a low-level cleric's WIS-mod).
+    pub flat_bonus: i32,
+    /// Maximum reach in tiles for the targeting picker (1 for touch-
+    /// range, 24 for "healing word range" 60 ft, etc.).
+    pub reach: isize,
+    /// `true` ⇒ Bonus Action cost; `false` ⇒ Action cost.
+    pub bonus_action: bool,
+}
 
-impl Action for ReadCureWoundsScroll {
+impl Action for SingleTargetHealItem {
     fn name(&self) -> &str {
-        "read cure wounds scroll"
+        self.action_name
     }
 
     fn aliases(&self) -> Vec<&str> {
-        vec!["cw scroll", "cure scroll"]
+        self.action_aliases.to_vec()
     }
 
     fn targeting_schema(&self) -> TargetingSchema {
@@ -869,15 +891,12 @@ impl Action for ReadCureWoundsScroll {
     }
 
     fn reach_tiles(&self) -> Option<isize> {
-        // Touch range — must be footprint-adjacent. Matches the Cure
-        // Wounds spell's range. The picker uses this to filter the
-        // target list.
-        Some(1)
+        Some(self.reach)
     }
 
     fn requires_los(&self) -> bool {
-        // Implicitly true at touch range, but kept on so the picker
-        // doesn't surface targets behind walls inside the 1-tile reach.
+        // Implicitly true at touch range, but kept on for longer-reach
+        // variants too so the picker doesn't surface targets behind walls.
         true
     }
 
@@ -893,6 +912,21 @@ impl Action for ReadCureWoundsScroll {
         false
     }
 
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        if self.bonus_action {
+            bonus_action_only()
+        } else {
+            vec![Resource::Action]
+        }
+    }
+
     fn custom_validate_input(
         &self,
         encounter: &EncounterInstance,
@@ -901,7 +935,7 @@ impl Action for ReadCureWoundsScroll {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        caster_holds(encounter, caster_id, SCROLL_OF_CURE_WOUNDS_NAME)
+        caster_holds(encounter, caster_id, self.item_name)
     }
 
     fn side_effects(
@@ -915,18 +949,14 @@ impl Action for ReadCureWoundsScroll {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        if !consume_caster_item(encounter, caster_id, SCROLL_OF_CURE_WOUNDS_NAME) {
+        if !consume_caster_item(encounter, caster_id, self.item_name) {
             return Vec::new();
         }
-        let raw = encounter.roll(&Dice::new(2, 8)) as i32;
-        // +2 is a stand-in for the spell's caster-CHA / WIS modifier. We
-        // don't have a caster ability tied to the scroll (the scroll is
-        // a fixed magic item, not a class spell), so a flat +2 keeps the
-        // expected total comparable to a low-level cleric's Cure Wounds.
-        let amount = (raw + 2).max(1) as u32;
+        let raw = encounter.roll(&self.dice) as i32;
+        let amount = (raw + self.flat_bonus).max(1) as u32;
         encounter.log(format!(
-            "  scroll of cure wounds: 2d8({})+2 = {} HP",
-            raw, amount
+            "  {}: {}d{}({}){:+} = {} HP",
+            self.log_label, self.dice.count, self.dice.faces, raw, self.flat_bonus, amount
         ));
         vec![Box::new(Heal {
             actor_id: target_id,
@@ -935,7 +965,21 @@ impl Action for ReadCureWoundsScroll {
     }
 }
 
-pub static READ_CURE_WOUNDS_SCROLL: ReadCureWoundsScroll = ReadCureWoundsScroll {};
+/// Scroll of Cure Wounds — touch (1-tile) ally heal for 2d8+2. Fires
+/// through the shared `SingleTargetHealItem` impl. The +2 stand-in for
+/// the spell's caster WIS / CHA modifier keeps the expected total
+/// comparable to a low-level cleric's Cure Wounds without binding the
+/// scroll to a caster ability.
+pub static READ_CURE_WOUNDS_SCROLL: SingleTargetHealItem = SingleTargetHealItem {
+    action_name: "read cure wounds scroll",
+    action_aliases: &["cw scroll", "cure scroll"],
+    item_name: SCROLL_OF_CURE_WOUNDS_NAME,
+    log_label: "scroll of cure wounds",
+    dice: Dice::new(2, 8),
+    flat_bonus: 2,
+    reach: 1,
+    bonus_action: false,
+};
 
 const PEARL_OF_POWER_NAME: &str = "Pearl of Power";
 const GREATER_PEARL_OF_POWER_NAME: &str = "Greater Pearl of Power";
@@ -1599,6 +1643,20 @@ impl Action for BurstSaveConditionItem {
         // catch allies; this lets the player aim through their own line
         // without burning the consumable on allies that pass / fail RAW.
         for tid in encounter.enemy_burst_targets(caster_id, center, self.radius) {
+            // Skip targets immune to this condition — the install would
+            // no-op at `add_condition` anyway. The bigger reason for the
+            // skip is the Sorcerer Heightened Spell prime: it consumes
+            // on the FIRST save in the burst, so wasting it on a target
+            // whose install can't land would leak the metamagic onto a
+            // no-op. The HYPNOTIC_PATTERN spell-side impl does the same
+            // up-front filter for the same reason.
+            if encounter
+                .actors
+                .get(&tid)
+                .is_some_and(|t| t.effectively_immune_to_condition(self.condition))
+            {
+                continue;
+            }
             let save =
                 encounter.roll_save_against_caster(tid, self.save, self.dc, caster_id);
             if !save.passed() {
@@ -1802,4 +1860,193 @@ pub static USE_WAND_OF_FEAR: SingleSaveConditionItem = SingleSaveConditionItem {
     reach: 24,
     condition: Condition::Frightened,
     timer: ConditionTimer::Rounds(10),
+};
+
+const SCROLL_OF_HOLD_PERSON_NAME: &str = "Scroll of Hold Person";
+const SCROLL_OF_HOLD_MONSTER_NAME: &str = "Scroll of Hold Monster";
+const WAND_OF_CONFUSION_NAME: &str = "Wand of Confusion";
+const SCROLL_OF_HYPNOTIC_PATTERN_NAME: &str = "Scroll of Hypnotic Pattern";
+const SCROLL_OF_VITRIOLIC_SPHERE_NAME: &str = "Scroll of Vitriolic Sphere";
+const ARCHMAGE_PEARL_OF_POWER_NAME: &str = "Archmage Pearl of Power";
+const POTION_OF_SANCTUARY_NAME: &str = "Potion of Sanctuary";
+const WAND_OF_CURE_WOUNDS_NAME: &str = "Wand of Cure Wounds";
+const SCROLL_OF_HEALING_WORD_NAME: &str = "Scroll of Healing Word";
+
+/// Scroll of Hold Person — Action; single-target, WIS save vs DC 13,
+/// fail = Paralyzed for 10 rounds. 5e RAW: level-2 enchantment with
+/// concentration and re-save each turn; the scroll variant drops the
+/// concentration / re-save mechanics for the simpler "fixed 10-round
+/// paralysis" envelope every other CC consumable rides. Lower DC (13
+/// vs the Wand of Paralysis's 15) keeps the scroll at the entry-level
+/// CC tier alongside Pipes of Haunting. Fires through the shared
+/// `SingleSaveConditionItem` impl.
+pub static READ_HOLD_PERSON_SCROLL: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "read hold person scroll",
+    action_aliases: &["hp scroll", "hold scroll"],
+    item_name: SCROLL_OF_HOLD_PERSON_NAME,
+    log_text: "{actor} reads a scroll of hold person; arcane shackles seek their mark.",
+    save: AbilityScoreType::Wisdom,
+    dc: 13,
+    // 60 ft range RAW; 24 tiles in the 2.5ft grid.
+    reach: 24,
+    condition: Condition::Paralyzed,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Scroll of Hold Monster — Action; single-target, WIS save vs DC 15,
+/// fail = Paralyzed for 10 rounds. 5e RAW: level-5 enchantment, same
+/// shape as Hold Person but lifts the "humanoid only" restriction. The
+/// engine doesn't model creature types beyond template, so the scroll's
+/// niche over Hold Person is purely the harder DC and longer reach
+/// (90 ft RAW). Fires through the shared `SingleSaveConditionItem`
+/// impl.
+pub static READ_HOLD_MONSTER_SCROLL: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "read hold monster scroll",
+    action_aliases: &["hm scroll", "monster scroll"],
+    item_name: SCROLL_OF_HOLD_MONSTER_NAME,
+    log_text: "{actor} reads a scroll of hold monster; otherworldly chains lash out.",
+    save: AbilityScoreType::Wisdom,
+    dc: 15,
+    // 90 ft range RAW; 36 tiles in the 2.5ft grid.
+    reach: 36,
+    condition: Condition::Paralyzed,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Wand of Confusion — Action; 4-tile burst, WIS save vs DC 15, fail =
+/// Confused for 10 rounds (disadvantage on attacks AND no reactions).
+/// 5e RAW: level-4 enchantment, 90-ft range / 10-ft cube; we collapse
+/// to the burst envelope every other AoE CC consumable rides. Top-of-
+/// pool burst CC alongside Wand of Paralysis (single-target Paralyzed)
+/// — the wand of confusion trades single-target lockdown for a wider
+/// soft-CC blanket. Fires through the shared `BurstSaveConditionItem`
+/// impl.
+pub static USE_WAND_OF_CONFUSION: BurstSaveConditionItem = BurstSaveConditionItem {
+    action_name: "use wand of confusion",
+    action_aliases: &["confusion", "confuse"],
+    item_name: WAND_OF_CONFUSION_NAME,
+    log_text: "{actor} flourishes the wand of confusion; minds unravel.",
+    save: AbilityScoreType::Wisdom,
+    dc: 15,
+    radius: 4,
+    // 90 ft range RAW; 36 tiles in the 2.5ft grid.
+    reach: 36,
+    condition: Condition::Confused,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Scroll of Hypnotic Pattern — Action; 4-tile burst, WIS save vs DC 14,
+/// fail = Incapacitated for 10 rounds. 5e RAW: level-3 illusion, 120-ft
+/// range / 30-ft cube, concentration; the scroll variant drops the
+/// concentration gate and uses the burst envelope every other AoE CC
+/// consumable rides. Lower DC (14 vs the Wand of Confusion's 15)
+/// reflects the "common burst CC" niche between Pipes of Haunting
+/// (DC 13 Frightened) and Wand of Confusion (DC 15 Confused). Fires
+/// through the shared `BurstSaveConditionItem` impl.
+pub static READ_HYPNOTIC_PATTERN_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
+    action_name: "read hypnotic pattern scroll",
+    action_aliases: &["hp pattern", "hypnotic scroll"],
+    item_name: SCROLL_OF_HYPNOTIC_PATTERN_NAME,
+    log_text: "{actor} reads a scroll of hypnotic pattern; swirling lights mesmerize.",
+    save: AbilityScoreType::Wisdom,
+    dc: 14,
+    radius: 4,
+    // 120 ft range RAW; 48 tiles in the 2.5ft grid.
+    reach: 48,
+    condition: Condition::Incapacitated,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Scroll of Vitriolic Sphere — Action; 10d4 acid DEX-save burst,
+/// 4-tile radius. 5e RAW: level-4 evocation, 150-ft range / 20-ft
+/// radius, 10d4 acid (failed save) + 5d4 next-turn drip (passed save).
+/// We collapse the next-turn drip clause onto the front-loaded 10d4
+/// since the engine's burst helper doesn't fork into a follow-up tick.
+/// Fills the acid lane in the burst-damage scroll family — alongside
+/// Fireball (fire), Lightning Bolt (lightning), Cone of Cold (cold),
+/// and Shatter (thunder). Fires through the shared
+/// `BurstSaveDamageItem` impl.
+pub static READ_VITRIOLIC_SPHERE_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+    action_name: "read vitriolic sphere scroll",
+    action_aliases: &["vs scroll", "acid scroll"],
+    item_name: SCROLL_OF_VITRIOLIC_SPHERE_NAME,
+    log_label: "scroll of vitriolic sphere",
+    dice: Dice::new(10, 4),
+    damage_type: DamageType::Acid,
+    save: AbilityScoreType::Dexterity,
+    dc: 15,
+    radius: 4,
+    // 150 ft range RAW; well past any current map. Capped at 60 to
+    // match the Fireball scroll's picker envelope.
+    reach: 60,
+};
+
+/// Archmage Pearl of Power — bonus action; restore one expended level-4
+/// spell slot. Top of the pearl ladder above Supreme Pearl of Power
+/// (level-3 refund). 5e RAW pearls cap at level-3 slots; the engine
+/// extends the ladder to cover the level-4 slot tier as the
+/// rarest-tier caster consumable. Fires through the shared
+/// `PearlOfPowerItem` impl.
+pub static USE_ARCHMAGE_PEARL_OF_POWER: PearlOfPowerItem = PearlOfPowerItem {
+    action_name: "use archmage pearl of power",
+    action_aliases: &["pearl+++", "pop+++"],
+    item_name: ARCHMAGE_PEARL_OF_POWER_NAME,
+    slot_level: 4,
+};
+
+/// Potion of Sanctuary — Bonus Action; installs `Sanctuary` for 10
+/// rounds. 5e RAW: the Sanctuary spell is a level-1 abjuration, bonus
+/// action cost, requires a willing target; the potion bypasses the
+/// targeting constraint and only protects the drinker. Hostile actions
+/// against the drinker require a WIS save vs the source's DC or they
+/// silently no-op (see the `Sanctuary` condition docs for the gate).
+/// The buff drops the moment the drinker themselves attacks or casts a
+/// damaging spell. Fires through the shared `SelfConditionItem` impl;
+/// rejects re-drink when already Sanctified so the consumable isn't
+/// burned on a no-op timer refresh.
+pub static DRINK_POTION_OF_SANCTUARY: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of sanctuary",
+    action_aliases: &["sanctuary", "sanc"],
+    item_name: POTION_OF_SANCTUARY_NAME,
+    log_text: "{actor} drinks a potion of sanctuary; an unseen ward settles over them.",
+    condition: Condition::Sanctuary,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: true,
+    reject_when_active: true,
+};
+
+/// Wand of Cure Wounds — Action; touch (1-tile) ally heal for 3d8+3.
+/// Sits a tier above the Scroll of Cure Wounds (2d8+2) — same shape,
+/// bigger pool. 5e RAW: 7 charges casting Cure Wounds at level 1-3;
+/// we collapse to a single-use cast at the level-3 upcast (3d8) for
+/// the engine's charge-less loot model. Fires through the shared
+/// `SingleTargetHealItem` impl.
+pub static USE_WAND_OF_CURE_WOUNDS: SingleTargetHealItem = SingleTargetHealItem {
+    action_name: "use wand of cure wounds",
+    action_aliases: &["cw wand", "cure wand"],
+    item_name: WAND_OF_CURE_WOUNDS_NAME,
+    log_label: "wand of cure wounds",
+    dice: Dice::new(3, 8),
+    flat_bonus: 3,
+    reach: 1,
+    bonus_action: false,
+};
+
+/// Scroll of Healing Word — Bonus Action; 24-tile ranged ally heal for
+/// 1d4+3. 5e RAW: level-1 evocation, bonus action, 60-ft range. The
+/// scroll-as-slot envelope drops the spell-slot cost. Pairs with the
+/// touch-range Scroll of Cure Wounds — the healing-word scroll trades
+/// payload for reach (kite-heal an ally across the room) and action
+/// economy (BA vs Action). Fires through the shared
+/// `SingleTargetHealItem` impl.
+pub static READ_HEALING_WORD_SCROLL: SingleTargetHealItem = SingleTargetHealItem {
+    action_name: "read healing word scroll",
+    action_aliases: &["hw scroll", "word scroll"],
+    item_name: SCROLL_OF_HEALING_WORD_NAME,
+    log_label: "scroll of healing word",
+    dice: Dice::new(1, 4),
+    flat_bonus: 3,
+    // 60 ft range RAW; 24 tiles in the 2.5ft grid.
+    reach: 24,
+    bonus_action: true,
 };
