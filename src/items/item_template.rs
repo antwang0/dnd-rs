@@ -104,6 +104,20 @@ pub struct Item {
     /// immunity short-circuits the damage pipeline before resistance /
     /// vulnerability rolls fire. Empty for items without typed immunity.
     pub damage_immunities: &'static [crate::engine::types::DamageType],
+    /// Conditions the wearer has installed (Permanent) for as long as the
+    /// item is carried. Used by passive-buff trinkets like Slippers of
+    /// Spider Climbing (SpiderClimbing) and Winged Boots (Flying) so the
+    /// in-fiction effect flows through the same condition map that already
+    /// drives `speed()`, `compute_attack_mode`, etc. Hooked at three
+    /// places: `pickup_item` installs each entry on grab, `remove_item_by_name`
+    /// strips entries that no remaining carried item still grants, and
+    /// `long_rest` re-installs them after the conditions clear. A
+    /// `Dispel Magic` or other in-combat strip will leave the actor
+    /// without the buff until the next long rest (or until the player
+    /// re-picks-up the item) — acceptable tradeoff for the simpler
+    /// "install on the inventory event" model. Empty for items without a
+    /// persistent condition (the default for most loot).
+    pub passive_conditions: &'static [crate::conditions::Condition],
 }
 
 impl Item {
@@ -123,6 +137,7 @@ impl Item {
         condition_immunities: &[],
         damage_resistances: &[],
         damage_immunities: &[],
+        passive_conditions: &[],
     };
 }
 
@@ -1106,6 +1121,190 @@ pub static POTION_OF_LONGSTRIDER: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Scroll of Bless — Action; install `Blessed` for 10 rounds on a single
+/// ally (+1d4 to attack rolls and saving throws). Sits in the loot pool
+/// as the ally-buff counterpart to the harmful single-target CC scrolls.
+pub static SCROLL_OF_BLESS: Item = Item {
+    name: "Scroll of Bless",
+    glyph: 'B',
+    on_use: Some(&crate::actions::item_actions::READ_BLESS_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Shield of Faith — Action; install `ShieldOfFaith` for 10
+/// rounds (+2 AC) on a single ally. Pairs with Scroll of Bless on the
+/// ally-buff lane — the latter buffs attack rolls / saves, the former
+/// boosts AC.
+pub static SCROLL_OF_SHIELD_OF_FAITH: Item = Item {
+    name: "Scroll of Shield of Faith",
+    glyph: 'F',
+    on_use: Some(&crate::actions::item_actions::READ_SHIELD_OF_FAITH_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Blindness — Action; single-target, CON save vs DC 13, fail
+/// = Blinded for 10 rounds. Fills the single-target Blinded niche
+/// alongside Wand of Paralysis (Paralyzed) and Wand of Fear (Frightened).
+pub static SCROLL_OF_BLINDNESS: Item = Item {
+    name: "Scroll of Blindness",
+    glyph: '!',
+    on_use: Some(&crate::actions::item_actions::READ_BLINDNESS_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Bane — Action; 4-tile burst, CHA save vs DC 13, fail =
+/// Baned for 10 rounds. Mirror of Scroll of Bless on the debuff lane —
+/// enemies caught in the burst eat -1d4 to attack rolls and saves.
+pub static SCROLL_OF_BANE: Item = Item {
+    name: "Scroll of Bane",
+    glyph: 'b',
+    on_use: Some(&crate::actions::item_actions::READ_BANE_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Faerie Fire — Action; 4-tile burst, DEX save vs DC 13, fail
+/// = Outlined for 10 rounds (attacks against them have advantage, can't
+/// benefit from Hidden / Invisible). Cheap pre-burst setup for the
+/// martial-heavy party.
+pub static SCROLL_OF_FAERIE_FIRE: Item = Item {
+    name: "Scroll of Faerie Fire",
+    glyph: 'i',
+    on_use: Some(&crate::actions::item_actions::READ_FAERIE_FIRE_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Wand of Polymorph — Action; single-target, WIS save vs DC 15, fail =
+/// Polymorphed for 10 rounds. Top-of-pool single-target CC consumable —
+/// Polymorphed shuts down the target's entire spellcasting toolkit.
+pub static WAND_OF_POLYMORPH: Item = Item {
+    name: "Wand of Polymorph",
+    glyph: 'p',
+    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_POLYMORPH),
+    ..Item::DEFAULTS
+};
+
+/// Potion of Barkskin — Bonus Action; installs `Barkskinned` for 10
+/// rounds (AC floor of 16). Cheap defensive consumable for low-AC
+/// casters; pairs with Potion of Mage Armor (AC 13 + DEX floor) and
+/// Potion of Blur (disadvantage on attackers) in the defensive consumable
+/// trio.
+pub static POTION_OF_BARKSKIN: Item = Item {
+    name: "Potion of Barkskin",
+    glyph: '+',
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_BARKSKIN),
+    ..Item::DEFAULTS
+};
+
+/// Potion of Fire Resistance — Action; installs `DamageResistant` for 10
+/// rounds. Resists everything in the engine model (the `DamageResistant`
+/// condition isn't typed); the loot pool keeps the flavored name to give
+/// the player a tactical "elemental shield" feel without proliferating
+/// typed-resistance condition variants. Sibling to Potion of Cold
+/// Resistance.
+pub static POTION_OF_FIRE_RESISTANCE: Item = Item {
+    name: "Potion of Fire Resistance",
+    glyph: 'F',
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_FIRE_RESISTANCE),
+    ..Item::DEFAULTS
+};
+
+/// Potion of Cold Resistance — Action; installs `DamageResistant` for 10
+/// rounds. Mirror of Potion of Fire Resistance — same envelope, distinct
+/// flavor.
+pub static POTION_OF_COLD_RESISTANCE: Item = Item {
+    name: "Potion of Cold Resistance",
+    glyph: 'C',
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_COLD_RESISTANCE),
+    ..Item::DEFAULTS
+};
+
+/// Potion of Hill Giant Strength — Action; installs `Enlarged` for 10
+/// rounds (+1d4 weapon damage rider, size bump). Sibling to Potion of
+/// Growth — same condition envelope, distinct in-fiction trigger so the
+/// loot pool covers the offensive bruiser consumable lane at two rolls.
+pub static POTION_OF_HILL_GIANT_STRENGTH: Item = Item {
+    name: "Potion of Hill Giant Strength",
+    glyph: 'G',
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_HILL_GIANT_STRENGTH),
+    ..Item::DEFAULTS
+};
+
+/// Slippers of Spider Climbing — passive trinket that grants the wearer
+/// a climbing speed equal to their walking speed (modeled via the
+/// `SpiderClimbing` condition's flat +30 ft / +12 tile speed bump). 5e
+/// RAW: "you have a climbing speed equal to your walking speed; you can
+/// move up, down, and across vertical surfaces and along ceilings." The
+/// engine doesn't model vertical terrain — the load-bearing combat clause
+/// is the speed bonus, which flows through `condition_speed_bonus`
+/// alongside Longstrider / Fly. Sibling to Potion of Climbing (same
+/// condition, but the potion is a single-use consumable, while the
+/// slippers are passive-on-while-worn).
+pub static SLIPPERS_OF_SPIDER_CLIMBING: Item = Item {
+    name: "Slippers of Spider Climbing",
+    glyph: '_',
+    passive_conditions: &[crate::conditions::Condition::SpiderClimbing],
+    ..Item::DEFAULTS
+};
+
+/// Winged Boots — passive trinket that grants the wearer a flying speed
+/// equal to their walking speed (modeled via the `Flying` condition's +60
+/// ft / +24 tile speed bump plus the ranged-attacker disadvantage rider).
+/// 5e RAW: "while you wear these boots, you have a flying speed equal to
+/// your walking speed... a total of 4 hours of flying time, split however
+/// you like; recharges 2 hours at dawn." The engine doesn't model fuel
+/// reserves — the boots are passive-on-while-worn. Sibling to Potion of
+/// Flying (same condition, consumable variant); the boots are the rare-
+/// tier permanent counterpart, with the AC bump and ranged-deflection
+/// rolling through the same condition the spell installs.
+pub static WINGED_BOOTS: Item = Item {
+    name: "Winged Boots",
+    glyph: 'w',
+    passive_conditions: &[crate::conditions::Condition::Flying],
+    ..Item::DEFAULTS
+};
+
+/// Boots of the Forest — passive trinket. Grants the wearer Longstriding
+/// (+10 ft / +4 tile speed bump) while worn. 5e flavor mimic of the
+/// Longstrider spell's effect routed through the same condition (joins
+/// `condition_speed_bonus` for the additive stack with Boots of Striding's
+/// flat ItemBonuses.speed). Sibling to Potion of Longstrider (consumable)
+/// — the boots cover the always-on speed-bump niche.
+pub static BOOTS_OF_THE_FOREST: Item = Item {
+    name: "Boots of the Forest",
+    glyph: '~',
+    passive_conditions: &[crate::conditions::Condition::Longstriding],
+    ..Item::DEFAULTS
+};
+
+/// Cloak of Etherealness — passive trinket. Grants the wearer
+/// `DamageResistant` (halve all incoming damage) while worn. 5e RAW: the
+/// cloak's Etherealness ability lets the wearer enter the Ethereal Plane
+/// at will; we collapse the "shift planes to dodge damage" envelope to a
+/// flat damage-halve buff that flows through the existing condition lane.
+/// Top-of-pool defensive trinket — strictly stronger than the typed-
+/// resistance rings.
+pub static CLOAK_OF_ETHEREALNESS: Item = Item {
+    name: "Cloak of Etherealness",
+    glyph: '$',
+    passive_conditions: &[crate::conditions::Condition::DamageResistant],
+    ..Item::DEFAULTS
+};
+
+/// Amulet of the Vigilant — passive trinket. Grants the wearer the
+/// Barbarian-style `DangerSense` (always-on advantage on DEX saves while
+/// not Blinded / Incapacitated / Deafened). 5e RAW flavor: a stylized
+/// amulet that hums warm when danger approaches; we abstract the
+/// "preternatural sixth sense" to the Barbarian feature's mechanical
+/// envelope. Distinct from the typed-resistance rings — the amulet
+/// boosts DEX saves rather than halving damage, sliding cleanly under the
+/// "AoE survival" niche for low-DEX casters.
+pub static AMULET_OF_THE_VIGILANT: Item = Item {
+    name: "Amulet of the Vigilant",
+    glyph: 'V',
+    passive_conditions: &[crate::conditions::Condition::DangerSense],
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -1316,4 +1515,43 @@ pub static LOOT_POOL: &[&Item] = &[
     // tier as Potion of Climbing; +10 ft for the encounter. Bonus-action
     // drink so it doesn't compete with the holder's main turn budget.
     &POTION_OF_LONGSTRIDER,
+    // Ally-buff scrolls — Bless and Shield of Faith fill the support
+    // scroll niche alongside the Mass Healing Word / Cure Wounds heal
+    // scrolls. Both buff a single ally for 10 rounds; Bless boosts
+    // attack rolls / saves (+1d4), Shield of Faith boosts AC (+2).
+    &SCROLL_OF_BLESS,
+    &SCROLL_OF_SHIELD_OF_FAITH,
+    // Single-target CC scrolls — Blindness (CON save Blinded) fills the
+    // entry-level "save-or-suck single target" niche alongside the rare
+    // Wand of Paralysis. Wand of Polymorph sits at the top of the same
+    // ladder — Polymorphed locks out the target's spellcasting toolkit.
+    &SCROLL_OF_BLINDNESS,
+    &WAND_OF_POLYMORPH,
+    // Burst CC scrolls — Bane (CHA save Baned) is the burst debuff
+    // counterpart to Bless; Faerie Fire (DEX save Outlined) sets up the
+    // martial-heavy party for advantage on follow-up swings.
+    &SCROLL_OF_BANE,
+    &SCROLL_OF_FAERIE_FIRE,
+    // Defensive consumables — Barkskin (AC 16 floor), Fire / Cold
+    // Resistance potions (blanket damage halve), and Hill Giant Strength
+    // (Enlarged size+damage). Single entries each; the resistance
+    // potions share the `DamageResistant` lane with Potion of Stoneskin
+    // so the loot pool has multiple flavored entries on the same
+    // mechanical envelope.
+    &POTION_OF_BARKSKIN,
+    &POTION_OF_FIRE_RESISTANCE,
+    &POTION_OF_COLD_RESISTANCE,
+    &POTION_OF_HILL_GIANT_STRENGTH,
+    // Passive-condition trinkets — Slippers of Spider Climbing
+    // (SpiderClimbing speed bump), Winged Boots (Flying), Boots of the
+    // Forest (Longstriding +10 ft), Cloak of Etherealness (DamageResistant
+    // blanket halve), Amulet of the Vigilant (DangerSense DEX-save
+    // advantage). All ride the new `passive_conditions` item lane so the
+    // install lives on `pickup_item` and persists across long rests via
+    // the `reinstall_item_passive_conditions` hook.
+    &SLIPPERS_OF_SPIDER_CLIMBING,
+    &WINGED_BOOTS,
+    &BOOTS_OF_THE_FOREST,
+    &CLOAK_OF_ETHEREALNESS,
+    &AMULET_OF_THE_VIGILANT,
 ];

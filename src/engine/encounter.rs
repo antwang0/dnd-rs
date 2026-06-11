@@ -35877,6 +35877,334 @@ mod tests {
         );
     }
 
+    /// Wand of Paralysis aimed at a Ring-of-Free-Action wearer is a
+    /// no-op: the wearer is condition-immune to Paralyzed, so the save
+    /// is skipped entirely (preserving the Heightened Spell prime if
+    /// one is up). Wand still consumes — the player chose to fire it.
+    /// Regression test for the `SingleSaveConditionItem` immunity-skip
+    /// optimization.
+    #[test]
+    fn wand_of_paralysis_skips_save_on_immune_target() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::USE_WAND_OF_PARALYSIS;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::{RING_OF_FREE_ACTION, WAND_OF_PARALYSIS};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let caster = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let immune_target = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .pickup_item(&WAND_OF_PARALYSIS);
+        // Ring of Free Action makes the target immune to Paralyzed.
+        e.actors
+            .get_mut(&immune_target)
+            .unwrap()
+            .pickup_item(&RING_OF_FREE_ACTION);
+        let aei = ActionExecutionInfo::new(
+            &USE_WAND_OF_PARALYSIS,
+            caster,
+            Some(vec![immune_target]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        // Target was immune so the install can't land — confirm the
+        // condition is NOT installed (would happen anyway via the
+        // `add_condition` immunity gate, but the skip preserves the
+        // Heightened prime by avoiding the save roll).
+        assert!(
+            !e.actors[&immune_target].has_condition(Condition::Paralyzed),
+            "Ring of Free Action should block Paralyzed install"
+        );
+        // Wand still consumes — UX matches the player's intent.
+        assert!(
+            !e.actors[&caster].has_item_named("Wand of Paralysis"),
+            "wand should still be consumed even on a no-op shot"
+        );
+    }
+
+    /// Scroll of Bless: install `Blessed` for 10 rounds on a single ally
+    /// at touch range. Confirms the scroll consumes, the install lands on
+    /// the right actor, and the buff doesn't leak onto the caster (no
+    /// "self-target by default" surprise).
+    #[test]
+    fn scroll_of_bless_installs_blessed_on_ally() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_BLESS_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::SCROLL_OF_BLESS;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let caster = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_BLESS);
+        let aei = ActionExecutionInfo::new(
+            &READ_BLESS_SCROLL,
+            caster,
+            Some(vec![ally]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            e.actors[&ally].has_condition(Condition::Blessed),
+            "ally should be Blessed after scroll use"
+        );
+        assert!(
+            !e.actors[&caster].has_condition(Condition::Blessed),
+            "caster should not pick up Blessed (scroll targets the picked ally only)"
+        );
+        assert!(
+            e.actors[&caster].items().is_empty(),
+            "bless scroll should be consumed on use"
+        );
+    }
+
+    /// Scroll of Bless rejects a re-cast on an already-Blessed ally.
+    /// `add_condition` would keep the longer timer either way, so the
+    /// re-cast would be a no-op — the `reject_when_active` gate spares
+    /// the consumable from being burned on a refresh.
+    #[test]
+    fn scroll_of_bless_rejects_already_blessed_target() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_BLESS_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::items::item_template::SCROLL_OF_BLESS;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let caster = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_BLESS);
+        // Pre-install Blessed; the re-cast should reject.
+        e.actors
+            .get_mut(&ally)
+            .unwrap()
+            .add_condition(Condition::Blessed, ConditionTimer::Rounds(10));
+        let aei = ActionExecutionInfo::new(
+            &READ_BLESS_SCROLL,
+            caster,
+            Some(vec![ally]),
+            None,
+            None,
+        );
+        assert!(
+            !aei.validate(&e),
+            "re-cast Bless on an already-blessed ally should be rejected"
+        );
+        // Scroll should still be in inventory (not consumed by the rejection).
+        assert!(
+            e.actors[&caster].has_item_named("Scroll of Bless"),
+            "rejected validate must not consume the scroll"
+        );
+    }
+
+    /// Scroll of Bane: 4-tile burst, CHA save vs DC 13, fail = Baned for
+    /// 10 rounds. Seed-swept so the probabilistic save path lands at least
+    /// once; the burst should hit enemies (Baned debuff) but spare the
+    /// caster (enemy-only burst filter).
+    #[test]
+    fn scroll_of_bane_installs_baned_on_failed_save() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_BANE_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::SCROLL_OF_BANE;
+
+        let trials = 50u64;
+        let mut any_baned = false;
+        for seed in 0..trials {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let caster = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 7), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&caster)
+                .unwrap()
+                .pickup_item(&SCROLL_OF_BANE);
+            let aei = ActionExecutionInfo::new(
+                &READ_BANE_SCROLL,
+                caster,
+                None,
+                Some(vec![Coordinate::new(7, 7)]),
+                None,
+            );
+            assert!(aei.validate(&e));
+            e.push_action(aei);
+            e.process_stack();
+            assert!(
+                e.actors[&caster].items().is_empty(),
+                "bane scroll should be consumed on use (seed {})",
+                seed
+            );
+            // Caster never makes a save — enemy-burst filter excludes
+            // them, so they shouldn't be Baned.
+            assert!(
+                !e.actors[&caster].has_condition(Condition::Baned),
+                "caster should not be Baned (enemy-only burst, seed {})",
+                seed
+            );
+            if e.actors[&enemy].has_condition(Condition::Baned) {
+                any_baned = true;
+                break;
+            }
+        }
+        assert!(
+            any_baned,
+            "scroll of bane never installed Baned across {} seeds",
+            trials
+        );
+    }
+
+    /// Wand of Polymorph: single-target WIS save vs DC 15, fail =
+    /// Polymorphed for 10 rounds. Seed-swept; should land on a zombie
+    /// (poor WIS, no WIS save proficiency, no Polymorphed-immunity).
+    #[test]
+    fn wand_of_polymorph_installs_polymorphed_on_failed_save() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::USE_WAND_OF_POLYMORPH;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::WAND_OF_POLYMORPH;
+
+        let trials = 50u64;
+        let mut any_polymorphed = false;
+        for seed in 0..trials {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let caster = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let zombie = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&caster)
+                .unwrap()
+                .pickup_item(&WAND_OF_POLYMORPH);
+            let aei = ActionExecutionInfo::new(
+                &USE_WAND_OF_POLYMORPH,
+                caster,
+                Some(vec![zombie]),
+                None,
+                None,
+            );
+            assert!(aei.validate(&e));
+            e.push_action(aei);
+            e.process_stack();
+            assert!(
+                e.actors[&caster].items().is_empty(),
+                "wand should be consumed on use (seed {})",
+                seed
+            );
+            if e.actors[&zombie].has_condition(Condition::Polymorphed) {
+                any_polymorphed = true;
+                // The wand also grants the beast-form 30 temp HP buffer
+                // (mirroring the Polymorph spell). Confirm the buffer
+                // lands alongside the condition install.
+                assert_eq!(
+                    e.actors[&zombie].temp_hp(),
+                    30,
+                    "wand of polymorph should grant 30 temp HP buffer (seed {})",
+                    seed
+                );
+                break;
+            }
+        }
+        assert!(
+            any_polymorphed,
+            "wand of polymorph never installed Polymorphed across {} seeds",
+            trials
+        );
+    }
+
+    /// Potion of Barkskin: bonus-action self-install of `Barkskinned`
+    /// for 10 rounds. Consumes the potion and rejects a re-drink on the
+    /// same actor (the SelfConditionItem reject-when-active gate).
+    #[test]
+    fn potion_of_barkskin_installs_and_rejects_redrink() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::DRINK_POTION_OF_BARKSKIN;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::POTION_OF_BARKSKIN;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let actor = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&actor)
+            .unwrap()
+            .pickup_item(&POTION_OF_BARKSKIN);
+        // Give a second potion so the redrink-reject test can verify the
+        // second potion is NOT consumed.
+        e.actors
+            .get_mut(&actor)
+            .unwrap()
+            .pickup_item(&POTION_OF_BARKSKIN);
+        let aei = ActionExecutionInfo::new(
+            &DRINK_POTION_OF_BARKSKIN,
+            actor,
+            None,
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            e.actors[&actor].has_condition(Condition::Barkskinned),
+            "drinking should install Barkskinned"
+        );
+        assert_eq!(
+            e.actors[&actor].items().len(),
+            1,
+            "one potion should be consumed, one should remain"
+        );
+        // Re-drink while the buff is up should fail to validate.
+        let aei2 = ActionExecutionInfo::new(
+            &DRINK_POTION_OF_BARKSKIN,
+            actor,
+            None,
+            None,
+            None,
+        );
+        assert!(
+            !aei2.validate(&e),
+            "re-drink while Barkskinned should be rejected"
+        );
+    }
+
     /// Seeded sibling of `ei_with_terrain` — same hand-crafted terrain
     /// shape but the encounter's RNG is initialized from `seed` so callers
     /// can sweep seeds for probabilistic assertions while keeping a

@@ -1103,6 +1103,15 @@ impl ActorInstance {
 
     pub fn pickup_item(&mut self, item: &'static Item) {
         self.items.push(item);
+        // Install passive-condition trinket buffs (Slippers of Spider
+        // Climbing, Winged Boots, etc.). Each entry is installed with
+        // `Permanent` timer; the install gate honors immunities (so a
+        // Cloak of Displacement on a creature with template Displacement-
+        // immunity silently no-ops). Duplicates are deduped by
+        // `add_condition` (it keeps the longer / Permanent timer).
+        for &c in item.passive_conditions {
+            self.add_condition(c, ConditionTimer::Permanent);
+        }
     }
 
     pub fn has_item_named(&self, name: &str) -> bool {
@@ -1111,10 +1120,42 @@ impl ActorInstance {
 
     pub fn remove_item_by_name(&mut self, name: &str) -> bool {
         if let Some(pos) = self.items.iter().position(|i| i.name == name) {
-            self.items.remove(pos);
+            let removed = self.items.remove(pos);
+            // Strip passive conditions the dropped item granted, unless
+            // another carried item still grants the same condition (e.g.
+            // two Winged Boots paired) — keeps the install lane idempotent
+            // across multi-item stacks.
+            for &c in removed.passive_conditions {
+                let still_granted = self
+                    .items
+                    .iter()
+                    .any(|it| it.passive_conditions.contains(&c));
+                if !still_granted {
+                    self.remove_condition(c);
+                }
+            }
             true
         } else {
             false
+        }
+    }
+
+    /// Re-install every passive condition granted by a currently-carried
+    /// item. Used after `long_rest` clears the condition map so trinkets
+    /// like Slippers of Spider Climbing keep their always-on buff across
+    /// rest cycles. Idempotent — running it on an actor whose passive
+    /// conditions are already up is a no-op (the install gate dedupes via
+    /// `add_condition`'s timer-extension logic).
+    fn reinstall_item_passive_conditions(&mut self) {
+        // Snapshot the (item, condition) pairs first so the borrow on
+        // `self.items` doesn't fight the `add_condition` mutation.
+        let to_install: Vec<Condition> = self
+            .items
+            .iter()
+            .flat_map(|it| it.passive_conditions.iter().copied())
+            .collect();
+        for c in to_install {
+            self.add_condition(c, ConditionTimer::Permanent);
         }
     }
 
@@ -1153,6 +1194,10 @@ impl ActorInstance {
         }
         self.legendary_action_slots = self.legendary_actions_per_round;
         self.sorcery_points = self.sorcery_points_max;
+        // Restore passive-trinket conditions cleared by `conditions.clear()`
+        // above so the wearer wakes up still spider-climbing / flying /
+        // whatever the carried trinkets grant.
+        self.reinstall_item_passive_conditions();
     }
 
     /// 5e Short Rest — 1 hour of downtime. Restores: Hit Dice-based
@@ -2991,5 +3036,115 @@ mod tests {
         f.pickup_item(&crate::items::item_template::WEAPON_PLUS_ONE);
         assert_eq!(f.item_attack_bonus(), 2);
         assert_eq!(f.item_damage_bonus(), 2);
+    }
+
+    #[test]
+    fn slippers_of_spider_climbing_grants_spider_climb_buff() {
+        // Slippers should install the SpiderClimbing condition on
+        // pickup so the +30 ft speed bump flows through
+        // `condition_speed_bonus` without an explicit cast.
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        let baseline_speed = f.speed();
+        assert!(!f.has_condition(Condition::SpiderClimbing));
+        f.pickup_item(&crate::items::item_template::SLIPPERS_OF_SPIDER_CLIMBING);
+        assert!(
+            f.has_condition(Condition::SpiderClimbing),
+            "slippers should install SpiderClimbing on pickup"
+        );
+        // +30 ft (= 6 tiles * 5 ft) over the baseline.
+        assert!(
+            f.speed() > baseline_speed,
+            "slippers should boost speed via SpiderClimbing"
+        );
+    }
+
+    #[test]
+    fn winged_boots_grants_flying_buff() {
+        // Winged Boots should install Flying on pickup so the +60 ft
+        // speed bump and ranged-attacker disadvantage flow through the
+        // same condition the Fly spell installs.
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        let baseline_speed = f.speed();
+        assert!(!f.has_condition(Condition::Flying));
+        f.pickup_item(&crate::items::item_template::WINGED_BOOTS);
+        assert!(
+            f.has_condition(Condition::Flying),
+            "winged boots should install Flying on pickup"
+        );
+        // +60 ft over the baseline.
+        assert!(
+            f.speed() > baseline_speed + 30.0,
+            "winged boots should boost speed by Flying's +60 ft"
+        );
+    }
+
+    #[test]
+    fn passive_item_condition_strips_on_drop_when_unique() {
+        // Removing the slippers strips the SpiderClimbing condition when
+        // no other carried item still grants it — keeps the install lane
+        // idempotent across multi-item stacks.
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        f.pickup_item(&crate::items::item_template::SLIPPERS_OF_SPIDER_CLIMBING);
+        assert!(f.has_condition(Condition::SpiderClimbing));
+        assert!(f.remove_item_by_name("Slippers of Spider Climbing"));
+        assert!(
+            !f.has_condition(Condition::SpiderClimbing),
+            "dropping the only slipper should strip the SpiderClimbing buff"
+        );
+    }
+
+    #[test]
+    fn passive_item_condition_persists_when_a_second_grantor_remains() {
+        // If a second item also grants the same passive condition,
+        // dropping one should NOT strip the buff — the remaining grantor
+        // keeps it pinned. We use two Winged Boots (Flying) — a contrived
+        // case but the right shape for the "multiple grantors" path.
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        f.pickup_item(&crate::items::item_template::WINGED_BOOTS);
+        f.pickup_item(&crate::items::item_template::WINGED_BOOTS);
+        assert!(f.has_condition(Condition::Flying));
+        // Drop one pair — the other still grants Flying.
+        f.remove_item_by_name("Winged Boots");
+        assert!(
+            f.has_condition(Condition::Flying),
+            "Flying should remain while a second Winged Boots still grants it"
+        );
+        // Drop the second — now the buff strips.
+        f.remove_item_by_name("Winged Boots");
+        assert!(
+            !f.has_condition(Condition::Flying),
+            "Flying should strip when the last grantor is dropped"
+        );
+    }
+
+    #[test]
+    fn passive_item_condition_reinstalls_on_long_rest() {
+        // Long rest clears the condition map; the reinstall hook should
+        // bring back item-granted passive conditions so the wearer wakes
+        // up still flying / spider-climbing / etc.
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        f.pickup_item(&crate::items::item_template::WINGED_BOOTS);
+        assert!(f.has_condition(Condition::Flying));
+        // Simulate a mid-encounter dispel that strips Flying.
+        f.remove_condition(Condition::Flying);
+        assert!(!f.has_condition(Condition::Flying));
+        // Long rest reinstalls the passive item buff.
+        f.long_rest();
+        assert!(
+            f.has_condition(Condition::Flying),
+            "long_rest should re-install Flying from Winged Boots"
+        );
+    }
+
+    #[test]
+    fn cloak_of_etherealness_grants_blanket_damage_resistance() {
+        // Cloak installs `DamageResistant` so every incoming damage type
+        // is halved through the existing condition lane.
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        assert_eq!(f.effective_damage(20, DamageType::Force), 20);
+        f.pickup_item(&crate::items::item_template::CLOAK_OF_ETHEREALNESS);
+        assert!(f.has_condition(Condition::DamageResistant));
+        assert_eq!(f.effective_damage(20, DamageType::Force), 10);
+        assert_eq!(f.effective_damage(20, DamageType::Slashing), 10);
     }
 }

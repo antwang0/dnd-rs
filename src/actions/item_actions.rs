@@ -1759,6 +1759,19 @@ impl Action for SingleSaveConditionItem {
             .map(|a| a.name().to_string())
             .unwrap_or_default();
         encounter.log(self.log_text.replace("{actor}", &name));
+        // Skip the save roll against a target who's immune to the
+        // installed condition — the install can't land anyway, and
+        // skipping preserves the Sorcerer Heightened Spell prime from
+        // leaking onto a no-op save. Matches the burst-variant's
+        // up-front filter. The consumable still consumes (the player
+        // chose to fire it; that's a UX decision).
+        if encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|t| t.effectively_immune_to_condition(self.condition))
+        {
+            return Vec::new();
+        }
         let save =
             encounter.roll_save_against_caster(target_id, self.save, self.dc, caster_id);
         if save.passed() {
@@ -2105,4 +2118,439 @@ pub static USE_WAND_OF_GREATER_HEALING: SingleTargetHealItem = SingleTargetHealI
     flat_bonus: 4,
     reach: 1,
     bonus_action: false,
+};
+
+/// Config struct for "single-target ally buff" consumable items — the
+/// shared shape behind Scroll of Bless / Scroll of Shield of Faith / any
+/// future ally-targetable condition-install scroll. Mirrors
+/// `SingleTargetHealItem` for the buff lane (no dice / flat_bonus — the
+/// install is fixed by the scroll's spell). Each static instance encodes
+/// the condition + timer + reach + cost; the `Action` impl below pops the
+/// item from inventory and emits an `ApplyCondition` side-effect against
+/// the picked target. The target gate matches the existing ally-targetable
+/// pattern — picker / AI route through `is_harmful = false`.
+///
+/// Adding a new variant is a one-static declaration — no new `Action`
+/// impl needed.
+pub struct SingleTargetBuffItem {
+    /// Player-facing action name (e.g. "read bless scroll").
+    pub action_name: &'static str,
+    /// Picker aliases (e.g. ["bless scroll", "bless"]).
+    pub action_aliases: &'static [&'static str],
+    /// Inventory item name to gate validate / consume on.
+    pub item_name: &'static str,
+    /// Full log line emitted on use. The `{actor}` placeholder is
+    /// substituted with the caster's name; no other formatting is
+    /// performed.
+    pub log_text: &'static str,
+    /// Condition to install on the picked target.
+    pub condition: Condition,
+    /// Timer for the install.
+    pub timer: ConditionTimer,
+    /// Maximum reach in tiles for the targeting picker (1 for touch,
+    /// 12 for "close ranged", 24 for "30 ft RAW").
+    pub reach: isize,
+    /// `true` ⇒ Bonus Action cost; `false` ⇒ Action cost.
+    pub bonus_action: bool,
+    /// If `true`, the validator rejects when the picked target already
+    /// has the buff up — prevents the consumable from being wasted on a
+    /// no-op timer refresh (since `add_condition` keeps the longer of
+    /// the two timers). Mirrors `SelfConditionItem.reject_when_active`
+    /// for the ally lane.
+    pub reject_when_active: bool,
+}
+
+impl Action for SingleTargetBuffItem {
+    fn name(&self) -> &str {
+        self.action_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.action_aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.reach)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn is_heal(&self) -> bool {
+        // The buff install reads as a support action so the AI's heal
+        // / buff pipeline can pick the scroll up alongside genuine heals.
+        true
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        if self.bonus_action {
+            bonus_action_only()
+        } else {
+            vec![Resource::Action]
+        }
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !caster_holds(encounter, caster_id, self.item_name) {
+            return false;
+        }
+        if self.reject_when_active
+            && let Some(tid) = first_target_id(target_ids)
+            && encounter
+                .actors
+                .get(&tid)
+                .is_some_and(|t| t.has_condition(self.condition))
+        {
+            return false;
+        }
+        true
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        if !consume_caster_item(encounter, caster_id, self.item_name) {
+            return Vec::new();
+        }
+        let name = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.name().to_string())
+            .unwrap_or_default();
+        encounter.log(self.log_text.replace("{actor}", &name));
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: self.condition,
+            timer: self.timer,
+        })]
+    }
+}
+
+const SCROLL_OF_BLESS_NAME: &str = "Scroll of Bless";
+const SCROLL_OF_SHIELD_OF_FAITH_NAME: &str = "Scroll of Shield of Faith";
+const SCROLL_OF_BLINDNESS_NAME: &str = "Scroll of Blindness";
+const SCROLL_OF_BANE_NAME: &str = "Scroll of Bane";
+const SCROLL_OF_FAERIE_FIRE_NAME: &str = "Scroll of Faerie Fire";
+const WAND_OF_POLYMORPH_NAME: &str = "Wand of Polymorph";
+const POTION_OF_BARKSKIN_NAME: &str = "Potion of Barkskin";
+const POTION_OF_FIRE_RESISTANCE_NAME: &str = "Potion of Fire Resistance";
+const POTION_OF_COLD_RESISTANCE_NAME: &str = "Potion of Cold Resistance";
+const POTION_OF_HILL_GIANT_STRENGTH_NAME: &str = "Potion of Hill Giant Strength";
+
+/// Scroll of Bless — Action; install `Blessed` for 10 rounds on a single
+/// ally (+1d4 to attack rolls and saving throws). 5e RAW: level-1
+/// concentration enchantment hitting up to 3 creatures; the scroll
+/// collapses to a single-target install with the standard fixed-duration
+/// timer all consumable buffs ride. Touch range (the engine's "ally
+/// support" niche). Fires through the shared `SingleTargetBuffItem`
+/// impl.
+pub static READ_BLESS_SCROLL: SingleTargetBuffItem = SingleTargetBuffItem {
+    action_name: "read bless scroll",
+    action_aliases: &["bless scroll", "bless"],
+    item_name: SCROLL_OF_BLESS_NAME,
+    log_text: "{actor} reads a scroll of bless; a soft golden light settles.",
+    condition: Condition::Blessed,
+    timer: ConditionTimer::Rounds(10),
+    // 30 ft range RAW; 12 tiles in the 2.5ft grid.
+    reach: 12,
+    bonus_action: false,
+    reject_when_active: true,
+};
+
+/// Scroll of Shield of Faith — Action; install `ShieldOfFaith` for 10
+/// rounds (+2 AC) on a single ally. 5e RAW: level-1 abjuration,
+/// concentration, bonus action; the scroll bypasses the concentration
+/// gate and the bonus-action cost (drops to Action for the read +
+/// targeting envelope). Fires through the shared `SingleTargetBuffItem`
+/// impl.
+pub static READ_SHIELD_OF_FAITH_SCROLL: SingleTargetBuffItem = SingleTargetBuffItem {
+    action_name: "read shield of faith scroll",
+    action_aliases: &["sof scroll", "shield faith scroll"],
+    item_name: SCROLL_OF_SHIELD_OF_FAITH_NAME,
+    log_text: "{actor} reads a scroll of shield of faith; faint motes of shimmering light orbit.",
+    condition: Condition::ShieldOfFaith,
+    timer: ConditionTimer::Rounds(10),
+    // 60 ft range RAW; 24 tiles.
+    reach: 24,
+    bonus_action: false,
+    reject_when_active: true,
+};
+
+/// Scroll of Blindness — Action; CON save vs DC 13, fail = Blinded for
+/// 10 rounds on a single target. 5e RAW: level-2 necromancy
+/// (Blindness/Deafness), CON save, no concentration. Fills the single-
+/// target Blinded niche in the loot pool alongside Wand of Paralysis
+/// (Paralyzed) / Wand of Fear (Frightened). Fires through the shared
+/// `SingleSaveConditionItem` impl.
+pub static READ_BLINDNESS_SCROLL: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "read blindness scroll",
+    action_aliases: &["blindness scroll", "blind"],
+    item_name: SCROLL_OF_BLINDNESS_NAME,
+    log_text: "{actor} reads a scroll of blindness; the words sear the air.",
+    save: AbilityScoreType::Constitution,
+    dc: 13,
+    // 30 ft range RAW; 12 tiles.
+    reach: 12,
+    condition: Condition::Blinded,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Scroll of Bane — Action; 4-tile burst, CHA save vs DC 13, fail =
+/// Baned for 10 rounds (-1d4 to attack rolls and saving throws). 5e RAW:
+/// level-1 enchantment, concentration, CHA save; the scroll collapses
+/// to a burst envelope every other AoE CC consumable rides. Mirror of
+/// `READ_BLESS_SCROLL` on the debuff lane — enemies caught in the
+/// burst eat the penalty for 10 rounds. Fires through the shared
+/// `BurstSaveConditionItem` impl.
+pub static READ_BANE_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
+    action_name: "read bane scroll",
+    action_aliases: &["bane scroll", "bane"],
+    item_name: SCROLL_OF_BANE_NAME,
+    log_text: "{actor} reads a scroll of bane; a creeping shadow seeps over the foes.",
+    save: AbilityScoreType::Charisma,
+    dc: 13,
+    radius: 4,
+    // 30 ft range RAW; 12 tiles.
+    reach: 12,
+    condition: Condition::Baned,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Scroll of Faerie Fire — Action; 4-tile burst, DEX save vs DC 13, fail
+/// = Outlined for 10 rounds (attacks against them have advantage, can't
+/// benefit from Hidden / Invisible). 5e RAW: level-1 evocation,
+/// concentration, DEX save; the scroll drops the concentration gate.
+/// Fills the "burst Outlined" niche alongside the existing single-target
+/// outline sources. Fires through the shared `BurstSaveConditionItem`
+/// impl.
+pub static READ_FAERIE_FIRE_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
+    action_name: "read faerie fire scroll",
+    action_aliases: &["faerie fire", "ff scroll"],
+    item_name: SCROLL_OF_FAERIE_FIRE_NAME,
+    log_text: "{actor} reads a scroll of faerie fire; motes of pale light tag the foes.",
+    save: AbilityScoreType::Dexterity,
+    dc: 13,
+    radius: 4,
+    // 60 ft range RAW; 24 tiles.
+    reach: 24,
+    condition: Condition::Outlined,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Wand of Polymorph — Action; single-target, WIS save vs DC 15, fail =
+/// Polymorphed for 10 rounds AND a 30 temp HP buffer (matching the
+/// Polymorph spell's beast-form HP pool). 5e RAW: level-4 transmutation,
+/// concentration, WIS save; the wand collapses to the standard fixed-
+/// duration consumable envelope and drops the concentration gate. Sits
+/// in the rare half of the loot pool — Polymorphed locks a target out
+/// of their spellcasting (the condition is in `is_dispellable_buff`),
+/// and the temp HP buffer means a target who later succeeds on a
+/// dispel returns to base HP with the buffer drained.
+///
+/// Custom impl rather than `SingleSaveConditionItem` because the temp
+/// HP grant lives outside the single-condition envelope the shared
+/// factor handles.
+pub struct UseWandOfPolymorph {}
+
+impl Action for UseWandOfPolymorph {
+    fn name(&self) -> &str {
+        "use wand of polymorph"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["polymorph", "poly wand"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft RAW = 24 tiles.
+        Some(24)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, WAND_OF_POLYMORPH_NAME)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::GainTempHp;
+
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        if !consume_caster_item(encounter, caster_id, WAND_OF_POLYMORPH_NAME) {
+            return Vec::new();
+        }
+        let name = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.name().to_string())
+            .unwrap_or_default();
+        encounter.log(format!(
+            "{} aims the wand of polymorph; the target's form ripples.",
+            name
+        ));
+        // Skip the save against a Polymorphed-immune target — same
+        // pattern as `SingleSaveConditionItem`'s up-front filter so the
+        // Sorcerer Heightened Spell prime doesn't leak onto a no-op.
+        if encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|t| t.effectively_immune_to_condition(Condition::Polymorphed))
+        {
+            return Vec::new();
+        }
+        let save = encounter.roll_save_against_caster(
+            target_id,
+            AbilityScoreType::Wisdom,
+            15,
+            caster_id,
+        );
+        if save.passed() {
+            return Vec::new();
+        }
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Polymorphed,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(GainTempHp {
+                actor_id: target_id,
+                amount: 30,
+            }),
+        ]
+    }
+}
+
+pub static USE_WAND_OF_POLYMORPH: UseWandOfPolymorph = UseWandOfPolymorph {};
+
+/// Potion of Barkskin — Bonus Action; installs `Barkskinned` for 10
+/// rounds (AC floor of 16). 5e RAW: level-2 transmutation, action cost,
+/// concentration, 1-hour duration; the potion drops concentration and
+/// uses the bonus-action drink envelope every other defensive
+/// consumable rides. Single-use; rejects re-drink when already
+/// barkskinned so the consumable isn't burned on a no-op timer refresh.
+/// Fires through the shared `SelfConditionItem` impl.
+pub static DRINK_POTION_OF_BARKSKIN: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of barkskin",
+    action_aliases: &["barkskin", "bark"],
+    item_name: POTION_OF_BARKSKIN_NAME,
+    log_text: "{actor} drinks a potion of barkskin; their skin hardens to rough bark.",
+    condition: Condition::Barkskinned,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: true,
+    reject_when_active: true,
+};
+
+/// Potion of Fire Resistance — Action; installs `DamageResistant` (halve
+/// all incoming damage) for 10 rounds. 5e RAW grants resistance to a
+/// single damage type; the engine's `DamageResistant` condition is type-
+/// blanket so the potion delivers broader value than RAW. Single-use;
+/// rejects re-drink when already resistant. Fires through the shared
+/// `SelfConditionItem` impl. (We don't model per-type buffs as
+/// conditions yet — this is the closest envelope.)
+pub static DRINK_POTION_OF_FIRE_RESISTANCE: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of fire resistance",
+    action_aliases: &["fire potion", "fire res"],
+    item_name: POTION_OF_FIRE_RESISTANCE_NAME,
+    log_text: "{actor} drinks a potion of fire resistance; a cooling shimmer wraps them.",
+    condition: Condition::DamageResistant,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    reject_when_active: true,
+};
+
+/// Potion of Cold Resistance — Action; installs `DamageResistant` for 10
+/// rounds. Sibling to Potion of Fire Resistance — same envelope, distinct
+/// flavor. Both potions share the `DamageResistant` lane (blanket damage
+/// halve) since the engine doesn't yet model per-type buffs as separate
+/// conditions; the loot pool just gets two flavored entries instead of
+/// one. Single-use; rejects re-drink when already resistant.
+pub static DRINK_POTION_OF_COLD_RESISTANCE: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of cold resistance",
+    action_aliases: &["cold potion", "cold res"],
+    item_name: POTION_OF_COLD_RESISTANCE_NAME,
+    log_text: "{actor} drinks a potion of cold resistance; a warm glow sinks into their skin.",
+    condition: Condition::DamageResistant,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    reject_when_active: true,
+};
+
+/// Potion of Hill Giant Strength — Action; installs `Enlarged` for 10
+/// rounds (+1d4 weapon damage rider, size bump). 5e RAW: STR becomes 21
+/// for 1 hour; the engine doesn't overwrite ability scores, so we route
+/// through the Enlarged envelope every other "size up" consumable
+/// (Potion of Growth) uses — same flavor, slightly different in-fiction
+/// trigger. Single-use; rejects re-drink when already enlarged. Fires
+/// through the shared `SelfConditionItem` impl.
+pub static DRINK_POTION_OF_HILL_GIANT_STRENGTH: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of hill giant strength",
+    action_aliases: &["giant strength", "giant str"],
+    item_name: POTION_OF_HILL_GIANT_STRENGTH_NAME,
+    log_text: "{actor} drinks a potion of hill giant strength; their frame swells.",
+    condition: Condition::Enlarged,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    reject_when_active: true,
 };
