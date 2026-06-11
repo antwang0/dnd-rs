@@ -1,7 +1,9 @@
 use std::collections::HashSet;
 
 use crate::{
-    actions::action_template::{Action, TargetingSchema, bonus_action_only, first_target_id},
+    actions::action_template::{
+        Action, TargetingSchema, action_or_bonus_only, bonus_action_only, first_target_id,
+    },
     conditions::{Condition, ConditionTimer},
     engine::{
         action_overrides::ActionOverride,
@@ -193,11 +195,7 @@ impl Action for SelfHealItem {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        if self.bonus_action {
-            bonus_action_only()
-        } else {
-            vec![Resource::Action]
-        }
+        action_or_bonus_only(self.bonus_action)
     }
 
     fn custom_validate_input(
@@ -300,11 +298,7 @@ impl Action for SelfConditionItem {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        if self.bonus_action {
-            bonus_action_only()
-        } else {
-            vec![Resource::Action]
-        }
+        action_or_bonus_only(self.bonus_action)
     }
 
     fn custom_validate_input(
@@ -912,11 +906,7 @@ impl Action for SingleTargetHealItem {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        if self.bonus_action {
-            bonus_action_only()
-        } else {
-            vec![Resource::Action]
-        }
+        action_or_bonus_only(self.bonus_action)
     }
 
     fn custom_validate_input(
@@ -2179,11 +2169,7 @@ impl Action for SingleTargetBuffItem {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        if self.bonus_action {
-            bonus_action_only()
-        } else {
-            vec![Resource::Action]
-        }
+        action_or_bonus_only(self.bonus_action)
     }
 
     fn custom_validate_input(

@@ -188,6 +188,28 @@ pub fn bonus_action_only() -> Vec<Resource> {
     vec![Resource::BonusAction]
 }
 
+/// Action-only cost — one Action, no spell slot. Symmetric counterpart to
+/// `bonus_action_only` for slot-less Action-cost consumables and class
+/// features (e.g. the `BurstSaveDamageItem` scrolls, `Drink Potion of X`
+/// at Action cost). The matching chokepoint half of the toggle below.
+pub fn action_only() -> Vec<Resource> {
+    vec![Resource::Action]
+}
+
+/// Boolean-gated picker for the two main-slot action costs: bonus action
+/// when `true`, full Action when `false`. Used by the `SelfHealItem` /
+/// `SelfConditionItem` / `SingleTargetHealItem` factor structs so the
+/// per-impl `cost()` block collapses to a one-liner. Centralizes the
+/// "bonus action OR action, no spell slot" toggle every consumable-with-
+/// configurable-action-economy item rides.
+pub fn action_or_bonus_only(bonus_action: bool) -> Vec<Resource> {
+    if bonus_action {
+        bonus_action_only()
+    } else {
+        action_only()
+    }
+}
+
 /// Free action — no resource cost at all. Used by Action Surge,
 /// Indomitable, etc. — features that don't consume action economy
 /// directly. The empty vec lives behind a name so call sites read

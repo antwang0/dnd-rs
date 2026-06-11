@@ -3,8 +3,8 @@ use std::sync::LazyLock;
 
 use crate::{
     actions::action_template::{
-        action_and_slot, bonus_action_and_slot, first_target_id, first_target_location, Action,
-        TargetingSchema,
+        action_and_slot, action_only, bonus_action_and_slot, first_target_id, first_target_location,
+        Action, TargetingSchema,
     },
     actors::actor_template::ConcentrationData,
     conditions::{Condition, ConditionTimer},
@@ -20208,7 +20208,7 @@ impl Action for ProduceFlame {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action]
+        action_only()
     }
     fn side_effects(
         &self,
@@ -20275,7 +20275,7 @@ impl Action for CreateBonfire {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action]
+        action_only()
     }
     fn side_effects(
         &self,
@@ -20411,7 +20411,7 @@ impl Action for Infestation {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action]
+        action_only()
     }
     fn side_effects(
         &self,
