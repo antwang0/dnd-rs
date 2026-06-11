@@ -264,11 +264,7 @@ pub struct TeleportActor {
 
 impl ApplicableSideEffect for TeleportActor {
     fn apply(&self, ei: &mut EncounterInstance) {
-        let name = ei
-            .actors
-            .get(&self.actor_id)
-            .map(|a| a.name().to_string())
-            .unwrap_or_default();
+        let name = ei.actor_name(self.actor_id);
         match ei.place_actor_at(self.actor_id, self.dest) {
             Ok(()) => {
                 if !name.is_empty() {

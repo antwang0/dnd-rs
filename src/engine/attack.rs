@@ -1384,11 +1384,7 @@ fn push_follow_up_effect(
                 "  sweeping attack: +{} {:?} splashes to {}",
                 rolled,
                 damage_type,
-                encounter
-                    .actors
-                    .get(&splash_id)
-                    .map(|a| a.name().to_string())
-                    .unwrap_or_default()
+                encounter.actor_name(splash_id)
             ));
             effects.push(Box::new(DealDamage {
                 actor_id: splash_id,

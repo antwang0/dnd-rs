@@ -340,11 +340,7 @@ impl Action for SelfConditionItem {
         if !consume_caster_item(encounter, caster_id, self.item_name) {
             return Vec::new();
         }
-        let name = encounter
-            .actors
-            .get(&caster_id)
-            .map(|a| a.name().to_string())
-            .unwrap_or_default();
+        let name = encounter.actor_name(caster_id);
         encounter.log(self.log_text.replace("{actor}", &name));
         vec![Box::new(ApplyCondition {
             actor_id: caster_id,
@@ -753,11 +749,7 @@ impl Action for DrinkPotionOfHeroism {
         if !consume_caster_item(encounter, caster_id, POTION_OF_HEROISM_NAME) {
             return Vec::new();
         }
-        let name = encounter
-            .actors
-            .get(&caster_id)
-            .map(|a| a.name().to_string())
-            .unwrap_or_default();
+        let name = encounter.actor_name(caster_id);
         encounter.log(format!("{} drinks a potion of heroism.", name));
         vec![
             Box::new(GainTempHp {
@@ -1629,11 +1621,7 @@ impl Action for BurstSaveConditionItem {
         if !consume_caster_item(encounter, caster_id, self.item_name) {
             return Vec::new();
         }
-        let name = encounter
-            .actors
-            .get(&caster_id)
-            .map(|a| a.name().to_string())
-            .unwrap_or_default();
+        let name = encounter.actor_name(caster_id);
         encounter.log(self.log_text.replace("{actor}", &name));
 
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
@@ -1753,11 +1741,7 @@ impl Action for SingleSaveConditionItem {
         if !consume_caster_item(encounter, caster_id, self.item_name) {
             return Vec::new();
         }
-        let name = encounter
-            .actors
-            .get(&caster_id)
-            .map(|a| a.name().to_string())
-            .unwrap_or_default();
+        let name = encounter.actor_name(caster_id);
         encounter.log(self.log_text.replace("{actor}", &name));
         // Skip the save roll against a target who's immune to the
         // installed condition — the install can't land anyway, and
@@ -2247,11 +2231,7 @@ impl Action for SingleTargetBuffItem {
         if !consume_caster_item(encounter, caster_id, self.item_name) {
             return Vec::new();
         }
-        let name = encounter
-            .actors
-            .get(&caster_id)
-            .map(|a| a.name().to_string())
-            .unwrap_or_default();
+        let name = encounter.actor_name(caster_id);
         encounter.log(self.log_text.replace("{actor}", &name));
         vec![Box::new(ApplyCondition {
             actor_id: target_id,
@@ -2440,11 +2420,7 @@ impl Action for UseWandOfPolymorph {
         if !consume_caster_item(encounter, caster_id, WAND_OF_POLYMORPH_NAME) {
             return Vec::new();
         }
-        let name = encounter
-            .actors
-            .get(&caster_id)
-            .map(|a| a.name().to_string())
-            .unwrap_or_default();
+        let name = encounter.actor_name(caster_id);
         encounter.log(format!(
             "{} aims the wand of polymorph; the target's form ripples.",
             name
@@ -2554,3 +2530,206 @@ pub static DRINK_POTION_OF_HILL_GIANT_STRENGTH: SelfConditionItem = SelfConditio
     bonus_action: false,
     reject_when_active: true,
 };
+
+const WAND_OF_SLEEP_NAME: &str = "Wand of Sleep";
+const SCROLL_OF_SLOW_NAME: &str = "Scroll of Slow";
+const SCROLL_OF_STINKING_CLOUD_NAME: &str = "Scroll of Stinking Cloud";
+const SCROLL_OF_DEATH_WARD_NAME: &str = "Scroll of Death Ward";
+const SCROLL_OF_AID_NAME: &str = "Scroll of Aid";
+
+/// Wand of Sleep — Action; single-target, WIS save vs DC 13, fail =
+/// `Asleep` for 10 rounds. Single-use consumable. 5e RAW: level-1
+/// enchantment with an HP-pool gate (5d8 HP of creatures fall asleep
+/// lowest-first); the wand variant collapses to a per-target save
+/// envelope every other CC consumable rides. Pairs with Scroll of Hold
+/// Person at the entry-level CC tier — Sleep is the "wake-on-damage"
+/// counterpart to Hold Person's "duration-bound paralysis," letting a
+/// martial follow-up burn the lock with a single swing. Fires through
+/// the shared `SingleSaveConditionItem` impl.
+pub static USE_WAND_OF_SLEEP: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "use wand of sleep",
+    action_aliases: &["sleep", "sleep wand"],
+    item_name: WAND_OF_SLEEP_NAME,
+    log_text: "{actor} waves the wand of sleep; soft motes of sand drift.",
+    save: AbilityScoreType::Wisdom,
+    dc: 13,
+    // 90 ft RAW; 36 tiles. Keep at 24 (60 ft) for the engine's typical
+    // wand reach cap — long enough for any plausible CC opener.
+    reach: 24,
+    condition: Condition::Asleep,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Scroll of Slow — Action; 4-tile burst, WIS save vs DC 13, fail =
+/// `Slowed` for 10 rounds (halved speed, -2 AC, -2 DEX saves). 5e RAW:
+/// level-3 transmutation, WIS save, concentration, 40-ft cube; the
+/// scroll collapses to the standard fixed-duration burst envelope and
+/// drops the concentration gate. Mirrors Scroll of Bane / Faerie Fire on
+/// the burst-debuff lane — Slowed is the AC/movement counterpart to
+/// Bane's roll penalties. Fires through the shared
+/// `BurstSaveConditionItem` impl.
+pub static READ_SLOW_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
+    action_name: "read slow scroll",
+    action_aliases: &["slow", "slow scroll"],
+    item_name: SCROLL_OF_SLOW_NAME,
+    log_text: "{actor} reads a scroll of slow; the air around the foes thickens.",
+    save: AbilityScoreType::Wisdom,
+    dc: 13,
+    radius: 4,
+    // 120 ft RAW; 48 tiles. 24 (60 ft) matches the engine's typical
+    // burst-CC scroll reach.
+    reach: 24,
+    condition: Condition::Slowed,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Scroll of Stinking Cloud — Action; 4-tile burst, CON save vs DC 15,
+/// fail = `Poisoned` for 10 rounds (disadvantage on attacks / ability
+/// checks). 5e RAW: level-3 conjuration, CON save, concentration, 20-ft
+/// radius; the scroll collapses to the standard fixed-duration burst
+/// envelope and drops the concentration gate. Fills the burst-Poisoned
+/// niche in the loot pool alongside Pipes of Haunting (burst Frightened)
+/// and Wand of Web (burst Restrained). Fires through the shared
+/// `BurstSaveConditionItem` impl.
+pub static READ_STINKING_CLOUD_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
+    action_name: "read stinking cloud scroll",
+    action_aliases: &["stinking", "stink"],
+    item_name: SCROLL_OF_STINKING_CLOUD_NAME,
+    log_text: "{actor} reads a scroll of stinking cloud; a sickly yellow fog billows.",
+    save: AbilityScoreType::Constitution,
+    dc: 15,
+    radius: 4,
+    // 90 ft RAW; 36 tiles. 24 (60 ft) matches the engine's typical
+    // burst-CC scroll reach.
+    reach: 24,
+    condition: Condition::Poisoned,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Scroll of Death Ward — Action; install `DeathWarded` on a single
+/// ally for 100 rounds. 5e RAW: level-4 abjuration, action, touch,
+/// 8-hour duration; the scroll collapses to the engine's standard fixed-
+/// duration buff envelope and the touch reach (1 tile). The ward
+/// intercepts the next lethal hit (damage that would drop the target to
+/// 0 HP leaves them at 1) and then burns off — handled by the existing
+/// `DeathWarded` lane in `take_damage`. Fires through the shared
+/// `SingleTargetBuffItem` impl.
+pub static READ_DEATH_WARD_SCROLL: SingleTargetBuffItem = SingleTargetBuffItem {
+    action_name: "read death ward scroll",
+    action_aliases: &["death ward", "dw scroll"],
+    item_name: SCROLL_OF_DEATH_WARD_NAME,
+    log_text: "{actor} reads a scroll of death ward; a faint silver aura settles.",
+    condition: Condition::DeathWarded,
+    // RAW: 8-hour duration. 100 rounds = ~10 minutes engine time —
+    // plenty to span any encounter, short enough to drop between long
+    // rests cleanly.
+    timer: ConditionTimer::Rounds(100),
+    reach: 1,
+    bonus_action: false,
+    reject_when_active: true,
+};
+
+/// Aid — multi-ally permanent +5 max-HP / current-HP buff in a burst.
+/// Mirrors the `Aid` spell's envelope (which is single-target in this
+/// engine's UI but RAW affects up to 3 creatures); the scroll uses a
+/// burst-targeted picker so the player can clip multiple allies in one
+/// cast.
+///
+/// Distinct from `SingleTargetBuffItem` / `SingleTargetHealItem` because
+/// the effect is a permanent base-HP bump (`bump_max_hp`) rather than a
+/// condition install or a Heal side-effect — neither shared template
+/// covers the lane.
+pub struct ReadAidScroll {}
+
+impl Action for ReadAidScroll {
+    fn name(&self) -> &str {
+        "read aid scroll"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["aid scroll", "aid"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft RAW; 12 tiles.
+        Some(12)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn is_heal(&self) -> bool {
+        true
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, SCROLL_OF_AID_NAME)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(&center) = target_locations.and_then(|locs| locs.first()) else {
+            return Vec::new();
+        };
+        if !consume_caster_item(encounter, caster_id, SCROLL_OF_AID_NAME) {
+            return Vec::new();
+        }
+        let name = encounter.actor_name(caster_id);
+        encounter.log(format!(
+            "{} reads a scroll of aid; warm light pulses across allies.",
+            name
+        ));
+        // RAW Aid: up to 3 ally targets. Pick the lowest-HP-percent allies
+        // first so the buff lands where it matters (a near-dead front-
+        // liner needs the +5 cushion more than the at-full mage). The
+        // caster is implicitly included via the `ally_burst_targets`
+        // team filter.
+        let mut allies = encounter.ally_burst_targets(caster_id, center, 4);
+        allies.sort_by_key(|&id| {
+            encounter
+                .actors
+                .get(&id)
+                .map(|a| {
+                    let max = a.max_hitpoints().max(1) as u64;
+                    (a.hitpoints() as u64 * 1000) / max
+                })
+                .unwrap_or(u64::MAX)
+        });
+        allies.truncate(3);
+        for tid in allies {
+            if let Some(target) = encounter.actors.get_mut(&tid) {
+                target.bump_max_hp(5);
+            }
+        }
+        encounter.log("  aid: +5 max HP, +5 HP per ally".to_string());
+        Vec::new()
+    }
+}
+
+pub static READ_AID_SCROLL: ReadAidScroll = ReadAidScroll {};

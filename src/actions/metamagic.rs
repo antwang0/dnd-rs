@@ -458,11 +458,7 @@ impl Action for TwinnedSpell {
         // cast" timing for Twinned specifically.
         encounter.log(format!(
             "{} primes the next spell with twinned metamagic.",
-            encounter
-                .actors
-                .get(&caster_id)
-                .map(|a| a.name().to_string())
-                .unwrap_or_default(),
+            encounter.actor_name(caster_id),
         ));
         vec![Box::new(ApplyCondition {
             actor_id: caster_id,

@@ -62,11 +62,7 @@ pub fn resolve_burst_save_damage(
             if has_evasion && save.passed() {
                 encounter.log(format!(
                     "  evasion: {} takes no damage",
-                    encounter
-                        .actors
-                        .get(&target_id)
-                        .map(|a| a.name().to_string())
-                        .unwrap_or_default()
+                    encounter.actor_name(target_id)
                 ));
             }
             continue;

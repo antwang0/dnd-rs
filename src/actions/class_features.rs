@@ -2598,11 +2598,7 @@ impl Action for ArcaneRecovery {
         }
         encounter.log(format!(
             "  arcane recovery: {} restores {} spell slot{}.",
-            encounter
-                .actors
-                .get(&caster_id)
-                .map(|a| a.name().to_string())
-                .unwrap_or_default(),
+            encounter.actor_name(caster_id),
             effects.len(),
             if effects.len() == 1 { "" } else { "s" },
         ));

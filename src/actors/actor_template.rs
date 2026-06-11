@@ -3147,4 +3147,58 @@ mod tests {
         assert_eq!(f.effective_damage(20, DamageType::Force), 10);
         assert_eq!(f.effective_damage(20, DamageType::Slashing), 10);
     }
+
+    #[test]
+    fn cloak_of_displacement_grants_displaced_buff() {
+        // Cloak installs `Displaced` on pickup so attackers eat
+        // disadvantage through the existing condition lane.
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        assert!(!f.has_condition(Condition::Displaced));
+        f.pickup_item(&crate::items::item_template::CLOAK_OF_DISPLACEMENT);
+        assert!(
+            f.has_condition(Condition::Displaced),
+            "cloak should install Displaced on pickup"
+        );
+    }
+
+    #[test]
+    fn scarab_of_protection_grants_dual_condition_immunity() {
+        // Scarab folds Charmed AND Frightened immunity through the
+        // condition-immunity lane and stacks a +1 save bump.
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        assert!(!f.effectively_immune_to_condition(Condition::Charmed));
+        assert!(!f.effectively_immune_to_condition(Condition::Frightened));
+        let base_save = f.total_item_bonuses().save;
+        f.pickup_item(&crate::items::item_template::SCARAB_OF_PROTECTION);
+        assert!(
+            f.effectively_immune_to_condition(Condition::Charmed),
+            "scarab should grant Charmed immunity"
+        );
+        assert!(
+            f.effectively_immune_to_condition(Condition::Frightened),
+            "scarab should grant Frightened immunity"
+        );
+        assert_eq!(
+            f.total_item_bonuses().save,
+            base_save + 1,
+            "scarab should add a +1 save bonus"
+        );
+    }
+
+    #[test]
+    fn ring_of_heroism_installs_heroic_buff() {
+        // Ring installs the Heroic condition on pickup; the engine's
+        // existing `Heroic` lane covers the Frightened-immunity rider.
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        assert!(!f.has_condition(Condition::Heroic));
+        f.pickup_item(&crate::items::item_template::RING_OF_HEROISM);
+        assert!(
+            f.has_condition(Condition::Heroic),
+            "ring should install Heroic on pickup"
+        );
+        assert!(
+            f.effectively_immune_to_condition(Condition::Frightened),
+            "Heroic should fold into Frightened immunity"
+        );
+    }
 }

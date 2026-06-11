@@ -1305,6 +1305,126 @@ pub static AMULET_OF_THE_VIGILANT: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Cloak of Displacement — passive trinket (DMG, rare). Light bends around
+/// the wearer so attackers see a phantom image a half-step off true: the
+/// `Displaced` condition flickers on at install time and self-restores
+/// at the start of every turn (so a hit that strips it mid-round comes
+/// back next turn). Attackers eat disadvantage on the first swing each
+/// round. 5e RAW: "while you wear this cloak, it projects an illusion
+/// that makes you appear to be standing in a place near your actual
+/// location" — the load-bearing combat clause is the disadvantage rider,
+/// which flows through the existing `Displaced` condition install lane.
+pub static CLOAK_OF_DISPLACEMENT: Item = Item {
+    name: "Cloak of Displacement",
+    glyph: 'd',
+    passive_conditions: &[crate::conditions::Condition::Displaced],
+    ..Item::DEFAULTS
+};
+
+/// Scarab of Protection — passive trinket (DMG, legendary). A beetle-
+/// shaped amulet that wards the wearer against magical compulsion and
+/// fear: dynamic immunity to `Charmed` and `Frightened` while carried,
+/// plus a small flat +1 save bonus (the RAW "advantage on saves vs
+/// spells" clause collapsed onto the load-bearing save lane, since the
+/// engine doesn't have a per-school advantage hook). Pairs with the
+/// Necklace of Adaptation (Poisoned-immune) and the Ring of Free Action
+/// (movement-condition-immune) in the condition-immunity trinket family.
+pub static SCARAB_OF_PROTECTION: Item = Item {
+    name: "Scarab of Protection",
+    glyph: 'S',
+    bonuses: ItemBonuses { save: 1, ..ItemBonuses::ZERO },
+    condition_immunities: &[
+        crate::conditions::Condition::Charmed,
+        crate::conditions::Condition::Frightened,
+    ],
+    ..Item::DEFAULTS
+};
+
+/// Ring of Heroism — passive trinket. Grants the wearer the `Heroic`
+/// condition while worn: dynamic immunity to `Frightened` (the load-
+/// bearing combat clause of the Heroism spell) plus the temp-HP rider
+/// the condition carries. Mirrors the consumable Potion of Heroism on
+/// the passive-trinket lane — the ring is always-on, the potion is a
+/// one-shot 10-round buff. Sits in the rare half of the loot pool
+/// alongside the other condition-installer trinkets (Amulet of the
+/// Vigilant / Slippers of Spider Climbing).
+pub static RING_OF_HEROISM: Item = Item {
+    name: "Ring of Heroism",
+    glyph: 'H',
+    passive_conditions: &[crate::conditions::Condition::Heroic],
+    ..Item::DEFAULTS
+};
+
+/// Wand of Sleep — single-use consumable. Single-target WIS save vs DC 13;
+/// fail = `Asleep` for 10 rounds. 5e RAW: the Sleep spell is HP-pool based
+/// (5d8 HP of creatures fall asleep, lowest first); we collapse to a
+/// per-target save envelope every other CC consumable rides. Fills the
+/// entry-level lockdown niche alongside Scroll of Hold Person (Paralyzed
+/// DC 13) — Sleep wakes on damage (the engine strips `Asleep` on any non-
+/// zero hit through the existing wake-on-damage hook), so it pairs with a
+/// martial follow-up cleanly.
+pub static WAND_OF_SLEEP: Item = Item {
+    name: "Wand of Sleep",
+    glyph: 'z',
+    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_SLEEP),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Slow — single-use 4-tile burst, WIS save vs DC 13, fail =
+/// `Slowed` for 10 rounds (halved speed, -2 AC, -2 DEX saves). 5e RAW:
+/// level-3 transmutation, WIS save, concentration; the scroll collapses
+/// to the standard fixed-duration burst envelope and drops the
+/// concentration gate. Mirrors Scroll of Bane / Faerie Fire on the burst
+/// debuff lane — Slowed is the AC/movement counterpart to Bane's roll
+/// penalties.
+pub static SCROLL_OF_SLOW: Item = Item {
+    name: "Scroll of Slow",
+    glyph: 'l',
+    on_use: Some(&crate::actions::item_actions::READ_SLOW_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Stinking Cloud — single-use 4-tile burst, CON save vs DC 15,
+/// fail = `Poisoned` for 10 rounds (disadvantage on attacks / ability
+/// checks). 5e RAW: level-3 conjuration, CON save, concentration; the
+/// scroll collapses to a fixed-duration burst envelope and drops the
+/// concentration gate. Fills the burst-Poisoned niche in the loot pool
+/// alongside Pipes of Haunting (burst Frightened) and Wand of Web
+/// (burst Restrained).
+pub static SCROLL_OF_STINKING_CLOUD: Item = Item {
+    name: "Scroll of Stinking Cloud",
+    glyph: 'c',
+    on_use: Some(&crate::actions::item_actions::READ_STINKING_CLOUD_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Death Ward — single-use Action; install `DeathWarded` on a
+/// single ally for 100 rounds. 5e RAW: level-4 abjuration, action, touch,
+/// 8-hour duration; the scroll collapses to the engine's standard fixed-
+/// duration buff envelope. The ward absorbs the next lethal blow (any
+/// damage that would drop the holder to 0 HP instead leaves them at 1)
+/// and then burns off. Sits in the loot pool as a defensive ally-buff
+/// scroll alongside Scroll of Bless / Scroll of Shield of Faith.
+pub static SCROLL_OF_DEATH_WARD: Item = Item {
+    name: "Scroll of Death Ward",
+    glyph: 'W',
+    on_use: Some(&crate::actions::item_actions::READ_DEATH_WARD_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Aid — single-use Action; bumps up to 3 allies' max HP and
+/// current HP by 5 within a 4-tile burst. 5e RAW: level-2 abjuration,
+/// 8-hour duration, max 3 targets within 30 ft; the scroll collapses to
+/// a burst-targeted version that picks the lowest-HP allies first. Sits
+/// in the loot pool as a multi-target permanent buff scroll alongside
+/// Mass Healing Word (multi-ally instant heal).
+pub static SCROLL_OF_AID: Item = Item {
+    name: "Scroll of Aid",
+    glyph: 'A',
+    on_use: Some(&crate::actions::item_actions::READ_AID_SCROLL),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -1554,4 +1674,33 @@ pub static LOOT_POOL: &[&Item] = &[
     &BOOTS_OF_THE_FOREST,
     &CLOAK_OF_ETHEREALNESS,
     &AMULET_OF_THE_VIGILANT,
+    // Cloak of Displacement — rare passive trinket with the Displaced
+    // condition rider. Pairs with the Amulet of the Vigilant in the
+    // "save-flavored" trinket niche on a different defensive lane
+    // (attacker-disadvantage instead of save-advantage).
+    &CLOAK_OF_DISPLACEMENT,
+    // Scarab of Protection — legendary-tier dual-immunity trinket plus a
+    // small flat save bump. Sits in the rare half of the pool alongside
+    // the Periapt of Proof against Poison / Ring of Mind Shielding
+    // dual-lane trinkets.
+    &SCARAB_OF_PROTECTION,
+    // Ring of Heroism — passive-condition counterpart to Potion of Heroism;
+    // single low-weight entry alongside Slippers / Winged Boots.
+    &RING_OF_HEROISM,
+    // Wand of Sleep — entry-tier single-target CC (DC 13 Asleep). Lighter
+    // tier than Scroll of Hold Person (DC 13 Paralyzed) since Asleep
+    // breaks on damage; the loot pool keeps both as single-entry
+    // alternatives for the rogue / fighter's "first knockout swing"
+    // niche.
+    &WAND_OF_SLEEP,
+    // Burst-debuff scrolls — Slow (WIS save, AC/movement penalty) and
+    // Stinking Cloud (CON save, Poisoned blanket). Single entries each
+    // alongside Scroll of Bane / Faerie Fire on the burst-debuff lane.
+    &SCROLL_OF_SLOW,
+    &SCROLL_OF_STINKING_CLOUD,
+    // Defensive ally-buff scrolls — Death Ward (next-lethal-blow absorb)
+    // and Aid (multi-ally permanent +5 max HP / current HP). Single
+    // entries each in the rare half of the support-scroll lane.
+    &SCROLL_OF_DEATH_WARD,
+    &SCROLL_OF_AID,
 ];

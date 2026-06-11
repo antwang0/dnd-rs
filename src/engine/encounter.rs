@@ -492,6 +492,21 @@ impl EncounterInstance {
         self.messages.push(msg.into());
     }
 
+    /// Owned name for an actor, or the empty string if the id has no live
+    /// actor. Centralizes the `self.actors.get(&id).map(|a|
+    /// a.name().to_string()).unwrap_or_default()` chain that fired at ~30
+    /// call sites — log formatters in spells / item-actions / engine hooks
+    /// uniformly want "name the actor if it's still alive, otherwise blank
+    /// the substitution out." Returns String (not &str) because every
+    /// caller wants a stable owned name they can hold across mutable
+    /// borrows on `self.actors` later in the function.
+    pub fn actor_name(&self, id: usize) -> String {
+        self.actors
+            .get(&id)
+            .map(|a| a.name().to_string())
+            .unwrap_or_default()
+    }
+
     /// Logs a play-by-play line for an action that consumes the
     /// action-economy (Action / BonusAction / Reaction / LegendaryAction).
     /// Movement and free actions are intentionally excluded — the AI takes
@@ -673,11 +688,7 @@ impl EncounterInstance {
         // common-table interpretation. Either way the reroll happens
         // through the same seedable roller so determinism by seed holds.
         let reroll = self.roll_d20_with_mode(mode);
-        let name = self
-            .actors
-            .get(&actor_id)
-            .map(|a| a.name().to_string())
-            .unwrap_or_default();
+        let name = self.actor_name(actor_id);
         self.log(format!(
             "  lucky: {} re-rolls nat-1 → {}",
             name, reroll
@@ -1213,11 +1224,7 @@ impl EncounterInstance {
         // Paralyzed / Stunned auto-fail STR & DEX saves (5e). Log it so
         // the player can see why the save tanked.
         if self.auto_fail_save(actor_id, ability) {
-            let name = self
-                .actors
-                .get(&actor_id)
-                .map(|a| a.name().to_string())
-                .unwrap_or_default();
+            let name = self.actor_name(actor_id);
             self.log(format!(
                 "  {} {:?} save: auto-fail (incapacitated)",
                 name, ability
@@ -1430,11 +1437,7 @@ impl EncounterInstance {
         if let Some(caster) = self.actors.get_mut(&caster_id) {
             caster.remove_condition(Condition::HeightenedSpelling);
         }
-        let target_name = self
-            .actors
-            .get(&target_id)
-            .map(|a| a.name().to_string())
-            .unwrap_or_default();
+        let target_name = self.actor_name(target_id);
         self.log(format!(
             "  heightened spell: {} rolls the save at disadvantage",
             target_name
@@ -1863,16 +1866,8 @@ impl EncounterInstance {
                 continue;
             }
 
-            let reactor_name = self
-                .actors
-                .get(&reactor_id)
-                .map(|a| a.name().to_string())
-                .unwrap_or_default();
-            let mover_name = self
-                .actors
-                .get(&mover_id)
-                .map(|a| a.name().to_string())
-                .unwrap_or_default();
+            let reactor_name = self.actor_name(reactor_id);
+            let mover_name = self.actor_name(mover_id);
             self.log(format!(
                 "[reaction] {} opportunity-attacks {} as they leave reach",
                 reactor_name, mover_name
@@ -2710,11 +2705,7 @@ impl EncounterInstance {
             return raw;
         }
         let new_raw = self.roll_d20_lucky(caster_id, mode);
-        let name = self
-            .actors
-            .get(&caster_id)
-            .map(|a| a.name().to_string())
-            .unwrap_or_default();
+        let name = self.actor_name(caster_id);
         if let Some(caster) = self.actors.get_mut(&caster_id) {
             caster.remove_condition(Condition::SeekingSpelling);
         }
@@ -2831,11 +2822,7 @@ impl EncounterInstance {
             candidates.sort_unstable_by(|a, b| a.2.cmp(&b.2).then(a.0.cmp(&b.0)));
         }
         let twin_id = candidates[0].0;
-        let twin_name = self
-            .actors
-            .get(&twin_id)
-            .map(|a| a.name().to_string())
-            .unwrap_or_default();
+        let twin_name = self.actor_name(twin_id);
         // Consume prime + SP atomically. Spending SP can fail in principle
         // (race with another mutation), so guard with a re-check before
         // returning the id — we can't unscramble a "no target" path if SP
@@ -3156,11 +3143,7 @@ impl EncounterInstance {
             Some(a) => a.location(),
             None => return Vec::new(),
         };
-        let caster_name = self
-            .actors
-            .get(&caster_id)
-            .map(|a| a.name().to_string())
-            .unwrap_or_default();
+        let caster_name = self.actor_name(caster_id);
         let pick = self.roll(&Dice::new(1, 6));
         self.log(format!(
             "{} surges with wild magic! (d20=1, table d6={})",
@@ -3293,16 +3276,8 @@ impl EncounterInstance {
             }
             false
         } else {
-            let attacker_name = self
-                .actors
-                .get(&attacker_id)
-                .map(|a| a.name().to_string())
-                .unwrap_or_default();
-            let target_name = self
-                .actors
-                .get(&target_id)
-                .map(|a| a.name().to_string())
-                .unwrap_or_default();
+            let attacker_name = self.actor_name(attacker_id);
+            let target_name = self.actor_name(target_id);
             self.log(format!(
                 "  sanctuary protects {} from {}.",
                 target_name, attacker_name
@@ -3590,11 +3565,7 @@ impl EncounterInstance {
                 continue;
             }
             let dmg = self.roll(&dot.dice);
-            let name = self
-                .actors
-                .get(&actor_id)
-                .map(|a| a.name().to_string())
-                .unwrap_or_default();
+            let name = self.actor_name(actor_id);
             self.log(format!(
                 "  {} {}: {}({}) {:?}",
                 name, dot.log_verb, dot.dice, dmg, dot.damage_type
@@ -3640,11 +3611,7 @@ impl EncounterInstance {
                     crate::engine::types::AbilityScoreType::Intelligence,
                 ]))
                 .unwrap_or(13);
-            let name = self
-                .actors
-                .get(&actor_id)
-                .map(|a| a.name().to_string())
-                .unwrap_or_default();
+            let name = self.actor_name(actor_id);
             self.log(format!("  {} {}", name, entry.log_verb));
             let save = self.roll_save(actor_id, entry.save_ability, dc);
             if save.passed() {
@@ -3705,11 +3672,7 @@ impl EncounterInstance {
             return;
         }
         let dmg = self.roll(&Dice::new(3, 8));
-        let caster_name = self
-            .actors
-            .get(&caster_id)
-            .map(|a| a.name().to_string())
-            .unwrap_or_default();
+        let caster_name = self.actor_name(caster_id);
         self.log(format!(
             "  {}'s spirit guardians lash out: 3d8({}) radiant",
             caster_name, dmg
