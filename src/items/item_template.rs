@@ -1425,6 +1425,46 @@ pub static SCROLL_OF_AID: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Wand of Binding — single-use Action; single-target DEX save vs DC 15,
+/// fail = `Restrained` for 10 rounds. 5e flavor: a wand carved with iron
+/// runes that fixes a target in place with crackling bands of force.
+/// Single-target counterpart to the Wand of Web (burst Restrained).
+/// Distinct loot tier from the Wand of Web — the burst hits more targets
+/// but the wand is harder to dodge (single-target DC 15 vs burst DC 15).
+pub static WAND_OF_BINDING: Item = Item {
+    name: "Wand of Binding",
+    glyph: 'B',
+    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_BINDING),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Banishment — single-use Action; single-target CHA save vs
+/// DC 15, fail = `Mazed` (banished demi-plane envelope) for 10 rounds.
+/// 5e RAW: level-4 abjuration, concentration, 60-ft range; the scroll
+/// drops concentration and uses a fixed 10-round timer. Sits at the top
+/// of the single-target CC tier alongside Wand of Polymorph — both
+/// effectively remove the target from the encounter.
+pub static SCROLL_OF_BANISHMENT: Item = Item {
+    name: "Scroll of Banishment",
+    glyph: 'X',
+    on_use: Some(&crate::actions::item_actions::READ_BANISHMENT_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Fear — single-use Action; 4-tile burst, WIS save vs DC 15,
+/// fail = `Frightened` for 10 rounds. 5e RAW: level-3 illusion,
+/// concentration, 30-ft cone; the scroll drops concentration and uses a
+/// burst envelope. Harder DC version of Pipes of Haunting (burst
+/// Frightened DC 13) — sits alongside Wand of Fear (single-target
+/// Frightened DC 15) so the loot pool covers all three combinations of
+/// (burst/single, soft/hard DC) on the Frightened lane.
+pub static SCROLL_OF_FEAR: Item = Item {
+    name: "Scroll of Fear",
+    glyph: 'r',
+    on_use: Some(&crate::actions::item_actions::READ_FEAR_SCROLL),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -1703,4 +1743,13 @@ pub static LOOT_POOL: &[&Item] = &[
     // entries each in the rare half of the support-scroll lane.
     &SCROLL_OF_DEATH_WARD,
     &SCROLL_OF_AID,
+    // Top-tier single-target CC consumables — Banishment (CHA save
+    // banished-to-demiplane) and Binding (DEX save Restrained). Single
+    // entries each in the rare half of the CC-consumable lane.
+    &SCROLL_OF_BANISHMENT,
+    &WAND_OF_BINDING,
+    // Scroll of Fear — burst Frightened at the rare DC 15 tier. Sits
+    // between Pipes of Haunting (burst DC 13) and Wand of Fear (single-
+    // target DC 15).
+    &SCROLL_OF_FEAR,
 ];

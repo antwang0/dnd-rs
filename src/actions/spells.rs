@@ -4828,11 +4828,7 @@ impl Action for HypnoticPattern {
             // Charm-immune creatures shrug off the pattern (template or
             // dynamic — Fey Ancestry / MindBlanked). We don't log per-
             // target immunity for AoE — would be noisy.
-            if encounter
-                .actors
-                .get(&target_id)
-                .is_some_and(|t| t.effectively_immune_to_condition(Condition::Charmed))
-            {
+            if encounter.actor_immune_to_condition(target_id, Condition::Charmed) {
                 continue;
             }
             // Caster-aware save so the Sorcerer Heightened Spell prime

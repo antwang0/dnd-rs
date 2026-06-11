@@ -1638,11 +1638,7 @@ impl Action for BurstSaveConditionItem {
             // whose install can't land would leak the metamagic onto a
             // no-op. The HYPNOTIC_PATTERN spell-side impl does the same
             // up-front filter for the same reason.
-            if encounter
-                .actors
-                .get(&tid)
-                .is_some_and(|t| t.effectively_immune_to_condition(self.condition))
-            {
+            if encounter.actor_immune_to_condition(tid, self.condition) {
                 continue;
             }
             let save =
@@ -1749,11 +1745,7 @@ impl Action for SingleSaveConditionItem {
         // leaking onto a no-op save. Matches the burst-variant's
         // up-front filter. The consumable still consumes (the player
         // chose to fire it; that's a UX decision).
-        if encounter
-            .actors
-            .get(&target_id)
-            .is_some_and(|t| t.effectively_immune_to_condition(self.condition))
-        {
+        if encounter.actor_immune_to_condition(target_id, self.condition) {
             return Vec::new();
         }
         let save =
@@ -2428,11 +2420,7 @@ impl Action for UseWandOfPolymorph {
         // Skip the save against a Polymorphed-immune target — same
         // pattern as `SingleSaveConditionItem`'s up-front filter so the
         // Sorcerer Heightened Spell prime doesn't leak onto a no-op.
-        if encounter
-            .actors
-            .get(&target_id)
-            .is_some_and(|t| t.effectively_immune_to_condition(Condition::Polymorphed))
-        {
+        if encounter.actor_immune_to_condition(target_id, Condition::Polymorphed) {
             return Vec::new();
         }
         let save = encounter.roll_save_against_caster(
@@ -2629,11 +2617,13 @@ pub static READ_DEATH_WARD_SCROLL: SingleTargetBuffItem = SingleTargetBuffItem {
     reject_when_active: true,
 };
 
-/// Aid — multi-ally permanent +5 max-HP / current-HP buff in a burst.
-/// Mirrors the `Aid` spell's envelope (which is single-target in this
-/// engine's UI but RAW affects up to 3 creatures); the scroll uses a
-/// burst-targeted picker so the player can clip multiple allies in one
-/// cast.
+/// Aid — multi-ally permanent +5 max-HP / current-HP buff. RAW affects
+/// up to 3 creatures within 30 ft; the scroll uses a self-centered
+/// `NoArgs` schema (mirroring `Scroll of Mass Healing Word`) and picks
+/// the 3 lowest-HP-percent allies inside range automatically. Keeping
+/// the targeting implicit lets the AI's `try_support_heal` heuristic
+/// reach for it without a burst-aware picker — same shape as the
+/// existing multi-ally heal scroll.
 ///
 /// Distinct from `SingleTargetBuffItem` / `SingleTargetHealItem` because
 /// the effect is a permanent base-HP bump (`bump_max_hp`) rather than a
@@ -2651,16 +2641,7 @@ impl Action for ReadAidScroll {
     }
 
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
-    }
-
-    fn reach_tiles(&self) -> Option<isize> {
-        // 30 ft RAW; 12 tiles.
-        Some(12)
-    }
-
-    fn requires_los(&self) -> bool {
-        true
+        TargetingSchema::NoArgs
     }
 
     fn is_harmful(&self) -> bool {
@@ -2691,45 +2672,130 @@ impl Action for ReadAidScroll {
         encounter: &mut EncounterInstance,
         caster_id: usize,
         _ti: Option<&Vec<usize>>,
-        target_locations: Option<&Vec<Coordinate>>,
+        _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(&center) = target_locations.and_then(|locs| locs.first()) else {
-            return Vec::new();
-        };
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
         if !consume_caster_item(encounter, caster_id, SCROLL_OF_AID_NAME) {
             return Vec::new();
         }
-        let name = encounter.actor_name(caster_id);
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let caster_team = caster.team();
+        let caster_loc = caster.location();
+        let caster_size = get_tiles_from_size(caster.size());
+        let name = caster.name().to_string();
         encounter.log(format!(
             "{} reads a scroll of aid; warm light pulses across allies.",
             name
         ));
-        // RAW Aid: up to 3 ally targets. Pick the lowest-HP-percent allies
-        // first so the buff lands where it matters (a near-dead front-
-        // liner needs the +5 cushion more than the at-full mage). The
-        // caster is implicitly included via the `ally_burst_targets`
-        // team filter.
-        let mut allies = encounter.ally_burst_targets(caster_id, center, 4);
-        allies.sort_by_key(|&id| {
-            encounter
-                .actors
-                .get(&id)
-                .map(|a| {
-                    let max = a.max_hitpoints().max(1) as u64;
-                    (a.hitpoints() as u64 * 1000) / max
-                })
-                .unwrap_or(u64::MAX)
-        });
-        allies.truncate(3);
-        for tid in allies {
-            if let Some(target) = encounter.actors.get_mut(&tid) {
+        // RAW Aid: up to 3 ally targets within 30 ft. Pick the lowest-HP-
+        // percent allies first so the buff lands where it matters (a near-
+        // dead front-liner needs the +5 cushion more than the at-full
+        // mage). 12 tiles = 30 ft on the 2.5 ft grid.
+        const RANGE_TILES: isize = 12;
+        const MAX_TARGETS: usize = 3;
+        let mut candidates: Vec<(u64, usize)> = encounter
+            .actors
+            .iter()
+            .filter_map(|(id, a)| {
+                if a.team() != caster_team || !a.is_combat_active() {
+                    return None;
+                }
+                let dist = footprint_chebyshev(
+                    caster_loc,
+                    caster_size,
+                    a.location(),
+                    get_tiles_from_size(a.size()),
+                );
+                if dist > RANGE_TILES {
+                    return None;
+                }
+                let max = a.max_hitpoints().max(1) as u64;
+                let hp_pct = (a.hitpoints() as u64 * 1000) / max;
+                Some((hp_pct, *id))
+            })
+            .collect();
+        candidates.sort_unstable();
+        candidates.truncate(MAX_TARGETS);
+        for (_, tid) in &candidates {
+            if let Some(target) = encounter.actors.get_mut(tid) {
                 target.bump_max_hp(5);
             }
         }
-        encounter.log("  aid: +5 max HP, +5 HP per ally".to_string());
+        encounter.log(format!(
+            "  aid: +5 max HP / +5 HP on {} ally{}",
+            candidates.len(),
+            if candidates.len() == 1 { "" } else { "(ies)" }
+        ));
         Vec::new()
     }
 }
 
 pub static READ_AID_SCROLL: ReadAidScroll = ReadAidScroll {};
+
+const WAND_OF_BINDING_NAME: &str = "Wand of Binding";
+const SCROLL_OF_BANISHMENT_NAME: &str = "Scroll of Banishment";
+const SCROLL_OF_FEAR_NAME: &str = "Scroll of Fear";
+
+/// Wand of Binding — Action; single-target DEX save vs DC 15, fail =
+/// `Restrained` for 10 rounds. Single-use consumable. Single-target
+/// counterpart to the Wand of Web (burst Restrained); the wand trades
+/// area coverage for a more targeted lock. Fires through the shared
+/// `SingleSaveConditionItem` impl.
+pub static USE_WAND_OF_BINDING: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "use wand of binding",
+    action_aliases: &["binding", "bind"],
+    item_name: WAND_OF_BINDING_NAME,
+    log_text: "{actor} aims the wand of binding; iron-rune bands lash out.",
+    save: AbilityScoreType::Dexterity,
+    dc: 15,
+    // 60 ft RAW; 24 tiles.
+    reach: 24,
+    condition: Condition::Restrained,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Scroll of Banishment — Action; single-target CHA save vs DC 15,
+/// fail = `Mazed` for 10 rounds (banished-demiplane envelope; the
+/// engine's `Mazed` condition is the load-bearing inert tag). 5e RAW:
+/// level-4 abjuration, concentration; the scroll drops concentration
+/// and uses a fixed 10-round timer. Top-of-pool single-target CC
+/// consumable alongside Wand of Polymorph — both effectively remove the
+/// target. Fires through the shared `SingleSaveConditionItem` impl.
+pub static READ_BANISHMENT_SCROLL: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "read banishment scroll",
+    action_aliases: &["banishment", "banish"],
+    item_name: SCROLL_OF_BANISHMENT_NAME,
+    log_text: "{actor} reads a scroll of banishment; the target shimmers and fades.",
+    save: AbilityScoreType::Charisma,
+    dc: 15,
+    // 60 ft RAW; 24 tiles.
+    reach: 24,
+    condition: Condition::Mazed,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Scroll of Fear — Action; 4-tile burst, WIS save vs DC 15, fail =
+/// `Frightened` for 10 rounds. 5e RAW: level-3 illusion, concentration,
+/// 30-ft cone; the scroll drops concentration and uses a burst envelope.
+/// Harder DC counterpart to Pipes of Haunting (burst DC 13 Frightened);
+/// sits alongside Wand of Fear (single-target DC 15 Frightened) so the
+/// loot pool covers all three combinations of (burst/single, soft/hard
+/// DC) on the Frightened lane. Fires through the shared
+/// `BurstSaveConditionItem` impl.
+pub static READ_FEAR_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
+    action_name: "read fear scroll",
+    action_aliases: &["fear scroll", "fear burst"],
+    item_name: SCROLL_OF_FEAR_NAME,
+    log_text: "{actor} reads a scroll of fear; shadows leap from the parchment.",
+    save: AbilityScoreType::Wisdom,
+    dc: 15,
+    radius: 4,
+    // 30 ft RAW; 12 tiles.
+    reach: 12,
+    condition: Condition::Frightened,
+    timer: ConditionTimer::Rounds(10),
+};
