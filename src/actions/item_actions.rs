@@ -2807,3 +2807,157 @@ pub static READ_FEAR_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
     condition: Condition::Frightened,
     timer: ConditionTimer::Rounds(10),
 };
+
+const SCROLL_OF_CHARM_PERSON_NAME: &str = "Scroll of Charm Person";
+const WAND_OF_CHARM_MONSTER_NAME: &str = "Wand of Charm Monster";
+const SCROLL_OF_TASHAS_HIDEOUS_LAUGHTER_NAME: &str = "Scroll of Tasha's Hideous Laughter";
+const SCROLL_OF_HEAT_METAL_NAME: &str = "Scroll of Heat Metal";
+const SCROLL_OF_ICE_STORM_NAME: &str = "Scroll of Ice Storm";
+const SCROLL_OF_WEB_NAME: &str = "Scroll of Web";
+const POTION_OF_RESISTANCE_NAME: &str = "Potion of Resistance";
+const POTION_OF_VIGILANCE_NAME: &str = "Potion of Vigilance";
+
+/// Scroll of Charm Person — Action; single-target WIS save vs DC 13, fail =
+/// `Charmed` for 10 rounds. 5e RAW: level-1 enchantment, 30-ft range, 1-hour
+/// duration; the scroll uses the engine's standard 10-round CC envelope.
+/// Charm-immune families (undead / constructs / fiends) silently skip the
+/// save through the up-front immunity filter in `SingleSaveConditionItem`.
+/// Fires through the shared `SingleSaveConditionItem` impl.
+pub static READ_CHARM_PERSON_SCROLL: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "read charm person scroll",
+    action_aliases: &["charm", "charm person"],
+    item_name: SCROLL_OF_CHARM_PERSON_NAME,
+    log_text: "{actor} reads a scroll of charm person; honeyed words weave through the air.",
+    save: AbilityScoreType::Wisdom,
+    dc: 13,
+    // 30 ft RAW; 12 tiles.
+    reach: 12,
+    condition: Condition::Charmed,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Wand of Charm Monster — Action; single-target WIS save vs DC 15, fail =
+/// `Charmed` for 10 rounds. 5e RAW: level-4 enchantment, 60-ft range, 1-hour
+/// duration. Top-tier enchantment consumable: harder DC and longer reach
+/// than `READ_CHARM_PERSON_SCROLL`. Fires through the shared
+/// `SingleSaveConditionItem` impl.
+pub static USE_WAND_OF_CHARM_MONSTER: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "use wand of charm monster",
+    action_aliases: &["charm monster", "charm+"],
+    item_name: WAND_OF_CHARM_MONSTER_NAME,
+    log_text: "{actor} aims the wand of charm monster; the air shimmers with persuasive light.",
+    save: AbilityScoreType::Wisdom,
+    dc: 15,
+    // 60 ft RAW; 24 tiles.
+    reach: 24,
+    condition: Condition::Charmed,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Scroll of Tasha's Hideous Laughter — Action; single-target WIS save vs
+/// DC 13, fail = `Incapacitated` for 10 rounds. 5e RAW: level-1 enchantment,
+/// 30-ft range, concentration; the scroll drops concentration and uses the
+/// engine's standard fixed-duration envelope. Entry-tier single-target
+/// Incapacitated installer. Fires through the shared
+/// `SingleSaveConditionItem` impl.
+pub static READ_TASHAS_HIDEOUS_LAUGHTER_SCROLL: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "read tasha's hideous laughter scroll",
+    action_aliases: &["laughter", "tasha"],
+    item_name: SCROLL_OF_TASHAS_HIDEOUS_LAUGHTER_NAME,
+    log_text: "{actor} reads a scroll of hideous laughter; the target chokes on uncontrollable mirth.",
+    save: AbilityScoreType::Wisdom,
+    dc: 13,
+    // 30 ft RAW; 12 tiles.
+    reach: 12,
+    condition: Condition::Incapacitated,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Scroll of Heat Metal — Action; single-target CON save vs DC 13, fail =
+/// `HeatMetaled` for 10 rounds (attack-roll / ability-check disadvantage).
+/// 5e RAW: level-2 transmutation, no save on cast plus 2d8 fire per round
+/// while concentration holds; we collapse the spell's load-bearing combat
+/// clause (attack disadvantage) to a single CON save and drop the
+/// damage-per-round rider. The condition flows through
+/// `compute_attack_mode`'s disadvantage clause. Fires through the shared
+/// `SingleSaveConditionItem` impl.
+pub static READ_HEAT_METAL_SCROLL: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "read heat metal scroll",
+    action_aliases: &["heat metal", "heat"],
+    item_name: SCROLL_OF_HEAT_METAL_NAME,
+    log_text: "{actor} reads a scroll of heat metal; the target's gear glows red-hot.",
+    save: AbilityScoreType::Constitution,
+    dc: 13,
+    // 60 ft RAW; 24 tiles.
+    reach: 24,
+    condition: Condition::HeatMetaled,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Scroll of Ice Storm — Action; 4-tile burst, DEX save vs DC 15, fail =
+/// 4d8 cold, pass = half. 5e RAW: level-4 evocation, 2d8 bludgeoning + 4d6
+/// cold; the scroll collapses the dual-type damage to a single cold roll
+/// (4d8). Fires through the shared `BurstSaveDamageItem` impl.
+pub static READ_ICE_STORM_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+    action_name: "read ice storm scroll",
+    action_aliases: &["ice storm", "ice"],
+    item_name: SCROLL_OF_ICE_STORM_NAME,
+    log_label: "scroll of ice storm",
+    dice: Dice::new(4, 8),
+    damage_type: DamageType::Cold,
+    save: AbilityScoreType::Dexterity,
+    dc: 15,
+    radius: 4,
+    // 300 ft RAW; we cap to a map-realistic 48 tiles (120 ft).
+    reach: 48,
+};
+
+/// Scroll of Web — Action; 4-tile burst, DEX save vs DC 13, fail =
+/// `Restrained` for 10 rounds. Cheap-tier counterpart to Wand of Web (DC 15
+/// burst Restrained) — same shape, easier DC. Fires through the shared
+/// `BurstSaveConditionItem` impl.
+pub static READ_WEB_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
+    action_name: "read web scroll",
+    action_aliases: &["web scroll", "web burst"],
+    item_name: SCROLL_OF_WEB_NAME,
+    log_text: "{actor} reads a scroll of web; sticky strands erupt across the ground.",
+    save: AbilityScoreType::Dexterity,
+    dc: 13,
+    radius: 4,
+    // 60 ft RAW; 24 tiles.
+    reach: 24,
+    condition: Condition::Restrained,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Potion of Resistance — Action; installs `DamageResistant` for 10 rounds.
+/// Un-flavored generic counterpart to Potion of Fire / Cold Resistance —
+/// same envelope, no flavor tied to a specific damage type. Single-use;
+/// rejects re-drink when already resistant. Fires through the shared
+/// `SelfConditionItem` impl.
+pub static DRINK_POTION_OF_RESISTANCE: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of resistance",
+    action_aliases: &["resistance", "resist"],
+    item_name: POTION_OF_RESISTANCE_NAME,
+    log_text: "{actor} drinks a potion of resistance; a translucent shimmer wraps them.",
+    condition: Condition::DamageResistant,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    reject_when_active: true,
+};
+
+/// Potion of Vigilance — Bonus Action; installs `DangerSense` for 10 rounds
+/// (advantage on DEX saves while not Blinded / Incapacitated / Deafened).
+/// Consumable counterpart to the passive `AMULET_OF_THE_VIGILANT` trinket.
+/// Single-use; rejects re-drink when already active. Fires through the
+/// shared `SelfConditionItem` impl.
+pub static DRINK_POTION_OF_VIGILANCE: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of vigilance",
+    action_aliases: &["vigilance", "vigil"],
+    item_name: POTION_OF_VIGILANCE_NAME,
+    log_text: "{actor} drinks a potion of vigilance; their senses sharpen to a knife's edge.",
+    condition: Condition::DangerSense,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: true,
+    reject_when_active: true,
+};

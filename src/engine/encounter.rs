@@ -36285,6 +36285,423 @@ mod tests {
         );
     }
 
+    /// Scroll of Charm Person: single-target WIS save vs DC 13, fail =
+    /// Charmed for 10 rounds. Mirrors the `wand_of_paralysis` envelope on
+    /// the enchantment lane. Zombies are charm-immune (5e undead trait), so
+    /// we target a Fighter to confirm the save lands at least once.
+    #[test]
+    fn scroll_of_charm_person_installs_charmed_on_failed_save() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_CHARM_PERSON_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::SCROLL_OF_CHARM_PERSON;
+
+        let trials = 50u64;
+        let mut any_charmed = false;
+        for seed in 0..trials {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let caster = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&caster)
+                .unwrap()
+                .pickup_item(&SCROLL_OF_CHARM_PERSON);
+            let aei = ActionExecutionInfo::new(
+                &READ_CHARM_PERSON_SCROLL,
+                caster,
+                Some(vec![target]),
+                None,
+                None,
+            );
+            assert!(aei.validate(&e));
+            e.push_action(aei);
+            e.process_stack();
+            assert!(
+                e.actors[&caster].items().is_empty(),
+                "scroll should be consumed (seed {})",
+                seed
+            );
+            if e.actors[&target].has_condition(Condition::Charmed) {
+                any_charmed = true;
+                break;
+            }
+        }
+        assert!(
+            any_charmed,
+            "scroll of charm person never installed Charmed across {} seeds",
+            trials
+        );
+    }
+
+    /// Wand of Charm Monster: single-target WIS save vs DC 15, fail =
+    /// Charmed for 10 rounds. Same lane as the Charm Person scroll but a
+    /// harder DC. Seed-swept for the probabilistic save.
+    #[test]
+    fn wand_of_charm_monster_installs_charmed_on_failed_save() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::USE_WAND_OF_CHARM_MONSTER;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::WAND_OF_CHARM_MONSTER;
+
+        let trials = 50u64;
+        let mut any_charmed = false;
+        for seed in 0..trials {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let caster = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&caster)
+                .unwrap()
+                .pickup_item(&WAND_OF_CHARM_MONSTER);
+            let aei = ActionExecutionInfo::new(
+                &USE_WAND_OF_CHARM_MONSTER,
+                caster,
+                Some(vec![target]),
+                None,
+                None,
+            );
+            assert!(aei.validate(&e));
+            e.push_action(aei);
+            e.process_stack();
+            assert!(
+                e.actors[&caster].items().is_empty(),
+                "wand should be consumed (seed {})",
+                seed
+            );
+            if e.actors[&target].has_condition(Condition::Charmed) {
+                any_charmed = true;
+                break;
+            }
+        }
+        assert!(
+            any_charmed,
+            "wand of charm monster never installed Charmed across {} seeds",
+            trials
+        );
+    }
+
+    /// Scroll of Tasha's Hideous Laughter: single-target WIS save vs DC 13,
+    /// fail = Incapacitated for 10 rounds. Seed-swept; targets a Fighter so
+    /// the probabilistic save lands at least once.
+    #[test]
+    fn scroll_of_tashas_hideous_laughter_installs_incapacitated() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_TASHAS_HIDEOUS_LAUGHTER_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::SCROLL_OF_TASHAS_HIDEOUS_LAUGHTER;
+
+        let trials = 50u64;
+        let mut any_incapacitated = false;
+        for seed in 0..trials {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let caster = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&caster)
+                .unwrap()
+                .pickup_item(&SCROLL_OF_TASHAS_HIDEOUS_LAUGHTER);
+            let aei = ActionExecutionInfo::new(
+                &READ_TASHAS_HIDEOUS_LAUGHTER_SCROLL,
+                caster,
+                Some(vec![target]),
+                None,
+                None,
+            );
+            assert!(aei.validate(&e));
+            e.push_action(aei);
+            e.process_stack();
+            assert!(
+                e.actors[&caster].items().is_empty(),
+                "scroll should be consumed (seed {})",
+                seed
+            );
+            if e.actors[&target].has_condition(Condition::Incapacitated) {
+                any_incapacitated = true;
+                break;
+            }
+        }
+        assert!(
+            any_incapacitated,
+            "scroll of hideous laughter never installed Incapacitated across {} seeds",
+            trials
+        );
+    }
+
+    /// Scroll of Heat Metal: single-target CON save vs DC 13, fail =
+    /// HeatMetaled for 10 rounds. Seed-swept; targets a Fighter so the
+    /// probabilistic save lands at least once.
+    #[test]
+    fn scroll_of_heat_metal_installs_heat_metaled() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_HEAT_METAL_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::SCROLL_OF_HEAT_METAL;
+
+        let trials = 50u64;
+        let mut any_heated = false;
+        for seed in 0..trials {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let caster = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&caster)
+                .unwrap()
+                .pickup_item(&SCROLL_OF_HEAT_METAL);
+            let aei = ActionExecutionInfo::new(
+                &READ_HEAT_METAL_SCROLL,
+                caster,
+                Some(vec![target]),
+                None,
+                None,
+            );
+            assert!(aei.validate(&e));
+            e.push_action(aei);
+            e.process_stack();
+            assert!(
+                e.actors[&caster].items().is_empty(),
+                "scroll should be consumed (seed {})",
+                seed
+            );
+            if e.actors[&target].has_condition(Condition::HeatMetaled) {
+                any_heated = true;
+                break;
+            }
+        }
+        assert!(
+            any_heated,
+            "scroll of heat metal never installed HeatMetaled across {} seeds",
+            trials
+        );
+    }
+
+    /// Scroll of Ice Storm: 4-tile burst, DEX save vs DC 15, 4d8 cold
+    /// damage on a fail, half on a pass. Confirms the scroll consumes and
+    /// the burst damages a target inside the radius.
+    #[test]
+    fn scroll_of_ice_storm_damages_burst_and_consumes() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_ICE_STORM_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_ICE_STORM;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let caster = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 8), 1, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_ICE_STORM);
+        let before = e.actors[&target].hitpoints();
+
+        let aei = ActionExecutionInfo::new(
+            &READ_ICE_STORM_SCROLL,
+            caster,
+            None,
+            Some(vec![Coordinate::new(8, 8)]),
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+
+        let after = e.actors[&target].hitpoints();
+        assert!(
+            after < before,
+            "ice storm burst should damage the zombie"
+        );
+        assert!(
+            e.actors[&caster].items().is_empty(),
+            "scroll should be consumed on use"
+        );
+    }
+
+    /// Scroll of Web: burst DEX save vs DC 13, fail = Restrained for 10
+    /// rounds. Mirrors the Wand of Web envelope at the cheap-DC tier.
+    /// Seed-swept for the probabilistic save.
+    #[test]
+    fn scroll_of_web_installs_restrained_on_failed_save() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_WEB_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::SCROLL_OF_WEB;
+
+        let trials = 50u64;
+        let mut any_restrained = false;
+        for seed in 0..trials {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let caster = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 7), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&caster)
+                .unwrap()
+                .pickup_item(&SCROLL_OF_WEB);
+            let aei = ActionExecutionInfo::new(
+                &READ_WEB_SCROLL,
+                caster,
+                None,
+                Some(vec![Coordinate::new(7, 7)]),
+                None,
+            );
+            assert!(aei.validate(&e));
+            e.push_action(aei);
+            e.process_stack();
+            assert!(
+                e.actors[&caster].items().is_empty(),
+                "scroll should be consumed (seed {})",
+                seed
+            );
+            if e.actors[&enemy].has_condition(Condition::Restrained) {
+                any_restrained = true;
+                break;
+            }
+        }
+        assert!(
+            any_restrained,
+            "scroll of web never installed Restrained across {} seeds",
+            trials
+        );
+    }
+
+    /// Potion of Resistance: action self-install of `DamageResistant` for
+    /// 10 rounds. Mirrors the Potion of Stoneskin envelope (same condition,
+    /// same timer) — confirms the install and the redrink-rejection gate.
+    #[test]
+    fn potion_of_resistance_installs_and_rejects_redrink() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::DRINK_POTION_OF_RESISTANCE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::POTION_OF_RESISTANCE;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let actor = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&actor)
+            .unwrap()
+            .pickup_item(&POTION_OF_RESISTANCE);
+        e.actors
+            .get_mut(&actor)
+            .unwrap()
+            .pickup_item(&POTION_OF_RESISTANCE);
+        let aei = ActionExecutionInfo::new(
+            &DRINK_POTION_OF_RESISTANCE,
+            actor,
+            None,
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            e.actors[&actor].has_condition(Condition::DamageResistant),
+            "drinking should install DamageResistant"
+        );
+        assert_eq!(
+            e.actors[&actor].items().len(),
+            1,
+            "one potion should be consumed, one should remain"
+        );
+        let aei2 = ActionExecutionInfo::new(
+            &DRINK_POTION_OF_RESISTANCE,
+            actor,
+            None,
+            None,
+            None,
+        );
+        assert!(
+            !aei2.validate(&e),
+            "re-drink while DamageResistant should be rejected"
+        );
+    }
+
+    /// Potion of Vigilance: bonus-action self-install of `DangerSense` for
+    /// 10 rounds. Confirms the install lands and the redrink-rejection
+    /// gate keeps the second potion in inventory.
+    #[test]
+    fn potion_of_vigilance_installs_and_rejects_redrink() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::DRINK_POTION_OF_VIGILANCE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::POTION_OF_VIGILANCE;
+
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let actor = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&actor)
+            .unwrap()
+            .pickup_item(&POTION_OF_VIGILANCE);
+        e.actors
+            .get_mut(&actor)
+            .unwrap()
+            .pickup_item(&POTION_OF_VIGILANCE);
+        let aei = ActionExecutionInfo::new(
+            &DRINK_POTION_OF_VIGILANCE,
+            actor,
+            None,
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            e.actors[&actor].has_condition(Condition::DangerSense),
+            "drinking should install DangerSense"
+        );
+        assert_eq!(
+            e.actors[&actor].items().len(),
+            1,
+            "one potion should be consumed, one should remain"
+        );
+        let aei2 = ActionExecutionInfo::new(
+            &DRINK_POTION_OF_VIGILANCE,
+            actor,
+            None,
+            None,
+            None,
+        );
+        assert!(
+            !aei2.validate(&e),
+            "re-drink while DangerSense should be rejected"
+        );
+    }
+
     /// Seeded sibling of `ei_with_terrain` — same hand-crafted terrain
     /// shape but the encounter's RNG is initialized from `seed` so callers
     /// can sweep seeds for probabilistic assertions while keeping a

@@ -1465,6 +1465,117 @@ pub static SCROLL_OF_FEAR: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Scroll of Charm Person — single-use Action; single-target, WIS save vs
+/// DC 13, fail = `Charmed` for 10 rounds. 5e RAW: level-1 enchantment, 30-ft
+/// range, 1-hour duration; the scroll drops concentration (Charm Person has
+/// none anyway) and lands the engine's standard 10-round CC envelope. Entry-
+/// level enchantment scroll alongside Scroll of Hold Person / Wand of Sleep.
+/// Charm-immune families (undead, constructs, fiends) silently skip the save
+/// through the up-front immunity filter in `SingleSaveConditionItem`.
+pub static SCROLL_OF_CHARM_PERSON: Item = Item {
+    name: "Scroll of Charm Person",
+    glyph: 'p',
+    on_use: Some(&crate::actions::item_actions::READ_CHARM_PERSON_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Wand of Charm Monster — single-use Action; single-target, WIS save vs DC
+/// 15, fail = `Charmed` for 10 rounds. Top-tier enchantment consumable: same
+/// shape as `SCROLL_OF_CHARM_PERSON` but a harder DC and longer reach (60 ft
+/// vs 30 ft). 5e RAW: level-4 enchantment, no concentration, 1-hour duration.
+/// Distinct from the scroll variant since Charm Monster lands on creature
+/// types the Person variant can't reach — the engine doesn't gate by creature
+/// type today, so the niche is the harder DC + longer reach.
+pub static WAND_OF_CHARM_MONSTER: Item = Item {
+    name: "Wand of Charm Monster",
+    glyph: 'm',
+    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_CHARM_MONSTER),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Tasha's Hideous Laughter — single-use Action; single-target,
+/// WIS save vs DC 13, fail = `Incapacitated` for 10 rounds. 5e RAW: level-1
+/// enchantment, 30-ft range, concentration, re-save each turn; the scroll
+/// drops concentration and uses the engine's standard fixed-duration CC
+/// envelope. Sits in the loot pool as the entry-level Incapacitated
+/// installer alongside Scroll of Charm Person — both are WIS save vs DC 13.
+pub static SCROLL_OF_TASHAS_HIDEOUS_LAUGHTER: Item = Item {
+    name: "Scroll of Tasha's Hideous Laughter",
+    glyph: 'L',
+    on_use: Some(&crate::actions::item_actions::READ_TASHAS_HIDEOUS_LAUGHTER_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Heat Metal — single-use Bonus Action; single-target, CON save
+/// vs DC 13, fail = `HeatMetaled` for 10 rounds (disadvantage on attack
+/// rolls / ability checks). 5e RAW: level-2 transmutation, action, no save
+/// on cast (CON save each turn to drop the gear); the scroll collapses to
+/// a single up-front CON save vs the standard scroll DC. Drops the per-
+/// round fire damage rider from the spell — the load-bearing combat clause
+/// is the attack-roll disadvantage, which flows through the existing
+/// `HeatMetaled` condition. Fires through the shared
+/// `SingleSaveConditionItem` impl.
+pub static SCROLL_OF_HEAT_METAL: Item = Item {
+    name: "Scroll of Heat Metal",
+    glyph: 'h',
+    on_use: Some(&crate::actions::item_actions::READ_HEAT_METAL_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Ice Storm — single-use Action; 4-tile burst, DEX save vs DC 15,
+/// fail = 4d8 cold, pass = half. 5e RAW: level-4 evocation that deals
+/// 2d8 bludgeoning + 4d6 cold; we collapse the dual-type damage to a single
+/// cold roll (4d8) so the scroll fires through the shared
+/// `BurstSaveDamageItem` impl. Sits between Wand of Cone of Cold (10d8 cold,
+/// 6-radius) and the scroll-tier cold burst as the mid-tier cold-burst
+/// scroll.
+pub static SCROLL_OF_ICE_STORM: Item = Item {
+    name: "Scroll of Ice Storm",
+    glyph: 'I',
+    on_use: Some(&crate::actions::item_actions::READ_ICE_STORM_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Web — single-use Action; 4-tile burst, DEX save vs DC 13, fail
+/// = `Restrained` for 10 rounds. 5e RAW: level-2 conjuration, concentration,
+/// 60-ft range / 20-ft cube, no concentration on the scroll. Sibling to
+/// Wand of Web (DC 15 Restrained burst) at the cheap-tier weight — same
+/// shape, easier DC. Both ride the shared `BurstSaveConditionItem` impl.
+pub static SCROLL_OF_WEB: Item = Item {
+    name: "Scroll of Web",
+    glyph: 'W',
+    on_use: Some(&crate::actions::item_actions::READ_WEB_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Potion of Resistance — Action; installs `DamageResistant` (halve all
+/// incoming damage) for 10 rounds. 5e RAW grants resistance to a single
+/// damage type; we collapse to the engine's blanket `DamageResistant`
+/// envelope every other resistance potion (Fire / Cold / Stoneskin) rides.
+/// Single-use; rejects re-drink when already resistant. Sits in the loot
+/// pool as the un-flavored generic counterpart to the typed resistance
+/// potions — the player can grab whichever flavor they roll without
+/// stratifying the buff itself.
+pub static POTION_OF_RESISTANCE: Item = Item {
+    name: "Potion of Resistance",
+    glyph: 'R',
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_RESISTANCE),
+    ..Item::DEFAULTS
+};
+
+/// Potion of Vigilance — Bonus Action; installs `DangerSense` (advantage on
+/// DEX saves while not Blinded / Incapacitated / Deafened) for 10 rounds.
+/// Consumable counterpart to the passive `AMULET_OF_THE_VIGILANT`: the
+/// amulet is always-on, the potion is a single-shot 10-round buff. Fits the
+/// "AoE survival burst" niche for low-DEX casters who can't afford an
+/// amulet slot. Single-use; rejects re-drink when already active.
+pub static POTION_OF_VIGILANCE: Item = Item {
+    name: "Potion of Vigilance",
+    glyph: 'v',
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_VIGILANCE),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -1752,4 +1863,34 @@ pub static LOOT_POOL: &[&Item] = &[
     // between Pipes of Haunting (burst DC 13) and Wand of Fear (single-
     // target DC 15).
     &SCROLL_OF_FEAR,
+    // Charm consumables — single-target Charmed at the cheap (DC 13) and
+    // rare (DC 15) tiers. Sit in the loot pool as the enchantment lane
+    // counterparts to the Hold Person / Hold Monster Paralyzed family.
+    &SCROLL_OF_CHARM_PERSON,
+    &WAND_OF_CHARM_MONSTER,
+    // Tasha's Hideous Laughter — entry-tier single-target Incapacitated
+    // installer. Same WIS-save-DC-13 envelope as Charm Person but a
+    // different lockdown condition (Incapacitated blocks actions; Charmed
+    // is marker-only today).
+    &SCROLL_OF_TASHAS_HIDEOUS_LAUGHTER,
+    // Heat Metal scroll — single-target HeatMetaled (attack-roll
+    // disadvantage) at the cheap CON-save tier. Distinct from the burst
+    // debuff scrolls (Bane / Slow / Stinking Cloud) — single-target,
+    // attack-roll-targeted.
+    &SCROLL_OF_HEAT_METAL,
+    // Ice Storm scroll — mid-tier cold burst between Cone of Cold (8d8)
+    // and Shatter (3d8 thunder). Single entry — same rarity as the
+    // existing cold-burst Cone of Cold scroll.
+    &SCROLL_OF_ICE_STORM,
+    // Web scroll — cheap-tier counterpart to Wand of Web (DC 15
+    // Restrained burst). Same shape, easier DC; sits alongside Pipes of
+    // Haunting (burst Frightened DC 13) at the entry-level burst CC tier.
+    &SCROLL_OF_WEB,
+    // Generic / un-flavored Potion of Resistance — DamageResistant for
+    // 10 rounds. Drops alongside the flavored Fire / Cold variants for
+    // a third roll on the same envelope.
+    &POTION_OF_RESISTANCE,
+    // Vigilance potion — consumable counterpart to Amulet of the Vigilant.
+    // Single low-weight entry; installs the DangerSense condition.
+    &POTION_OF_VIGILANCE,
 ];
