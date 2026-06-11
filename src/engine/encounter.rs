@@ -15249,6 +15249,109 @@ mod tests {
         );
     }
 
+    /// Scroll of Aid bumps up to 3 allies' max HP and current HP by 5 each
+    /// (RAW: 30-ft range, 3-target multi-buff). Verifies the picker picks
+    /// the lowest-HP-percent ally first and excludes out-of-range allies.
+    #[test]
+    fn scroll_of_aid_bumps_three_lowest_hp_allies() {
+        use crate::actions::item_actions::READ_AID_SCROLL;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_AID;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&cleric).unwrap().pickup_item(&SCROLL_OF_AID);
+        // Four allies in range — the scroll should pick the three lowest-
+        // HP-percent and skip the healthy one (Aid sorts by HP percentage,
+        // truncates to 3).
+        let close_a = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        let close_b = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        let close_c = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 7), 0, 0)
+            .unwrap();
+        let close_d = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 7), 0, 0)
+            .unwrap();
+        // Wound three different amounts so the priority sort is observable.
+        // close_d stays full-HP and should be skipped (lowest 3 sort
+        // truncates at MAX_TARGETS = 3).
+        e.actors.get_mut(&close_a).unwrap().take_damage(20);
+        e.actors.get_mut(&close_b).unwrap().take_damage(10);
+        e.actors.get_mut(&close_c).unwrap().take_damage(5);
+        let maxes_before: Vec<u32> = [close_a, close_b, close_c, close_d]
+            .iter()
+            .map(|id| e.actors[id].max_hitpoints())
+            .collect();
+        let effects = READ_AID_SCROLL.side_effects(&mut e, cleric, None, None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        // close_a, close_b, close_c should be bumped; close_d skipped
+        // (highest HP percent — sort drops it past the truncate).
+        assert_eq!(
+            e.actors[&close_a].max_hitpoints(),
+            maxes_before[0] + 5,
+            "lowest-HP ally A should get +5 max HP"
+        );
+        assert_eq!(
+            e.actors[&close_b].max_hitpoints(),
+            maxes_before[1] + 5,
+            "second-lowest-HP ally B should get +5 max HP"
+        );
+        assert_eq!(
+            e.actors[&close_c].max_hitpoints(),
+            maxes_before[2] + 5,
+            "third-lowest-HP ally C should get +5 max HP"
+        );
+        assert_eq!(
+            e.actors[&close_d].max_hitpoints(),
+            maxes_before[3],
+            "full-HP ally D should be skipped (only 3 targets)"
+        );
+    }
+
+    /// Scroll of Aid still picks dying allies as targets (RAW Aid is
+    /// usable on a 0-HP ally to keep them in the fight). The bump to max
+    /// HP applies, and the ally's current HP rises by 5 — though the
+    /// engine's `bump_max_hp` doesn't transition the dying actor back to
+    /// Active (that's a separate `heal` path), matching the spell-side
+    /// `Aid` semantics.
+    #[test]
+    fn scroll_of_aid_targets_dying_ally() {
+        use crate::actions::item_actions::READ_AID_SCROLL;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_AID;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&cleric).unwrap().pickup_item(&SCROLL_OF_AID);
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        // Knock the ally to 0 HP (dying) — Aid should still target them
+        // (the dying-filter exclusion was loosened so RAW Aid can apply).
+        let max_before = e.actors[&ally].max_hitpoints();
+        e.actors.get_mut(&ally).unwrap().take_damage(max_before);
+        assert!(e.actors[&ally].is_dying(), "ally should be dying");
+        let effects = READ_AID_SCROLL.side_effects(&mut e, cleric, None, None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&ally].max_hitpoints(),
+            max_before + 5,
+            "Aid should raise the dying ally's max HP by 5"
+        );
+    }
+
     #[test]
     fn hunters_mark_marks_target_and_starts_concentration() {
         use crate::actions::spells::HUNTERS_MARK;

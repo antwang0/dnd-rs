@@ -5258,6 +5258,44 @@ mod tests {
         );
     }
 
+    /// Scroll of Aid uses `TargetingSchema::NoArgs` and is_heal=true so
+    /// the self-heal pipeline reaches for it when the reader is below
+    /// half HP. Mirrors the Mass Healing Word scroll's AI integration —
+    /// confirms a wounded reader will read the scroll without a separate
+    /// burst-aware heuristic.
+    #[test]
+    fn ai_reads_aid_scroll_when_wounded() {
+        use crate::actions::class_features::{RALLY_TAG, SECOND_WIND_TAG};
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_AID;
+        let mut e = empty_arena();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        {
+            let a = e.actors.get_mut(&fighter).unwrap();
+            assert!(a.spend_feature(SECOND_WIND_TAG));
+            a.spend_feature(RALLY_TAG);
+            a.pickup_item(&SCROLL_OF_AID);
+            let max = a.max_hitpoints();
+            a.take_damage(max - 1);
+        }
+
+        let ai = SimpleAi;
+        let decision = ai.decide(&e, fighter);
+        let ControllerDecision::Act(aei) = decision else {
+            panic!("expected an action");
+        };
+        assert_eq!(
+            aei.action().name(),
+            "read aid scroll",
+            "AI should reach for the Aid scroll when wounded and no other heal is available"
+        );
+    }
+
     #[test]
     fn ai_does_not_self_heal_at_full_hp() {
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;

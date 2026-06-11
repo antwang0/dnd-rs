@@ -2697,11 +2697,19 @@ impl Action for ReadAidScroll {
         // mage). 12 tiles = 30 ft on the 2.5 ft grid.
         const RANGE_TILES: isize = 12;
         const MAX_TARGETS: usize = 3;
+        // Allow dying allies — RAW Aid: "the target's hit point maximum
+        // and current hit points increase by 5." A dying ally at 0 HP
+        // gets bumped to 5 HP and is back in the fight (the `bump_max_hp`
+        // helper raises current by the same delta). Mirrors the spell-
+        // side `Aid` impl which doesn't filter dying targets.
         let mut candidates: Vec<(u64, usize)> = encounter
             .actors
             .iter()
             .filter_map(|(id, a)| {
-                if a.team() != caster_team || !a.is_combat_active() {
+                if a.team() != caster_team {
+                    return None;
+                }
+                if !a.is_combat_active() && !a.is_dying() {
                     return None;
                 }
                 let dist = footprint_chebyshev(
