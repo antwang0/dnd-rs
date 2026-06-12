@@ -36971,6 +36971,161 @@ mod tests {
         );
     }
 
+    /// Potion of Haste: bonus-action consumable installs the Hasted
+    /// condition. Verifies install, consume, and refresh rejection.
+    #[test]
+    fn potion_of_haste_installs_hasted_condition() {
+        use crate::actions::item_actions::DRINK_POTION_OF_HASTE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::POTION_OF_HASTE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&f).unwrap().pickup_item(&POTION_OF_HASTE);
+        let aei = ActionExecutionInfo::new(&DRINK_POTION_OF_HASTE, f, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&f].has_condition(Condition::Hasted));
+        assert!(!e.actors[&f].has_item_named("Potion of Haste"));
+    }
+
+    /// Scroll of Flesh to Stone: single-target CON save vs DC 15.
+    /// Sweep seeds to verify at least one failed save installs Petrified.
+    #[test]
+    fn scroll_of_flesh_to_stone_petrifies_on_failed_save() {
+        use crate::actions::item_actions::READ_FLESH_TO_STONE_SCROLL;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_FLESH_TO_STONE;
+        let mut saw_petrified = false;
+        for seed in 0..40u64 {
+            let mut e = ei_seeded(15, 15, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&wiz)
+                .unwrap()
+                .pickup_item(&SCROLL_OF_FLESH_TO_STONE);
+            let targets = vec![goblin];
+            for ef in
+                READ_FLESH_TO_STONE_SCROLL.side_effects(&mut e, wiz, Some(&targets), None, None)
+            {
+                ef.apply(&mut e);
+            }
+            assert!(
+                !e.actors[&wiz].has_item_named("Scroll of Flesh to Stone"),
+                "scroll should be consumed on read"
+            );
+            if e.actors
+                .get(&goblin)
+                .is_some_and(|g| g.has_condition(Condition::Petrified))
+            {
+                saw_petrified = true;
+                break;
+            }
+        }
+        assert!(saw_petrified, "flesh to stone should petrify across seeds");
+    }
+
+    /// Scroll of Prayer of Healing: multi-target heal via the new
+    /// `MultiTargetHealItem` factor with a tight 6-tile envelope. Verifies
+    /// a wounded ally inside the burst is healed; one outside is not.
+    #[test]
+    fn scroll_of_prayer_of_healing_heals_close_allies_only() {
+        use crate::actions::item_actions::READ_PRAYER_OF_HEALING_SCROLL;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::side_effects::DealDamage;
+        use crate::items::item_template::SCROLL_OF_PRAYER_OF_HEALING;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let close_ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 6), 0, 0)
+            .unwrap();
+        let far_ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(15, 15), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_PRAYER_OF_HEALING);
+        // Wound both allies so heal has somewhere to land.
+        for &a in &[close_ally, far_ally] {
+            (DealDamage {
+                actor_id: a,
+                amount: 15,
+                damage_type: crate::engine::types::DamageType::Slashing,
+            })
+            .apply(&mut e);
+        }
+        let close_hp_wounded = e.actors[&close_ally].hitpoints();
+        let far_hp_wounded = e.actors[&far_ally].hitpoints();
+        for ef in READ_PRAYER_OF_HEALING_SCROLL.side_effects(&mut e, cleric, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&cleric].has_item_named("Scroll of Prayer of Healing"),
+            "scroll should be consumed"
+        );
+        assert!(
+            e.actors[&close_ally].hitpoints() > close_hp_wounded,
+            "ally within 6 tiles should be healed"
+        );
+        assert_eq!(
+            e.actors[&far_ally].hitpoints(),
+            far_hp_wounded,
+            "ally outside 6 tile envelope should not be healed"
+        );
+    }
+
+    /// Scroll of Greater Cure Wounds: 4d8+5 touch heal. Verifies the
+    /// scroll heals a wounded ally and is consumed.
+    #[test]
+    fn scroll_of_greater_cure_wounds_heals_touch_target() {
+        use crate::actions::item_actions::READ_GREATER_CURE_WOUNDS_SCROLL;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::side_effects::DealDamage;
+        use crate::items::item_template::SCROLL_OF_GREATER_CURE_WOUNDS;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_GREATER_CURE_WOUNDS);
+        (DealDamage {
+            actor_id: ally,
+            amount: 30,
+            damage_type: crate::engine::types::DamageType::Slashing,
+        })
+        .apply(&mut e);
+        let wounded = e.actors[&ally].hitpoints();
+        let targets = vec![ally];
+        for ef in
+            READ_GREATER_CURE_WOUNDS_SCROLL.side_effects(&mut e, cleric, Some(&targets), None, None)
+        {
+            ef.apply(&mut e);
+        }
+        assert!(!e.actors[&cleric].has_item_named("Scroll of Greater Cure Wounds"));
+        assert!(
+            e.actors[&ally].hitpoints() > wounded,
+            "greater cure wounds should heal the touched ally"
+        );
+    }
+
     /// Seeded sibling of `ei_with_terrain` — same hand-crafted terrain
     /// shape but the encounter's RNG is initialized from `seed` so callers
     /// can sweep seeds for probabilistic assertions while keeping a

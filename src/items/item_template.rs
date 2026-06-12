@@ -1710,6 +1710,74 @@ pub static RING_OF_SPELL_STORING: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Scroll of Cloudkill — Action; 4-tile burst, CON save vs DC 15, fail =
+/// 5d8 poison damage. 5e RAW: level-5 conjuration, 40-ft moving cloud
+/// dealing 5d8 poison; the scroll collapses the moving-cloud lane to a
+/// single one-shot burst-damage roll. Sits in the rare half of the
+/// poison-burst lane (the only poison-damage burst consumable; Stinking
+/// Cloud uses poison-CONDITION rather than poison-DAMAGE). Fires through
+/// the shared `BurstSaveDamageItem` impl.
+pub static SCROLL_OF_CLOUDKILL: Item = Item {
+    name: "Scroll of Cloudkill",
+    glyph: 'C',
+    on_use: Some(&crate::actions::item_actions::READ_CLOUDKILL_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Prayer of Healing — Action; self-centered burst that heals
+/// up to 6 nearest allies for 2d8+3 HP each (within 6 tiles). 5e RAW:
+/// level-2 evocation; 10-min cast time and 30-ft range. The scroll
+/// collapses the 10-min cast to an Action and uses a tighter ally pick
+/// envelope. Sits between Mass Healing Word (1d4+3 bonus action) and
+/// Mass Cure Wounds (3d8+5 action) on the multi-target heal ladder.
+/// Fires through the shared `MultiTargetHealItem` impl.
+pub static SCROLL_OF_PRAYER_OF_HEALING: Item = Item {
+    name: "Scroll of Prayer of Healing",
+    glyph: 'P',
+    on_use: Some(&crate::actions::item_actions::READ_PRAYER_OF_HEALING_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Greater Cure Wounds — Action; 4d8+5 single-target heal at
+/// touch range. Mid-tier between Scroll of Cure Wounds (2d8+2) and the
+/// Wand of Greater Healing (4d8+4) on the single-target ally heal lane.
+/// 5e RAW: Cure Wounds upcast at level 4 = 5d8 + caster mod; we collapse
+/// to 4d8+5 to slot cleanly between the scroll and wand tiers. Fires
+/// through the shared `SingleTargetHealItem` impl.
+pub static SCROLL_OF_GREATER_CURE_WOUNDS: Item = Item {
+    name: "Scroll of Greater Cure Wounds",
+    glyph: 'g',
+    on_use: Some(&crate::actions::item_actions::READ_GREATER_CURE_WOUNDS_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Potion of Haste — Bonus Action; installs `Hasted` on the holder for
+/// 10 rounds (+2 AC, advantage on DEX saves, doubled walking speed).
+/// Distinct from Potion of Speed (which grants an extra Action this turn
+/// + flat +1 attack/save): Haste rides the engine's `Hasted` condition
+/// for the AC / DEX-save / speed bundle. Fires through the shared
+/// `SelfConditionItem` impl. Rejects re-drink when already Hasted.
+pub static POTION_OF_HASTE: Item = Item {
+    name: "Potion of Haste",
+    glyph: 'H',
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_HASTE),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Flesh to Stone — Action; single-target CON save vs DC 15,
+/// fail = `Petrified` for 10 rounds. 5e RAW: level-6 transmutation,
+/// concentration, three-save ladder; the scroll collapses to a single
+/// save-or-stone install and drops concentration. Top of the single-
+/// target lockdown ladder — Petrified blocks the action economy AND
+/// drops the target's AC against physical damage (auto-fail STR / DEX
+/// saves). Fires through the shared `SingleSaveConditionItem` impl.
+pub static SCROLL_OF_FLESH_TO_STONE: Item = Item {
+    name: "Scroll of Flesh to Stone",
+    glyph: 'F',
+    on_use: Some(&crate::actions::item_actions::READ_FLESH_TO_STONE_SCROLL),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -2056,4 +2124,24 @@ pub static LOOT_POOL: &[&Item] = &[
     // Ring of Spell Storing — single-use Magic-Missile-style force dart
     // volley. Sibling to Scroll of Magic Missile on the auto-hit lane.
     &RING_OF_SPELL_STORING,
+    // Scroll of Cloudkill — 5d8 poison-damage burst at DC 15. The only
+    // poison-damage burst consumable; sits alongside Stinking Cloud
+    // (poison-CONDITION) on the poison-flavored AoE lane.
+    &SCROLL_OF_CLOUDKILL,
+    // Scroll of Prayer of Healing — mid-tier multi-ally heal between
+    // Mass Healing Word (1d4+3 bonus action) and Mass Cure Wounds
+    // (3d8+5 action). Single entry on the multi-target heal lane.
+    &SCROLL_OF_PRAYER_OF_HEALING,
+    // Scroll of Greater Cure Wounds — 4d8+5 single-target touch heal.
+    // Slots between the cheap Cure Wounds scroll and the Wand of
+    // Greater Healing on the ally-heal ladder.
+    &SCROLL_OF_GREATER_CURE_WOUNDS,
+    // Potion of Haste — Hasted install on a bonus action. Distinct from
+    // Potion of Speed (extra-action burst); same condition envelope as
+    // the Boots of Speed but bonus-action timing.
+    &POTION_OF_HASTE,
+    // Scroll of Flesh to Stone — top-tier single-target Petrified
+    // installer. Single entry alongside Wand of Polymorph on the
+    // rare half of the single-target lockdown lane.
+    &SCROLL_OF_FLESH_TO_STONE,
 ];

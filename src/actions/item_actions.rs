@@ -3109,3 +3109,96 @@ pub static READ_MASS_CURE_WOUNDS_SCROLL: MultiTargetHealItem = MultiTargetHealIt
     range_tiles: 4,
     max_targets: 6,
 };
+
+const SCROLL_OF_CLOUDKILL_NAME: &str = "Scroll of Cloudkill";
+const SCROLL_OF_PRAYER_OF_HEALING_NAME: &str = "Scroll of Prayer of Healing";
+const SCROLL_OF_GREATER_CURE_WOUNDS_NAME: &str = "Scroll of Greater Cure Wounds";
+const POTION_OF_HASTE_NAME: &str = "Potion of Haste";
+const SCROLL_OF_FLESH_TO_STONE_NAME: &str = "Scroll of Flesh to Stone";
+
+/// Scroll of Cloudkill — 5d8 poison-damage burst at DC 15 CON save.
+/// The only poison-damage burst consumable in the loot pool; sits
+/// alongside Stinking Cloud's burst-Poisoned condition variant.
+/// Fires through the shared `BurstSaveDamageItem` impl.
+pub static READ_CLOUDKILL_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+    action_name: "read cloudkill scroll",
+    action_aliases: &["cloudkill", "cloud"],
+    item_name: SCROLL_OF_CLOUDKILL_NAME,
+    log_label: "scroll of cloudkill",
+    dice: Dice::new(5, 8),
+    damage_type: DamageType::Poison,
+    save: AbilityScoreType::Constitution,
+    dc: 15,
+    radius: 4,
+    // 120 ft RAW; 48 tiles. Capped to map-realistic 48.
+    reach: 48,
+};
+
+/// Scroll of Prayer of Healing — 2d8+3 per-ally heal, up to 6 closest
+/// allies within 6 tiles. Mid-tier between Mass Healing Word (1d4+3
+/// bonus action, 24 tiles) and Mass Cure Wounds (3d8+5 action, 4 tiles
+/// from self) on the multi-target heal ladder. Fires through the shared
+/// `MultiTargetHealItem` impl.
+pub static READ_PRAYER_OF_HEALING_SCROLL: MultiTargetHealItem = MultiTargetHealItem {
+    action_name: "read prayer of healing scroll",
+    action_aliases: &["prayer", "poh"],
+    item_name: SCROLL_OF_PRAYER_OF_HEALING_NAME,
+    log_label: "scroll of prayer of healing",
+    dice: Dice::new(2, 8),
+    flat_bonus: 3,
+    bonus_action: false,
+    // 30 ft range RAW; tighter envelope than Mass Healing Word at 60 ft.
+    range_tiles: 6,
+    max_targets: 6,
+};
+
+/// Scroll of Greater Cure Wounds — 4d8+5 single-target touch heal.
+/// Slots between Cure Wounds scroll (2d8+2) and Wand of Greater Healing
+/// (4d8+4) on the ally-heal ladder. Fires through the shared
+/// `SingleTargetHealItem` impl.
+pub static READ_GREATER_CURE_WOUNDS_SCROLL: SingleTargetHealItem = SingleTargetHealItem {
+    action_name: "read greater cure wounds scroll",
+    action_aliases: &["gcw", "cure+"],
+    item_name: SCROLL_OF_GREATER_CURE_WOUNDS_NAME,
+    log_label: "scroll of greater cure wounds",
+    dice: Dice::new(4, 8),
+    flat_bonus: 5,
+    bonus_action: false,
+    // Touch range RAW — 1 tile gap.
+    reach: 1,
+};
+
+/// Potion of Haste — Bonus Action; installs `Hasted` on the holder for
+/// 10 rounds (+2 AC, advantage on DEX saves, doubled walking speed).
+/// Distinct from Potion of Speed (extra-action burst) — Haste rides the
+/// engine's existing `Hasted` condition for the AC/DEX/speed bundle.
+/// Fires through the shared `SelfConditionItem` impl. Rejects re-drink
+/// when already Hasted.
+pub static DRINK_POTION_OF_HASTE: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of haste",
+    action_aliases: &["haste potion", "hasten"],
+    item_name: POTION_OF_HASTE_NAME,
+    log_text: "{actor} drinks a potion of haste; their movements blur to a streak.",
+    condition: Condition::Hasted,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: true,
+    reject_when_active: true,
+    temp_hp: None,
+};
+
+/// Scroll of Flesh to Stone — Action; single-target CON save vs DC 15,
+/// fail = `Petrified` for 10 rounds. Top of the single-target lockdown
+/// ladder alongside Wand of Polymorph. Fires through the shared
+/// `SingleSaveConditionItem` impl.
+pub static READ_FLESH_TO_STONE_SCROLL: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "read flesh to stone scroll",
+    action_aliases: &["flesh to stone", "fts"],
+    item_name: SCROLL_OF_FLESH_TO_STONE_NAME,
+    log_text: "{actor} reads a scroll of flesh to stone; the target's skin pales to gray.",
+    save: AbilityScoreType::Constitution,
+    dc: 15,
+    // 60 ft RAW; 24 tiles.
+    reach: 24,
+    condition: Condition::Petrified,
+    timer: ConditionTimer::Rounds(10),
+};
