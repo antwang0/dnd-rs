@@ -3115,6 +3115,9 @@ const SCROLL_OF_PRAYER_OF_HEALING_NAME: &str = "Scroll of Prayer of Healing";
 const SCROLL_OF_GREATER_CURE_WOUNDS_NAME: &str = "Scroll of Greater Cure Wounds";
 const POTION_OF_HASTE_NAME: &str = "Potion of Haste";
 const SCROLL_OF_FLESH_TO_STONE_NAME: &str = "Scroll of Flesh to Stone";
+const SCROLL_OF_SYNAPTIC_STATIC_NAME: &str = "Scroll of Synaptic Static";
+const SCROLL_OF_CIRCLE_OF_DEATH_NAME: &str = "Scroll of Circle of Death";
+const POTION_OF_MIND_BLANK_NAME: &str = "Potion of Mind Blank";
 
 /// Scroll of Cloudkill — 5d8 poison-damage burst at DC 15 CON save.
 /// The only poison-damage burst consumable in the loot pool; sits
@@ -3201,4 +3204,66 @@ pub static READ_FLESH_TO_STONE_SCROLL: SingleSaveConditionItem = SingleSaveCondi
     reach: 24,
     condition: Condition::Petrified,
     timer: ConditionTimer::Rounds(10),
+};
+
+/// Scroll of Synaptic Static — Action; 4-tile burst, INT save vs DC 15,
+/// fail = 8d6 psychic damage; pass = half. 5e RAW: level-5 enchantment,
+/// 20-ft radius (4 tiles), 120-ft range (48 tiles). Fills the psychic
+/// burst-damage niche in the scroll family alongside Fire / Lightning /
+/// Cold / Acid / Thunder / Poison. Routes through the shared
+/// `BurstSaveDamageItem` impl — evasion / Careful Spell / Heightened
+/// Spell all flow through the same chokepoint as every other AoE save.
+pub static READ_SYNAPTIC_STATIC_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+    action_name: "read synaptic static scroll",
+    action_aliases: &["synaptic", "static"],
+    item_name: SCROLL_OF_SYNAPTIC_STATIC_NAME,
+    log_label: "scroll of synaptic static",
+    dice: Dice::new(8, 6),
+    damage_type: DamageType::Psychic,
+    save: AbilityScoreType::Intelligence,
+    dc: 15,
+    radius: 4,
+    // 120 ft RAW; 48 tiles.
+    reach: 48,
+};
+
+/// Scroll of Circle of Death — Action; 6-tile burst, CON save vs DC 15,
+/// fail = 8d6 necrotic damage; pass = half. 5e RAW: level-6 necromancy,
+/// 60-ft radius (we tighten to 6 tiles so the burst stays on-grid for the
+/// typical encounter map), 150-ft range. Fills the necrotic burst-damage
+/// niche in the scroll family — the only necrotic-typed burst consumable
+/// in the loot pool. Routes through the shared `BurstSaveDamageItem` impl.
+pub static READ_CIRCLE_OF_DEATH_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+    action_name: "read circle of death scroll",
+    action_aliases: &["circle of death", "death circle"],
+    item_name: SCROLL_OF_CIRCLE_OF_DEATH_NAME,
+    log_label: "scroll of circle of death",
+    dice: Dice::new(8, 6),
+    damage_type: DamageType::Necrotic,
+    save: AbilityScoreType::Constitution,
+    dc: 15,
+    // RAW 60 ft radius — collapsed to 6 tiles so the burst fits the
+    // grid envelope every other scroll rides (4-6 tile radius range).
+    radius: 6,
+    // 150 ft RAW; 48 tiles (engine cap).
+    reach: 48,
+};
+
+/// Potion of Mind Blank — Action; installs `MindBlanked` on the drinker
+/// for 10 rounds (immunity to psychic damage and the Charmed condition).
+/// 5e RAW: level-8 abjuration, 24-hour duration; the potion collapses
+/// to a combat-scale fixed-duration buff. Top-tier mental-defense
+/// consumable — pairs with Periapt of Proof against Poison (poison
+/// immunity) on the typed-immunity consumable lane. Fires through the
+/// shared `SelfConditionItem` impl. Rejects re-drink when already up.
+pub static DRINK_POTION_OF_MIND_BLANK: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of mind blank",
+    action_aliases: &["mind blank", "mb potion"],
+    item_name: POTION_OF_MIND_BLANK_NAME,
+    log_text: "{actor} drinks a potion of mind blank; their thoughts dim to a silent grey.",
+    condition: Condition::MindBlanked,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    reject_when_active: true,
+    temp_hp: None,
 };

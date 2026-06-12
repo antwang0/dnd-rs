@@ -1778,6 +1778,42 @@ pub static SCROLL_OF_FLESH_TO_STONE: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Scroll of Synaptic Static — 8d6 psychic-damage burst at DC 15 INT save.
+/// Fills the psychic burst-damage niche in the scroll family alongside
+/// Fire / Lightning / Cold / Acid / Thunder / Poison. Fires through the
+/// shared `BurstSaveDamageItem` action impl.
+pub static SCROLL_OF_SYNAPTIC_STATIC: Item = Item {
+    name: "Scroll of Synaptic Static",
+    glyph: 'y',
+    on_use: Some(&crate::actions::item_actions::READ_SYNAPTIC_STATIC_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Circle of Death — 8d6 necrotic-damage burst at DC 15 CON save.
+/// The only necrotic-damage burst consumable in the loot pool; sits in
+/// the rare half of the lane alongside Synaptic Static (psychic) as a
+/// premium typed-burst scroll. Fires through the shared
+/// `BurstSaveDamageItem` action impl.
+pub static SCROLL_OF_CIRCLE_OF_DEATH: Item = Item {
+    name: "Scroll of Circle of Death",
+    glyph: 'O',
+    on_use: Some(&crate::actions::item_actions::READ_CIRCLE_OF_DEATH_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Potion of Mind Blank — installs `MindBlanked` on the drinker for 10
+/// rounds. Top-tier mental-defense consumable: immune to psychic damage
+/// AND immune to the Charmed condition for the duration. Sits in the
+/// rare half of the loot pool alongside Periapt of Proof against Poison
+/// (poison immunity passive) on the typed-immunity lane. Fires through
+/// the shared `SelfConditionItem` action impl.
+pub static POTION_OF_MIND_BLANK: Item = Item {
+    name: "Potion of Mind Blank",
+    glyph: 'M',
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_MIND_BLANK),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -2144,4 +2180,17 @@ pub static LOOT_POOL: &[&Item] = &[
     // installer. Single entry alongside Wand of Polymorph on the
     // rare half of the single-target lockdown lane.
     &SCROLL_OF_FLESH_TO_STONE,
+    // Scroll of Synaptic Static — 8d6 psychic-damage burst at DC 15 INT
+    // save. Fills the psychic-burst niche between Cone of Cold (cold)
+    // and Vitriolic Sphere (acid) — single entry alongside the rare
+    // typed-burst scroll tier.
+    &SCROLL_OF_SYNAPTIC_STATIC,
+    // Scroll of Circle of Death — 8d6 necrotic-damage burst at DC 15 CON
+    // save. The only necrotic-typed burst in the loot pool; rounds out
+    // the typed-burst scroll family.
+    &SCROLL_OF_CIRCLE_OF_DEATH,
+    // Potion of Mind Blank — top-tier mental-defense consumable.
+    // Psychic + Charmed immunity for 10 rounds. Single low-weight entry
+    // alongside the other premium typed-defense consumables.
+    &POTION_OF_MIND_BLANK,
 ];

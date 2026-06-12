@@ -37126,6 +37126,137 @@ mod tests {
         );
     }
 
+    /// Scroll of Synaptic Static: psychic burst. Enemies in the burst
+    /// take damage on a failed save; MindBlanked actors (psychic-immune)
+    /// take zero. Verifies the typed-immunity lane folds the burst-damage
+    /// scroll into the same chokepoint as the spell-side equivalents.
+    #[test]
+    fn scroll_of_synaptic_static_psychic_immunity_takes_zero() {
+        use crate::actions::item_actions::READ_SYNAPTIC_STATIC_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_SYNAPTIC_STATIC;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        e.actors.get_mut(&enemy).unwrap().add_condition(
+            Condition::MindBlanked,
+            crate::conditions::ConditionTimer::Rounds(10),
+        );
+        e.actors
+            .get_mut(&wiz)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_SYNAPTIC_STATIC);
+        let hp = e.actors[&enemy].hitpoints();
+        for ef in READ_SYNAPTIC_STATIC_SCROLL.side_effects(
+            &mut e,
+            wiz,
+            None,
+            Some(&vec![Coordinate::new(10, 10)]),
+            None,
+        ) {
+            ef.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&enemy].hitpoints(),
+            hp,
+            "psychic-immune (MindBlanked) target should take no damage from Synaptic Static"
+        );
+        assert!(
+            !e.actors[&wiz].has_item_named("Scroll of Synaptic Static"),
+            "scroll should be consumed on read"
+        );
+    }
+
+    /// Scroll of Circle of Death: necrotic burst. Enemies in the burst
+    /// take damage on a failed save. Sweep seeds to assert at least one
+    /// failed save dropped HP — the necrotic-typed burst lane shares the
+    /// same chokepoint as every other BurstSaveDamageItem.
+    #[test]
+    fn scroll_of_circle_of_death_deals_necrotic_burst() {
+        use crate::actions::item_actions::READ_CIRCLE_OF_DEATH_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_CIRCLE_OF_DEATH;
+        let mut saw_damage = false;
+        for seed in 0..20u64 {
+            let mut e = ei_seeded(25, 25, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(12, 12), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&wiz)
+                .unwrap()
+                .pickup_item(&SCROLL_OF_CIRCLE_OF_DEATH);
+            let hp = e.actors[&enemy].hitpoints();
+            for ef in READ_CIRCLE_OF_DEATH_SCROLL.side_effects(
+                &mut e,
+                wiz,
+                None,
+                Some(&vec![Coordinate::new(12, 12)]),
+                None,
+            ) {
+                ef.apply(&mut e);
+            }
+            assert!(
+                !e.actors[&wiz].has_item_named("Scroll of Circle of Death"),
+                "scroll should be consumed on read"
+            );
+            let after = e.actors.get(&enemy).map(|a| a.hitpoints()).unwrap_or(0);
+            if after < hp {
+                saw_damage = true;
+                break;
+            }
+        }
+        assert!(
+            saw_damage,
+            "circle of death should deal necrotic damage across seeds"
+        );
+    }
+
+    /// Potion of Mind Blank: action-cost consumable installs MindBlanked.
+    /// Verifies install, consume, and refresh rejection — MindBlanked
+    /// grants psychic-damage immunity AND Charmed immunity for the duration.
+    #[test]
+    fn potion_of_mind_blank_installs_mind_blanked_condition() {
+        use crate::actions::item_actions::DRINK_POTION_OF_MIND_BLANK;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::POTION_OF_MIND_BLANK;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .pickup_item(&POTION_OF_MIND_BLANK);
+        let aei = ActionExecutionInfo::new(&DRINK_POTION_OF_MIND_BLANK, f, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&f].has_condition(Condition::MindBlanked));
+        assert!(!e.actors[&f].has_item_named("Potion of Mind Blank"));
+        // Refresh rejection: re-validating with no second potion in
+        // inventory should fail (no copy left), AND even with one a
+        // second drink is rejected by the reject_when_active gate.
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .pickup_item(&POTION_OF_MIND_BLANK);
+        let refresh = ActionExecutionInfo::new(&DRINK_POTION_OF_MIND_BLANK, f, None, None, None);
+        assert!(
+            !refresh.validate(&e),
+            "potion of mind blank should reject re-drink while already up"
+        );
+    }
+
     /// Seeded sibling of `ei_with_terrain` — same hand-crafted terrain
     /// shape but the encounter's RNG is initialized from `seed` so callers
     /// can sweep seeds for probabilistic assertions while keeping a
