@@ -3,8 +3,8 @@ use std::sync::LazyLock;
 
 use crate::{
     actions::action_template::{
-        Action, TargetingSchema, bonus_action_only, first_target_id, first_target_location,
-        free_cost,
+        Action, TargetingSchema, bonus_action_and_slot, bonus_action_only, first_target_id,
+        first_target_location, free_cost,
     },
     conditions::{Condition, ConditionTimer},
     engine::{
@@ -1258,7 +1258,7 @@ impl Action for DivineSmite {
         // Bonus action + level-1 spell slot. Burning the slot is the
         // load-bearing resource cost; the bonus action just prevents the
         // paladin from chaining smites with other bonus actions.
-        vec![Resource::BonusAction, Resource::SpellSlot(1)]
+        bonus_action_and_slot(1)
     }
     fn custom_validate_input(
         &self,
@@ -4018,7 +4018,7 @@ impl Action for ConvertSpellSlot {
         // The spell slot cost lives in the resource lane so the engine's
         // existing slot debit/log pipeline handles it cleanly (vs an
         // inline `consume_spell_slot` in `side_effects`).
-        vec![Resource::BonusAction, Resource::SpellSlot(self.slot_level)]
+        bonus_action_and_slot(self.slot_level)
     }
     fn custom_validate_input(
         &self,

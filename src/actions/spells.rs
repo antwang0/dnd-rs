@@ -3,8 +3,8 @@ use std::sync::LazyLock;
 
 use crate::{
     actions::action_template::{
-        action_and_slot, action_only, bonus_action_and_slot, first_target_id, first_target_location,
-        Action, TargetingSchema,
+        action_and_slot, action_only, bonus_action_and_slot, bonus_action_only, first_target_id,
+        first_target_location, Action, TargetingSchema,
     },
     actors::actor_template::ConcentrationData,
     conditions::{Condition, ConditionTimer},
@@ -13586,7 +13586,7 @@ impl Action for MassPolymorph {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(origin) = target_locations.and_then(|v| v.first().copied()) else {
+        let Some(origin) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -14006,7 +14006,7 @@ impl Action for SickeningRadiance {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(center) = target_locations.and_then(|v| v.first().copied()) else {
+        let Some(center) = first_target_location(target_locations) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -15536,7 +15536,7 @@ impl Action for Shillelagh {
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
         // RAW: bonus action (cantrip). No slot consumed.
-        crate::actions::action_template::bonus_action_only()
+        bonus_action_only()
     }
     fn custom_validate_input(
         &self,
@@ -18183,7 +18183,7 @@ impl Action for Telekinetic {
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
         // Bonus action cantrip — no spell slot.
-        vec![Resource::BonusAction]
+        bonus_action_only()
     }
     fn side_effects(
         &self,
@@ -20841,7 +20841,7 @@ impl Action for EldritchSmite {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(&tid) = target_ids.and_then(|ids| ids.first()) else {
+        let Some(tid) = first_target_id(target_ids) else {
             return Vec::new();
         };
         let Some(caster) = encounter.actors.get(&caster_id) else {

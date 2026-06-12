@@ -311,7 +311,7 @@ pub trait Action {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        vec![Resource::Action]
+        action_only()
     }
 
     fn validate_input(
