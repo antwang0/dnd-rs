@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use crate::{
     actions::action_template::{
         Action, TargetingSchema, action_or_bonus_only, bonus_action_only, first_target_id,
+        first_target_location,
     },
     conditions::{Condition, ConditionTimer},
     engine::{
@@ -107,7 +108,7 @@ impl Action for BurstSaveDamageItem {
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::actions::action_template::resolve_burst_save_damage;
 
-        let Some(&center) = target_locations.and_then(|locs| locs.first()) else {
+        let Some(center) = first_target_location(target_locations) else {
             return Vec::new();
         };
         if !consume_caster_item(encounter, caster_id, self.item_name) {
@@ -568,6 +569,155 @@ pub static READ_MAGIC_MISSILE_SCROLL: MagicMissileItem = MagicMissileItem {
     darts: 3,
     reach: 30,
 };
+
+/// Config struct for "single-target save-or-take-damage" consumables —
+/// the shared shape behind Scroll of Disintegrate (10d6+40 force, no
+/// save-half) and Scroll of Finger of Death (7d8+30 necrotic, save
+/// halves). Mirrors `BurstSaveDamageItem` for the single-target variant.
+///
+/// The save is rolled through the caster-aware path so the Sorcerer
+/// Heightened Spell prime (forces the target's first save to
+/// disadvantage) flows in if the item is fired from a sorcerer's
+/// inventory. Evasion (DEX-save halve-to-zero) applies the same way it
+/// does for the burst variant — RAW evasion fires on any DEX save vs
+/// an effect that already grants half-on-save, including single-target
+/// ones.
+///
+/// Adding a new variant is a one-static declaration — no new `Action`
+/// impl needed.
+pub struct SingleSaveDamageItem {
+    /// Player-facing action name (e.g. "read disintegrate scroll").
+    pub action_name: &'static str,
+    /// Picker aliases.
+    pub action_aliases: &'static [&'static str],
+    /// Inventory item name to gate validate / consume on.
+    pub item_name: &'static str,
+    /// Log line prefix (e.g. "scroll of disintegrate"). The row reads
+    /// `  {log_label}: {count}d{faces}({raw}){+flat} = {total} {type}`.
+    pub log_label: &'static str,
+    /// Damage dice (rolled once).
+    pub dice: Dice,
+    /// Flat bonus added on top of the rolled dice (RAW Disintegrate: +40;
+    /// Finger of Death: +30; 0 for "pure dice" payloads).
+    pub flat_bonus: u32,
+    /// Damage type emitted on the side-effect.
+    pub damage_type: DamageType,
+    /// Save ability for the target.
+    pub save: AbilityScoreType,
+    /// Save DC (typically 15 for SRD scrolls / wands).
+    pub dc: i32,
+    /// Maximum reach in tiles for the targeting picker.
+    pub reach: isize,
+    /// `true` ⇒ a successful save halves damage (Finger of Death style);
+    /// `false` ⇒ a successful save zeros it (Disintegrate style). Evasion
+    /// promotes both branches by one tier — pass+evasion zeros either
+    /// way, fail+evasion halves either way.
+    pub save_for_half: bool,
+}
+
+impl Action for SingleSaveDamageItem {
+    fn name(&self) -> &str {
+        self.action_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.action_aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.reach)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![self.damage_type]
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, self.item_name)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        if !consume_caster_item(encounter, caster_id, self.item_name) {
+            return Vec::new();
+        }
+        let raw = encounter.roll(&self.dice);
+        let total = raw.saturating_add(self.flat_bonus);
+        encounter.log(format!(
+            "  {}: {}d{}({})+{} = {} {}",
+            self.log_label,
+            self.dice.count,
+            self.dice.faces,
+            raw,
+            self.flat_bonus,
+            total,
+            self.damage_type,
+        ));
+        let save =
+            encounter.roll_save_against_caster(target_id, self.save, self.dc, caster_id);
+        let passed = save.passed();
+        // RAW Evasion: only fires on DEX saves against effects that
+        // allow half-damage on a successful save. Pass + evasion → 0;
+        // fail + evasion → half. No-save-half effects (Disintegrate)
+        // never trigger evasion — evasion has nothing to "evade" up to.
+        let has_evasion = self.save == AbilityScoreType::Dexterity
+            && self.save_for_half
+            && encounter
+                .actors
+                .get(&target_id)
+                .is_some_and(|a| a.has_evasion());
+        let dmg = match (passed, self.save_for_half, has_evasion) {
+            // Save passed with evasion (always save-for-half here).
+            (true, _, true) => 0,
+            // Save passed, save-for-half effect: half damage.
+            (true, true, false) => total / 2,
+            // Save passed, no-save-half effect: full block.
+            (true, false, false) => 0,
+            // Save failed with evasion (save-for-half): half damage.
+            (false, _, true) => total / 2,
+            // Save failed: full damage.
+            (false, _, false) => total,
+        };
+        if dmg == 0 {
+            if has_evasion && passed {
+                encounter.log(format!(
+                    "  evasion: {} takes no damage",
+                    encounter.actor_name(target_id)
+                ));
+            }
+            return Vec::new();
+        }
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: dmg,
+            damage_type: self.damage_type,
+        })]
+    }
+}
 
 /// Drink an Antitoxin: removes the Poisoned condition and grants a flat
 /// +5 save bonus until the next long rest (5e abstracts this as
@@ -1641,7 +1791,7 @@ impl Action for BurstSaveConditionItem {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(center) = target_locations.and_then(|locs| locs.first()).copied() else {
+        let Some(center) = first_target_location(target_locations) else {
             return Vec::new();
         };
         if !consume_caster_item(encounter, caster_id, self.item_name) {
@@ -3284,6 +3434,242 @@ pub static DRINK_POTION_OF_MIND_BLANK: SelfConditionItem = SelfConditionItem {
     item_name: POTION_OF_MIND_BLANK_NAME,
     log_text: "{actor} drinks a potion of mind blank; their thoughts dim to a silent grey.",
     condition: Condition::MindBlanked,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    reject_when_active: true,
+    temp_hp: None,
+};
+
+const SCROLL_OF_DISINTEGRATE_NAME: &str = "Scroll of Disintegrate";
+const SCROLL_OF_FINGER_OF_DEATH_NAME: &str = "Scroll of Finger of Death";
+const WAND_OF_HOLD_MONSTER_NAME: &str = "Wand of Hold Monster";
+const POTION_OF_FORESIGHT_NAME: &str = "Potion of Foresight";
+const NECKLACE_OF_PRAYER_BEADS_NAME: &str = "Necklace of Prayer Beads";
+const SCROLL_OF_HEAL_NAME: &str = "Scroll of Heal";
+const SCROLL_OF_PHANTASMAL_KILLER_NAME: &str = "Scroll of Phantasmal Killer";
+const POTION_OF_MIRROR_IMAGE_NAME: &str = "Potion of Mirror Image";
+
+/// Scroll of Disintegrate — Action; 24-tile reach, DEX save vs DC 15.
+/// On fail, 10d6+40 force damage; on save, nothing (no half). Force
+/// damage is rarely resisted in the engine's pool, so a landed hit
+/// reads as full payload. Top of the single-target burst-damage scroll
+/// ladder — sits alongside the burst Scrolls of Synaptic Static / Circle
+/// of Death on the rare typed-burst lane. Fires through the shared
+/// `SingleSaveDamageItem` impl.
+pub static READ_DISINTEGRATE_SCROLL: SingleSaveDamageItem = SingleSaveDamageItem {
+    action_name: "read disintegrate scroll",
+    action_aliases: &["disintegrate", "disint scroll"],
+    item_name: SCROLL_OF_DISINTEGRATE_NAME,
+    log_label: "scroll of disintegrate",
+    dice: Dice::new(10, 6),
+    flat_bonus: 40,
+    damage_type: DamageType::Force,
+    save: AbilityScoreType::Dexterity,
+    dc: 15,
+    reach: 24,
+    save_for_half: false,
+};
+
+/// Scroll of Finger of Death — Action; 24-tile reach, CON save vs DC 15.
+/// On fail, 7d8+30 necrotic damage; on save, half. RAW: level-7
+/// necromancy with a "raise-as-zombie" rider — the scroll drops the
+/// raise clause and surfaces the damage half. Sibling to Scroll of
+/// Disintegrate on the rare single-target damage-scroll lane (Force vs
+/// Necrotic; no-save-half vs save-half). Fires through the shared
+/// `SingleSaveDamageItem` impl.
+pub static READ_FINGER_OF_DEATH_SCROLL: SingleSaveDamageItem = SingleSaveDamageItem {
+    action_name: "read finger of death scroll",
+    action_aliases: &["finger of death", "fod scroll"],
+    item_name: SCROLL_OF_FINGER_OF_DEATH_NAME,
+    log_label: "scroll of finger of death",
+    dice: Dice::new(7, 8),
+    flat_bonus: 30,
+    damage_type: DamageType::Necrotic,
+    save: AbilityScoreType::Constitution,
+    dc: 15,
+    reach: 24,
+    save_for_half: true,
+};
+
+/// Wand of Hold Monster — Action; single-target WIS save vs DC 17, fail =
+/// `Paralyzed` for 10 rounds. Top tier of the Hold-Paralyzed ladder
+/// (Scroll of Hold Person at DC 13, Wand of Paralysis at DC 15,
+/// Scroll of Hold Monster at DC 15 / 36 reach, Wand of Hold Monster at
+/// DC 17 / 36 reach). 5e RAW: level-5 enchantment, concentration; the
+/// wand collapses to a single-use cast with the standard
+/// fixed-duration consumable envelope. Fires through the shared
+/// `SingleSaveConditionItem` impl.
+pub static USE_WAND_OF_HOLD_MONSTER: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "use wand of hold monster",
+    action_aliases: &["hold monster wand", "hm wand"],
+    item_name: WAND_OF_HOLD_MONSTER_NAME,
+    log_text: "{actor} aims the wand of hold monster; iron sigils freeze the target's limbs.",
+    save: AbilityScoreType::Wisdom,
+    dc: 17,
+    // 90 ft RAW; 36 tiles.
+    reach: 36,
+    condition: Condition::Paralyzed,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Potion of Foresight — Action; installs `Foreseen` for 10 rounds.
+/// 5e RAW: level-9 divination spell, 8-hour concentration; the potion
+/// collapses to a combat-scale fixed-duration self-buff and bypasses
+/// concentration. Foreseen grants advantage on every attack roll, save,
+/// and ability check while attackers against the holder roll with
+/// disadvantage — the mightiest single-target buff in the SRD,
+/// collapsed to a one-shot consumable for the rare top-tier defensive
+/// lane. Rejects re-drink while already up. Fires through the shared
+/// `SelfConditionItem` impl.
+pub static DRINK_POTION_OF_FORESIGHT: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of foresight",
+    action_aliases: &["foresight", "foresight potion"],
+    item_name: POTION_OF_FORESIGHT_NAME,
+    log_text: "{actor} drinks a potion of foresight; threads of fate spool out before them.",
+    condition: Condition::Foreseen,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    reject_when_active: true,
+    temp_hp: None,
+};
+
+/// Necklace of Prayer Beads — Bonus Action; installs `Blessed` on a
+/// touching ally for 10 rounds. 5e RAW (DMG): a strand of 24 to 30
+/// beads, each storing one cleric spell; we collapse to a single-bead
+/// consumable that fires the Bless spell at the bearer's chosen ally.
+/// Sibling to Scroll of Bless on the Blessed lane — the necklace is the
+/// trinket-flavored bonus-action variant. Touch range (1 tile) matches
+/// the strand-of-beads / lay-hands flavor. Fires through the shared
+/// `SingleTargetBuffItem` impl.
+pub static USE_NECKLACE_OF_PRAYER_BEADS: SingleTargetBuffItem = SingleTargetBuffItem {
+    action_name: "use necklace of prayer beads",
+    action_aliases: &["prayer beads", "beads"],
+    item_name: NECKLACE_OF_PRAYER_BEADS_NAME,
+    log_text: "{actor} pulls a single bead from the necklace of prayer beads; a halo of warm light settles.",
+    condition: Condition::Blessed,
+    timer: ConditionTimer::Rounds(10),
+    reach: 1,
+    bonus_action: true,
+    reject_when_active: true,
+};
+
+/// Scroll of Heal — Action; touch-range single-target heal for a flat
+/// 70 HP. 5e RAW: level-6 evocation, 70 HP heal + cures Blinded /
+/// Deafened / Diseased on the target. The scroll collapses to the
+/// raw-HP-heal half (the cure-condition clauses are flavor-only at the
+/// engine's current granularity). Sits at the top of the single-target
+/// ally heal ladder above Wand of Greater Healing (4d8+4). Custom
+/// `Action` impl rather than the shared `SingleTargetHealItem` because
+/// the heal is a flat number (no dice) — feeding 0d1+70 through the
+/// shared factor would print "0d1(0)+70 = 70 HP" which is ugly.
+pub struct ReadHealScroll {}
+
+impl Action for ReadHealScroll {
+    fn name(&self) -> &str {
+        "read heal scroll"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["heal scroll", "scroll of heal"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch range = 1 tile.
+        Some(1)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn is_heal(&self) -> bool {
+        true
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, SCROLL_OF_HEAL_NAME)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        if !consume_caster_item(encounter, caster_id, SCROLL_OF_HEAL_NAME) {
+            return Vec::new();
+        }
+        encounter.log("  scroll of heal: 70 HP".to_string());
+        vec![Box::new(Heal {
+            actor_id: target_id,
+            amount: 70,
+        })]
+    }
+}
+
+pub static READ_HEAL_SCROLL: ReadHealScroll = ReadHealScroll {};
+
+/// Scroll of Phantasmal Killer — Action; single-target WIS save vs DC 15,
+/// fail = `Frightened` for 10 rounds. 5e RAW: level-4 illusion,
+/// concentration; the target hallucinates their worst fear and takes
+/// 4d10 psychic damage at the start of each of their turns. The scroll
+/// drops the damage-ramp (the engine doesn't model recurring per-turn
+/// hallucination damage cleanly) and surfaces the Frightened install at
+/// the rare DC 15 tier. Sibling to Wand of Fear (also Frightened DC 15)
+/// — the scroll is the illusion-flavored variant with the same envelope.
+/// Fires through the shared `SingleSaveConditionItem` impl.
+pub static READ_PHANTASMAL_KILLER_SCROLL: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "read phantasmal killer scroll",
+    action_aliases: &["phantasmal killer", "pk scroll"],
+    item_name: SCROLL_OF_PHANTASMAL_KILLER_NAME,
+    log_text: "{actor} reads a scroll of phantasmal killer; the target's worst fear takes form.",
+    save: AbilityScoreType::Wisdom,
+    dc: 15,
+    // 120 ft RAW; 48 tiles (engine cap).
+    reach: 48,
+    condition: Condition::Frightened,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Potion of Mirror Image — Action; installs `MirroredImages` on the
+/// drinker for 10 rounds. 5e RAW: level-2 illusion, three illusory
+/// duplicates intercept attacks until popped one-by-one; the potion
+/// drops the spell-slot cost and collapses to the fixed-duration
+/// consumable envelope. Defensive consumable on the rare half of the
+/// pool — pairs with Potion of Blur and Potion of Invisibility on the
+/// attacker-disadvantage lane (Mirror Image trades attack-miss-on-
+/// duplicate for a finite stack of free hits). Rejects re-drink while
+/// already up. Fires through the shared `SelfConditionItem` impl.
+pub static DRINK_POTION_OF_MIRROR_IMAGE: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of mirror image",
+    action_aliases: &["mirror image", "mi potion"],
+    item_name: POTION_OF_MIRROR_IMAGE_NAME,
+    log_text: "{actor} drinks a potion of mirror image; three flickering duplicates fan out.",
+    condition: Condition::MirroredImages,
     timer: ConditionTimer::Rounds(10),
     bonus_action: false,
     reject_when_active: true,

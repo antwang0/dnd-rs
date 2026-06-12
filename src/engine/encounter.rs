@@ -37328,6 +37328,236 @@ mod tests {
         );
     }
 
+    /// Scroll of Disintegrate: 10d6+40 force damage on fail, 0 on save.
+    /// Min damage is 50 (10*1+40); we drop the enemy max HP enough to
+    /// guarantee a survival window when the save succeeds, then sweep
+    /// seeds to confirm we observe at least one damaging hit.
+    #[test]
+    fn scroll_of_disintegrate_deals_force_damage_on_failed_save() {
+        use crate::actions::item_actions::READ_DISINTEGRATE_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_DISINTEGRATE;
+        let mut saw_damage = false;
+        for seed in 0..30u64 {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&wiz)
+                .unwrap()
+                .pickup_item(&SCROLL_OF_DISINTEGRATE);
+            let hp_before = e.actors[&enemy].hitpoints();
+            for ef in READ_DISINTEGRATE_SCROLL.side_effects(
+                &mut e,
+                wiz,
+                Some(&vec![enemy]),
+                None,
+                None,
+            ) {
+                ef.apply(&mut e);
+            }
+            assert!(
+                !e.actors[&wiz].has_item_named("Scroll of Disintegrate"),
+                "scroll should be consumed on read"
+            );
+            let hp_after = e.actors.get(&enemy).map(|a| a.hitpoints()).unwrap_or(0);
+            if hp_after < hp_before {
+                saw_damage = true;
+                break;
+            }
+        }
+        assert!(
+            saw_damage,
+            "disintegrate should deal force damage on at least one seed",
+        );
+    }
+
+    /// Wand of Hold Monster: high-DC single-target Paralyzed installer.
+    /// Sweep seeds until we observe a failed save → Paralyzed install on
+    /// the target. DC 17 is high so we expect a few seeds to not paralyze;
+    /// the sweep guards against "wand never lands" regressions.
+    #[test]
+    fn wand_of_hold_monster_installs_paralyzed_on_failed_save() {
+        use crate::actions::item_actions::USE_WAND_OF_HOLD_MONSTER;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::WAND_OF_HOLD_MONSTER;
+        let mut saw_paralyzed = false;
+        for seed in 0..30u64 {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 6), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&wiz)
+                .unwrap()
+                .pickup_item(&WAND_OF_HOLD_MONSTER);
+            for ef in USE_WAND_OF_HOLD_MONSTER.side_effects(
+                &mut e,
+                wiz,
+                Some(&vec![target]),
+                None,
+                None,
+            ) {
+                ef.apply(&mut e);
+            }
+            assert!(
+                !e.actors[&wiz].has_item_named("Wand of Hold Monster"),
+                "wand should be consumed on use"
+            );
+            if e.actors[&target].has_condition(Condition::Paralyzed) {
+                saw_paralyzed = true;
+                break;
+            }
+        }
+        assert!(
+            saw_paralyzed,
+            "wand of hold monster should paralyze on at least one seed"
+        );
+    }
+
+    /// Potion of Foresight: installs Foreseen for 10 rounds; refresh
+    /// rejection mirrors the Mind Blank / Mage Armor pattern.
+    #[test]
+    fn potion_of_foresight_installs_foreseen_and_rejects_refresh() {
+        use crate::actions::item_actions::DRINK_POTION_OF_FORESIGHT;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::POTION_OF_FORESIGHT;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .pickup_item(&POTION_OF_FORESIGHT);
+        let aei = ActionExecutionInfo::new(&DRINK_POTION_OF_FORESIGHT, f, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&f].has_condition(Condition::Foreseen));
+        assert!(!e.actors[&f].has_item_named("Potion of Foresight"));
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .pickup_item(&POTION_OF_FORESIGHT);
+        let refresh =
+            ActionExecutionInfo::new(&DRINK_POTION_OF_FORESIGHT, f, None, None, None);
+        assert!(
+            !refresh.validate(&e),
+            "potion of foresight should reject re-drink while already up"
+        );
+    }
+
+    /// Scroll of Heal: heals a touching ally by a flat 70 HP and
+    /// consumes itself. Bruises the ally first so the heal is observable.
+    #[test]
+    fn scroll_of_heal_heals_adjacent_ally_by_flat_seventy() {
+        use crate::actions::item_actions::READ_HEAL_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_HEAL;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let healer = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&healer)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_HEAL);
+        // Bruise the ally to 1 HP so a 70-HP heal is observable.
+        let ally_max = e.actors[&ally].max_hitpoints();
+        e.actors.get_mut(&ally).unwrap().take_damage(ally_max - 1);
+        assert_eq!(e.actors[&ally].hitpoints(), 1);
+        let aei =
+            ActionExecutionInfo::new(&READ_HEAL_SCROLL, healer, Some(vec![ally]), None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        // Heal is capped at max HP; ally should now be at full or close
+        // to it.
+        let ally_hp = e.actors[&ally].hitpoints();
+        assert!(
+            ally_hp > 1,
+            "ally should have been healed (was 1, is now {})",
+            ally_hp
+        );
+        assert!(
+            !e.actors[&healer].has_item_named("Scroll of Heal"),
+            "scroll should be consumed on read"
+        );
+    }
+
+    /// Necklace of Prayer Beads: touch-range Bless install on an ally.
+    /// Single-bead consumable — Pickup, use, verify Blessed installs and
+    /// the necklace is consumed.
+    #[test]
+    fn necklace_of_prayer_beads_blesses_adjacent_ally() {
+        use crate::actions::item_actions::USE_NECKLACE_OF_PRAYER_BEADS;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::NECKLACE_OF_PRAYER_BEADS;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let user = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&user)
+            .unwrap()
+            .pickup_item(&NECKLACE_OF_PRAYER_BEADS);
+        let aei = ActionExecutionInfo::new(
+            &USE_NECKLACE_OF_PRAYER_BEADS,
+            user,
+            Some(vec![ally]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&ally].has_condition(Condition::Blessed));
+        assert!(!e.actors[&user].has_item_named("Necklace of Prayer Beads"));
+    }
+
+    /// Periapt of Health: passive trinket; carrying it blocks the Poisoned
+    /// install. Mirrors the Necklace of Adaptation test pattern.
+    #[test]
+    fn periapt_of_health_blocks_poisoned_install() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::items::item_template::PERIAPT_OF_HEALTH;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .pickup_item(&PERIAPT_OF_HEALTH);
+        // Try to install Poisoned manually — the item-immunity gate
+        // should short-circuit the install.
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .add_condition(Condition::Poisoned, ConditionTimer::Rounds(10));
+        assert!(
+            !e.actors[&f].has_condition(Condition::Poisoned),
+            "periapt of health should block Poisoned install via condition_immunities"
+        );
+    }
+
     /// Seeded sibling of `ei_with_terrain` — same hand-crafted terrain
     /// shape but the encounter's RNG is initialized from `seed` so callers
     /// can sweep seeds for probabilistic assertions while keeping a

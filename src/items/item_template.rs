@@ -1814,6 +1814,129 @@ pub static POTION_OF_MIND_BLANK: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Scroll of Disintegrate — Action; single-target DEX save vs DC 15.
+/// On fail: 10d6+40 force damage; on save: nothing (no save half). 5e
+/// RAW: level-6 transmutation, force-typed (rarely resisted in the
+/// engine's pool). Top of the single-target burst-scroll lane. Fires
+/// through the shared `SingleSaveDamageItem` impl.
+pub static SCROLL_OF_DISINTEGRATE: Item = Item {
+    name: "Scroll of Disintegrate",
+    glyph: 'D',
+    on_use: Some(&crate::actions::item_actions::READ_DISINTEGRATE_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Finger of Death — Action; single-target CON save vs DC 15.
+/// On fail: 7d8+30 necrotic damage; on save: half. 5e RAW: level-7
+/// necromancy with a "rise as zombie" rider — the scroll drops the
+/// raise clause and surfaces the damage half. Sibling to Scroll of
+/// Disintegrate (force, no-save-half) on the rare single-target
+/// damage-scroll lane. Fires through the shared `SingleSaveDamageItem`
+/// impl.
+pub static SCROLL_OF_FINGER_OF_DEATH: Item = Item {
+    name: "Scroll of Finger of Death",
+    glyph: 'X',
+    on_use: Some(&crate::actions::item_actions::READ_FINGER_OF_DEATH_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Wand of Hold Monster — Action; single-target WIS save vs DC 17, fail =
+/// `Paralyzed` for 10 rounds. Top of the Hold-Paralyzed ladder above
+/// Scroll of Hold Monster (DC 15) and Wand of Paralysis (DC 15, shorter
+/// reach). Single-use; consumed on use. Fires through the shared
+/// `SingleSaveConditionItem` impl.
+pub static WAND_OF_HOLD_MONSTER: Item = Item {
+    name: "Wand of Hold Monster",
+    glyph: '!',
+    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_HOLD_MONSTER),
+    ..Item::DEFAULTS
+};
+
+/// Potion of Foresight — Action; installs `Foreseen` for 10 rounds
+/// (advantage on attacks / saves / ability checks; attackers have
+/// disadvantage against the holder). 5e RAW: level-9 divination, 8-hour
+/// concentration; the potion collapses to a combat-scale fixed-duration
+/// self-buff. Top-tier offensive AND defensive consumable; sits alongside
+/// the rare passive trinkets in the loot pool. Single-use; rejects
+/// re-drink while already up. Fires through the shared `SelfConditionItem`
+/// impl.
+pub static POTION_OF_FORESIGHT: Item = Item {
+    name: "Potion of Foresight",
+    glyph: 'F',
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_FORESIGHT),
+    ..Item::DEFAULTS
+};
+
+/// Necklace of Prayer Beads — Bonus Action; touch-range single-ally
+/// install of `Blessed` for 10 rounds. 5e RAW: a strand of 24-30 beads,
+/// each storing one cleric spell; we collapse to a single-bead consumable
+/// firing the Bless spell. Sibling to Scroll of Bless on the Blessed
+/// lane — the necklace is the trinket-flavored bonus-action variant.
+/// Single-use; the bead crumbles to dust on use. Fires through the
+/// shared `SingleTargetBuffItem` impl.
+pub static NECKLACE_OF_PRAYER_BEADS: Item = Item {
+    name: "Necklace of Prayer Beads",
+    glyph: 'p',
+    on_use: Some(&crate::actions::item_actions::USE_NECKLACE_OF_PRAYER_BEADS),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Heal — Action; touch-range single-target flat 70 HP heal.
+/// 5e RAW: level-6 evocation, 70 HP heal + clears Blinded / Deafened /
+/// Diseased on the target. The scroll collapses to the raw-HP-heal half.
+/// Top of the single-target ally heal ladder above Wand of Greater
+/// Healing (4d8+4). Custom `Action` impl rather than the shared
+/// `SingleTargetHealItem` factor (flat heal — no dice).
+pub static SCROLL_OF_HEAL: Item = Item {
+    name: "Scroll of Heal",
+    glyph: 'h',
+    on_use: Some(&crate::actions::item_actions::READ_HEAL_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Phantasmal Killer — Action; single-target WIS save vs DC 15,
+/// fail = `Frightened` for 10 rounds. 5e RAW: level-4 illusion,
+/// concentration, recurring 4d10 psychic damage; the scroll drops the
+/// per-turn-damage ramp and surfaces the Frightened install at the rare
+/// DC 15 / 48-tile reach tier. Sibling to Wand of Fear (also Frightened
+/// DC 15) — same envelope, illusion flavor. Fires through the shared
+/// `SingleSaveConditionItem` impl.
+pub static SCROLL_OF_PHANTASMAL_KILLER: Item = Item {
+    name: "Scroll of Phantasmal Killer",
+    glyph: 'K',
+    on_use: Some(&crate::actions::item_actions::READ_PHANTASMAL_KILLER_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Potion of Mirror Image — Action; installs `MirroredImages` for 10
+/// rounds (three illusory duplicates intercept attacks until popped
+/// one-by-one). 5e RAW: level-2 illusion spell; the potion drops the
+/// spell-slot cost and collapses to the fixed-duration consumable
+/// envelope. Defensive consumable on the rare half of the pool. Single-
+/// use; rejects re-drink while already up. Fires through the shared
+/// `SelfConditionItem` impl.
+pub static POTION_OF_MIRROR_IMAGE: Item = Item {
+    name: "Potion of Mirror Image",
+    glyph: 'i',
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_MIRROR_IMAGE),
+    ..Item::DEFAULTS
+};
+
+/// Periapt of Health — passive trinket. Grants the wearer immunity to
+/// the Poisoned condition while carried. 5e RAW (DMG): "you are immune
+/// to contracting any disease while you wear this pendant"; we collapse
+/// the disease clause onto Poisoned-immunity (the load-bearing in-engine
+/// equivalent) and use the existing `condition_immunities` install gate.
+/// Distinct from Necklace of Adaptation (same single condition, different
+/// in-fiction flavor) — pads the loot pool with a second Poisoned-immune
+/// passive trinket.
+pub static PERIAPT_OF_HEALTH: Item = Item {
+    name: "Periapt of Health",
+    glyph: '*',
+    condition_immunities: &[crate::conditions::Condition::Poisoned],
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -2193,4 +2316,37 @@ pub static LOOT_POOL: &[&Item] = &[
     // Psychic + Charmed immunity for 10 rounds. Single low-weight entry
     // alongside the other premium typed-defense consumables.
     &POTION_OF_MIND_BLANK,
+    // Scroll of Disintegrate / Finger of Death — top of the single-target
+    // burst-damage scroll lane. Single entries each; sit alongside the
+    // rare burst scrolls (Synaptic Static / Circle of Death). The two
+    // damage flavors split the resistance landscape: Force (rarely
+    // resisted) vs Necrotic (commonly resisted by undead).
+    &SCROLL_OF_DISINTEGRATE,
+    &SCROLL_OF_FINGER_OF_DEATH,
+    // Wand of Hold Monster — top of the Hold-Paralyzed ladder at DC 17.
+    // Single rare entry above the DC 15 scroll variant.
+    &WAND_OF_HOLD_MONSTER,
+    // Potion of Foresight — top-tier offensive+defensive consumable.
+    // Single rare entry alongside Robe of the Archmagi on the legendary
+    // tier.
+    &POTION_OF_FORESIGHT,
+    // Necklace of Prayer Beads — trinket-flavored Bless on bonus action.
+    // Single entry alongside Scroll of Bless on the support-buff lane.
+    &NECKLACE_OF_PRAYER_BEADS,
+    // Scroll of Heal — top of the single-target ally heal ladder; flat
+    // 70 HP. Single rare entry above Wand of Greater Healing.
+    &SCROLL_OF_HEAL,
+    // Scroll of Phantasmal Killer — illusion-flavored Frightened install
+    // at the rare DC 15 tier. Sits alongside Wand of Fear on the
+    // Frightened single-target lane.
+    &SCROLL_OF_PHANTASMAL_KILLER,
+    // Potion of Mirror Image — three illusory duplicates. Single rare
+    // entry alongside Potion of Blur / Potion of Invisibility on the
+    // attacker-disadvantage defensive lane.
+    &POTION_OF_MIRROR_IMAGE,
+    // Periapt of Health — Poisoned-immunity passive at a low-weight slot
+    // alongside Necklace of Adaptation. Loot-pool stratification: lets a
+    // single dungeon roll two distinct Poisoned-immune trinkets without
+    // double-rolling Necklace of Adaptation.
+    &PERIAPT_OF_HEALTH,
 ];
