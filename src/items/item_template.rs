@@ -1576,6 +1576,140 @@ pub static POTION_OF_VIGILANCE: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Necklace of Fireballs — Action; 5d6 fire DEX-save burst (DC 15)
+/// centered on a target tile within 60 ft. Single-bead consumable (RAW
+/// has a multi-bead necklace ladder; we collapse to a single-use scroll-
+/// style envelope so the loot pool stays simple). Fires through the
+/// shared `BurstSaveDamageItem` impl. Sits between Scroll of Fireball
+/// (6d6) and Wand of Fireballs (8d6) — same envelope, smaller payload
+/// to mark the bead-tier of the magic-fireball ladder.
+pub static NECKLACE_OF_FIREBALLS: Item = Item {
+    name: "Necklace of Fireballs",
+    glyph: 'N',
+    on_use: Some(&crate::actions::item_actions::USE_NECKLACE_OF_FIREBALLS),
+    ..Item::DEFAULTS
+};
+
+/// Dust of Disappearance — Bonus Action; installs the `Invisible`
+/// condition on the holder for 10 rounds. 5e RAW: 2d4 minutes invisible;
+/// the engine collapses to the standard combat-scale 10-round timer
+/// every Invisibility-flavored consumable rides. Counterpart to Potion
+/// of Invisibility (Action cost) — the dust trades action lane for the
+/// bonus-action quickness. Fires through the shared `SelfConditionItem`
+/// impl.
+pub static DUST_OF_DISAPPEARANCE: Item = Item {
+    name: "Dust of Disappearance",
+    glyph: 'd',
+    on_use: Some(&crate::actions::item_actions::USE_DUST_OF_DISAPPEARANCE),
+    ..Item::DEFAULTS
+};
+
+/// Wand of Suggestion — Action; single-target WIS save vs DC 15, fail =
+/// `Charmed` for 10 rounds. 5e RAW: level-2 enchantment, concentration,
+/// 30-ft range; the wand collapses to the standard fixed-duration
+/// consumable envelope and drops the concentration gate. Sibling to
+/// Wand of Charm Monster (also Charmed, also DC 15) — different reach
+/// (24 vs 30 tiles RAW) so the loot pool has two flavored entries on
+/// the same condition lane. Fires through the shared
+/// `SingleSaveConditionItem` impl.
+pub static WAND_OF_SUGGESTION: Item = Item {
+    name: "Wand of Suggestion",
+    glyph: 'u',
+    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_SUGGESTION),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Calm Emotions — Action; 4-tile burst, CHA save vs DC 13,
+/// fail = `Charmed` for 10 rounds. 5e RAW: level-2 enchantment,
+/// concentration, two-option toggle (suppress fear OR Charm). The
+/// engine collapses to the Charm-installer half (the engine-relevant
+/// combat clause) and drops the concentration gate. Burst counterpart
+/// to Scroll of Charm Person (single-target, same DC) and
+/// debuff-burst-AoE counterpart to Scroll of Bane (CHA-save burst).
+/// Fires through the shared `BurstSaveConditionItem` impl.
+pub static SCROLL_OF_CALM_EMOTIONS: Item = Item {
+    name: "Scroll of Calm Emotions",
+    glyph: 's',
+    on_use: Some(&crate::actions::item_actions::READ_CALM_EMOTIONS_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Wand of Blindness — Action; single-target CON save vs DC 15, fail =
+/// `Blinded` for 10 rounds. 5e RAW: level-2 necromancy (Blindness /
+/// Deafness), 30-ft range, CON save; the wand bumps the DC to the
+/// standard wand tier (15) and the reach to 24 tiles (60 ft RAW). Top-
+/// tier counterpart to Scroll of Blindness (CON save, DC 13) on the
+/// single-target Blinded lane. Fires through the shared
+/// `SingleSaveConditionItem` impl.
+pub static WAND_OF_BLINDNESS: Item = Item {
+    name: "Wand of Blindness",
+    glyph: 'b',
+    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_BLINDNESS),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Mass Cure Wounds — Action; touches every ally within a
+/// 4-tile burst centered on the caster (RAW: 3d8 + spellcasting modifier
+/// per ally; the scroll uses a flat 3d8+5 per ally). 5e RAW: level-5
+/// conjuration, 60-ft range, up to 6 targets in a 30-ft radius. The
+/// scroll collapses to a self-centered burst with the standard
+/// 4-tile envelope and reuses the existing mass-heal item lane via the
+/// hand-rolled `READ_MASS_HEALING_WORD_SCROLL` (no shared factor yet for
+/// this exact shape — Mass Cure Wounds heals more per ally but uses an
+/// Action cost vs the bonus-action Healing Word variant).
+pub static SCROLL_OF_MASS_CURE_WOUNDS: Item = Item {
+    name: "Scroll of Mass Cure Wounds",
+    glyph: 'X',
+    on_use: Some(&crate::actions::item_actions::READ_MASS_CURE_WOUNDS_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Boots of Levitation — passive trinket. Wearer is treated as Flying
+/// (the engine's binary flight model). 5e RAW: action toggle to
+/// levitate for up to 10 minutes; the engine collapses to a permanent
+/// always-on flight install via the `passive_conditions` lane so the
+/// boots sit alongside Winged Boots (also Flying) and Slippers of
+/// Spider Climbing on the mobility-trinket lane. Difference from Winged
+/// Boots: cosmetic (vertical-only vs full flight RAW) — both grant the
+/// same in-engine `Flying` flag, so the loot pool keeps two flavored
+/// entries on the same mechanical envelope.
+pub static BOOTS_OF_LEVITATION: Item = Item {
+    name: "Boots of Levitation",
+    glyph: 'L',
+    passive_conditions: &[crate::conditions::Condition::Flying],
+    ..Item::DEFAULTS
+};
+
+/// Cloak of Elvenkind — passive trinket. Grants the wearer the
+/// `Untracked` condition (Pass Without Trace's +10 stealth-flavored
+/// rider, modeled in the engine as a flat to-hit-vs-the-wearer
+/// disadvantage chokepoint). 5e RAW: "creatures that try to spot you
+/// have disadvantage on Wisdom (Perception) checks" — the engine
+/// collapses Perception to the attack-against-the-wearer disadvantage
+/// since stealth-as-cover-for-the-next-swing is the load-bearing
+/// in-combat consequence. Sits alongside Cloak of Displacement on the
+/// "attacker-disadvantage" trinket lane.
+pub static CLOAK_OF_ELVENKIND: Item = Item {
+    name: "Cloak of Elvenkind",
+    glyph: 'e',
+    passive_conditions: &[crate::conditions::Condition::Untracked],
+    ..Item::DEFAULTS
+};
+
+/// Ring of Spell Storing — Action; the ring discharges into a Magic-
+/// Missile-style auto-hit dart against a single target (3 darts ×
+/// 1d4+1 force, no save). Single-use; we collapse the RAW "stored
+/// spells" subsystem (which would require an Action / SpellSlot ledger
+/// on the trinket) to a fixed force-dart payload, matching the size of
+/// the level-1 Magic Missile scroll. Fires through the shared
+/// `MagicMissileItem` impl.
+pub static RING_OF_SPELL_STORING: Item = Item {
+    name: "Ring of Spell Storing",
+    glyph: 'S',
+    on_use: Some(&crate::actions::item_actions::USE_RING_OF_SPELL_STORING),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -1893,4 +2027,33 @@ pub static LOOT_POOL: &[&Item] = &[
     // Vigilance potion — consumable counterpart to Amulet of the Vigilant.
     // Single low-weight entry; installs the DangerSense condition.
     &POTION_OF_VIGILANCE,
+    // Necklace of Fireballs — sub-tier fire burst (5d6, between scroll's
+    // 6d6 and wand's 8d6). Single entry alongside the rest of the fire-
+    // burst consumable family.
+    &NECKLACE_OF_FIREBALLS,
+    // Dust of Disappearance — bonus-action Invisibility counterpart to
+    // Potion of Invisibility (Action cost). Single entry.
+    &DUST_OF_DISAPPEARANCE,
+    // Wand of Suggestion — single-target Charmed at the rare DC 15 tier.
+    // Sibling to Wand of Charm Monster on the Charmed lane.
+    &WAND_OF_SUGGESTION,
+    // Scroll of Calm Emotions — burst Charmed at the cheap DC 13 tier;
+    // burst counterpart to Scroll of Charm Person (single, same DC).
+    &SCROLL_OF_CALM_EMOTIONS,
+    // Wand of Blindness — single-target Blinded at the rare DC 15 tier.
+    // Top-tier counterpart to Scroll of Blindness (CON save DC 13).
+    &WAND_OF_BLINDNESS,
+    // Scroll of Mass Cure Wounds — burst ally heal at Action cost.
+    // Pairs with Mass Healing Word scroll (bonus-action variant) on the
+    // mass-heal scroll lane.
+    &SCROLL_OF_MASS_CURE_WOUNDS,
+    // Boots of Levitation — passive Flying trinket. Sibling to Winged
+    // Boots on the always-on flight lane.
+    &BOOTS_OF_LEVITATION,
+    // Cloak of Elvenkind — passive Untracked trinket. Attacker-disadvantage
+    // counterpart to Cloak of Displacement; lower weight as a single entry.
+    &CLOAK_OF_ELVENKIND,
+    // Ring of Spell Storing — single-use Magic-Missile-style force dart
+    // volley. Sibling to Scroll of Magic Missile on the auto-hit lane.
+    &RING_OF_SPELL_STORING,
 ];

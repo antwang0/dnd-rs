@@ -267,6 +267,13 @@ pub struct SelfConditionItem {
     /// refresh. Use `false` for installs where the player explicitly
     /// might want to refresh (rare).
     pub reject_when_active: bool,
+    /// Optional flat temp HP grant the item installs alongside the
+    /// condition. 5e RAW: Potion of Heroism grants 10 temp HP + immunity
+    /// to Frightened; Aid-style buffs grant a HP cushion. `None` (the
+    /// default for most condition-only potions) emits no `GainTempHp`
+    /// side-effect. Temp HP doesn't stack — the bigger of the existing
+    /// pool and the new grant wins (see `GainTempHp`).
+    pub temp_hp: Option<u32>,
 }
 
 impl Action for SelfConditionItem {
@@ -331,16 +338,36 @@ impl Action for SelfConditionItem {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::GainTempHp;
         if !consume_caster_item(encounter, caster_id, self.item_name) {
             return Vec::new();
         }
         let name = encounter.actor_name(caster_id);
         encounter.log(self.log_text.replace("{actor}", &name));
-        vec![Box::new(ApplyCondition {
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(ApplyCondition {
             actor_id: caster_id,
             condition: self.condition,
             timer: self.timer,
-        })]
+        })];
+        // Optional temp HP grant — Potion of Heroism (10) and any future
+        // Aid-flavored self-buff fold into the same one-static declaration.
+        // `None` (the common case) skips the alloc cleanly; `GainTempHp`
+        // also no-ops on 0 internally as a defense in depth.
+        if let Some(amount) = self.temp_hp {
+            effects.push(Box::new(GainTempHp {
+                actor_id: caster_id,
+                amount,
+            }));
+        }
+        effects
+    }
+
+    fn is_heal(&self) -> bool {
+        // A condition-only buff doesn't route through the AI's heal-target
+        // pipeline; a temp-HP grant does (the cushion reads as healing the
+        // weakest ally for engine purposes). Mirrors `SingleTargetBuffItem`'s
+        // `is_heal = true` for the ally-buff lane on the temp-HP branch.
+        self.temp_hp.is_some()
     }
 }
 
@@ -677,89 +704,26 @@ impl Action for DrinkPotionOfSpeed {
 
 pub static DRINK_POTION_OF_SPEED: DrinkPotionOfSpeed = DrinkPotionOfSpeed {};
 
-/// Drink a Potion of Heroism: bonus action; gain 10 temp HP and the
-/// Heroic condition for 10 rounds (immune to Frightened + regen temp
-/// HP from the buff). 5e RAW: 1-hour duration, +10 temp HP and immune
-/// to Frightened — we collapse the duration to 10 rounds to match the
-/// engine's combat-scale timer envelope. Single-use; consumes one
-/// Potion of Heroism from inventory.
-pub struct DrinkPotionOfHeroism {}
-
-impl Action for DrinkPotionOfHeroism {
-    fn name(&self) -> &str {
-        "drink potion of heroism"
-    }
-
-    fn aliases(&self) -> Vec<&str> {
-        vec!["heroism", "hero"]
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-
-    fn is_harmful(&self) -> bool {
-        false
-    }
-
-    fn is_heal(&self) -> bool {
-        // The temp HP grant + Heroic install reads as a buff/heal-style
-        // support action, so the AI's support pipeline can pick it up.
-        true
-    }
-
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        bonus_action_only()
-    }
-
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        caster_holds(encounter, caster_id, POTION_OF_HEROISM_NAME)
-    }
-
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::conditions::{Condition, ConditionTimer};
-        use crate::engine::side_effects::{ApplyCondition, GainTempHp};
-        if !consume_caster_item(encounter, caster_id, POTION_OF_HEROISM_NAME) {
-            return Vec::new();
-        }
-        let name = encounter.actor_name(caster_id);
-        encounter.log(format!("{} drinks a potion of heroism.", name));
-        vec![
-            Box::new(GainTempHp {
-                actor_id: caster_id,
-                amount: 10,
-            }),
-            Box::new(ApplyCondition {
-                actor_id: caster_id,
-                condition: Condition::Heroic,
-                timer: ConditionTimer::Rounds(10),
-            }),
-        ]
-    }
-}
-
-pub static DRINK_POTION_OF_HEROISM: DrinkPotionOfHeroism = DrinkPotionOfHeroism {};
+/// Potion of Heroism — bonus action; gain 10 temp HP and install the
+/// `Heroic` condition for 10 rounds (immune to Frightened + a buff aura
+/// that regens temp HP each round). 5e RAW: 1-hour duration; the engine
+/// collapses to 10 rounds to match the combat-scale timer envelope used
+/// by the rest of the potion family. Routes through the shared
+/// `SelfConditionItem` impl via the `temp_hp` lane so the install +
+/// temp-HP grant flow as a single declarative static (no bespoke Action
+/// impl). Refresh is allowed so a wounded ally whose Heroic ticked low
+/// can re-drink for the fresh 10-HP cushion.
+pub static DRINK_POTION_OF_HEROISM: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of heroism",
+    action_aliases: &["heroism", "hero"],
+    item_name: POTION_OF_HEROISM_NAME,
+    log_text: "{actor} drinks a potion of heroism.",
+    condition: Condition::Heroic,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: true,
+    reject_when_active: false,
+    temp_hp: Some(10),
+};
 
 /// Potion of Invisibility — Action; installs the Invisible condition for
 /// 10 rounds. Fires through the shared `SelfConditionItem` impl.
@@ -772,6 +736,7 @@ pub static DRINK_POTION_OF_INVISIBILITY: SelfConditionItem = SelfConditionItem {
     timer: ConditionTimer::Rounds(10),
     bonus_action: false,
     reject_when_active: false,
+    temp_hp: None,
 };
 
 const POTION_OF_SUPERIOR_HEALING_NAME: &str = "Potion of Superior Healing";
@@ -808,6 +773,7 @@ pub static DRINK_POTION_OF_STONESKIN: SelfConditionItem = SelfConditionItem {
     timer: ConditionTimer::Rounds(10),
     bonus_action: false,
     reject_when_active: true,
+    temp_hp: None,
 };
 
 const SCROLL_OF_LIGHTNING_BOLT_NAME: &str = "Scroll of Lightning Bolt";
@@ -1128,6 +1094,7 @@ pub static WEAR_BOOTS_OF_SPEED: SelfConditionItem = SelfConditionItem {
     timer: ConditionTimer::Rounds(10),
     bonus_action: true,
     reject_when_active: true,
+    temp_hp: None,
 };
 
 const SCROLL_OF_CONE_OF_COLD_NAME: &str = "Scroll of Cone of Cold";
@@ -1182,6 +1149,7 @@ pub static DRINK_POTION_OF_FLYING: SelfConditionItem = SelfConditionItem {
     timer: ConditionTimer::Rounds(10),
     bonus_action: false,
     reject_when_active: true,
+    temp_hp: None,
 };
 
 /// Potion of Climbing — Bonus Action; installs `SpiderClimbing` for 10
@@ -1196,6 +1164,7 @@ pub static DRINK_POTION_OF_CLIMBING: SelfConditionItem = SelfConditionItem {
     timer: ConditionTimer::Rounds(10),
     bonus_action: true,
     reject_when_active: true,
+    temp_hp: None,
 };
 
 /// Wand of Fireballs: 8d6 fire DEX-save burst. Sits a tier above the
@@ -1277,23 +1246,58 @@ pub static USE_WAND_OF_CONE_OF_COLD: BurstSaveDamageItem = BurstSaveDamageItem {
 
 const SCROLL_OF_MASS_HEALING_WORD_NAME: &str = "Scroll of Mass Healing Word";
 
-/// Read a Scroll of Mass Healing Word: bonus action; heal up to 6 nearest
-/// allies (combat-active or dying) within 60 ft (24 tiles) of the caster
-/// for 1d4+3 HP each. Mirrors the `MASS_HEALING_WORD` spell's envelope at
-/// a fixed +3 caster-mod stand-in (the scroll has no caster-ability tie;
-/// +3 sits between the level-1 cleric's WIS-mod and a high-level cleric's
-/// WIS-mod for the typical reader). Touch-range targets the caster's
-/// own footprint as the center — no explicit target needed. Single-use
-/// consumable.
-pub struct ReadMassHealingWordScroll {}
+/// Config struct for "self-centered burst that heals up to N nearest
+/// allies" consumable items — the shared shape behind Mass Healing Word
+/// scroll (bonus action, long-reach 24-tile envelope) and Mass Cure
+/// Wounds scroll (Action, tight 4-tile burst). Each static instance
+/// encodes the dice / flat bonus / action economy / range / target cap;
+/// the `Action` impl below filters allies, sorts them by distance, and
+/// fires a `Heal` per pick.
+///
+/// Heal targets include dying allies (a dying ally at 0 HP gets bumped
+/// back up by the heal), matching the spell-side `MASS_HEALING_WORD` /
+/// `MASS_CURE_WOUNDS` impls.
+///
+/// Adding a new variant (e.g. a Wand of Mass Healing Word, or a level-9
+/// Mass Heal scroll) is a one-static declaration.
+pub struct MultiTargetHealItem {
+    /// Player-facing action name.
+    pub action_name: &'static str,
+    /// Picker aliases.
+    pub action_aliases: &'static [&'static str],
+    /// Inventory item name to gate validate / consume on.
+    pub item_name: &'static str,
+    /// Log line prefix. The row reads
+    /// `  {log_label}: {count}d{faces}({raw})+{flat_bonus} = {amount} HP each`.
+    pub log_label: &'static str,
+    /// Healing dice (e.g. 1d4 for Mass Healing Word, 3d8 for Mass Cure
+    /// Wounds). Rolled once and shared across every target — matches the
+    /// spell-side semantics.
+    pub dice: Dice,
+    /// Flat bonus added to the rolled dice. The scroll has no caster-
+    /// ability tie so this stands in for the caster's spellcasting mod.
+    pub flat_bonus: i32,
+    /// `true` ⇒ Bonus Action cost; `false` ⇒ Action cost. Mass Healing
+    /// Word is bonus action; Mass Cure Wounds is full Action.
+    pub bonus_action: bool,
+    /// Maximum tile-Chebyshev distance from the caster's footprint to
+    /// any ally that qualifies for the heal. Mass Healing Word: 24
+    /// (60 ft RAW). Mass Cure Wounds: 4 (30 ft RAW = 12 tiles, but the
+    /// engine uses a tighter 10-ft-burst-from-self envelope for the
+    /// existing front-line heal niche).
+    pub range_tiles: isize,
+    /// Maximum number of allies to heal. 5e RAW caps mass heals at
+    /// 6 for the level-3 / level-5 family.
+    pub max_targets: usize,
+}
 
-impl Action for ReadMassHealingWordScroll {
+impl Action for MultiTargetHealItem {
     fn name(&self) -> &str {
-        "read mass healing word scroll"
+        self.action_name
     }
 
     fn aliases(&self) -> Vec<&str> {
-        vec!["mhw scroll", "mass-heal scroll"]
+        self.action_aliases.to_vec()
     }
 
     fn targeting_schema(&self) -> TargetingSchema {
@@ -1320,7 +1324,7 @@ impl Action for ReadMassHealingWordScroll {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        bonus_action_only()
+        action_or_bonus_only(self.bonus_action)
     }
 
     fn custom_validate_input(
@@ -1331,7 +1335,7 @@ impl Action for ReadMassHealingWordScroll {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        caster_holds(encounter, caster_id, SCROLL_OF_MASS_HEALING_WORD_NAME)
+        caster_holds(encounter, caster_id, self.item_name)
     }
 
     fn side_effects(
@@ -1344,7 +1348,7 @@ impl Action for ReadMassHealingWordScroll {
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
-        if !consume_caster_item(encounter, caster_id, SCROLL_OF_MASS_HEALING_WORD_NAME) {
+        if !consume_caster_item(encounter, caster_id, self.item_name) {
             return Vec::new();
         }
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -1353,18 +1357,12 @@ impl Action for ReadMassHealingWordScroll {
         let caster_team = caster.team();
         let caster_loc = caster.location();
         let caster_size = get_tiles_from_size(caster.size());
-        let raw = encounter.roll(&Dice::new(1, 4)) as i32;
-        // Flat +3 stand-in for the spell's caster WIS modifier. The
-        // scroll is a fixed magic item with no caster-ability tie; +3
-        // sits between a level-1 cleric's WIS-mod (+2) and a high-level
-        // cleric's WIS-mod (+5) for the typical reader.
-        let amount = (raw + 3).max(1) as u32;
+        let raw = encounter.roll(&self.dice) as i32;
+        let amount = (raw + self.flat_bonus).max(1) as u32;
         encounter.log(format!(
-            "  scroll of mass healing word: 1d4({})+3 = {} HP each",
-            raw, amount
+            "  {}: {}d{}({}){:+} = {} HP each",
+            self.log_label, self.dice.count, self.dice.faces, raw, self.flat_bonus, amount
         ));
-        const RANGE_TILES: isize = 24;
-        const MAX_TARGETS: usize = 6;
         let mut candidates: Vec<(isize, usize)> = encounter
             .actors
             .iter()
@@ -1381,14 +1379,14 @@ impl Action for ReadMassHealingWordScroll {
                     a.location(),
                     get_tiles_from_size(a.size()),
                 );
-                if dist > RANGE_TILES {
+                if dist > self.range_tiles {
                     return None;
                 }
                 Some((dist, *id))
             })
             .collect();
         candidates.sort_unstable();
-        candidates.truncate(MAX_TARGETS);
+        candidates.truncate(self.max_targets);
         candidates
             .into_iter()
             .map(|(_, id)| {
@@ -1401,8 +1399,22 @@ impl Action for ReadMassHealingWordScroll {
     }
 }
 
-pub static READ_MASS_HEALING_WORD_SCROLL: ReadMassHealingWordScroll =
-    ReadMassHealingWordScroll {};
+/// Scroll of Mass Healing Word — bonus action; heal up to 6 nearest
+/// allies (combat-active or dying) within 60 ft (24 tiles) for 1d4+3
+/// HP each. The +3 stand-in for the caster's WIS modifier sits between
+/// a level-1 cleric (+2) and a high-level cleric (+5) for the typical
+/// reader. Fires through the shared `MultiTargetHealItem` impl.
+pub static READ_MASS_HEALING_WORD_SCROLL: MultiTargetHealItem = MultiTargetHealItem {
+    action_name: "read mass healing word scroll",
+    action_aliases: &["mhw scroll", "mass-heal scroll"],
+    item_name: SCROLL_OF_MASS_HEALING_WORD_NAME,
+    log_label: "scroll of mass healing word",
+    dice: Dice::new(1, 4),
+    flat_bonus: 3,
+    bonus_action: true,
+    range_tiles: 24,
+    max_targets: 6,
+};
 
 const POTION_OF_SUPREME_HEALING_NAME: &str = "Potion of Supreme Healing";
 const POTION_OF_MAGE_ARMOR_NAME: &str = "Potion of Mage Armor";
@@ -1440,6 +1452,7 @@ pub static DRINK_POTION_OF_MAGE_ARMOR: SelfConditionItem = SelfConditionItem {
     timer: ConditionTimer::Rounds(10),
     bonus_action: false,
     reject_when_active: true,
+    temp_hp: None,
 };
 
 /// Potion of Blur — Action; installs `Blurred` for 10 rounds (attacks
@@ -1456,6 +1469,7 @@ pub static DRINK_POTION_OF_BLUR: SelfConditionItem = SelfConditionItem {
     timer: ConditionTimer::Rounds(10),
     bonus_action: false,
     reject_when_active: true,
+    temp_hp: None,
 };
 
 /// Greater Wand of Magic Missiles — 7 darts of 1d4+1 force each, auto-hit,
@@ -1994,6 +2008,7 @@ pub static DRINK_POTION_OF_SANCTUARY: SelfConditionItem = SelfConditionItem {
     timer: ConditionTimer::Rounds(10),
     bonus_action: true,
     reject_when_active: true,
+    temp_hp: None,
 };
 
 /// Wand of Cure Wounds — Action; touch (1-tile) ally heal for 3d8+3.
@@ -2048,6 +2063,7 @@ pub static DRINK_POTION_OF_GROWTH: SelfConditionItem = SelfConditionItem {
     timer: ConditionTimer::Rounds(10),
     bonus_action: false,
     reject_when_active: true,
+    temp_hp: None,
 };
 
 /// Potion of Longstrider — Bonus Action; installs `Longstriding` for
@@ -2065,6 +2081,7 @@ pub static DRINK_POTION_OF_LONGSTRIDER: SelfConditionItem = SelfConditionItem {
     timer: ConditionTimer::Rounds(100),
     bonus_action: true,
     reject_when_active: true,
+    temp_hp: None,
 };
 
 const POTION_OF_LONGSTRIDER_NAME: &str = "Potion of Longstrider";
@@ -2450,6 +2467,7 @@ pub static DRINK_POTION_OF_BARKSKIN: SelfConditionItem = SelfConditionItem {
     timer: ConditionTimer::Rounds(10),
     bonus_action: true,
     reject_when_active: true,
+    temp_hp: None,
 };
 
 /// Potion of Fire Resistance — Action; installs `DamageResistant` (halve
@@ -2468,6 +2486,7 @@ pub static DRINK_POTION_OF_FIRE_RESISTANCE: SelfConditionItem = SelfConditionIte
     timer: ConditionTimer::Rounds(10),
     bonus_action: false,
     reject_when_active: true,
+    temp_hp: None,
 };
 
 /// Potion of Cold Resistance — Action; installs `DamageResistant` for 10
@@ -2485,6 +2504,7 @@ pub static DRINK_POTION_OF_COLD_RESISTANCE: SelfConditionItem = SelfConditionIte
     timer: ConditionTimer::Rounds(10),
     bonus_action: false,
     reject_when_active: true,
+    temp_hp: None,
 };
 
 /// Potion of Hill Giant Strength — Action; installs `Enlarged` for 10
@@ -2503,6 +2523,7 @@ pub static DRINK_POTION_OF_HILL_GIANT_STRENGTH: SelfConditionItem = SelfConditio
     timer: ConditionTimer::Rounds(10),
     bonus_action: false,
     reject_when_active: true,
+    temp_hp: None,
 };
 
 const WAND_OF_SLEEP_NAME: &str = "Wand of Sleep";
@@ -2930,6 +2951,7 @@ pub static DRINK_POTION_OF_RESISTANCE: SelfConditionItem = SelfConditionItem {
     timer: ConditionTimer::Rounds(10),
     bonus_action: false,
     reject_when_active: true,
+    temp_hp: None,
 };
 
 /// Potion of Vigilance — Bonus Action; installs `DangerSense` for 10 rounds
@@ -2946,4 +2968,144 @@ pub static DRINK_POTION_OF_VIGILANCE: SelfConditionItem = SelfConditionItem {
     timer: ConditionTimer::Rounds(10),
     bonus_action: true,
     reject_when_active: true,
+    temp_hp: None,
+};
+
+const NECKLACE_OF_FIREBALLS_NAME: &str = "Necklace of Fireballs";
+const DUST_OF_DISAPPEARANCE_NAME: &str = "Dust of Disappearance";
+const WAND_OF_SUGGESTION_NAME: &str = "Wand of Suggestion";
+const SCROLL_OF_CALM_EMOTIONS_NAME: &str = "Scroll of Calm Emotions";
+const WAND_OF_BLINDNESS_NAME: &str = "Wand of Blindness";
+const SCROLL_OF_MASS_CURE_WOUNDS_NAME: &str = "Scroll of Mass Cure Wounds";
+const RING_OF_SPELL_STORING_NAME: &str = "Ring of Spell Storing";
+
+/// Necklace of Fireballs — 5d6 fire DEX-save burst (DC 15, 4 radius).
+/// Single-bead consumable; the RAW multi-bead ladder collapses to a
+/// single-use scroll-style envelope so the loot pool stays simple. Sits
+/// between Scroll of Fireball (6d6) and Wand of Fireballs (8d6) on the
+/// fire-burst payload ladder. Fires through the shared
+/// `BurstSaveDamageItem` impl.
+pub static USE_NECKLACE_OF_FIREBALLS: BurstSaveDamageItem = BurstSaveDamageItem {
+    action_name: "use necklace of fireballs",
+    action_aliases: &["necklace", "bead"],
+    item_name: NECKLACE_OF_FIREBALLS_NAME,
+    log_label: "necklace of fireballs (bead)",
+    dice: Dice::new(5, 6),
+    damage_type: DamageType::Fire,
+    save: AbilityScoreType::Dexterity,
+    dc: 15,
+    radius: 4,
+    // 60 ft RAW; 24 tiles.
+    reach: 24,
+};
+
+/// Dust of Disappearance — Bonus Action; installs `Invisible` on the
+/// holder for 10 rounds. Quickened counterpart to Potion of Invisibility
+/// (Action cost). Fires through the shared `SelfConditionItem` impl.
+pub static USE_DUST_OF_DISAPPEARANCE: SelfConditionItem = SelfConditionItem {
+    action_name: "use dust of disappearance",
+    action_aliases: &["dust", "disappear"],
+    item_name: DUST_OF_DISAPPEARANCE_NAME,
+    log_text: "{actor} sprinkles dust of disappearance; their form fades.",
+    condition: Condition::Invisible,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: true,
+    reject_when_active: true,
+    temp_hp: None,
+};
+
+/// Wand of Suggestion — Action; single-target WIS save vs DC 15, fail =
+/// `Charmed` for 10 rounds. 5e RAW: level-2 enchantment, concentration;
+/// the wand drops the concentration gate and uses the standard
+/// fixed-duration consumable envelope. Sibling to Wand of Charm Monster
+/// on the Charmed lane — same DC, slightly shorter reach (24 tiles vs
+/// 30 ft RAW), distinct flavor (suggestion vs raw charm). Fires through
+/// the shared `SingleSaveConditionItem` impl.
+pub static USE_WAND_OF_SUGGESTION: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "use wand of suggestion",
+    action_aliases: &["suggestion", "suggest"],
+    item_name: WAND_OF_SUGGESTION_NAME,
+    log_text: "{actor} aims the wand of suggestion; a honeyed whisper threads through the air.",
+    save: AbilityScoreType::Wisdom,
+    dc: 15,
+    // 30 ft RAW; 12 tiles.
+    reach: 12,
+    condition: Condition::Charmed,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Scroll of Calm Emotions — Action; 4-tile burst, CHA save vs DC 13,
+/// fail = `Charmed` for 10 rounds. 5e RAW: level-2 enchantment,
+/// concentration, two-option toggle (suppress fear OR Charm). The
+/// scroll collapses to the Charm-installer half (the engine-relevant
+/// combat clause) and drops the concentration gate. Burst counterpart
+/// to Scroll of Charm Person (single-target, same DC 13) on the
+/// Charmed lane. Fires through the shared `BurstSaveConditionItem`
+/// impl.
+pub static READ_CALM_EMOTIONS_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
+    action_name: "read calm emotions scroll",
+    action_aliases: &["calm", "calm emotions"],
+    item_name: SCROLL_OF_CALM_EMOTIONS_NAME,
+    log_text: "{actor} reads a scroll of calm emotions; a soothing wave washes over the foes.",
+    save: AbilityScoreType::Charisma,
+    dc: 13,
+    radius: 4,
+    // 60 ft RAW; 24 tiles.
+    reach: 24,
+    condition: Condition::Charmed,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Wand of Blindness — Action; single-target CON save vs DC 15, fail =
+/// `Blinded` for 10 rounds. Top-tier counterpart to Scroll of Blindness
+/// (CON save DC 13, 12 reach). Same condition, harder DC and longer
+/// reach. Fires through the shared `SingleSaveConditionItem` impl.
+pub static USE_WAND_OF_BLINDNESS: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "use wand of blindness",
+    action_aliases: &["blindness wand", "blind+"],
+    item_name: WAND_OF_BLINDNESS_NAME,
+    log_text: "{actor} aims the wand of blindness; harsh light sears the target's eyes.",
+    save: AbilityScoreType::Constitution,
+    dc: 15,
+    // 60 ft RAW; 24 tiles.
+    reach: 24,
+    condition: Condition::Blinded,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Ring of Spell Storing — single-use Magic-Missile-style force-dart
+/// volley (3 darts × 1d4+1 force, auto-hit, no save). RAW: the ring
+/// stores up to 5 levels worth of spells the wearer can release. We
+/// collapse the storage subsystem to a fixed force-dart payload — same
+/// envelope as the Scroll of Magic Missile so the loot pool has a
+/// trinket-flavored variant on the auto-hit lane. Fires through the
+/// shared `MagicMissileItem` impl.
+pub static USE_RING_OF_SPELL_STORING: MagicMissileItem = MagicMissileItem {
+    action_name: "use ring of spell storing",
+    action_aliases: &["spell storing", "rss"],
+    item_name: RING_OF_SPELL_STORING_NAME,
+    log_label: "ring of spell storing (stored magic missile)",
+    darts: 3,
+    // 30 tile reach matches the Scroll of Magic Missile (150 ft RAW).
+    reach: 30,
+};
+
+/// Scroll of Mass Cure Wounds — Action; self-centered 4-tile burst that
+/// heals up to 6 closest allies for 3d8+5 HP each. RAW: 3d8 + caster
+/// mod per ally at level 5. The +5 stand-in matches a typical mid-level
+/// cleric's WIS mod. Sits one tier above Mass Healing Word (bonus action,
+/// 1d4+3) — the Action cost trades for bigger per-ally pool. Fires
+/// through the shared `MultiTargetHealItem` impl.
+pub static READ_MASS_CURE_WOUNDS_SCROLL: MultiTargetHealItem = MultiTargetHealItem {
+    action_name: "read mass cure wounds scroll",
+    action_aliases: &["mcw", "mass cure"],
+    item_name: SCROLL_OF_MASS_CURE_WOUNDS_NAME,
+    log_label: "scroll of mass cure wounds",
+    dice: Dice::new(3, 8),
+    flat_bonus: 5,
+    bonus_action: false,
+    // 30 ft RAW. Tighter envelope than Mass Healing Word (24 tiles)
+    // because the Action cost reads as a more focused front-line heal.
+    range_tiles: 4,
+    max_targets: 6,
 };
