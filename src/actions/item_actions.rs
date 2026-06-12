@@ -1363,14 +1363,26 @@ impl Action for MultiTargetHealItem {
             "  {}: {}d{}({}){:+} = {} HP each",
             self.log_label, self.dice.count, self.dice.faces, raw, self.flat_bonus, amount
         ));
-        let mut candidates: Vec<(isize, usize)> = encounter
+        // Build (priority, hp_deficit_desc, distance, id) for every
+        // ally-team actor in range. Lower priority wins:
+        //   0 = dying (stabilize / revive — most urgent)
+        //   1 = wounded combat-active (heal HP that won't go to waste)
+        //   2 = full-HP combat-active (last-resort filler if slots remain)
+        // We invert hp_deficit so larger deficits sort earlier inside
+        // priority 1, then break ties by distance and id for determinism.
+        // Matches the "smart player picks the wounded ones" intent of
+        // 5e's "you choose creatures" RAW wording — the previous
+        // nearest-first heuristic could waste max_targets slots on
+        // full-HP front-liners while dying allies sat unattended.
+        let mut candidates: Vec<(u8, std::cmp::Reverse<u32>, isize, usize)> = encounter
             .actors
             .iter()
             .filter_map(|(id, a)| {
                 if a.team() != caster_team {
                     return None;
                 }
-                if !a.is_combat_active() && !a.is_dying() {
+                let dying = a.is_dying();
+                if !a.is_combat_active() && !dying {
                     return None;
                 }
                 let dist = footprint_chebyshev(
@@ -1382,14 +1394,24 @@ impl Action for MultiTargetHealItem {
                 if dist > self.range_tiles {
                     return None;
                 }
-                Some((dist, *id))
+                let hp = a.hitpoints();
+                let max_hp = a.max_hitpoints();
+                let deficit = max_hp.saturating_sub(hp);
+                let priority = if dying {
+                    0u8
+                } else if deficit > 0 {
+                    1u8
+                } else {
+                    2u8
+                };
+                Some((priority, std::cmp::Reverse(deficit), dist, *id))
             })
             .collect();
         candidates.sort_unstable();
         candidates.truncate(self.max_targets);
         candidates
             .into_iter()
-            .map(|(_, id)| {
+            .map(|(_, _, _, id)| {
                 Box::new(Heal {
                     actor_id: id,
                     amount,

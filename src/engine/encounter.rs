@@ -37126,6 +37126,77 @@ mod tests {
         );
     }
 
+    /// MultiTargetHealItem prefers wounded allies over full-HP allies
+    /// when `max_targets` would force a choice. Sets up a cleric with 7
+    /// allies in range (capacity 6); the unwounded one should be the
+    /// only ally left out. Previously the heap chose the 6 nearest,
+    /// which could waste a max_target slot on a healthy front-liner
+    /// while a wounded back-line ally went unhealed.
+    #[test]
+    fn multi_target_heal_item_prefers_wounded_over_healthy() {
+        use crate::actions::item_actions::READ_MASS_HEALING_WORD_SCROLL;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_MASS_HEALING_WORD;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // One healthy ally sitting next to the cleric (would otherwise
+        // grab a heal slot under the old nearest-first heuristic).
+        let healthy_nearby = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        // Six wounded allies further out (still within the 24-tile
+        // range). All in range so the priority sort, not range, decides
+        // the cut.
+        let wounded: Vec<usize> = (0..6)
+            .map(|i| {
+                e.instantiate_creature(
+                    &FIGHTER_TEMPLATE,
+                    Coordinate::new(10 + i, 10),
+                    0,
+                    0,
+                )
+                .unwrap()
+            })
+            .collect();
+        for &id in &wounded {
+            e.actors.get_mut(&id).unwrap().take_damage(5);
+        }
+        let healthy_hp_before = e.actors[&healthy_nearby].hitpoints();
+        let wounded_hp_before: Vec<u32> =
+            wounded.iter().map(|&id| e.actors[&id].hitpoints()).collect();
+
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_MASS_HEALING_WORD);
+        for ef in READ_MASS_HEALING_WORD_SCROLL.side_effects(&mut e, cleric, None, None, None) {
+            ef.apply(&mut e);
+        }
+        // Each wounded ally should have been healed (their priority
+        // beat the healthy nearby ally despite the distance penalty).
+        for (i, &id) in wounded.iter().enumerate() {
+            assert!(
+                e.actors[&id].hitpoints() > wounded_hp_before[i],
+                "wounded ally {} should be healed (priority over full-HP nearby)",
+                i
+            );
+        }
+        // The healthy nearby ally should be skipped — max_targets = 6,
+        // and the 6 wounded ones plus the cleric (full HP, priority 2)
+        // exceed the cap. Healthy_nearby and cleric tie at priority 2;
+        // distance breaks the tie. Either way at least one priority-2
+        // slot is preserved for a wounded ally that the old code would
+        // have crowded out.
+        assert_eq!(
+            e.actors[&healthy_nearby].hitpoints(),
+            healthy_hp_before,
+            "full-HP nearby ally should not steal a heal slot from wounded allies"
+        );
+    }
+
     /// Scroll of Synaptic Static: psychic burst. Enemies in the burst
     /// take damage on a failed save; MindBlanked actors (psychic-immune)
     /// take zero. Verifies the typed-immunity lane folds the burst-damage
