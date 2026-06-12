@@ -1753,9 +1753,9 @@ pub static SCROLL_OF_GREATER_CURE_WOUNDS: Item = Item {
 
 /// Potion of Haste — Bonus Action; installs `Hasted` on the holder for
 /// 10 rounds (+2 AC, advantage on DEX saves, doubled walking speed).
-/// Distinct from Potion of Speed (which grants an extra Action this turn
-/// + flat +1 attack/save): Haste rides the engine's `Hasted` condition
-/// for the AC / DEX-save / speed bundle. Fires through the shared
+/// Distinct from Potion of Speed (extra Action this turn plus a flat
+/// +1 attack/save): Haste rides the engine's `Hasted` condition for the
+/// AC / DEX-save / speed bundle. Fires through the shared
 /// `SelfConditionItem` impl. Rejects re-drink when already Hasted.
 pub static POTION_OF_HASTE: Item = Item {
     name: "Potion of Haste",
