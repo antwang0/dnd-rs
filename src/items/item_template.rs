@@ -1937,6 +1937,121 @@ pub static PERIAPT_OF_HEALTH: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Wings of Flying — passive trinket. Grants the wearer the Flying
+/// condition while worn (modeled via the existing Flying envelope:
+/// +24 tile / +60 ft speed bump and ranged-attacker disadvantage).
+/// 5e RAW (DMG): a cape that unfurls into wings, granting a 60 ft flying
+/// speed for up to 1 hour; the engine doesn't track fuel reserves, so
+/// the wings are passive-on-while-worn. Sibling to Winged Boots and
+/// Boots of Levitation — distinct cape-slot flavor on the always-on
+/// flight lane, lets the loot pool drop a flight option without
+/// committing the boots / feet slot.
+pub static WINGS_OF_FLYING: Item = Item {
+    name: "Wings of Flying",
+    glyph: 'W',
+    passive_conditions: &[crate::conditions::Condition::Flying],
+    ..Item::DEFAULTS
+};
+
+/// Carpet of Flying — passive trinket. Grants the wearer the Flying
+/// condition while carried. 5e RAW (DMG): a finely woven carpet that the
+/// owner can command to fly; the engine doesn't model riding/dismounting
+/// or carrying-capacity, so we collapse to a passive Flying trinket
+/// (same envelope as Wings of Flying / Winged Boots). Distinct loot
+/// entry for the carpet-flavor; lets a single dungeon roll surface more
+/// than one flight option without piling identical entries on the boots
+/// slot.
+pub static CARPET_OF_FLYING: Item = Item {
+    name: "Carpet of Flying",
+    glyph: 'F',
+    passive_conditions: &[crate::conditions::Condition::Flying],
+    ..Item::DEFAULTS
+};
+
+/// Talisman of Pure Good — passive trinket. RAW (DMG): legendary holy
+/// relic with a Channel Divinity-style burst against evil; we collapse
+/// the per-day burst clauses to a flat defensive stack (+1 AC, +2 save)
+/// — the load-bearing combat envelope a paladin / cleric wants from a
+/// holy talisman. Slots above Ring of Protection (+1/+1) and Stone of
+/// Good Luck (+1/+1) on the save-bonus ladder; the +2 save edge marks
+/// it as a premium passive entry.
+pub static TALISMAN_OF_PURE_GOOD: Item = Item {
+    name: "Talisman of Pure Good",
+    glyph: 'T',
+    bonuses: ItemBonuses { ac: 1, save: 2, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
+};
+
+/// Periapt of Mind Blocking — passive trinket. Grants the wearer
+/// immunity to psychic damage AND to the Charmed condition while worn.
+/// 5e RAW flavor: an amulet that shields the bearer's mind from
+/// telepathic probes and psychic assault; the engine collapses the
+/// mental-defense envelope to the two load-bearing combat clauses
+/// (typed psychic damage zero, Charmed install blocked). Sibling to
+/// Ring of Mind Shielding (which already grants psychic immunity) —
+/// pads the loot pool with a second mental-defense passive on a
+/// distinct slot, and adds the Charmed-immune lane the ring doesn't
+/// cover.
+pub static PERIAPT_OF_MIND_BLOCKING: Item = Item {
+    name: "Periapt of Mind Blocking",
+    glyph: 'M',
+    damage_immunities: &[crate::engine::types::DamageType::Psychic],
+    condition_immunities: &[crate::conditions::Condition::Charmed],
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Hellish Rebuke — single-target DEX save vs DC 13 fire damage
+/// consumable. RAW (level-1 evocation, reaction): the caster wreathes the
+/// attacker in flames for 2d10 fire on a failed save, half on a pass. The
+/// scroll drops the reaction-timing clause and surfaces the save-or-half
+/// payload as an Action consumable.
+pub static SCROLL_OF_HELLISH_REBUKE: Item = Item {
+    name: "Scroll of Hellish Rebuke",
+    glyph: 'h',
+    on_use: Some(&crate::actions::item_actions::READ_HELLISH_REBUKE_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Wand of Mind Spike — single-target WIS save vs DC 15 psychic damage
+/// consumable. RAW: level-2 divination, 3d8 psychic with a tracking
+/// rider; the wand surfaces the save-for-half damage half and drops
+/// the concentration tracker. Fills the psychic-damage single-target
+/// slot in the loot pool — sibling to Wand of Lightning Bolts and the
+/// Scroll of Hellish Rebuke on the typed-damage consumable lane.
+pub static WAND_OF_MIND_SPIKE: Item = Item {
+    name: "Wand of Mind Spike",
+    glyph: 'X',
+    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_MIND_SPIKE),
+    ..Item::DEFAULTS
+};
+
+/// Eyes of Charming — passive trinket consumable. RAW (DMG): "as an
+/// action, you can cast the Charm Person spell on a humanoid within 30
+/// feet, expending 1 of 3 charges." The engine collapses the 3-charge
+/// ladder to a single-use scroll-style envelope: one Charm Person cast
+/// (WIS save vs DC 13, fail = Charmed for 10 rounds) and the item is
+/// consumed. Sibling to Scroll of Charm Person on the entry-tier Charmed
+/// installer lane.
+pub static EYES_OF_CHARMING: Item = Item {
+    name: "Eyes of Charming",
+    glyph: 'e',
+    on_use: Some(&crate::actions::item_actions::USE_EYES_OF_CHARMING),
+    ..Item::DEFAULTS
+};
+
+/// Gem of Brightness — burst-blind consumable. RAW (DMG): a gem with
+/// charges that flash a blinding light at one creature or in a cone.
+/// The engine collapses the multi-mode utility to the single combat-
+/// relevant clause — the cone Blind — and uses a burst envelope
+/// (4-tile radius) with a CON save vs DC 14. On a failed save the
+/// target is Blinded for 10 rounds.
+pub static GEM_OF_BRIGHTNESS: Item = Item {
+    name: "Gem of Brightness",
+    glyph: 'G',
+    on_use: Some(&crate::actions::item_actions::USE_GEM_OF_BRIGHTNESS),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -2349,4 +2464,35 @@ pub static LOOT_POOL: &[&Item] = &[
     // single dungeon roll two distinct Poisoned-immune trinkets without
     // double-rolling Necklace of Adaptation.
     &PERIAPT_OF_HEALTH,
+    // Wings of Flying / Carpet of Flying — passive Flying trinkets on
+    // distinct slots (cape / carry). Sit alongside Winged Boots and
+    // Boots of Levitation on the always-on flight lane; the extra entries
+    // let a single dungeon roll surface a flight option for a non-boots
+    // loadout without piling weight onto the boots slot.
+    &WINGS_OF_FLYING,
+    &CARPET_OF_FLYING,
+    // Talisman of Pure Good — premium passive +1 AC / +2 save trinket.
+    // Single rare entry above Cloak of Protection (+1/+1) on the
+    // defensive-passive ladder.
+    &TALISMAN_OF_PURE_GOOD,
+    // Periapt of Mind Blocking — psychic-immunity + Charmed-immunity
+    // passive. Sibling to Ring of Mind Shielding (psychic immune only)
+    // on the mental-defense passive lane.
+    &PERIAPT_OF_MIND_BLOCKING,
+    // Scroll of Hellish Rebuke — entry-tier single-target fire consumable
+    // (2d10 DEX save 13, save-for-half). Sibling to the Acid Arrow / Mind
+    // Spike scrolls on the single-target damage-scroll lane.
+    &SCROLL_OF_HELLISH_REBUKE,
+    // Wand of Mind Spike — single-target psychic damage at DC 15 WIS save
+    // (3d8 save-for-half). Fills the psychic single-target damage niche
+    // alongside Scroll of Hellish Rebuke (fire) and the burst Scroll of
+    // Synaptic Static (psychic burst).
+    &WAND_OF_MIND_SPIKE,
+    // Eyes of Charming — single-target Charmed installer at DC 13. Sibling
+    // to Scroll of Charm Person on the entry-tier Charmed lane.
+    &EYES_OF_CHARMING,
+    // Gem of Brightness — burst Blinded installer (DC 14 CON save).
+    // Single low-weight entry on the burst-CC lane alongside Pipes of
+    // Haunting (burst Frightened) and Wand of Web (burst Restrained).
+    &GEM_OF_BRIGHTNESS,
 ];

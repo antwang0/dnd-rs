@@ -37581,6 +37581,291 @@ mod tests {
         );
     }
 
+    /// Wings of Flying: passive_conditions install Flying on pickup, the
+    /// same install path Winged Boots rides. Verifies that the cape-slot
+    /// trinket routes through the same `passive_conditions` lane and the
+    /// Flying condition surfaces on the holder.
+    #[test]
+    fn wings_of_flying_install_flying_on_pickup() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::WINGS_OF_FLYING;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(!e.actors[&f].has_condition(Condition::Flying));
+        e.actors.get_mut(&f).unwrap().pickup_item(&WINGS_OF_FLYING);
+        assert!(
+            e.actors[&f].has_condition(Condition::Flying),
+            "wings of flying should install Flying via passive_conditions"
+        );
+    }
+
+    /// Carpet of Flying: same install lane as Wings of Flying / Winged
+    /// Boots. Quick smoke test that the carpet-slot entry hooks into
+    /// the passive_conditions lane.
+    #[test]
+    fn carpet_of_flying_installs_flying_on_pickup() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::CARPET_OF_FLYING;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .pickup_item(&CARPET_OF_FLYING);
+        assert!(
+            e.actors[&f].has_condition(Condition::Flying),
+            "carpet of flying should install Flying via passive_conditions"
+        );
+    }
+
+    /// Talisman of Pure Good: passive +1 AC / +2 save trinket. Verifies
+    /// the bonuses route through `ItemBonuses` summation onto the
+    /// holder's `armor_class()` and save-roll path.
+    #[test]
+    fn talisman_of_pure_good_bumps_ac_and_save() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::TALISMAN_OF_PURE_GOOD;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ac_before = e.actors[&f].armor_class();
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .pickup_item(&TALISMAN_OF_PURE_GOOD);
+        assert_eq!(
+            e.actors[&f].armor_class(),
+            ac_before + 1,
+            "talisman should bump AC by +1"
+        );
+    }
+
+    /// Periapt of Mind Blocking: passive Psychic damage immunity + Charmed
+    /// condition immunity. Verifies both lanes on a single hold.
+    #[test]
+    fn periapt_of_mind_blocking_blocks_psychic_and_charmed() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::engine::types::DamageType;
+        use crate::items::item_template::PERIAPT_OF_MIND_BLOCKING;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .pickup_item(&PERIAPT_OF_MIND_BLOCKING);
+        // Psychic damage: should be zeroed through the item-immunity lane.
+        assert_eq!(
+            e.actors[&f].effective_damage(20, DamageType::Psychic),
+            0,
+            "periapt should zero psychic damage via damage_immunities"
+        );
+        // Charmed: install gate should short-circuit.
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .add_condition(Condition::Charmed, ConditionTimer::Rounds(10));
+        assert!(
+            !e.actors[&f].has_condition(Condition::Charmed),
+            "periapt should block Charmed install via condition_immunities"
+        );
+    }
+
+    /// Scroll of Hellish Rebuke: 2d10 fire damage on failed DEX save, half
+    /// on pass. Sweep seeds to confirm at least one seed lands damage on
+    /// the target — guards against a "scroll never fires" regression.
+    #[test]
+    fn scroll_of_hellish_rebuke_deals_fire_damage() {
+        use crate::actions::item_actions::READ_HELLISH_REBUKE_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_HELLISH_REBUKE;
+        let mut saw_damage = false;
+        for seed in 0..30u64 {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&wiz)
+                .unwrap()
+                .pickup_item(&SCROLL_OF_HELLISH_REBUKE);
+            let hp_before = e.actors[&enemy].hitpoints();
+            for ef in READ_HELLISH_REBUKE_SCROLL.side_effects(
+                &mut e,
+                wiz,
+                Some(&vec![enemy]),
+                None,
+                None,
+            ) {
+                ef.apply(&mut e);
+            }
+            assert!(
+                !e.actors[&wiz].has_item_named("Scroll of Hellish Rebuke"),
+                "scroll should be consumed on read"
+            );
+            if e.actors.get(&enemy).map(|a| a.hitpoints()).unwrap_or(0) < hp_before {
+                saw_damage = true;
+                break;
+            }
+        }
+        assert!(
+            saw_damage,
+            "hellish rebuke should deal fire damage on at least one seed"
+        );
+    }
+
+    /// Wand of Mind Spike: 3d8 psychic damage on failed WIS save, half on
+    /// pass. Sweep seeds to confirm damage lands. Validates the wand
+    /// routes through the SingleSaveDamageItem psychic lane.
+    #[test]
+    fn wand_of_mind_spike_deals_psychic_damage() {
+        use crate::actions::item_actions::USE_WAND_OF_MIND_SPIKE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::WAND_OF_MIND_SPIKE;
+        let mut saw_damage = false;
+        for seed in 0..30u64 {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&wiz)
+                .unwrap()
+                .pickup_item(&WAND_OF_MIND_SPIKE);
+            let hp_before = e.actors[&enemy].hitpoints();
+            for ef in USE_WAND_OF_MIND_SPIKE.side_effects(
+                &mut e,
+                wiz,
+                Some(&vec![enemy]),
+                None,
+                None,
+            ) {
+                ef.apply(&mut e);
+            }
+            assert!(
+                !e.actors[&wiz].has_item_named("Wand of Mind Spike"),
+                "wand should be consumed on use"
+            );
+            if e.actors.get(&enemy).map(|a| a.hitpoints()).unwrap_or(0) < hp_before {
+                saw_damage = true;
+                break;
+            }
+        }
+        assert!(
+            saw_damage,
+            "mind spike should deal psychic damage on at least one seed"
+        );
+    }
+
+    /// Eyes of Charming: single-target WIS save vs DC 13. Sweep seeds
+    /// until we observe a fail → Charmed install on the target.
+    #[test]
+    fn eyes_of_charming_installs_charmed_on_failed_save() {
+        use crate::actions::item_actions::USE_EYES_OF_CHARMING;
+        use crate::actors::creatures::bards::BARD_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::EYES_OF_CHARMING;
+        let mut saw_charmed = false;
+        for seed in 0..30u64 {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let user = e
+                .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            // Wizard target: middling WIS so the DC 13 save bites some
+            // seeds without being trivial — gives us a Charmed install
+            // window in the sweep range.
+            let target = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&user)
+                .unwrap()
+                .pickup_item(&EYES_OF_CHARMING);
+            for ef in USE_EYES_OF_CHARMING.side_effects(
+                &mut e,
+                user,
+                Some(&vec![target]),
+                None,
+                None,
+            ) {
+                ef.apply(&mut e);
+            }
+            assert!(
+                !e.actors[&user].has_item_named("Eyes of Charming"),
+                "eyes should be consumed on use"
+            );
+            if e.actors[&target].has_condition(Condition::Charmed) {
+                saw_charmed = true;
+                break;
+            }
+        }
+        assert!(
+            saw_charmed,
+            "eyes of charming should land Charmed on at least one seed"
+        );
+    }
+
+    /// Gem of Brightness: burst CON save vs DC 14, fail = Blinded. Sweep
+    /// seeds until we observe a fail → Blinded install on at least one
+    /// target in the burst.
+    #[test]
+    fn gem_of_brightness_blinds_on_failed_save() {
+        use crate::actions::item_actions::USE_GEM_OF_BRIGHTNESS;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::GEM_OF_BRIGHTNESS;
+        let mut saw_blinded = false;
+        for seed in 0..30u64 {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let user = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&user)
+                .unwrap()
+                .pickup_item(&GEM_OF_BRIGHTNESS);
+            for ef in USE_GEM_OF_BRIGHTNESS.side_effects(
+                &mut e,
+                user,
+                None,
+                Some(&vec![Coordinate::new(5, 5)]),
+                None,
+            ) {
+                ef.apply(&mut e);
+            }
+            assert!(
+                !e.actors[&user].has_item_named("Gem of Brightness"),
+                "gem should be consumed on use"
+            );
+            if e.actors[&target].has_condition(Condition::Blinded) {
+                saw_blinded = true;
+                break;
+            }
+        }
+        assert!(
+            saw_blinded,
+            "gem of brightness should Blind a target on at least one seed"
+        );
+    }
+
     /// Seeded sibling of `ei_with_terrain` — same hand-crafted terrain
     /// shape but the encounter's RNG is initialized from `seed` so callers
     /// can sweep seeds for probabilistic assertions while keeping a

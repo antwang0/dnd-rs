@@ -3675,3 +3675,89 @@ pub static DRINK_POTION_OF_MIRROR_IMAGE: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
     temp_hp: None,
 };
+
+const SCROLL_OF_HELLISH_REBUKE_NAME: &str = "Scroll of Hellish Rebuke";
+const WAND_OF_MIND_SPIKE_NAME: &str = "Wand of Mind Spike";
+const EYES_OF_CHARMING_NAME: &str = "Eyes of Charming";
+const GEM_OF_BRIGHTNESS_NAME: &str = "Gem of Brightness";
+
+/// Scroll of Hellish Rebuke — Action; single-target, DEX save vs DC 13,
+/// fail = 2d10 fire damage; pass = half. 5e RAW: level-1 evocation
+/// reaction (Tiefling racial / warlock). The scroll surfaces the
+/// save-or-half damage half and drops the reaction-timing clause —
+/// becomes a standard Action-cost consumable. Routes through the
+/// shared `SingleSaveDamageItem` impl.
+pub static READ_HELLISH_REBUKE_SCROLL: SingleSaveDamageItem = SingleSaveDamageItem {
+    action_name: "read hellish rebuke scroll",
+    action_aliases: &["hellish rebuke", "rebuke"],
+    item_name: SCROLL_OF_HELLISH_REBUKE_NAME,
+    log_label: "scroll of hellish rebuke",
+    dice: Dice::new(2, 10),
+    flat_bonus: 0,
+    damage_type: DamageType::Fire,
+    save: AbilityScoreType::Dexterity,
+    dc: 13,
+    // 60 ft RAW; 24 tiles.
+    reach: 24,
+    save_for_half: true,
+};
+
+/// Wand of Mind Spike — Action; single-target, WIS save vs DC 15,
+/// fail = 3d8 psychic damage; pass = half. 5e RAW: level-2 divination,
+/// 3d8 psychic with a tracking rider; the wand surfaces the save-for-
+/// half damage half and drops the concentration tracker. Fills the
+/// psychic single-target damage niche in the wand family. Routes
+/// through the shared `SingleSaveDamageItem` impl.
+pub static USE_WAND_OF_MIND_SPIKE: SingleSaveDamageItem = SingleSaveDamageItem {
+    action_name: "use wand of mind spike",
+    action_aliases: &["mind spike", "spike wand"],
+    item_name: WAND_OF_MIND_SPIKE_NAME,
+    log_label: "wand of mind spike",
+    dice: Dice::new(3, 8),
+    flat_bonus: 0,
+    damage_type: DamageType::Psychic,
+    save: AbilityScoreType::Wisdom,
+    dc: 15,
+    // 60 ft RAW; 24 tiles.
+    reach: 24,
+    save_for_half: true,
+};
+
+/// Eyes of Charming — Action; single-target WIS save vs DC 13, fail =
+/// `Charmed` for 10 rounds. 5e RAW (DMG): a pair of crystal lenses that
+/// can cast Charm Person three times per day; the engine collapses the
+/// 3-charge ladder to a single-use envelope (consumed on use) and uses
+/// the standard 10-round CC timer every other Charm consumable rides.
+/// Routes through the shared `SingleSaveConditionItem` impl.
+pub static USE_EYES_OF_CHARMING: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "use eyes of charming",
+    action_aliases: &["eyes", "charm eyes"],
+    item_name: EYES_OF_CHARMING_NAME,
+    log_text: "{actor}'s crystal lenses flash; the target's gaze locks.",
+    save: AbilityScoreType::Wisdom,
+    dc: 13,
+    // 30 ft RAW; 12 tiles.
+    reach: 12,
+    condition: Condition::Charmed,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Gem of Brightness — Action; 4-tile burst, CON save vs DC 14, fail =
+/// `Blinded` for 10 rounds. 5e RAW (DMG): a prism gem with three charge
+/// modes (light, blind one, blind cone); the engine collapses the
+/// multi-mode utility to the only combat-relevant clause (cone Blinded)
+/// and uses a single-use envelope. Routes through the shared
+/// `BurstSaveConditionItem` impl.
+pub static USE_GEM_OF_BRIGHTNESS: BurstSaveConditionItem = BurstSaveConditionItem {
+    action_name: "use gem of brightness",
+    action_aliases: &["gem", "brightness"],
+    item_name: GEM_OF_BRIGHTNESS_NAME,
+    log_text: "{actor} discharges the gem of brightness; a searing prismatic flare blooms.",
+    save: AbilityScoreType::Constitution,
+    dc: 14,
+    radius: 4,
+    // 30 ft RAW for the cone-of-light variant; 12 tiles in the 2.5ft grid.
+    reach: 12,
+    condition: Condition::Blinded,
+    timer: ConditionTimer::Rounds(10),
+};
