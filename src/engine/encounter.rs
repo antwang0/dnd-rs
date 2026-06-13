@@ -81,10 +81,16 @@ use crate::actors::creatures::frost_giants::FROST_GIANT_TEMPLATE;
 use crate::actors::creatures::earth_elementals::EARTH_ELEMENTAL_TEMPLATE;
 use crate::actors::creatures::air_elementals::AIR_ELEMENTAL_TEMPLATE;
 use crate::actors::creatures::bullettes::BULLETTE_TEMPLATE;
+use crate::actors::creatures::couatls::COUATL_TEMPLATE;
+use crate::actors::creatures::fire_imps::FIRE_IMP_TEMPLATE;
 use crate::actors::creatures::flameskulls::FLAMESKULL_TEMPLATE;
+use crate::actors::creatures::imps::IMP_TEMPLATE;
+use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+use crate::actors::creatures::slimes::SLIME_TEMPLATE;
 use crate::actors::creatures::spectators::SPECTATOR_TEMPLATE;
 use crate::actors::creatures::wraiths::WRAITH_TEMPLATE;
 use crate::actors::creatures::vampires::VAMPIRE_TEMPLATE;
+use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
 use crate::actors::creatures::dragons::{
     ADULT_RED_DRAGON_TEMPLATE, ANCIENT_BLUE_DRAGON_TEMPLATE, YOUNG_WHITE_DRAGON_TEMPLATE,
 };
@@ -2401,6 +2407,23 @@ impl EncounterInstance {
             &SPECTATOR_TEMPLATE,
             &WRAITH_TEMPLATE,
             &VAMPIRE_TEMPLATE,
+            // Low-CR undead / fiend / ooze staples. These templates have
+            // existed for a while but were never added to the pool, so
+            // the random encounter generator could never roll them — a
+            // single dungeon room couldn't surface a humble skeleton-
+            // archer ambush or an acid slime puddle. Adding them here
+            // restores the "common monster" fallback for the cr_target
+            // ≈ 1 default the main loop spawns at.
+            &SKELETON_TEMPLATE,
+            &ZOMBIE_TEMPLATE,
+            &SLIME_TEMPLATE,
+            &IMP_TEMPLATE,
+            &FIRE_IMP_TEMPLATE,
+            // Mid-CR celestial — 5e Couatl (CR 4). Pairs with the rest
+            // of the mid-tier extraplanar entries (Bone Devil, Erinyes,
+            // Vrock) so a higher cr_target run has a good-aligned
+            // outsider in the pool too.
+            &COUATL_TEMPLATE,
             &ADULT_RED_DRAGON_TEMPLATE,
             &YOUNG_WHITE_DRAGON_TEMPLATE,
             &ANCIENT_BLUE_DRAGON_TEMPLATE,
