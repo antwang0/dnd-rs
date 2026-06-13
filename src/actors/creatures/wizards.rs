@@ -480,6 +480,22 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::LONGSTRIDER);
     actions.push(&*crate::actions::spells::EXPEDITIOUS_RETREAT);
     actions.push(&*crate::actions::spells::EARTHBIND);
+    // Latest wizard additions:
+    //   - lv2 **Enhance Ability** (transmutation): touch ally buff —
+    //     2d6 temp HP + flat +2 saves for the duration (concentration).
+    //     Slots cleanly into the wizard's support lane next to Bless's
+    //     burst cousin; the temp HP rider differentiates it from Bless.
+    //   - lv3 **Blink** (transmutation): self-only `Displaced` install
+    //     (10 rounds, no concentration). Defensive lane sibling to Blur
+    //     (concentration-bound attacker-disadvantage); Blink frees the
+    //     wizard's concentration slot for Hold Monster / Web / etc.
+    //   - lv5 **Contagion** (necromancy): single-target touch CON-save
+    //     vs the wizard's spell DC; on fail target picks up Poisoned
+    //     for 10 rounds. Necrotic-themed CON-save lockdown next to
+    //     Hold Monster's WIS-save lane.
+    actions.push(&*crate::actions::spells::ENHANCE_ABILITY);
+    actions.push(&*crate::actions::spells::BLINK);
+    actions.push(&*crate::actions::spells::CONTAGION);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

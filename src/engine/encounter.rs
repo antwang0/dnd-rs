@@ -2087,6 +2087,43 @@ impl EncounterInstance {
         ))
     }
 
+    /// True if both ids resolve to live actors and they sit on the same
+    /// team. Used by support / buff spells (Bless, Aid, Enhance Ability,
+    /// Longstrider, Heroism, Healing Word) at the side-effect chokepoint
+    /// to short-circuit on a hostile-aimed cast — the picker UI should
+    /// have steered the caster to an ally, but the safety net catches
+    /// any input-shape edge case (a mind-controlled caster trying to
+    /// heal their captor, a UI override). Returns false if either id
+    /// resolves to a missing actor — symmetric with `footprint_distance`'s
+    /// `None`-on-missing semantics, but folded into a single bool here so
+    /// call sites can collapse the four-line `is_none_or(|t| t.team() != caster_team)`
+    /// dance to a one-liner.
+    pub fn actors_allied(&self, a_id: usize, b_id: usize) -> bool {
+        let Some(a) = self.actors.get(&a_id) else {
+            return false;
+        };
+        let Some(b) = self.actors.get(&b_id) else {
+            return false;
+        };
+        a.team() == b.team()
+    }
+
+    /// Negation of `actors_allied` that also fails on missing actors —
+    /// "these two ids are both live AND on opposite teams." Used by
+    /// harmful actions that want to short-circuit on a self-/ally-aimed
+    /// cast (sanity check; the picker shouldn't allow this either). A
+    /// missing actor returns false rather than true so the helper never
+    /// reports a phantom enemy.
+    pub fn actors_enemies(&self, a_id: usize, b_id: usize) -> bool {
+        let Some(a) = self.actors.get(&a_id) else {
+            return false;
+        };
+        let Some(b) = self.actors.get(&b_id) else {
+            return false;
+        };
+        a.team() != b.team()
+    }
+
     /// First step the actor should take to reach a footprint-adjacent square
     /// next to `target_id`. Uses 8-connected BFS over walkable tiles for the
     /// actor's footprint; finds the *shortest-step-count* path, ignoring
@@ -38277,6 +38314,290 @@ mod tests {
         assert!(
             saw_blinded,
             "gem of brightness should Blind a target on at least one seed"
+        );
+    }
+
+    /// Scroll of Enhance Ability — single-use ally buff. Installs
+    /// `Heroic` for 10 rounds on a picked ally and consumes the scroll.
+    #[test]
+    fn scroll_of_enhance_ability_installs_heroic_on_ally() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_ENHANCE_ABILITY_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_ENHANCE_ABILITY;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let caster = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_ENHANCE_ABILITY);
+        let aei = ActionExecutionInfo::new(
+            &READ_ENHANCE_ABILITY_SCROLL,
+            caster,
+            Some(vec![ally]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            e.actors[&ally].has_condition(Condition::Heroic),
+            "Scroll of Enhance Ability should install Heroic on the ally"
+        );
+        assert!(
+            !e.actors[&caster].has_item_named("Scroll of Enhance Ability"),
+            "scroll should be consumed on use"
+        );
+    }
+
+    /// Scroll of Blink: single-use self-buff. Installs `Displaced` for
+    /// 10 rounds and consumes the scroll. No concentration is started.
+    #[test]
+    fn scroll_of_blink_installs_displaced_on_self() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_BLINK_SCROLL;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_BLINK;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&caster).unwrap().pickup_item(&SCROLL_OF_BLINK);
+        let aei = ActionExecutionInfo::new(&READ_BLINK_SCROLL, caster, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            e.actors[&caster].has_condition(Condition::Displaced),
+            "Scroll of Blink should install Displaced on the caster"
+        );
+        assert!(
+            !e.actors[&caster].is_concentrating(),
+            "Scroll of Blink doesn't consume the concentration slot"
+        );
+        assert!(
+            !e.actors[&caster].has_item_named("Scroll of Blink"),
+            "scroll should be consumed on use"
+        );
+    }
+
+    /// Scroll of Contagion: on a failed CON save, the target picks up
+    /// `Poisoned` for 10 rounds. Single-use consumable; sweeping seeds
+    /// to find at least one failed save.
+    #[test]
+    fn scroll_of_contagion_poisons_failed_save_target() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_CONTAGION_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_CONTAGION;
+        let mut poisoned = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let caster = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&caster)
+                .unwrap()
+                .pickup_item(&SCROLL_OF_CONTAGION);
+            let aei = ActionExecutionInfo::new(
+                &READ_CONTAGION_SCROLL,
+                caster,
+                Some(vec![g]),
+                None,
+                None,
+            );
+            assert!(aei.validate(&e));
+            e.push_action(aei);
+            e.process_stack();
+            if e.actors[&g].has_condition(Condition::Poisoned) {
+                poisoned = true;
+                assert!(
+                    !e.actors[&caster].has_item_named("Scroll of Contagion"),
+                    "scroll should be consumed on use"
+                );
+                break;
+            }
+        }
+        assert!(poisoned, "Scroll of Contagion never landed across 30 seeds");
+    }
+
+    /// Enhance Ability: ally-buff cast — applies temp HP, the +2 save
+    /// buff, and the Heroic marker, all anchored under concentration. On
+    /// concentration drop the buffs cleanly unwind.
+    #[test]
+    fn enhance_ability_buffs_ally_with_concentration() {
+        use crate::actions::spells::ENHANCE_ABILITY;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        let tv = vec![ally];
+        let effs = ENHANCE_ABILITY.side_effects(&mut e, cleric, Some(&tv), None, None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&ally].has_condition(Condition::Heroic),
+            "Enhance Ability installs the Heroic marker on the target"
+        );
+        assert_eq!(
+            e.actors[&ally].save_bonus_buff(),
+            2,
+            "Enhance Ability grants +2 to saves"
+        );
+        assert!(
+            e.actors[&ally].temp_hp() > 0,
+            "Enhance Ability grants temp HP (2d6 ≥ 2)"
+        );
+        assert!(
+            e.actors[&cleric].is_concentrating(),
+            "Enhance Ability is concentration-bound"
+        );
+        e.drop_concentration(cleric);
+        assert!(
+            !e.actors[&ally].has_condition(Condition::Heroic),
+            "dropping concentration strips the Heroic marker"
+        );
+        assert_eq!(
+            e.actors[&ally].save_bonus_buff(),
+            0,
+            "dropping concentration rolls the save buff back to zero"
+        );
+    }
+
+    /// Enhance Ability refuses to land on a hostile target — even though
+    /// the picker UI shouldn't offer it, the side-effect builder guards
+    /// against hostile aim as a safety net. Mirrors Longstrider.
+    #[test]
+    fn enhance_ability_rejects_hostile_target() {
+        use crate::actions::spells::ENHANCE_ABILITY;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        let tv = vec![enemy];
+        let effs = ENHANCE_ABILITY.side_effects(&mut e, cleric, Some(&tv), None, None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&enemy].has_condition(Condition::Heroic),
+            "Enhance Ability must not buff a hostile target"
+        );
+        assert!(
+            !e.actors[&cleric].is_concentrating(),
+            "rejected cast must not start concentration"
+        );
+    }
+
+    /// Blink: self-cast applies the `Displaced` condition without
+    /// consuming concentration. The 10-round timer prevents a swing-less
+    /// blink from dangling.
+    #[test]
+    fn blink_self_applies_displaced_no_concentration() {
+        use crate::actions::spells::BLINK;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let effs = BLINK.side_effects(&mut e, wiz, None, None, None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&wiz].has_condition(Condition::Displaced),
+            "Blink installs Displaced on the caster"
+        );
+        assert!(
+            !e.actors[&wiz].is_concentrating(),
+            "Blink is fire-and-forget — no concentration"
+        );
+    }
+
+    /// Contagion: on a failed CON save, Poisoned lands on the target for
+    /// the spell's 10-round duration. Save-aware: a Poisoned-immune
+    /// target is filtered out at the side-effect site (no save rolled).
+    #[test]
+    fn contagion_poisons_failed_save_target() {
+        use crate::actions::spells::CONTAGION;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut poisoned = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let cleric = e
+                .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let tv = vec![g];
+            let effs = CONTAGION.side_effects(&mut e, cleric, Some(&tv), None, None);
+            for ef in effs {
+                ef.apply(&mut e);
+            }
+            if e.actors[&g].has_condition(Condition::Poisoned) {
+                poisoned = true;
+                break;
+            }
+        }
+        assert!(poisoned, "contagion never landed across 30 attempts");
+    }
+
+    /// Contagion's Poisoned-immunity short-circuit: against a Zombie
+    /// (Poisoned-immune via template), the cast still consumes resources
+    /// but skips the save and installs nothing — no spurious tick on the
+    /// Heightened Spell prime, no useless Poisoned tag.
+    #[test]
+    fn contagion_skips_poisoned_immune_target() {
+        use crate::actions::spells::CONTAGION;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let z = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        // Sanity: zombie is Poisoned-immune at the template lane.
+        assert!(e.actors[&z].effectively_immune_to_condition(Condition::Poisoned));
+        let tv = vec![z];
+        let effs = CONTAGION.side_effects(&mut e, cleric, Some(&tv), None, None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&z].has_condition(Condition::Poisoned),
+            "Contagion must not install Poisoned on an immune target"
         );
     }
 

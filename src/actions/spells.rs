@@ -1504,14 +1504,9 @@ impl Action for Bless {
         }
         effects.push(Box::new(StartConcentration {
             caster_id,
-            data: ConcentrationData {
-                spell_name: "Bless".to_string(),
-                conditions,
-                attack_buffs,
-                save_buffs,
-                damage_buffs: Vec::new(),
-                breaks_on_attack: false,
-            },
+            data: ConcentrationData::with_conditions("Bless", conditions)
+                .with_attack_buffs(attack_buffs)
+                .with_save_buffs(save_buffs),
         }));
         effects
     }
@@ -1733,14 +1728,10 @@ impl Action for ShieldOfFaith {
             }),
             Box::new(StartConcentration {
                 caster_id,
-                data: ConcentrationData {
-                    spell_name: "Shield of Faith".to_string(),
-                    conditions: vec![(target_id, Condition::ShieldOfFaith)],
-                    attack_buffs: Vec::new(),
-                    save_buffs: Vec::new(),
-                    damage_buffs: Vec::new(),
-                    breaks_on_attack: false,
-                },
+                data: ConcentrationData::with_conditions(
+                    "Shield of Faith",
+                    vec![(target_id, Condition::ShieldOfFaith)],
+                ),
             }),
         ]
     }
@@ -1810,14 +1801,10 @@ impl Action for CauseFear {
             }),
             Box::new(StartConcentration {
                 caster_id,
-                data: ConcentrationData {
-                    spell_name: "Cause Fear".to_string(),
-                    conditions: vec![(target_id, Condition::Frightened)],
-                    attack_buffs: Vec::new(),
-                    save_buffs: Vec::new(),
-                    damage_buffs: Vec::new(),
-                    breaks_on_attack: false,
-                },
+                data: ConcentrationData::with_conditions(
+                    "Cause Fear",
+                    vec![(target_id, Condition::Frightened)],
+                ),
             }),
         ]
     }
@@ -2630,18 +2617,10 @@ impl Action for Aid {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
         // Aid only affects allies — reject hostile targets at side-effect
         // time as a safety net (the harmful=false flag should already
         // steer the picker UI here).
-        let caster_team = caster.team();
-        if encounter
-            .actors
-            .get(&target_id)
-            .is_none_or(|t| t.team() != caster_team)
-        {
+        if !encounter.actors_allied(caster_id, target_id) {
             return Vec::new();
         }
         // RAW Aid: "the target's hit point maximum and current hit
@@ -4497,9 +4476,6 @@ impl Action for MagicWeapon {
         // Install +1 attack AND +1 damage buffs, registering both on the
         // concentration so dropping the spell rolls back each delta on
         // the right actor.
-        let mut data = ConcentrationData::new("Magic Weapon");
-        data.attack_buffs.push((target_id, 1));
-        data.damage_buffs.push((target_id, 1));
         vec![
             Box::new(AdjustAttackBuff {
                 actor_id: target_id,
@@ -4511,7 +4487,9 @@ impl Action for MagicWeapon {
             }),
             Box::new(StartConcentration {
                 caster_id,
-                data,
+                data: ConcentrationData::new("Magic Weapon")
+                    .with_attack_buffs(vec![(target_id, 1)])
+                    .with_damage_buffs(vec![(target_id, 1)]),
             }),
         ]
     }
@@ -4912,8 +4890,6 @@ impl Action for DivineFavor {
         use crate::engine::side_effects::AdjustAttackBuff;
         // +2 attack buff approximates "+1d4 radiant per hit". The buff
         // lives on the concentration so it rolls back automatically.
-        let mut data = ConcentrationData::new("Divine Favor");
-        data.attack_buffs.push((caster_id, 2));
         vec![
             Box::new(AdjustAttackBuff {
                 actor_id: caster_id,
@@ -4921,7 +4897,8 @@ impl Action for DivineFavor {
             }),
             Box::new(StartConcentration {
                 caster_id,
-                data,
+                data: ConcentrationData::new("Divine Favor")
+                    .with_attack_buffs(vec![(caster_id, 2)]),
             }),
         ]
     }
@@ -23773,18 +23750,10 @@ impl Action for Longstrider {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
         // Buff-only — reject hostile targets at side-effect time as a
         // safety net (the `is_harmful = false` flag already steers the
         // picker UI to allies).
-        let caster_team = caster.team();
-        if encounter
-            .actors
-            .get(&target_id)
-            .is_none_or(|t| t.team() != caster_team)
-        {
+        if !encounter.actors_allied(caster_id, target_id) {
             return Vec::new();
         }
         vec![Box::new(ApplyCondition {
@@ -23968,3 +23937,278 @@ impl Action for Earthbind {
 }
 
 pub static EARTHBIND: LazyLock<Earthbind> = LazyLock::new(|| Earthbind {});
+
+/// Enhance Ability — level-2 transmutation (bard / cleric / druid /
+/// sorcerer / wizard), action, concentration. The caster touches one
+/// willing creature and bestows a magical enhancement chosen from a list
+/// of six animal-themed boons (Bear's Endurance / Bull's Strength /
+/// Cat's Grace / Eagle's Splendor / Fox's Cunning / Owl's Wisdom). The
+/// universal load-bearing clause is "advantage on ability checks for the
+/// chosen ability score" — which the engine doesn't model directly (we
+/// don't track ability-check rolls outside saves).
+///
+/// Engine model: collapse to the *combat-relevant* twin (Bear's
+/// Endurance). On cast, the target gains 2d6 temporary HP (an immediate
+/// buffer that pairs with low-AC casters and dying frontliners) and a
+/// flat +2 to every saving throw via the standard `AdjustSaveBuff` lane.
+/// Both halves clear on concentration drop — the temp HP via natural
+/// consumption / long rest, the save buff via the standard concentration
+/// cleanup hook. Distinct from `Bless` (the burst counterpart) by the
+/// single-target focus, the temp HP rider, and no attack-roll buff.
+///
+/// SingleActor target, touch range, concentration-bound on the caster.
+/// `is_harmful = false` so the AI's support pipeline considers it
+/// alongside Bless / Heroism / Aid.
+pub struct EnhanceAbility {}
+
+impl Action for EnhanceAbility {
+    fn name(&self) -> &str {
+        "enhance ability"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ea", "enhance"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        // Temp HP install — surfaces to the AI's heal-search lane so an
+        // enhance-ability cast on a wounded ally registers as support.
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::AdjustSaveBuff;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // Buff-only — reject hostile aim at the side-effect site as a
+        // safety net (the `is_harmful = false` flag already steers the
+        // picker UI to allies). Mirrors Longstrider / Aid.
+        if !encounter.actors_allied(caster_id, target_id) {
+            return Vec::new();
+        }
+        // 2d6 temp HP (Bear's Endurance flavor) + flat +2 saves.
+        let raw = encounter.roll(&Dice::new(2, 6));
+        encounter.log(format!(
+            "  enhance ability: 2d6({}) temp HP, +2 saves",
+            raw
+        ));
+        vec![
+            Box::new(GainTempHp {
+                actor_id: target_id,
+                amount: raw,
+            }) as Box<dyn ApplicableSideEffect>,
+            Box::new(AdjustSaveBuff {
+                actor_id: target_id,
+                delta: 2,
+            }),
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Heroic,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Enhance Ability",
+                    vec![(target_id, Condition::Heroic)],
+                )
+                .with_save_buffs(vec![(target_id, 2)]),
+            }),
+        ]
+    }
+}
+
+pub static ENHANCE_ABILITY: LazyLock<EnhanceAbility> = LazyLock::new(|| EnhanceAbility {});
+
+/// Blink — level-3 transmutation (sorcerer / wizard), action, NO
+/// concentration. The caster phases between the Material and Ethereal
+/// Planes — RAW: at the end of each of their turns, roll 1d20; on 11+
+/// they vanish to the Ethereal Plane until the start of their next turn,
+/// during which time attacks against them are at disadvantage and they
+/// can pass through obstacles.
+///
+/// Engine model: collapse the per-turn coin-flip into a flat install of
+/// the existing `Displaced` condition on the caster. Displaced imposes
+/// disadvantage on attackers (matching the "vanishes when attacked"
+/// half) and breaks the first time the caster takes damage (matching
+/// RAW's "if you're hit, you snap back into phase" intuition — close
+/// enough; in RAW the blink-out is the explicit roll, but the engine's
+/// damage-break envelope conveys the same defensive flavor cleanly).
+/// Lasts up to 10 rounds (1 minute RAW) via the standard tick-down
+/// timer. No concentration — fire-and-forget defensive buff.
+///
+/// Self-target (NoArgs); slots in alongside Mirror Image / Blur on the
+/// caster's defensive lane. Distinct from Mirror Image (which uses the
+/// mirror_images count) and Blur (which is concentration); Blink's niche
+/// is "non-concentration, single-hit-break attacker disadvantage" — a
+/// clean fit for a wizard already concentrating on Hold Person / Web.
+pub struct Blink {}
+
+impl Action for Blink {
+    fn name(&self) -> &str {
+        "blink"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bl", "phase"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        encounter.log("  blink: phasing between planes".to_string());
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::Displaced,
+            // 1 minute RAW; cap at 10 rounds so a swing-less blink
+            // doesn't dangle across encounters.
+            timer: ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static BLINK: LazyLock<Blink> = LazyLock::new(|| Blink {});
+
+/// Contagion — level-5 necromancy (cleric / druid), action, touch. RAW:
+/// the caster makes a melee spell attack against one creature within
+/// reach; on hit the target makes three CON saves at the end of each of
+/// their turns over the next three turns; after three failed saves the
+/// target contracts one of seven foul diseases (each a distinct mechanical
+/// debuff: Blinding Sickness blinds, Filth Fever drops STR, etc.).
+///
+/// Engine model: collapse the three-save chain to a single CON save vs
+/// the caster's spell DC, resolved on the cast site. The melee touch
+/// attack itself is auto-hit (we drop the to-hit roll — the slot-5
+/// resource is the gate, and a contested touch attack + save chain
+/// would be one of the heaviest action-economy bills in the engine).
+/// On a failed save the target picks up `Poisoned` for 10 rounds (1
+/// minute) — the RAW disease variants collapse to the common debuff
+/// envelope (disadvantage on attacks + ability checks).
+///
+/// SingleActor target, touch range; harmful single-target install. Slots
+/// alongside Hold Person / Bestow Curse on the single-target lockdown
+/// lane — distinct by save ability (CON, not WIS) so a different stat
+/// profile gets bitten.
+pub struct Contagion {}
+
+impl Action for Contagion {
+    fn name(&self) -> &str {
+        "contagion"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cg", "infect"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // Use WIS as the default spell ability (cleric/druid primary).
+        // For SRD purity we'd pick per-caster; the cleric/druid pool
+        // both lean WIS so a single ability suffices.
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        // Skip the save against a Poisoned-immune target — the install
+        // can't land, and skipping preserves the Heightened Spell prime.
+        if encounter.actor_immune_to_condition(target_id, Condition::Poisoned) {
+            encounter.log("  contagion: target is immune to Poisoned".to_string());
+            return Vec::new();
+        }
+        let save = encounter.roll_save_against_caster(
+            target_id,
+            AbilityScoreType::Constitution,
+            dc,
+            caster_id,
+        );
+        if save.passed() {
+            return Vec::new();
+        }
+        encounter.log("  contagion: a foul disease takes hold".to_string());
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Poisoned,
+            timer: ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static CONTAGION: LazyLock<Contagion> = LazyLock::new(|| Contagion {});

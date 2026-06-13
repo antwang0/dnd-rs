@@ -152,6 +152,19 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::PROTECTION_FROM_ENERGY);
     actions.push(&*crate::actions::spells::REMOVE_CURSE);
     actions.push(&*crate::actions::spells::ANTILIFE_SHELL);
+    // Latest cleric additions:
+    //   - lv2 **Enhance Ability** (transmutation): touch single-target
+    //     buff — 2d6 temp HP + flat +2 saves for the duration
+    //     (concentration). Slots cleanly into the cleric's support lane
+    //     alongside Bless / Heroism / Aid; the single-target temp HP
+    //     differentiates it from Bless's burst attack-roll buff.
+    //   - lv5 **Contagion** (necromancy): single-target touch CON-save
+    //     vs the cleric's spell DC; on fail target picks up Poisoned for
+    //     10 rounds. Slots between Bestow Curse (lv3 WIS-save) and Hold
+    //     Monster (lv5 WIS-save) on the single-target lockdown ladder —
+    //     a CON-save lane bites a different stat profile.
+    actions.push(&*crate::actions::spells::ENHANCE_ABILITY);
+    actions.push(&*crate::actions::spells::CONTAGION);
     // Preserve Life — Cleric Channel Divinity (Life Domain in RAW; we
     // expose it generically here). Once per short rest pool of 5 × level
     // HP, healing the most-wounded allies first up to half max HP each.

@@ -242,6 +242,17 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     enemies (wyverns, dragons, fire imps). Concentration-bound.
     actions.push(&*crate::actions::spells::LONGSTRIDER);
     actions.push(&*crate::actions::spells::EARTHBIND);
+    // Latest druid additions (PHB druid list):
+    //   - lv2 **Enhance Ability** (transmutation): touch ally buff — 2d6
+    //     temp HP + flat +2 saves for the duration (concentration). Pairs
+    //     with the druid's healing / cleanse lane on a wounded frontliner.
+    //   - lv5 **Contagion** (necromancy): single-target touch CON-save
+    //     vs the druid's spell DC; on fail target picks up Poisoned for
+    //     10 rounds. The druid's signature single-target disease — slots
+    //     between Heat Metal (lv2) and Insect Plague (lv5) on the
+    //     debilitating-debuff ladder.
+    actions.push(&*crate::actions::spells::ENHANCE_ABILITY);
+    actions.push(&*crate::actions::spells::CONTAGION);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

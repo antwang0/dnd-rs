@@ -77,6 +77,12 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // cleanly with Bardic Inspiration's accuracy bump and the bard's
     // role as the party's tempo-setter.
     actions.push(&*crate::actions::spells::LONGSTRIDER);
+    // lv2 **Enhance Ability** (transmutation): touch ally buff — 2d6 temp
+    // HP + flat +2 saves for the duration (concentration). Slots cleanly
+    // into the bard's support lane next to Bless / Heroism — the
+    // single-target temp HP differentiates it from Bless's burst attack-
+    // roll buff and Heroism's flat-mod temp HP.
+    actions.push(&*crate::actions::spells::ENHANCE_ABILITY);
     CreatureTemplate {
         name: "Bard",
         glyph: 'B',

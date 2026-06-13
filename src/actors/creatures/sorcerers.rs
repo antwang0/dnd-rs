@@ -378,6 +378,18 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     flying boss.
     actions.push(&*crate::actions::spells::EXPEDITIOUS_RETREAT);
     actions.push(&*crate::actions::spells::EARTHBIND);
+    // Latest sorcerer additions (PHB sorcerer list):
+    //   - lv2 **Enhance Ability** (transmutation): touch ally buff — 2d6
+    //     temp HP + flat +2 saves for the duration (concentration). Pairs
+    //     with the sorcerer's Twinned Spell metamagic for a 2-for-1 buff
+    //     spread across two allies.
+    //   - lv3 **Blink** (transmutation): self-only `Displaced` install
+    //     (10 rounds, no concentration). The sorcerer's defensive lane
+    //     companion to Blur — Blink doesn't burn the concentration slot
+    //     so the sorcerer can run Haste / Hold Monster / Slow on the
+    //     same turn while the blink ward soaks attacker swings.
+    actions.push(&*crate::actions::spells::ENHANCE_ABILITY);
+    actions.push(&*crate::actions::spells::BLINK);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

@@ -151,6 +151,30 @@ impl ConcentrationData {
         self.breaks_on_attack = true;
         self
     }
+
+    /// Chainable builder setter for `attack_buffs`. Replaces the field in
+    /// place; pair with `with_conditions(...)` / `new(...)` so a single
+    /// fluent expression builds the full payload. Bless is the canonical
+    /// triple-lane case: conditions + attack buffs + save buffs.
+    pub fn with_attack_buffs(mut self, attack_buffs: Vec<(usize, i32)>) -> Self {
+        self.attack_buffs = attack_buffs;
+        self
+    }
+
+    /// Chainable builder setter for `save_buffs`. Mirrors
+    /// `with_attack_buffs` on the save-roll lane (Bless, Enhance Ability).
+    pub fn with_save_buffs(mut self, save_buffs: Vec<(usize, i32)>) -> Self {
+        self.save_buffs = save_buffs;
+        self
+    }
+
+    /// Chainable builder setter for `damage_buffs`. Mirrors
+    /// `with_attack_buffs` on the damage-roll lane (Magic Weapon /
+    /// Elemental Weapon-style installs).
+    pub fn with_damage_buffs(mut self, damage_buffs: Vec<(usize, i32)>) -> Self {
+        self.damage_buffs = damage_buffs;
+        self
+    }
 }
 
 pub struct CreatureTemplate {

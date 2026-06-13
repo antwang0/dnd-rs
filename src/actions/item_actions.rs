@@ -4125,3 +4125,74 @@ impl Action for GuidingBoltScrollItem {
         ]
     }
 }
+
+const SCROLL_OF_ENHANCE_ABILITY_NAME: &str = "Scroll of Enhance Ability";
+const SCROLL_OF_BLINK_NAME: &str = "Scroll of Blink";
+const SCROLL_OF_CONTAGION_NAME: &str = "Scroll of Contagion";
+
+/// Scroll of Enhance Ability — Action; install `Heroic` for 10 rounds on
+/// a single ally. 5e RAW (level-2 transmutation, concentration). The
+/// scroll drops the concentration gate and surfaces the Heroic-style
+/// buff envelope as a fire-and-forget ally buff. Sibling to Scroll of
+/// Bless (Blessed) and Scroll of Shield of Faith (ShieldOfFaith) on the
+/// single-target ally-buff scroll lane — distinct from Bless by the
+/// concentration-free envelope (the scroll already absorbs that cost)
+/// and by the choice of Heroic (Frightened immunity) over Blessed
+/// (+1d4 attack / saves). Touch range (RAW); fires through the shared
+/// `SingleTargetBuffItem` impl.
+pub static READ_ENHANCE_ABILITY_SCROLL: SingleTargetBuffItem = SingleTargetBuffItem {
+    action_name: "read enhance ability scroll",
+    action_aliases: &["ea scroll", "enhance ability scroll"],
+    item_name: SCROLL_OF_ENHANCE_ABILITY_NAME,
+    log_text: "{actor} reads a scroll of enhance ability; the target's stride steadies.",
+    condition: Condition::Heroic,
+    timer: ConditionTimer::Rounds(10),
+    // Touch range RAW; 1 tile in the 2.5ft grid.
+    reach: crate::actions::action_template::MELEE_REACH,
+    bonus_action: false,
+    reject_when_active: true,
+};
+
+/// Scroll of Blink — Action; install `Displaced` for 10 rounds on the
+/// reader. 5e RAW (level-3 transmutation, no concentration). Self-only
+/// defensive consumable that gives attackers disadvantage until the
+/// reader takes damage (the `Displaced` envelope breaks on hit). Slots
+/// alongside Potion of Mirror Image / Potion of Blur on the attacker-
+/// disadvantage defensive lane. Distinct from the others by being a
+/// scroll (the wizard / sorcerer / cleric can read while concentrating
+/// on something else, since Blink doesn't require concentration). Fires
+/// through the shared `SelfConditionItem` impl.
+pub static READ_BLINK_SCROLL: SelfConditionItem = SelfConditionItem {
+    action_name: "read blink scroll",
+    action_aliases: &["blink scroll", "blink"],
+    item_name: SCROLL_OF_BLINK_NAME,
+    log_text: "{actor} reads a scroll of blink; their form flickers between planes.",
+    condition: Condition::Displaced,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    reject_when_active: true,
+    temp_hp: None,
+};
+
+/// Scroll of Contagion — Action; single-target, CON save vs DC 15, fail
+/// = `Poisoned` for 10 rounds. 5e RAW (level-5 necromancy, touch, 3
+/// failed CON saves to disease the target). The scroll collapses the
+/// three-save chain to a single save vs the scroll's fixed DC. Slots in
+/// the rare half of the single-target CC lane alongside Scroll of Hold
+/// Person and Wand of Paralysis — distinct by the CON-save lane (bites
+/// low-CON enemies that shrug off the WIS-save Paralyzed installs) and
+/// by the Poisoned envelope (disadvantage on attacks + checks, not a
+/// full action-economy block). Touch range; fires through the shared
+/// `SingleSaveConditionItem` impl.
+pub static READ_CONTAGION_SCROLL: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "read contagion scroll",
+    action_aliases: &["contagion scroll", "contagion"],
+    item_name: SCROLL_OF_CONTAGION_NAME,
+    log_text: "{actor} reads a scroll of contagion; a foul mist coils around the target.",
+    save: AbilityScoreType::Constitution,
+    dc: 15,
+    // Touch range RAW; 1 tile.
+    reach: crate::actions::action_template::MELEE_REACH,
+    condition: Condition::Poisoned,
+    timer: ConditionTimer::Rounds(10),
+};

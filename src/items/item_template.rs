@@ -2177,6 +2177,43 @@ pub static SCROLL_OF_GUIDING_BOLT: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Scroll of Enhance Ability — Action; single-target ally buff (touch).
+/// Installs `Heroic` for 10 rounds — Frightened-immunity envelope. RAW:
+/// level-2 transmutation, concentration, touch; the scroll bypasses the
+/// concentration gate. Sibling to Scroll of Bless / Shield of Faith on
+/// the support-buff lane.
+pub static SCROLL_OF_ENHANCE_ABILITY: Item = Item {
+    name: "Scroll of Enhance Ability",
+    glyph: 'e',
+    on_use: Some(&crate::actions::item_actions::READ_ENHANCE_ABILITY_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Blink — Action; self-buff. Installs `Displaced` for 10
+/// rounds (attackers roll at disadvantage; broken on first damage taken).
+/// RAW: level-3 transmutation, no concentration. Sibling to Potion of
+/// Blur / Potion of Mirror Image on the attacker-disadvantage defensive
+/// consumable lane — distinct by the scroll envelope (any caster can
+/// read it) and the on-damage break.
+pub static SCROLL_OF_BLINK: Item = Item {
+    name: "Scroll of Blink",
+    glyph: 'k',
+    on_use: Some(&crate::actions::item_actions::READ_BLINK_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Contagion — Action; single-target CON save vs DC 15
+/// (touch). On fail target picks up `Poisoned` for 10 rounds. RAW:
+/// level-5 necromancy, three-save chain to disease; the scroll collapses
+/// to a single save vs the fixed DC. Slots in the rare half of the loot
+/// pool alongside the other lockdown scrolls.
+pub static SCROLL_OF_CONTAGION: Item = Item {
+    name: "Scroll of Contagion",
+    glyph: 'X',
+    on_use: Some(&crate::actions::item_actions::READ_CONTAGION_SCROLL),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -2655,4 +2692,16 @@ pub static LOOT_POOL: &[&Item] = &[
     // advantage. Unique support niche; sets up the next ally swing
     // for an advantaged hit on the same target.
     &SCROLL_OF_GUIDING_BOLT,
+    // Scroll of Enhance Ability — touch ally buff (Heroic, 10 rounds).
+    // Sibling to Scroll of Bless / Shield of Faith on the support-buff
+    // scroll lane. Single low-weight entry.
+    &SCROLL_OF_ENHANCE_ABILITY,
+    // Scroll of Blink — self-buff (Displaced, 10 rounds). Sibling to
+    // Potion of Blur / Mirror Image on the attacker-disadvantage defensive
+    // consumable lane. Single low-weight entry.
+    &SCROLL_OF_BLINK,
+    // Scroll of Contagion — single-target CON save Poisoned installer
+    // (touch, DC 15). Top-tier single-target lockdown alongside Scroll of
+    // Flesh to Stone / Wand of Polymorph; single low-weight entry.
+    &SCROLL_OF_CONTAGION,
 ];
