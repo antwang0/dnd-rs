@@ -1273,6 +1273,17 @@ impl Condition {
     /// the spell falls back to stripping one helpful condition rather
     /// than failing silently.
     pub fn is_dispellable_buff(&self) -> bool {
+        // Categorical primes funnel through their own helpers so adding
+        // a new metamagic / smite / maneuver / cunning prime drops the
+        // bookkeeping to a single list edit (the prime helper) and the
+        // dispel sweep picks it up automatically.
+        if self.is_metamagic_prime()
+            || self.is_cunning_strike_prime()
+            || self.is_smite_prime()
+            || self.is_maneuver_prime()
+        {
+            return true;
+        }
         matches!(
             self,
             Condition::Blessed
@@ -1296,12 +1307,7 @@ impl Condition {
                 | Condition::CrusadersMantled
                 | Condition::CrownOfStars
                 | Condition::TimeStopped
-                | Condition::Smiting
                 | Condition::Sacred
-                | Condition::SearingSmiting
-                | Condition::WrathfulSmiting
-                | Condition::BrandingSmiting
-                | Condition::BlindingSmiting
                 | Condition::Inspired
                 | Condition::SpiritShrouded
                 | Condition::HolyAuraed
@@ -1311,16 +1317,11 @@ impl Condition {
                 | Condition::AgathysShielded
                 | Condition::BigbysHanded
                 | Condition::Transformed
-                | Condition::DivineStriking
-                | Condition::TripAttacking
                 | Condition::InvestedInFlame
                 | Condition::InvestedInIce
                 | Condition::InvestedInStone
                 | Condition::InvestedInWind
                 | Condition::WindWalled
-                | Condition::StaggeringSmiting
-                | Condition::BanishingSmiting
-                | Condition::ThunderousSmiting
                 | Condition::Shillelaghed
                 | Condition::Enlarged
                 | Condition::WardingBonded
@@ -1332,6 +1333,53 @@ impl Condition {
                 | Condition::Displaced
                 | Condition::AbsorbedElements
                 | Condition::SpiritGuarding
+                | Condition::TidesOfChaos
+                | Condition::Purified
+                | Condition::Longstriding
+                | Condition::ExpeditiouslyRetreating
+        )
+    }
+
+    /// True if this condition is one of the Paladin **Smite** primes — the
+    /// bonus-action "next melee hit gets a damage rider" buffs (`Smiting`
+    /// for plain Divine Smite, plus the spell smites SearingSmiting /
+    /// WrathfulSmiting / BrandingSmiting / BlindingSmiting / StaggeringSmiting
+    /// / BanishingSmiting / ThunderousSmiting; DivineStriking for the
+    /// Cleric variant). Centralized so the dispellable-buff sweep, the
+    /// AI's "don't double-prime" gates, and any future smite-aware
+    /// chokepoint read a single helper instead of listing each prime by
+    /// name. Mutually exclusive in spirit (only one rider lands per swing
+    /// RAW; the engine doesn't enforce stacking — adding two primes lets
+    /// both ride).
+    pub fn is_smite_prime(&self) -> bool {
+        matches!(
+            self,
+            Condition::Smiting
+                | Condition::SearingSmiting
+                | Condition::WrathfulSmiting
+                | Condition::BrandingSmiting
+                | Condition::BlindingSmiting
+                | Condition::StaggeringSmiting
+                | Condition::BanishingSmiting
+                | Condition::ThunderousSmiting
+                | Condition::DivineStriking
+        )
+    }
+
+    /// True if this condition is one of the Fighter Battle Master
+    /// **maneuver** primes — bonus-action "next melee hit gets a control
+    /// rider" buffs (TripAttacking / MenacingAttacking / DisarmingAttacking
+    /// / PushingAttacking / GoadingAttacking / PrecisionAttacking /
+    /// SweepingAttacking / LungingAttacking / DistractingAttacking).
+    /// Centralized so the dispellable-buff sweep and any future maneuver-
+    /// aware chokepoint read a single helper instead of listing each
+    /// prime by name. RAW: each maneuver is a separate superiority die
+    /// spend; multiple primes can stack here since the rider-table consume
+    /// site picks the first one that matches.
+    pub fn is_maneuver_prime(&self) -> bool {
+        matches!(
+            self,
+            Condition::TripAttacking
                 | Condition::MenacingAttacking
                 | Condition::DisarmingAttacking
                 | Condition::PushingAttacking
@@ -1339,24 +1387,7 @@ impl Condition {
                 | Condition::PrecisionAttacking
                 | Condition::SweepingAttacking
                 | Condition::LungingAttacking
-                | Condition::EmpoweredSpelling
-                | Condition::HeightenedSpelling
-                | Condition::CarefulSpelling
-                | Condition::DistantSpelling
-                | Condition::TwinnedSpelling
-                | Condition::ExtendedSpelling
-                | Condition::SeekingSpelling
-                | Condition::SubtleSpelling
-                | Condition::TidesOfChaos
-                | Condition::TransmutedSpelling
-                | Condition::CunningStrikePoison
-                | Condition::CunningStrikeTrip
-                | Condition::CunningStrikeWithdraw
-                | Condition::CunningStrikeDaze
                 | Condition::DistractingAttacking
-                | Condition::Purified
-                | Condition::Longstriding
-                | Condition::ExpeditiouslyRetreating
         )
     }
 

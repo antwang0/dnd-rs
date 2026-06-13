@@ -37827,7 +37827,6 @@ mod tests {
     #[test]
     fn resilient_sphere_scroll_installs_sphered_on_failed_save() {
         use crate::actions::item_actions::READ_RESILIENT_SPHERE_SCROLL;
-        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::items::item_template::SCROLL_OF_RESILIENT_SPHERE;
         let mut saw_sphered = false;
@@ -37836,9 +37835,8 @@ mod tests {
             let user = e
                 .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
                 .unwrap();
-            // Fighter target — strong DEX-save profile would skip
-            // every roll; the wizard's lower DEX gives the sweep a
-            // window to observe a failed save.
+            // Wizard target — low DEX gives the sweep a window to
+            // observe a failed save without being trivial.
             let target = e
                 .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 2), 1, 0)
                 .unwrap();
@@ -37863,10 +37861,6 @@ mod tests {
                 saw_sphered = true;
                 break;
             }
-            // Allow the FIGHTER_TEMPLATE reference to participate in
-            // the build pipeline so an accidental rename triggers a
-            // compile error rather than a silent test gap.
-            let _ = &FIGHTER_TEMPLATE;
         }
         assert!(
             saw_sphered,
