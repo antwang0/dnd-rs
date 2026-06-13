@@ -2108,15 +2108,13 @@ pub static SCROLL_OF_EARTHEN_GRASP: Item = Item {
     ..Item::DEFAULTS
 };
 
-/// Scroll of Sleep — 4-tile burst, WIS save vs DC 13, fail = `Asleep`
-/// for 10 rounds. RAW: level-1 enchantment, no save — drops creatures
-/// whose combined current HP totals up to 5d8, lowest HP first. The
-/// scroll collapses the HP-bucket mechanic to the standard burst-save
-/// envelope so the install routes through the shared
-/// `BurstSaveConditionItem` impl. Sleep is mind-affecting RAW — the
-/// AI's immunity-skip naturally protects undead / constructs since the
-/// burst-target-prune filters out Charmed-immune targets (Sleep RAW
-/// only affects living creatures with INT > 0).
+/// Scroll of Sleep — 4-tile burst centered on a picked tile. Rolls a
+/// 5d8 HP pool and sweeps enemy creatures in ascending current-HP order,
+/// putting each to `Asleep` + `Prone` until the pool is consumed. RAW:
+/// level-1 enchantment, no save — the HP-bucket IS the gate. The scroll
+/// reuses the `pool_sweep_targets` chokepoint the SLEEP spell rides, so
+/// undead / constructs / fey ancestry races are correctly spared via
+/// the Charmed-immunity "mind-affecting" proxy.
 pub static SCROLL_OF_SLEEP: Item = Item {
     name: "Scroll of Sleep",
     glyph: 'Z',

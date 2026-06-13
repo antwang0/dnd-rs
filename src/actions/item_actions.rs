@@ -3853,30 +3853,112 @@ pub static READ_EARTHEN_GRASP_SCROLL: SingleSaveConditionItem = SingleSaveCondit
     timer: ConditionTimer::Rounds(10),
 };
 
-/// Scroll of Sleep — Action; 4-tile burst, WIS save vs DC 13, fail =
-/// `Asleep` for 10 rounds. 5e RAW (level-1 enchantment): no save in
-/// RAW; the spell drops creatures whose combined current HP totals up
-/// to 5d8, lowest HP first. We collapse the HP-bucket mechanic to a
-/// burst-save envelope (the standard "spell knocks you out if you fail
-/// a save" shape) so the scroll routes through the shared
-/// `BurstSaveConditionItem` impl. Asleep is the same hard lockdown as
-/// `Unconscious` (no actions, prone, auto-fail STR/DEX, melee advantage)
-/// but wakes on damage — slot in alongside Wand of Sleep (single-target
-/// DC 13) on the entry-tier knockout lane. Sleep is mind-affecting RAW
-/// so the AI's immunity-skip naturally protects undead / constructs.
-pub static READ_SLEEP_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
-    action_name: "read sleep scroll",
-    action_aliases: &["sleep", "sleep scroll"],
-    item_name: SCROLL_OF_SLEEP_NAME,
-    log_text: "{actor} reads a scroll of sleep; a sand-soft hum lulls the targets.",
-    save: AbilityScoreType::Wisdom,
-    dc: 13,
-    radius: 4,
-    // 90 ft RAW; 36 tiles.
-    reach: 36,
-    condition: Condition::Asleep,
-    timer: ConditionTimer::Rounds(10),
-};
+/// Scroll of Sleep — Action; 4-tile burst centered on a picked tile.
+/// Rolls a 5d8 HP pool; sweeps enemy creatures in the burst in ascending
+/// current-HP order and puts each to `Asleep` (+ `Prone` for the RAW
+/// unconscious clause) until the pool is consumed (each target consumes
+/// `current_hp` from the pool). 5e RAW: level-1 enchantment, no save —
+/// the HP-bucket IS the gate. Creatures immune to Charmed (the engine's
+/// proxy for "mind-affecting") are spared; this protects undead,
+/// constructs, and fey ancestry races RAW. Mirrors the SLEEP spell
+/// exactly — the scroll is a one-static declaration that reuses the
+/// same `pool_sweep_targets` chokepoint.
+pub static READ_SLEEP_SCROLL: ReadSleepScrollItem = ReadSleepScrollItem {};
+
+/// Scroll of Sleep — bespoke item action that mirrors the SLEEP spell's
+/// pool-sweep envelope. Doesn't fit `BurstSaveConditionItem` because that
+/// factor uses the installed condition for the immunity-prune (Asleep
+/// here) — Sleep RAW uses "mind-affecting" immunity (Charmed proxy in
+/// this engine), so undead / constructs are correctly spared via the
+/// Charmed-immunity gate inside `pool_sweep_targets`.
+pub struct ReadSleepScrollItem {}
+
+impl Action for ReadSleepScrollItem {
+    fn name(&self) -> &str {
+        "read sleep scroll"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sleep", "sleep scroll"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 4 }
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        // 90 ft RAW; 36 tiles.
+        Some(36)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, SCROLL_OF_SLEEP_NAME)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        if !consume_caster_item(encounter, caster_id, SCROLL_OF_SLEEP_NAME) {
+            return Vec::new();
+        }
+        const BURST_RADIUS: isize = 4;
+        let pool_roll = encounter.roll(&Dice::new(5, 8));
+        encounter.log(format!(
+            "  scroll of sleep: 5d8({}) = {} HP pool",
+            pool_roll, pool_roll
+        ));
+        // Mirror the SLEEP spell's "Charmed-immune is the no-mind-affecting
+        // proxy" filter — undead / constructs / fey ancestry get pruned
+        // up-front so the pool isn't burnt on no-ops.
+        let hit = crate::actions::action_template::pool_sweep_targets(
+            encounter,
+            caster_id,
+            point,
+            BURST_RADIUS,
+            pool_roll,
+            Condition::Charmed,
+        );
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for id in hit {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: id,
+                condition: Condition::Asleep,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            // 5e RAW: Sleep also drops the target prone via the
+            // unconscious clause. Matches the spell-side install.
+            effects.push(Box::new(ApplyCondition {
+                actor_id: id,
+                condition: Condition::Prone,
+                timer: ConditionTimer::Permanent,
+            }));
+        }
+        effects
+    }
+}
 
 /// Scroll of Sacred Flame — Action; single-target, DEX save vs DC 13.
 /// On fail, 2d8 radiant damage; on save, nothing (no half). 5e RAW: cantrip

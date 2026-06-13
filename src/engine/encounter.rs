@@ -37962,50 +37962,89 @@ mod tests {
         );
     }
 
-    /// Scroll of Sleep: burst WIS save vs DC 13. Sweep seeds until we
-    /// observe a fail → Asleep install on at least one target in the
-    /// burst. Validates the scroll routes through the
-    /// `BurstSaveConditionItem` lane.
+    /// Scroll of Sleep: pool-sweep installer mirroring the SLEEP spell.
+    /// Drains a bandit to low HP so the 5d8 pool covers them, then
+    /// asserts both `Asleep` and `Prone` land — the same envelope the
+    /// SLEEP spell installs. Validates the scroll's custom action uses
+    /// `pool_sweep_targets` correctly.
     #[test]
-    fn sleep_scroll_burst_installs_asleep() {
+    fn sleep_scroll_knocks_out_low_hp_targets() {
         use crate::actions::item_actions::READ_SLEEP_SCROLL;
-        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
         use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
         use crate::items::item_template::SCROLL_OF_SLEEP;
-        let mut saw_asleep = false;
-        for seed in 0..30u64 {
-            let mut e = ei_seeded(20, 20, &[], seed);
-            let user = e
-                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-                .unwrap();
-            let target = e
-                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 1, 0)
-                .unwrap();
-            e.actors
-                .get_mut(&user)
-                .unwrap()
-                .pickup_item(&SCROLL_OF_SLEEP);
-            for ef in READ_SLEEP_SCROLL.side_effects(
-                &mut e,
-                user,
-                None,
-                Some(&vec![Coordinate::new(5, 5)]),
-                None,
-            ) {
-                ef.apply(&mut e);
-            }
-            assert!(
-                !e.actors[&user].has_item_named("Scroll of Sleep"),
-                "scroll should be consumed on read"
-            );
-            if e.actors[&target].has_condition(Condition::Asleep) {
-                saw_asleep = true;
-                break;
-            }
+        let mut e = ei_seeded(20, 20, &[], 0);
+        let user = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        // Drain bandit HP to 3 so the 5d8 pool (min 5) always covers them.
+        let drain = e.actors[&target].max_hitpoints().saturating_sub(3);
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .take_typed_damage(drain, DamageType::Slashing);
+        e.actors
+            .get_mut(&user)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_SLEEP);
+        for ef in READ_SLEEP_SCROLL.side_effects(
+            &mut e,
+            user,
+            None,
+            Some(&vec![Coordinate::new(5, 5)]),
+            None,
+        ) {
+            ef.apply(&mut e);
         }
         assert!(
-            saw_asleep,
-            "sleep scroll should install Asleep on at least one seed"
+            !e.actors[&user].has_item_named("Scroll of Sleep"),
+            "scroll should be consumed on read"
+        );
+        assert!(
+            e.actors[&target].has_condition(Condition::Asleep),
+            "low-HP target should be put to Asleep by the sleep scroll"
+        );
+        assert!(
+            e.actors[&target].has_condition(Condition::Prone),
+            "sleeping target should also be Prone (unconscious-clause rider)"
+        );
+    }
+
+    /// Scroll of Sleep skips undead targets — RAW Sleep doesn't affect
+    /// creatures immune to Charmed (the engine's "mind-affecting" proxy).
+    /// Mirrors the SLEEP spell's `sleep_skips_undead_target` test on the
+    /// scroll lane.
+    #[test]
+    fn sleep_scroll_skips_undead_target() {
+        use crate::actions::item_actions::READ_SLEEP_SCROLL;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_SLEEP;
+        let mut e = ei_seeded(20, 20, &[], 0);
+        let user = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&user)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_SLEEP);
+        for ef in READ_SLEEP_SCROLL.side_effects(
+            &mut e,
+            user,
+            None,
+            Some(&vec![Coordinate::new(5, 5)]),
+            None,
+        ) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&zombie].has_condition(Condition::Asleep),
+            "undead should be unaffected by Scroll of Sleep (Charmed-immunity proxy)"
         );
     }
 
