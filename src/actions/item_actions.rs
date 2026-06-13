@@ -3761,3 +3761,285 @@ pub static USE_GEM_OF_BRIGHTNESS: BurstSaveConditionItem = BurstSaveConditionIte
     condition: Condition::Blinded,
     timer: ConditionTimer::Rounds(10),
 };
+
+const SCROLL_OF_RESILIENT_SPHERE_NAME: &str = "Scroll of Resilient Sphere";
+const SCROLL_OF_TELEKINESIS_NAME: &str = "Scroll of Telekinesis";
+const WAND_OF_TELEKINESIS_NAME: &str = "Wand of Telekinesis";
+const SCROLL_OF_EARTHEN_GRASP_NAME: &str = "Scroll of Earthen Grasp";
+const SCROLL_OF_SLEEP_NAME: &str = "Scroll of Sleep";
+const SCROLL_OF_SACRED_FLAME_NAME: &str = "Scroll of Sacred Flame";
+const SCROLL_OF_MIND_SLIVER_NAME: &str = "Scroll of Mind Sliver";
+const SCROLL_OF_MOONBEAM_NAME: &str = "Scroll of Moonbeam";
+const SCROLL_OF_GUIDING_BOLT_NAME: &str = "Scroll of Guiding Bolt";
+
+/// Scroll of Resilient Sphere — Action; single-target, DEX save vs DC 15,
+/// fail = `Sphered` for 10 rounds. 5e RAW (Otiluke's Resilient Sphere,
+/// level-4 evocation, concentration). The scroll drops the concentration
+/// gate. Sphered is a full lockdown envelope (zero movement, action
+/// economy blocked, attacks against advantage, holder attacks with
+/// disadvantage, no reactions) — top-tier single-target CC consumable
+/// alongside Wand of Polymorph / Scroll of Flesh to Stone. Routes
+/// through the shared `SingleSaveConditionItem` impl.
+pub static READ_RESILIENT_SPHERE_SCROLL: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "read resilient sphere scroll",
+    action_aliases: &["sphere", "resilient sphere"],
+    item_name: SCROLL_OF_RESILIENT_SPHERE_NAME,
+    log_text: "{actor} reads a scroll of resilient sphere; a hemisphere of force snaps shut.",
+    save: AbilityScoreType::Dexterity,
+    dc: 15,
+    // 30 ft RAW; 12 tiles.
+    reach: 12,
+    condition: Condition::Sphered,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Scroll of Telekinesis — Action; single-target, STR save vs DC 15,
+/// fail = `Lifted` for 10 rounds. 5e RAW (level-5 transmutation,
+/// concentration). The scroll surfaces the lift-and-hold half (the spell
+/// also lets the caster fling the target around; we collapse to the
+/// movement-zero lift envelope). Mirror of Resilient Sphere on the
+/// movement-pin lane — Sphered blocks actions too, Lifted only zeros
+/// movement, so this sits at the cheaper CC tier. Fires through the
+/// shared `SingleSaveConditionItem` impl.
+pub static READ_TELEKINESIS_SCROLL: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "read telekinesis scroll",
+    action_aliases: &["telekinesis", "tk scroll"],
+    item_name: SCROLL_OF_TELEKINESIS_NAME,
+    log_text: "{actor} reads a scroll of telekinesis; the target floats helplessly skyward.",
+    save: AbilityScoreType::Strength,
+    dc: 15,
+    // 60 ft RAW; 24 tiles.
+    reach: 24,
+    condition: Condition::Lifted,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Wand of Telekinesis — Action; single-target, STR save vs DC 17, fail
+/// = `Lifted` for 10 rounds. Top tier of the Lifted ladder above the
+/// Scroll of Telekinesis (DC 15). Same `SingleSaveConditionItem` envelope,
+/// harder DC and longer reach — mirrors the Scroll vs Wand of Hold Monster
+/// tier split on the Paralyzed lane.
+pub static USE_WAND_OF_TELEKINESIS: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "use wand of telekinesis",
+    action_aliases: &["tk wand", "telekinesis wand"],
+    item_name: WAND_OF_TELEKINESIS_NAME,
+    log_text: "{actor} aims the wand of telekinesis; the target is wrenched into the air.",
+    save: AbilityScoreType::Strength,
+    dc: 17,
+    // 90 ft RAW; 36 tiles.
+    reach: 36,
+    condition: Condition::Lifted,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Scroll of Earthen Grasp — Action; single-target, STR save vs DC 13,
+/// fail = `EarthenGrasped` for 10 rounds. 5e RAW (Maximilian's Earthen
+/// Grasp, level-2 transmutation, concentration). The scroll drops the
+/// concentration gate. EarthenGrasped is a Restrained envelope plus a
+/// 2d6 bludgeoning round-end DoT (see `ROUND_END_DOTS`). Sibling to
+/// Scroll of Web (Restrained burst) on the entry-tier CC lane — single-
+/// target trade for a DoT rider. Fires through the shared
+/// `SingleSaveConditionItem` impl.
+pub static READ_EARTHEN_GRASP_SCROLL: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "read earthen grasp scroll",
+    action_aliases: &["earthen grasp", "grasp scroll"],
+    item_name: SCROLL_OF_EARTHEN_GRASP_NAME,
+    log_text: "{actor} reads a scroll of earthen grasp; a stony fist erupts and clamps shut.",
+    save: AbilityScoreType::Strength,
+    dc: 13,
+    // 30 ft RAW; 12 tiles.
+    reach: 12,
+    condition: Condition::EarthenGrasped,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Scroll of Sleep — Action; 4-tile burst, WIS save vs DC 13, fail =
+/// `Asleep` for 10 rounds. 5e RAW (level-1 enchantment): no save in
+/// RAW; the spell drops creatures whose combined current HP totals up
+/// to 5d8, lowest HP first. We collapse the HP-bucket mechanic to a
+/// burst-save envelope (the standard "spell knocks you out if you fail
+/// a save" shape) so the scroll routes through the shared
+/// `BurstSaveConditionItem` impl. Asleep is the same hard lockdown as
+/// `Unconscious` (no actions, prone, auto-fail STR/DEX, melee advantage)
+/// but wakes on damage — slot in alongside Wand of Sleep (single-target
+/// DC 13) on the entry-tier knockout lane. Sleep is mind-affecting RAW
+/// so the AI's immunity-skip naturally protects undead / constructs.
+pub static READ_SLEEP_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
+    action_name: "read sleep scroll",
+    action_aliases: &["sleep", "sleep scroll"],
+    item_name: SCROLL_OF_SLEEP_NAME,
+    log_text: "{actor} reads a scroll of sleep; a sand-soft hum lulls the targets.",
+    save: AbilityScoreType::Wisdom,
+    dc: 13,
+    radius: 4,
+    // 90 ft RAW; 36 tiles.
+    reach: 36,
+    condition: Condition::Asleep,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Scroll of Sacred Flame — Action; single-target, DEX save vs DC 13.
+/// On fail, 2d8 radiant damage; on save, nothing (no half). 5e RAW: cantrip
+/// (1d8 at level 1, scaling to 2d8 at level 5 / 3d8 at level 11 / 4d8 at
+/// level 17); the scroll bakes in the level-5 damage tier (2d8) since
+/// scroll consumables don't carry caster-level. Pure radiant single-target
+/// damage — sibling to Wand of Mind Spike (psychic) and Scroll of Hellish
+/// Rebuke (fire) on the entry-tier damage-scroll lane. Routes through the
+/// shared `SingleSaveDamageItem` impl.
+pub static READ_SACRED_FLAME_SCROLL: SingleSaveDamageItem = SingleSaveDamageItem {
+    action_name: "read sacred flame scroll",
+    action_aliases: &["sacred flame", "flame scroll"],
+    item_name: SCROLL_OF_SACRED_FLAME_NAME,
+    log_label: "scroll of sacred flame",
+    dice: Dice::new(2, 8),
+    flat_bonus: 0,
+    damage_type: DamageType::Radiant,
+    save: AbilityScoreType::Dexterity,
+    dc: 13,
+    // 60 ft RAW; 24 tiles.
+    reach: 24,
+    save_for_half: false,
+};
+
+/// Scroll of Mind Sliver — Action; single-target, INT save vs DC 13.
+/// On fail, 2d6 psychic damage; on save, nothing (no half). 5e RAW
+/// (Tasha's): cantrip 1d6 with a "subtract 1d4 from the target's next
+/// save" rider; the scroll bakes in the level-5 damage tier (2d6) and
+/// drops the rider (no engine-side "subtract from next save" hook today).
+/// Pure psychic single-target damage at the cheap tier — sibling to
+/// Wand of Mind Spike (3d8 psychic, DC 15) on the psychic-damage ladder.
+/// Routes through the shared `SingleSaveDamageItem` impl.
+pub static READ_MIND_SLIVER_SCROLL: SingleSaveDamageItem = SingleSaveDamageItem {
+    action_name: "read mind sliver scroll",
+    action_aliases: &["mind sliver", "sliver"],
+    item_name: SCROLL_OF_MIND_SLIVER_NAME,
+    log_label: "scroll of mind sliver",
+    dice: Dice::new(2, 6),
+    flat_bonus: 0,
+    damage_type: DamageType::Psychic,
+    save: AbilityScoreType::Intelligence,
+    dc: 13,
+    // 60 ft RAW; 24 tiles.
+    reach: 24,
+    save_for_half: false,
+};
+
+/// Scroll of Moonbeam — Action; 3-tile burst, CON save vs DC 15. 5d10
+/// radiant damage on fail; half on pass. 5e RAW: level-2 evocation,
+/// concentration, sustained zone. The scroll collapses the persistent
+/// drip to a single burst-on-cast cast, dropping concentration. Mirror
+/// of Scroll of Ice Storm (cold burst) on the radiant burst lane —
+/// fills a single-element niche between the cheap Scroll of Shatter
+/// (3d8 thunder DC 13) and the rare Scroll of Synaptic Static (8d6
+/// psychic DC 15). Routes through the shared `BurstSaveDamageItem` impl.
+pub static READ_MOONBEAM_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+    action_name: "read moonbeam scroll",
+    action_aliases: &["moonbeam", "moon scroll"],
+    item_name: SCROLL_OF_MOONBEAM_NAME,
+    log_label: "scroll of moonbeam",
+    dice: Dice::new(5, 10),
+    damage_type: DamageType::Radiant,
+    save: AbilityScoreType::Constitution,
+    dc: 15,
+    // 5ft cylinder radius RAW collapsed to a 3-tile burst — smaller than
+    // Fireball's 4 because Moonbeam is RAW a tight zone, not a wide AoE.
+    radius: 3,
+    // 120 ft RAW; 48 tiles.
+    reach: 48,
+};
+
+/// Scroll of Guiding Bolt — Action; single-target, 4d6 radiant damage on
+/// hit + installs `GuidingBoltLit` for 1 round (next attack against the
+/// target has advantage). 5e RAW: level-1 evocation, spell attack roll.
+/// The scroll bakes in the standard "no roll needed, no save" envelope
+/// for SRD scroll auto-resolve — collapses to a guaranteed-hit damage
+/// rider plus the advantage-marker condition. Fills a unique support
+/// niche in the loot pool: the radiant damage sets up the rest of the
+/// party for a free advantaged swing on the same target.
+pub static READ_GUIDING_BOLT_SCROLL: GuidingBoltScrollItem = GuidingBoltScrollItem {};
+
+const GUIDING_BOLT_LOG_LABEL: &str = "scroll of guiding bolt";
+
+/// Scroll of Guiding Bolt — auto-hit single-target radiant damage plus a
+/// 1-round `GuidingBoltLit` install. Distinct from the standard
+/// `SingleSaveDamageItem` because the install rider runs AND the
+/// "guarantee a hit" envelope is the load-bearing fiction; folding the
+/// rider in via a Custom Action keeps the existing factor structs
+/// orthogonal. Mirror of `MagicMissileItem`'s "auto-hit, no save" shape
+/// with a radiant typing and a condition rider.
+pub struct GuidingBoltScrollItem {}
+
+impl Action for GuidingBoltScrollItem {
+    fn name(&self) -> &str {
+        "read guiding bolt scroll"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["guiding bolt", "bolt scroll"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft RAW; 48 tiles.
+        Some(48)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Radiant]
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, SCROLL_OF_GUIDING_BOLT_NAME)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        if !consume_caster_item(encounter, caster_id, SCROLL_OF_GUIDING_BOLT_NAME) {
+            return Vec::new();
+        }
+        let dice = Dice::new(4, 6);
+        let amount = encounter.roll(&dice);
+        encounter.log(format!(
+            "  {}: {}d{} = {} radiant",
+            GUIDING_BOLT_LOG_LABEL, dice.count, dice.faces, amount
+        ));
+        vec![
+            Box::new(DealDamage {
+                actor_id: target_id,
+                amount,
+                damage_type: DamageType::Radiant,
+            }),
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::GuidingBoltLit,
+                // RAW: lasts until the end of the caster's next turn.
+                // The condition's existing burn-off-on-attack logic
+                // consumes it the moment a follow-up swing connects.
+                timer: ConditionTimer::Rounds(1),
+            }),
+        ]
+    }
+}

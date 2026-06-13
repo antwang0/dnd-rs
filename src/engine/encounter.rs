@@ -37820,6 +37820,387 @@ mod tests {
         );
     }
 
+    /// Scroll of Resilient Sphere: single-target DEX save vs DC 15.
+    /// Sweep seeds until we observe a fail → Sphered install on the
+    /// target. Validates the scroll routes through the
+    /// `SingleSaveConditionItem` lockdown lane.
+    #[test]
+    fn resilient_sphere_scroll_installs_sphered_on_failed_save() {
+        use crate::actions::item_actions::READ_RESILIENT_SPHERE_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_RESILIENT_SPHERE;
+        let mut saw_sphered = false;
+        for seed in 0..30u64 {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let user = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            // Fighter target — strong DEX-save profile would skip
+            // every roll; the wizard's lower DEX gives the sweep a
+            // window to observe a failed save.
+            let target = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&user)
+                .unwrap()
+                .pickup_item(&SCROLL_OF_RESILIENT_SPHERE);
+            for ef in READ_RESILIENT_SPHERE_SCROLL.side_effects(
+                &mut e,
+                user,
+                Some(&vec![target]),
+                None,
+                None,
+            ) {
+                ef.apply(&mut e);
+            }
+            assert!(
+                !e.actors[&user].has_item_named("Scroll of Resilient Sphere"),
+                "scroll should be consumed on read"
+            );
+            if e.actors[&target].has_condition(Condition::Sphered) {
+                saw_sphered = true;
+                break;
+            }
+            // Allow the FIGHTER_TEMPLATE reference to participate in
+            // the build pipeline so an accidental rename triggers a
+            // compile error rather than a silent test gap.
+            let _ = &FIGHTER_TEMPLATE;
+        }
+        assert!(
+            saw_sphered,
+            "resilient sphere should install Sphered on at least one seed"
+        );
+    }
+
+    /// Scroll of Telekinesis: single-target STR save vs DC 15. Sweep
+    /// seeds until we observe a fail → Lifted install on the target.
+    /// Validates the scroll routes through the `SingleSaveConditionItem`
+    /// movement-pin lane.
+    #[test]
+    fn telekinesis_scroll_installs_lifted_on_failed_save() {
+        use crate::actions::item_actions::READ_TELEKINESIS_SCROLL;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_TELEKINESIS;
+        let mut saw_lifted = false;
+        for seed in 0..30u64 {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let user = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            // Wizard target — low STR so the DC 15 save bites some
+            // seeds without being trivial.
+            let target = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&user)
+                .unwrap()
+                .pickup_item(&SCROLL_OF_TELEKINESIS);
+            for ef in READ_TELEKINESIS_SCROLL.side_effects(
+                &mut e,
+                user,
+                Some(&vec![target]),
+                None,
+                None,
+            ) {
+                ef.apply(&mut e);
+            }
+            assert!(
+                !e.actors[&user].has_item_named("Scroll of Telekinesis"),
+                "scroll should be consumed on read"
+            );
+            if e.actors[&target].has_condition(Condition::Lifted) {
+                saw_lifted = true;
+                break;
+            }
+        }
+        assert!(
+            saw_lifted,
+            "telekinesis should install Lifted on at least one seed"
+        );
+    }
+
+    /// Scroll of Earthen Grasp: single-target STR save vs DC 13. Sweep
+    /// seeds until we observe a fail → EarthenGrasped install on the
+    /// target. Validates the entry-tier CC scroll routes through the
+    /// `SingleSaveConditionItem` envelope.
+    #[test]
+    fn earthen_grasp_scroll_installs_earthen_grasped() {
+        use crate::actions::item_actions::READ_EARTHEN_GRASP_SCROLL;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_EARTHEN_GRASP;
+        let mut saw_grasped = false;
+        for seed in 0..30u64 {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let user = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&user)
+                .unwrap()
+                .pickup_item(&SCROLL_OF_EARTHEN_GRASP);
+            for ef in READ_EARTHEN_GRASP_SCROLL.side_effects(
+                &mut e,
+                user,
+                Some(&vec![target]),
+                None,
+                None,
+            ) {
+                ef.apply(&mut e);
+            }
+            assert!(
+                !e.actors[&user].has_item_named("Scroll of Earthen Grasp"),
+                "scroll should be consumed on read"
+            );
+            if e.actors[&target].has_condition(Condition::EarthenGrasped) {
+                saw_grasped = true;
+                break;
+            }
+        }
+        assert!(
+            saw_grasped,
+            "earthen grasp should install EarthenGrasped on at least one seed"
+        );
+    }
+
+    /// Scroll of Sleep: burst WIS save vs DC 13. Sweep seeds until we
+    /// observe a fail → Asleep install on at least one target in the
+    /// burst. Validates the scroll routes through the
+    /// `BurstSaveConditionItem` lane.
+    #[test]
+    fn sleep_scroll_burst_installs_asleep() {
+        use crate::actions::item_actions::READ_SLEEP_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_SLEEP;
+        let mut saw_asleep = false;
+        for seed in 0..30u64 {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let user = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&user)
+                .unwrap()
+                .pickup_item(&SCROLL_OF_SLEEP);
+            for ef in READ_SLEEP_SCROLL.side_effects(
+                &mut e,
+                user,
+                None,
+                Some(&vec![Coordinate::new(5, 5)]),
+                None,
+            ) {
+                ef.apply(&mut e);
+            }
+            assert!(
+                !e.actors[&user].has_item_named("Scroll of Sleep"),
+                "scroll should be consumed on read"
+            );
+            if e.actors[&target].has_condition(Condition::Asleep) {
+                saw_asleep = true;
+                break;
+            }
+        }
+        assert!(
+            saw_asleep,
+            "sleep scroll should install Asleep on at least one seed"
+        );
+    }
+
+    /// Scroll of Sacred Flame: single-target DEX save vs DC 13, 2d8
+    /// radiant on fail. Sweep seeds until we observe damage landing.
+    /// Validates the scroll routes through the `SingleSaveDamageItem`
+    /// radiant lane.
+    #[test]
+    fn sacred_flame_scroll_deals_radiant_damage() {
+        use crate::actions::item_actions::READ_SACRED_FLAME_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_SACRED_FLAME;
+        let mut saw_damage = false;
+        for seed in 0..30u64 {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let user = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&user)
+                .unwrap()
+                .pickup_item(&SCROLL_OF_SACRED_FLAME);
+            let hp_before = e.actors[&enemy].hitpoints();
+            for ef in READ_SACRED_FLAME_SCROLL.side_effects(
+                &mut e,
+                user,
+                Some(&vec![enemy]),
+                None,
+                None,
+            ) {
+                ef.apply(&mut e);
+            }
+            assert!(
+                !e.actors[&user].has_item_named("Scroll of Sacred Flame"),
+                "scroll should be consumed on read"
+            );
+            if e.actors.get(&enemy).map(|a| a.hitpoints()).unwrap_or(0) < hp_before {
+                saw_damage = true;
+                break;
+            }
+        }
+        assert!(
+            saw_damage,
+            "sacred flame should deal radiant damage on at least one seed"
+        );
+    }
+
+    /// Scroll of Mind Sliver: single-target INT save vs DC 13, 2d6
+    /// psychic on fail. Sweep seeds until we observe damage landing.
+    /// Validates the scroll routes through the `SingleSaveDamageItem`
+    /// psychic lane at the cheap DC 13 tier.
+    #[test]
+    fn mind_sliver_scroll_deals_psychic_damage() {
+        use crate::actions::item_actions::READ_MIND_SLIVER_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_MIND_SLIVER;
+        let mut saw_damage = false;
+        for seed in 0..30u64 {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let user = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            // Fighter target — low INT means many seeds fail the save.
+            let enemy = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&user)
+                .unwrap()
+                .pickup_item(&SCROLL_OF_MIND_SLIVER);
+            let hp_before = e.actors[&enemy].hitpoints();
+            for ef in READ_MIND_SLIVER_SCROLL.side_effects(
+                &mut e,
+                user,
+                Some(&vec![enemy]),
+                None,
+                None,
+            ) {
+                ef.apply(&mut e);
+            }
+            assert!(
+                !e.actors[&user].has_item_named("Scroll of Mind Sliver"),
+                "scroll should be consumed on read"
+            );
+            if e.actors.get(&enemy).map(|a| a.hitpoints()).unwrap_or(0) < hp_before {
+                saw_damage = true;
+                break;
+            }
+        }
+        assert!(
+            saw_damage,
+            "mind sliver should deal psychic damage on at least one seed"
+        );
+    }
+
+    /// Scroll of Moonbeam: burst CON save vs DC 15, 5d10 radiant on
+    /// fail (half on pass). Sweep seeds until we observe damage
+    /// landing. Validates the scroll routes through the
+    /// `BurstSaveDamageItem` radiant lane.
+    #[test]
+    fn moonbeam_scroll_deals_burst_radiant_damage() {
+        use crate::actions::item_actions::READ_MOONBEAM_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_MOONBEAM;
+        let mut saw_damage = false;
+        for seed in 0..20u64 {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let user = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&user)
+                .unwrap()
+                .pickup_item(&SCROLL_OF_MOONBEAM);
+            let hp_before = e.actors[&enemy].hitpoints();
+            for ef in READ_MOONBEAM_SCROLL.side_effects(
+                &mut e,
+                user,
+                None,
+                Some(&vec![Coordinate::new(8, 8)]),
+                None,
+            ) {
+                ef.apply(&mut e);
+            }
+            assert!(
+                !e.actors[&user].has_item_named("Scroll of Moonbeam"),
+                "scroll should be consumed on read"
+            );
+            if e.actors.get(&enemy).map(|a| a.hitpoints()).unwrap_or(0) < hp_before {
+                saw_damage = true;
+                break;
+            }
+        }
+        assert!(
+            saw_damage,
+            "moonbeam should deal burst radiant damage on at least one seed"
+        );
+    }
+
+    /// Scroll of Guiding Bolt: auto-hit single-target 4d6 radiant +
+    /// `GuidingBoltLit` install. No save, no attack roll — the damage
+    /// and rider always land. Validates the bespoke `GuidingBoltScrollItem`
+    /// action emits both side-effects in order on a single use.
+    #[test]
+    fn guiding_bolt_scroll_damages_and_marks() {
+        use crate::actions::item_actions::READ_GUIDING_BOLT_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_GUIDING_BOLT;
+        let mut e = ei_seeded(20, 20, &[], 0);
+        let user = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&user)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_GUIDING_BOLT);
+        let hp_before = e.actors[&enemy].hitpoints();
+        for ef in
+            READ_GUIDING_BOLT_SCROLL.side_effects(&mut e, user, Some(&vec![enemy]), None, None)
+        {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&user].has_item_named("Scroll of Guiding Bolt"),
+            "scroll should be consumed on read"
+        );
+        assert!(
+            e.actors[&enemy].hitpoints() < hp_before,
+            "guiding bolt should always deal radiant damage (no save / attack roll)"
+        );
+        assert!(
+            e.actors[&enemy].has_condition(Condition::GuidingBoltLit),
+            "guiding bolt should always install GuidingBoltLit"
+        );
+    }
+
     /// Gem of Brightness: burst CON save vs DC 14, fail = Blinded. Sweep
     /// seeds until we observe a fail → Blinded install on at least one
     /// target in the burst.

@@ -2052,6 +2052,133 @@ pub static GEM_OF_BRIGHTNESS: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Scroll of Resilient Sphere — single-target DEX save vs DC 15 lockdown
+/// consumable. RAW: level-4 evocation (Otiluke's Resilient Sphere),
+/// concentration; the scroll drops the concentration gate. On a failed
+/// save the target is `Sphered` for 10 rounds — a full lockdown envelope
+/// (zero movement, action economy blocked, attacks against advantage,
+/// holder's own attacks at disadvantage, no reactions). Top-tier
+/// single-target CC consumable, sitting alongside Wand of Polymorph
+/// and Scroll of Flesh to Stone in the rare half of the loot pool.
+pub static SCROLL_OF_RESILIENT_SPHERE: Item = Item {
+    name: "Scroll of Resilient Sphere",
+    glyph: 'O',
+    on_use: Some(&crate::actions::item_actions::READ_RESILIENT_SPHERE_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Telekinesis — single-target STR save vs DC 15 lift
+/// consumable. RAW: level-5 transmutation, concentration; the scroll
+/// surfaces the lift-and-hold half and drops the concentration gate.
+/// On a failed save the target is `Lifted` for 10 rounds (movement
+/// zeroed; melee swings get advantage since the target's dangling
+/// helplessly). Mirror of Resilient Sphere on the movement-pin lane,
+/// at a lighter lockdown (no action-economy block).
+pub static SCROLL_OF_TELEKINESIS: Item = Item {
+    name: "Scroll of Telekinesis",
+    glyph: 'T',
+    on_use: Some(&crate::actions::item_actions::READ_TELEKINESIS_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Wand of Telekinesis — single-target STR save vs DC 17, fail = `Lifted`
+/// for 10 rounds. Top tier of the Lifted ladder above the Scroll of
+/// Telekinesis (DC 15). Harder DC and longer reach (90 ft RAW vs the
+/// scroll's 60 ft) — mirrors the Scroll vs Wand of Hold Monster tier
+/// split on the Paralyzed lane.
+pub static WAND_OF_TELEKINESIS: Item = Item {
+    name: "Wand of Telekinesis",
+    glyph: 'K',
+    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_TELEKINESIS),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Earthen Grasp — single-target STR save vs DC 13 grapple
+/// consumable. RAW: Maximilian's Earthen Grasp (level-2 transmutation,
+/// concentration); the scroll drops the concentration gate. On a failed
+/// save the target gets `EarthenGrasped` for 10 rounds — a Restrained
+/// envelope plus 2d6 bludgeoning round-end drip from the existing
+/// `ROUND_END_DOTS` registry. Sibling to Scroll of Web (burst Restrained)
+/// on the entry-tier CC lane — trades the burst envelope for a single-
+/// target DoT rider.
+pub static SCROLL_OF_EARTHEN_GRASP: Item = Item {
+    name: "Scroll of Earthen Grasp",
+    glyph: 'E',
+    on_use: Some(&crate::actions::item_actions::READ_EARTHEN_GRASP_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Sleep — 4-tile burst, WIS save vs DC 13, fail = `Asleep`
+/// for 10 rounds. RAW: level-1 enchantment, no save — drops creatures
+/// whose combined current HP totals up to 5d8, lowest HP first. The
+/// scroll collapses the HP-bucket mechanic to the standard burst-save
+/// envelope so the install routes through the shared
+/// `BurstSaveConditionItem` impl. Sleep is mind-affecting RAW — the
+/// AI's immunity-skip naturally protects undead / constructs since the
+/// burst-target-prune filters out Charmed-immune targets (Sleep RAW
+/// only affects living creatures with INT > 0).
+pub static SCROLL_OF_SLEEP: Item = Item {
+    name: "Scroll of Sleep",
+    glyph: 'Z',
+    on_use: Some(&crate::actions::item_actions::READ_SLEEP_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Sacred Flame — single-target DEX save vs DC 13 radiant
+/// damage consumable. RAW: cantrip (1d8 at level 1, scaling to 2d8 at
+/// level 5 / 3d8 at level 11 / 4d8 at level 17); the scroll bakes in
+/// the level-5 damage tier (2d8) since scrolls don't carry caster-level.
+/// Pure radiant single-target damage — sibling to Wand of Mind Spike
+/// (psychic) and Scroll of Hellish Rebuke (fire) on the entry-tier
+/// damage-scroll lane.
+pub static SCROLL_OF_SACRED_FLAME: Item = Item {
+    name: "Scroll of Sacred Flame",
+    glyph: 'r',
+    on_use: Some(&crate::actions::item_actions::READ_SACRED_FLAME_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Mind Sliver — single-target INT save vs DC 13 psychic
+/// damage consumable. RAW (Tasha's): cantrip 1d6 with a "subtract 1d4
+/// from the target's next save" rider; the scroll bakes in the level-5
+/// damage tier (2d6) and drops the rider. Cheap psychic single-target
+/// damage — sits on the same shape as Scroll of Sacred Flame but with
+/// an INT save rather than DEX, so a different stat profile gets bitten.
+pub static SCROLL_OF_MIND_SLIVER: Item = Item {
+    name: "Scroll of Mind Sliver",
+    glyph: 'y',
+    on_use: Some(&crate::actions::item_actions::READ_MIND_SLIVER_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Moonbeam — 3-tile burst, CON save vs DC 15, 5d10 radiant
+/// damage on fail (half on pass). RAW: level-2 evocation, concentration,
+/// sustained zone (4d10 / round in a 5-ft cylinder); the scroll collapses
+/// the persistent drip to a single burst-on-cast envelope at a slightly
+/// boosted single-cast tier (5d10 vs the 4d10 per-tick). Fills the
+/// radiant burst niche between Scroll of Shatter (3d8 thunder DC 13)
+/// and Scroll of Synaptic Static (8d6 psychic DC 15).
+pub static SCROLL_OF_MOONBEAM: Item = Item {
+    name: "Scroll of Moonbeam",
+    glyph: 'm',
+    on_use: Some(&crate::actions::item_actions::READ_MOONBEAM_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Guiding Bolt — single-target auto-hit consumable that deals
+/// 4d6 radiant damage AND installs `GuidingBoltLit` for 1 round on the
+/// target. RAW: level-1 evocation, spell attack roll, 4d6 radiant +
+/// "next attack against target has advantage" rider. The scroll bakes
+/// in the "guaranteed hit" envelope SRD scrolls auto-resolve as: no
+/// attack roll, no save. The condition rider sets up the rest of the
+/// party for a free advantaged swing on the same target.
+pub static SCROLL_OF_GUIDING_BOLT: Item = Item {
+    name: "Scroll of Guiding Bolt",
+    glyph: 'g',
+    on_use: Some(&crate::actions::item_actions::READ_GUIDING_BOLT_SCROLL),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -2495,4 +2622,39 @@ pub static LOOT_POOL: &[&Item] = &[
     // Single low-weight entry on the burst-CC lane alongside Pipes of
     // Haunting (burst Frightened) and Wand of Web (burst Restrained).
     &GEM_OF_BRIGHTNESS,
+    // Top-tier single-target lockdown consumables. Resilient Sphere
+    // installs `Sphered` (full action-economy block + movement zero);
+    // Forcecage's lighter sibling. Sit alongside Wand of Polymorph /
+    // Scroll of Flesh to Stone in the rare half of the single-target
+    // CC lane.
+    &SCROLL_OF_RESILIENT_SPHERE,
+    // Telekinesis ladder — Scroll (DC 15 / 60 ft) and Wand (DC 17 /
+    // 90 ft) install the `Lifted` condition. Sibling to the Hold
+    // Person / Hold Monster ladder on the single-target movement-pin
+    // lane.
+    &SCROLL_OF_TELEKINESIS,
+    &WAND_OF_TELEKINESIS,
+    // Earthen Grasp — single-target Restrained-equivalent at the cheap
+    // DC 13 STR-save tier, plus a 2d6 bludgeoning DoT. Sibling to
+    // Scroll of Web (burst Restrained) on the entry-tier CC lane.
+    &SCROLL_OF_EARTHEN_GRASP,
+    // Scroll of Sleep — entry-tier burst Asleep installer at the DC 13
+    // WIS-save tier. Sits alongside Wand of Sleep (single-target DC 13)
+    // on the entry-tier knockout lane.
+    &SCROLL_OF_SLEEP,
+    // Entry-tier damage scrolls — Sacred Flame (radiant DEX save) and
+    // Mind Sliver (psychic INT save) round out the cheap typed-damage
+    // single-target scroll family alongside Scroll of Hellish Rebuke
+    // (fire). Both at DC 13.
+    &SCROLL_OF_SACRED_FLAME,
+    &SCROLL_OF_MIND_SLIVER,
+    // Scroll of Moonbeam — radiant burst between Shatter (3d8 thunder
+    // DC 13) and Synaptic Static (8d6 psychic DC 15). Fills the
+    // radiant burst lane.
+    &SCROLL_OF_MOONBEAM,
+    // Scroll of Guiding Bolt — auto-hit radiant single-target damage
+    // (4d6) + `GuidingBoltLit` rider that grants the next attacker
+    // advantage. Unique support niche; sets up the next ally swing
+    // for an advantaged hit on the same target.
+    &SCROLL_OF_GUIDING_BOLT,
 ];
