@@ -3,8 +3,8 @@ use std::sync::LazyLock;
 
 use crate::{
     actions::action_template::{
-        action_and_slot, action_only, bonus_action_and_slot, bonus_action_only, first_target_id,
-        first_target_location, Action, TargetingSchema,
+        action_and_slot, action_only, bonus_action_and_slot, bonus_action_only,
+        first_ally_target_id, first_target_id, first_target_location, Action, TargetingSchema,
     },
     actors::actor_template::ConcentrationData,
     conditions::{Condition, ConditionTimer},
@@ -2614,15 +2614,14 @@ impl Action for Aid {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
         // Aid only affects allies — reject hostile targets at side-effect
         // time as a safety net (the harmful=false flag should already
-        // steer the picker UI here).
-        if !encounter.actors_allied(caster_id, target_id) {
+        // steer the picker UI here). Routes through the shared
+        // `first_ally_target_id` helper so the "extract id + ally check"
+        // gate is shared with Longstrider / Enhance Ability.
+        let Some(target_id) = first_ally_target_id(encounter, caster_id, target_ids) else {
             return Vec::new();
-        }
+        };
         // RAW Aid: "the target's hit point maximum and current hit
         // points increase by 5." Our `bump_max_hp` raises the base by
         // `delta` and the current HP by the same amount, capped at the
@@ -23747,15 +23746,13 @@ impl Action for Longstrider {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
         // Buff-only — reject hostile targets at side-effect time as a
         // safety net (the `is_harmful = false` flag already steers the
-        // picker UI to allies).
-        if !encounter.actors_allied(caster_id, target_id) {
+        // picker UI to allies). Shared `first_ally_target_id` helper
+        // collapses the id-extract + ally-check into one early-return.
+        let Some(target_id) = first_ally_target_id(encounter, caster_id, target_ids) else {
             return Vec::new();
-        }
+        };
         vec![Box::new(ApplyCondition {
             actor_id: target_id,
             condition: Condition::Longstriding,
@@ -24004,15 +24001,14 @@ impl Action for EnhanceAbility {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::engine::side_effects::AdjustSaveBuff;
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
         // Buff-only — reject hostile aim at the side-effect site as a
         // safety net (the `is_harmful = false` flag already steers the
-        // picker UI to allies). Mirrors Longstrider / Aid.
-        if !encounter.actors_allied(caster_id, target_id) {
+        // picker UI to allies). Shared `first_ally_target_id` helper
+        // collapses the id-extract + ally-check into one early-return,
+        // mirroring Longstrider / Aid.
+        let Some(target_id) = first_ally_target_id(encounter, caster_id, target_ids) else {
             return Vec::new();
-        }
+        };
         // 2d6 temp HP (Bear's Endurance flavor) + flat +2 saves.
         let raw = encounter.roll(&Dice::new(2, 6));
         encounter.log(format!(

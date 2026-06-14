@@ -161,6 +161,33 @@ pub fn first_target_location(locations: Option<&Vec<Coordinate>>) -> Option<Coor
     locations.and_then(|v| v.first().copied())
 }
 
+/// Extract the first id from `target_ids` AND verify that actor is on the
+/// caster's team. Returns `Some(id)` only when both legs pass — the
+/// target exists in the arg vec and `actors_allied` returns true for the
+/// `(caster, target)` pair. Returns `None` on either failure so the
+/// caller's `side_effects` builder collapses to a single
+/// `let Some(target_id) = first_ally_target_id(...) else { return Vec::new(); };`
+/// guard instead of two stacked early-returns.
+///
+/// Used by ally-target buff spells (Aid, Longstrider, Enhance Ability)
+/// where the `is_harmful = false` flag is the picker-UI hint and this
+/// helper is the side-effect-time enforcement. Centralizing the gate
+/// keeps the "buff cast on a hostile target should fizzle quietly"
+/// invariant in one place, so future tweaks (e.g. a charmed-by gate)
+/// land here once.
+pub fn first_ally_target_id(
+    encounter: &EncounterInstance,
+    caster_id: usize,
+    target_ids: Option<&Vec<usize>>,
+) -> Option<usize> {
+    let target_id = first_target_id(target_ids)?;
+    if encounter.actors_allied(caster_id, target_id) {
+        Some(target_id)
+    } else {
+        None
+    }
+}
+
 /// Standard leveled-spell cost shape: one Action plus a level-`lvl` slot.
 /// Used by ~60 leveled-spell impls; the helper keeps the cost block to
 /// one line at the call site and gives us a single chokepoint for any
