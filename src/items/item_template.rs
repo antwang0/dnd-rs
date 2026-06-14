@@ -2273,6 +2273,50 @@ pub static SCROLL_OF_MIND_BLANK: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Scroll of Mass Bless — Action; install `Blessed` on up to 3 allies
+/// within a 12-tile burst (30 ft RAW) of the reader. 5e RAW: Bless is
+/// a level-1 concentration buff hitting up to 3 creatures; the scroll
+/// collapses to the fixed 10-round non-concentration envelope every
+/// support-scroll buff rides. Sibling to `SCROLL_OF_BLESS` (single
+/// target, same condition / duration) — the mass variant is the multi-
+/// ally counterpart at one tier up in the loot pool. Fires through the
+/// shared `MultiTargetBuffItem` impl.
+pub static SCROLL_OF_MASS_BLESS: Item = Item {
+    name: "Scroll of Mass Bless",
+    glyph: '1',
+    on_use: Some(&crate::actions::item_actions::READ_MASS_BLESS_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Banner of Valor — Bonus Action; raise the banner to install `Heroic`
+/// (Frightened-immunity) on up to 4 allies within a 6-tile self-burst
+/// (15 ft) AND grant each 5 temp HP. Bardic / paladin trinket flavor.
+/// Single-use consumable — the banner unfurls once. Sits in the loot
+/// pool as a mass-buff alternative to Scroll of Mass Bless (3 allies,
+/// Blessed, Action cost) — distinct by the action-economy cost, the
+/// shorter self-centered burst, and the temp-HP cushion rider. Fires
+/// through the shared `MultiTargetBuffItem` impl via the `temp_hp` lane.
+pub static BANNER_OF_VALOR: Item = Item {
+    name: "Banner of Valor",
+    glyph: '2',
+    on_use: Some(&crate::actions::item_actions::USE_BANNER_OF_VALOR),
+    ..Item::DEFAULTS
+};
+
+/// Drum of Inspiration — Action; beat the drum to install `Inspired`
+/// (single-d6 buff die on the next attack roll / save / check) on up
+/// to 4 allies within a 12-tile burst (30 ft) of the holder. Single-use
+/// consumable — the drum-skin tears after one beat. Bardic flavor;
+/// distinct from Banner of Valor (Heroic + temp HP, bonus action) on
+/// the Inspired condition lane and the longer reach. Fires through the
+/// shared `MultiTargetBuffItem` impl.
+pub static DRUM_OF_INSPIRATION: Item = Item {
+    name: "Drum of Inspiration",
+    glyph: '3',
+    on_use: Some(&crate::actions::item_actions::USE_DRUM_OF_INSPIRATION),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -2788,4 +2832,11 @@ pub static LOOT_POOL: &[&Item] = &[
     // on the rare half of the mental-defense lane; distinct from the
     // potion by Action cost.
     &SCROLL_OF_MIND_BLANK,
+    // Multi-ally buff consumables — fire through the shared
+    // `MultiTargetBuffItem` factor. Scroll of Mass Bless is the RAW
+    // 3-target Bless cap; Banner of Valor and Drum of Inspiration are
+    // bardic-flavored mass-buff siblings on the Heroic / Inspired lanes.
+    &SCROLL_OF_MASS_BLESS,
+    &BANNER_OF_VALOR,
+    &DRUM_OF_INSPIRATION,
 ];

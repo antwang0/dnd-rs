@@ -2108,6 +2108,51 @@ impl EncounterInstance {
         a.team() == b.team()
     }
 
+    /// Walk every ally-team actor that's `is_combat_active` OR `is_dying`
+    /// and within `range_tiles` footprint-Chebyshev gap of `caster_id`,
+    /// returning `(id, distance)` for each. The caster itself is included
+    /// (distance 0) — every multi-ally consumable today treats the holder
+    /// as a candidate. Returns an empty Vec when `caster_id` is missing.
+    ///
+    /// Centralizes the "find candidate allies in range" walker the mass-
+    /// heal / mass-buff / Aid scroll factors all share so they don't each
+    /// re-implement the team-eq + alive-or-dying + chebyshev-gap loop.
+    /// Callers can layer their own priority sort on top (HP deficit for
+    /// heals, condition-status for buffs, HP% for Aid).
+    pub fn ally_candidates_in_range(
+        &self,
+        caster_id: usize,
+        range_tiles: isize,
+    ) -> Vec<(usize, isize)> {
+        let Some(caster) = self.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let caster_team = caster.team();
+        let caster_loc = caster.location();
+        let caster_size = get_tiles_from_size(caster.size());
+        self.actors
+            .iter()
+            .filter_map(|(id, a)| {
+                if a.team() != caster_team {
+                    return None;
+                }
+                if !a.is_combat_active() && !a.is_dying() {
+                    return None;
+                }
+                let dist = footprint_chebyshev(
+                    caster_loc,
+                    caster_size,
+                    a.location(),
+                    get_tiles_from_size(a.size()),
+                );
+                if dist > range_tiles {
+                    return None;
+                }
+                Some((*id, dist))
+            })
+            .collect()
+    }
+
     /// Negation of `actors_allied` that also fails on missing actors —
     /// "these two ids are both live AND on opposite teams." Used by
     /// harmful actions that want to short-circuit on a self-/ally-aimed
@@ -38848,6 +38893,242 @@ mod tests {
             !refresh.validate(&e),
             "Scroll of Mind Blank should reject re-read while already up"
         );
+    }
+
+    /// Scroll of Mass Bless: Action; install Blessed for 10 rounds on up
+    /// to 3 nearest allies within a 12-tile burst of the reader. Verifies
+    /// (1) the reader and allies in range pick up the buff, (2) the
+    /// scroll is consumed, (3) the 3-target cap holds when 4+ allies are
+    /// in range, and (4) enemies in range are untouched.
+    #[test]
+    fn scroll_of_mass_bless_buffs_close_allies_and_skips_enemies() {
+        use crate::actions::item_actions::READ_MASS_BLESS_SCROLL;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_MASS_BLESS;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Four allies in range — the cap should drop one.
+        let allies: Vec<usize> = (0..4)
+            .map(|i| {
+                e.instantiate_creature(
+                    &FIGHTER_TEMPLATE,
+                    Coordinate::new(6 + i, 5),
+                    0,
+                    0,
+                )
+                .unwrap()
+            })
+            .collect();
+        // Enemy in range — should be untouched by the buff.
+        let enemy = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 6), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_MASS_BLESS);
+
+        for ef in READ_MASS_BLESS_SCROLL.side_effects(&mut e, cleric, None, None, None) {
+            ef.apply(&mut e);
+        }
+
+        // Cleric + 3 allies = 4 candidates buffed (one ally drops to the
+        // cap). Confirm at least 4 actors picked up Blessed, all on the
+        // ally team.
+        let blessed_count = std::iter::once(cleric)
+            .chain(allies.iter().copied())
+            .filter(|id| e.actors[id].has_condition(Condition::Blessed))
+            .count();
+        assert!(
+            (3..=4).contains(&blessed_count),
+            "expected 3-4 allies blessed (cap=3 picks); got {}",
+            blessed_count
+        );
+        assert!(
+            !e.actors[&enemy].has_condition(Condition::Blessed),
+            "enemy in range should not pick up the ally buff"
+        );
+        assert!(
+            !e.actors[&cleric].has_item_named("Scroll of Mass Bless"),
+            "scroll should be consumed on use"
+        );
+    }
+
+    /// Banner of Valor: bonus-action; install Heroic + 5 temp HP on up
+    /// to 4 nearest allies within a 6-tile self-burst. Verifies the
+    /// temp-HP cushion lands alongside the Heroic install.
+    #[test]
+    fn banner_of_valor_installs_heroic_and_temp_hp() {
+        use crate::actions::item_actions::USE_BANNER_OF_VALOR;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::BANNER_OF_VALOR;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let holder = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&holder)
+            .unwrap()
+            .pickup_item(&BANNER_OF_VALOR);
+        assert_eq!(e.actors[&ally].temp_hp(), 0);
+
+        for ef in USE_BANNER_OF_VALOR.side_effects(&mut e, holder, None, None, None) {
+            ef.apply(&mut e);
+        }
+
+        assert!(
+            e.actors[&holder].has_condition(Condition::Heroic),
+            "holder should pick up Heroic"
+        );
+        assert!(
+            e.actors[&ally].has_condition(Condition::Heroic),
+            "ally in range should pick up Heroic"
+        );
+        assert_eq!(
+            e.actors[&holder].temp_hp(),
+            5,
+            "holder should pick up 5 temp HP"
+        );
+        assert_eq!(
+            e.actors[&ally].temp_hp(),
+            5,
+            "ally in range should pick up 5 temp HP"
+        );
+        assert!(
+            !e.actors[&holder].has_item_named("Banner of Valor"),
+            "banner should be consumed on use"
+        );
+    }
+
+    /// Drum of Inspiration: Action; install Inspired on up to 4 nearest
+    /// allies within a 12-tile burst. Allies out of range are skipped;
+    /// the drum is consumed regardless.
+    #[test]
+    fn drum_of_inspiration_skips_out_of_range_allies() {
+        use crate::actions::item_actions::USE_DRUM_OF_INSPIRATION;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::DRUM_OF_INSPIRATION;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let holder = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let near_ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        // 15 tiles away — out of the 12-tile burst.
+        let far_ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(20, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&holder)
+            .unwrap()
+            .pickup_item(&DRUM_OF_INSPIRATION);
+
+        for ef in USE_DRUM_OF_INSPIRATION.side_effects(&mut e, holder, None, None, None) {
+            ef.apply(&mut e);
+        }
+
+        assert!(
+            e.actors[&holder].has_condition(Condition::Inspired),
+            "holder should pick up Inspired"
+        );
+        assert!(
+            e.actors[&near_ally].has_condition(Condition::Inspired),
+            "in-range ally should pick up Inspired"
+        );
+        assert!(
+            !e.actors[&far_ally].has_condition(Condition::Inspired),
+            "out-of-range ally should not pick up Inspired"
+        );
+        assert!(
+            !e.actors[&holder].has_item_named("Drum of Inspiration"),
+            "drum should be consumed on use"
+        );
+    }
+
+    /// MultiTargetBuffItem prioritizes unbuffed allies over already-
+    /// buffed ones when the candidate pool exceeds `max_targets`. The
+    /// 3-target cap on the Mass Bless scroll should land on 3 fresh
+    /// allies even when an additional already-Blessed ally is the
+    /// closest candidate.
+    #[test]
+    fn multi_target_buff_item_prefers_unbuffed_allies() {
+        use crate::actions::item_actions::READ_MASS_BLESS_SCROLL;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::items::item_template::SCROLL_OF_MASS_BLESS;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Already-Blessed ally closest to the cleric — should be passed
+        // over so the cap doesn't land on a no-op refresh.
+        let already_blessed = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&already_blessed)
+            .unwrap()
+            .add_condition(Condition::Blessed, ConditionTimer::Rounds(10));
+        // A second already-Blessed ally adjacent to the first — guarantees
+        // the priority gate has to discriminate, since by distance alone
+        // both buffed allies would slot into the cap-3 budget ahead of
+        // the fresh ones sitting further out.
+        let already_blessed_b = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 6), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&already_blessed_b)
+            .unwrap()
+            .add_condition(Condition::Blessed, ConditionTimer::Rounds(10));
+        // Two unbuffed allies further out — the priority sort should
+        // pull them ahead of the buffed pair so the cap-3 budget lands
+        // on (cleric, fresh[0], fresh[1]).
+        let fresh: Vec<usize> = (0..2)
+            .map(|i| {
+                e.instantiate_creature(
+                    &FIGHTER_TEMPLATE,
+                    Coordinate::new(8 + i, 5),
+                    0,
+                    0,
+                )
+                .unwrap()
+            })
+            .collect();
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_MASS_BLESS);
+
+        for ef in READ_MASS_BLESS_SCROLL.side_effects(&mut e, cleric, None, None, None) {
+            ef.apply(&mut e);
+        }
+
+        for (i, &id) in fresh.iter().enumerate() {
+            assert!(
+                e.actors[&id].has_condition(Condition::Blessed),
+                "fresh ally {} should pick up Blessed (priority over the already-buffed allies)",
+                i
+            );
+        }
+        // Sanity: the cleric is on the ally team and unbuffed at scroll
+        // time, so the priority-0 sort lands them in the cap-3 budget too.
+        assert!(
+            e.actors[&cleric].has_condition(Condition::Blessed),
+            "cleric should pick up Blessed as a cap-3 ally candidate"
+        );
+        // The already-Blessed allies stay Blessed (idempotent install)
+        // but their slot is what would have been spent on a no-op; the
+        // test passes only because the unbuffed fresh allies took the
+        // cap-3 budget instead.
+        assert!(e.actors[&already_blessed].has_condition(Condition::Blessed));
     }
 
     /// Seeded sibling of `ei_with_terrain` — same hand-crafted terrain

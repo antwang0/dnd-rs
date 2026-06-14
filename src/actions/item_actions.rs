@@ -1496,25 +1496,17 @@ impl Action for MultiTargetHealItem {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
-
         if !consume_caster_item(encounter, caster_id, self.item_name) {
             return Vec::new();
         }
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let caster_team = caster.team();
-        let caster_loc = caster.location();
-        let caster_size = get_tiles_from_size(caster.size());
         let raw = encounter.roll(&self.dice) as i32;
         let amount = (raw + self.flat_bonus).max(1) as u32;
         encounter.log(format!(
             "  {}: {}d{}({}){:+} = {} HP each",
             self.log_label, self.dice.count, self.dice.faces, raw, self.flat_bonus, amount
         ));
-        // Build (priority, hp_deficit_desc, distance, id) for every
-        // ally-team actor in range. Lower priority wins:
+        // Layer a heal-specific priority sort on top of the shared
+        // ally-candidates walker:
         //   0 = dying (stabilize / revive — most urgent)
         //   1 = wounded combat-active (heal HP that won't go to waste)
         //   2 = full-HP combat-active (last-resort filler if slots remain)
@@ -1525,25 +1517,11 @@ impl Action for MultiTargetHealItem {
         // nearest-first heuristic could waste max_targets slots on
         // full-HP front-liners while dying allies sat unattended.
         let mut candidates: Vec<(u8, std::cmp::Reverse<u32>, isize, usize)> = encounter
-            .actors
-            .iter()
-            .filter_map(|(id, a)| {
-                if a.team() != caster_team {
-                    return None;
-                }
+            .ally_candidates_in_range(caster_id, self.range_tiles)
+            .into_iter()
+            .filter_map(|(id, dist)| {
+                let a = encounter.actors.get(&id)?;
                 let dying = a.is_dying();
-                if !a.is_combat_active() && !dying {
-                    return None;
-                }
-                let dist = footprint_chebyshev(
-                    caster_loc,
-                    caster_size,
-                    a.location(),
-                    get_tiles_from_size(a.size()),
-                );
-                if dist > self.range_tiles {
-                    return None;
-                }
                 let hp = a.hitpoints();
                 let max_hp = a.max_hitpoints();
                 let deficit = max_hp.saturating_sub(hp);
@@ -1554,7 +1532,7 @@ impl Action for MultiTargetHealItem {
                 } else {
                     2u8
                 };
-                Some((priority, std::cmp::Reverse(deficit), dist, *id))
+                Some((priority, std::cmp::Reverse(deficit), dist, id))
             })
             .collect();
         candidates.sort_unstable();
@@ -2854,18 +2832,10 @@ impl Action for ReadAidScroll {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
-
         if !consume_caster_item(encounter, caster_id, SCROLL_OF_AID_NAME) {
             return Vec::new();
         }
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let caster_team = caster.team();
-        let caster_loc = caster.location();
-        let caster_size = get_tiles_from_size(caster.size());
-        let name = caster.name().to_string();
+        let name = encounter.actor_name(caster_id);
         encounter.log(format!(
             "{} reads a scroll of aid; warm light pulses across allies.",
             name
@@ -2882,27 +2852,13 @@ impl Action for ReadAidScroll {
         // helper raises current by the same delta). Mirrors the spell-
         // side `Aid` impl which doesn't filter dying targets.
         let mut candidates: Vec<(u64, usize)> = encounter
-            .actors
-            .iter()
-            .filter_map(|(id, a)| {
-                if a.team() != caster_team {
-                    return None;
-                }
-                if !a.is_combat_active() && !a.is_dying() {
-                    return None;
-                }
-                let dist = footprint_chebyshev(
-                    caster_loc,
-                    caster_size,
-                    a.location(),
-                    get_tiles_from_size(a.size()),
-                );
-                if dist > RANGE_TILES {
-                    return None;
-                }
+            .ally_candidates_in_range(caster_id, RANGE_TILES)
+            .into_iter()
+            .filter_map(|(id, _dist)| {
+                let a = encounter.actors.get(&id)?;
                 let max = a.max_hitpoints().max(1) as u64;
                 let hp_pct = (a.hitpoints() as u64 * 1000) / max;
-                Some((hp_pct, *id))
+                Some((hp_pct, id))
             })
             .collect();
         candidates.sort_unstable();
@@ -4308,5 +4264,233 @@ pub static READ_MIND_BLANK_SCROLL: SelfConditionItem = SelfConditionItem {
     timer: ConditionTimer::Rounds(10),
     bonus_action: false,
     reject_when_active: true,
+    temp_hp: None,
+};
+
+/// Config struct for "multi-target ally buff" consumable items — the
+/// shared shape behind Scroll of Mass Bless / Banner of Valor / Drum of
+/// Inspiration. Each static instance encodes a single item's per-cast
+/// configuration; the `Action` impl below picks the up-to-`max_targets`
+/// closest ally-team actors (combat-active or dying) within `range_tiles`
+/// of the caster and installs `condition` for `timer` on each. Allies
+/// who already have the condition are skipped over so the install never
+/// burns a slot on a no-op refresh (mirrors `reject_when_active` on the
+/// single-target buff factor — here it filters per-target instead of
+/// rejecting the whole cast, since one already-buffed ally shouldn't
+/// blackball the other slots).
+///
+/// Mirror of `MultiTargetHealItem` for the condition-install lane. The
+/// caster is included as a candidate so a buff-yourself-plus-your-allies
+/// envelope folds through the same impl as the "burst from a banner /
+/// drum" envelope. Adding a new mass-buff scroll / banner is a one-static
+/// declaration — no new `Action` impl needed.
+pub struct MultiTargetBuffItem {
+    /// Player-facing action name (e.g. "read mass bless scroll").
+    pub action_name: &'static str,
+    /// Picker aliases (e.g. ["mass bless", "bless burst"]).
+    pub action_aliases: &'static [&'static str],
+    /// Inventory item name to gate validate / consume on.
+    pub item_name: &'static str,
+    /// Full log line emitted on use. The `{actor}` placeholder is
+    /// substituted with the caster's name; no other formatting is
+    /// performed.
+    pub log_text: &'static str,
+    /// Condition to install on each picked ally.
+    pub condition: Condition,
+    /// Timer for the install (typically `Rounds(10)` for combat-scale
+    /// buffs).
+    pub timer: ConditionTimer,
+    /// `true` ⇒ Bonus Action cost; `false` ⇒ Action cost.
+    pub bonus_action: bool,
+    /// Maximum tile-Chebyshev distance from the caster's footprint to
+    /// any ally that qualifies for the buff. Matches the
+    /// `MultiTargetHealItem.range_tiles` lane so the loot pool's "30 ft
+    /// burst" / "60 ft reach" envelopes both ride one knob.
+    pub range_tiles: isize,
+    /// Maximum number of allies to buff. 5e RAW caps Bless at 3 targets
+    /// — bigger banners / drums sit at 4-6 to match their bardic flavor.
+    pub max_targets: usize,
+    /// Optional flat temp HP grant alongside the condition. Used by
+    /// Aid-flavored mass buffs (Banner of Valor) — `None` for plain
+    /// condition installs. Mirrors `SelfConditionItem.temp_hp` so the
+    /// two factors share the loot-pool's temp-HP semantics.
+    pub temp_hp: Option<u32>,
+}
+
+impl Action for MultiTargetBuffItem {
+    fn name(&self) -> &str {
+        self.action_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.action_aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn is_heal(&self) -> bool {
+        // The buff install reads as a support action so the AI's heal
+        // / buff pipeline can pick the item up alongside genuine heals.
+        // Mirrors `SingleTargetBuffItem`'s is_heal=true stance.
+        true
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_or_bonus_only(self.bonus_action)
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, self.item_name)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::GainTempHp;
+
+        if !consume_caster_item(encounter, caster_id, self.item_name) {
+            return Vec::new();
+        }
+        let name = encounter.actor_name(caster_id);
+        encounter.log(self.log_text.replace("{actor}", &name));
+
+        // Layer a buff-specific priority sort on top of the shared
+        // ally-candidates walker:
+        //   0 = unbuffed (gets a fresh install)
+        //   1 = already buffed (no-op refresh; sort to the back so the
+        //       cap budget lands on unbuffed allies first)
+        // Skip condition-immune allies entirely (they can't take the
+        // install) so they don't eat a slot. Mirrors `MultiTargetHealItem`'s
+        // priority shape but with "already has condition" as the priority
+        // key instead of HP deficit — the install equivalent of "skip
+        // the healthy ally."
+        let condition = self.condition;
+        let mut candidates: Vec<(u8, isize, usize)> = encounter
+            .ally_candidates_in_range(caster_id, self.range_tiles)
+            .into_iter()
+            .filter_map(|(id, dist)| {
+                let a = encounter.actors.get(&id)?;
+                if a.effectively_immune_to_condition(condition) {
+                    return None;
+                }
+                let priority = if a.has_condition(condition) { 1u8 } else { 0u8 };
+                Some((priority, dist, id))
+            })
+            .collect();
+        candidates.sort_unstable();
+        candidates.truncate(self.max_targets);
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for (_, _, id) in candidates {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: id,
+                condition,
+                timer: self.timer,
+            }));
+            if let Some(amount) = self.temp_hp {
+                effects.push(Box::new(GainTempHp {
+                    actor_id: id,
+                    amount,
+                }));
+            }
+        }
+        effects
+    }
+}
+
+const SCROLL_OF_MASS_BLESS_NAME: &str = "Scroll of Mass Bless";
+const BANNER_OF_VALOR_NAME: &str = "Banner of Valor";
+const DRUM_OF_INSPIRATION_NAME: &str = "Drum of Inspiration";
+
+/// Scroll of Mass Bless — Action; install `Blessed` for 10 rounds on up
+/// to 3 allies within 12 tiles (30 ft RAW burst, matching the level-1
+/// Bless target cap). 5e RAW: Bless is a level-1 concentration spell that
+/// blesses up to 3 creatures within 30 ft; the scroll collapses to the
+/// fixed 10-round non-concentration envelope all support-scroll buffs
+/// ride. Sibling to Scroll of Bless (single-target) — distinct by the
+/// multi-target lane. Fires through the shared `MultiTargetBuffItem`
+/// impl.
+pub static READ_MASS_BLESS_SCROLL: MultiTargetBuffItem = MultiTargetBuffItem {
+    action_name: "read mass bless scroll",
+    action_aliases: &["mass bless", "bless burst"],
+    item_name: SCROLL_OF_MASS_BLESS_NAME,
+    log_text: "{actor} reads a scroll of mass bless; a wide halo of golden light settles.",
+    condition: Condition::Blessed,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    // 30 ft RAW; 12 tiles in the 2.5 ft grid.
+    range_tiles: 12,
+    max_targets: 3,
+    temp_hp: None,
+};
+
+/// Banner of Valor — Bonus Action; install `Heroic` for 10 rounds on up
+/// to 4 allies within 6 tiles (15 ft burst self-centered) and grant each
+/// 5 temp HP. Bardic / paladin trinket flavor — the holder hoists the
+/// banner and the nearby line steels up against Frightened. Sits between
+/// Scroll of Mass Bless (3 targets, no temp HP, Action cost) and a
+/// hypothetical higher-tier mass-buff on the support-burst lane. Fires
+/// through the shared `MultiTargetBuffItem` impl via the `temp_hp` lane.
+pub static USE_BANNER_OF_VALOR: MultiTargetBuffItem = MultiTargetBuffItem {
+    action_name: "raise banner of valor",
+    action_aliases: &["banner valor", "raise banner"],
+    item_name: BANNER_OF_VALOR_NAME,
+    log_text: "{actor} hoists the Banner of Valor; the nearby line steels.",
+    condition: Condition::Heroic,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: true,
+    // 15 ft self-burst; 6 tiles.
+    range_tiles: 6,
+    max_targets: 4,
+    temp_hp: Some(5),
+};
+
+/// Drum of Inspiration — Action; install `Inspired` for 10 rounds on up
+/// to 4 allies within 12 tiles (30 ft burst). Bardic flavor — the holder
+/// beats the drum and the line picks up an Inspired die for their next
+/// save / attack roll. Distinct from Banner of Valor (Heroic +
+/// temp-HP, bonus action) on the Inspired lane — the drum is the longer-
+/// reach Action-cost variant. Fires through the shared
+/// `MultiTargetBuffItem` impl.
+pub static USE_DRUM_OF_INSPIRATION: MultiTargetBuffItem = MultiTargetBuffItem {
+    action_name: "beat drum of inspiration",
+    action_aliases: &["drum inspiration", "drum"],
+    item_name: DRUM_OF_INSPIRATION_NAME,
+    log_text: "{actor} beats the Drum of Inspiration; a rolling cadence steadies the line.",
+    condition: Condition::Inspired,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    // 30 ft burst RAW; 12 tiles.
+    range_tiles: 12,
+    max_targets: 4,
     temp_hp: None,
 };
