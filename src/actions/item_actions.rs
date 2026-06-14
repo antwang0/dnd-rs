@@ -2,8 +2,8 @@ use std::collections::HashSet;
 
 use crate::{
     actions::action_template::{
-        Action, TargetingSchema, action_or_bonus_only, bonus_action_only, first_target_id,
-        first_target_location,
+        Action, TargetingSchema, action_or_bonus_only, bonus_action_only, first_ally_target_id,
+        first_target_id, first_target_location,
     },
     conditions::{Condition, ConditionTimer},
     engine::{
@@ -1028,11 +1028,22 @@ impl Action for SingleTargetHealItem {
         &self,
         encounter: &EncounterInstance,
         caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
+        target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        caster_holds(encounter, caster_id, self.item_name)
+        if !caster_holds(encounter, caster_id, self.item_name) {
+            return false;
+        }
+        // Ally-target gate: a heal scroll picked at an enemy is a no-op
+        // RAW. Folding it into validate keeps the picker UX honest — the
+        // affordability check, the LOS check, and the ally check all
+        // agree on whether the action can fire. Without this, a queued
+        // heal on a hostile target would fall through to `side_effects`,
+        // consume the scroll, and then drop the heal into the enemy's
+        // HP pool — strictly bad. Mirrors the ally-check `first_ally_target_id`
+        // does on the spell-side `Aid` / `Cure Wounds` impls.
+        first_ally_target_id(encounter, caster_id, target_ids).is_some()
     }
 
     fn side_effects(
@@ -1043,7 +1054,7 @@ impl Action for SingleTargetHealItem {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
+        let Some(target_id) = first_ally_target_id(encounter, caster_id, target_ids) else {
             return Vec::new();
         };
         if !consume_caster_item(encounter, caster_id, self.item_name) {
@@ -2349,8 +2360,16 @@ impl Action for SingleTargetBuffItem {
         if !caster_holds(encounter, caster_id, self.item_name) {
             return false;
         }
+        // Ally-target gate: a buff scroll picked at an enemy is a no-op
+        // RAW. Without this, a queued buff on a hostile target would
+        // fall through to `side_effects`, consume the scroll, and stamp
+        // the friendly condition on the enemy — strictly bad. Mirrors
+        // the spell-side gate (`first_ally_target_id` on Bless / Shield
+        // of Faith).
+        let Some(tid) = first_ally_target_id(encounter, caster_id, target_ids) else {
+            return false;
+        };
         if self.reject_when_active
-            && let Some(tid) = first_target_id(target_ids)
             && encounter
                 .actors
                 .get(&tid)
@@ -2369,7 +2388,7 @@ impl Action for SingleTargetBuffItem {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
+        let Some(target_id) = first_ally_target_id(encounter, caster_id, target_ids) else {
             return Vec::new();
         };
         if !consume_caster_item(encounter, caster_id, self.item_name) {

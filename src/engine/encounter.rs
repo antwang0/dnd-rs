@@ -39391,6 +39391,111 @@ mod tests {
         );
     }
 
+    /// Ally-target gate: a single-target heal scroll targeted at an
+    /// enemy must NOT validate, must NOT consume, and must NOT heal the
+    /// hostile target. Regression for the `first_ally_target_id` gate
+    /// added to `SingleTargetHealItem`.
+    #[test]
+    fn single_target_heal_item_rejects_enemy_target() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_CURE_WOUNDS_SCROLL;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::side_effects::DealDamage;
+        use crate::items::item_template::SCROLL_OF_CURE_WOUNDS;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        // Pre-damage the enemy so a Heal would be observable.
+        DealDamage {
+            actor_id: enemy,
+            amount: 3,
+            damage_type: DamageType::Slashing,
+        }
+        .apply(&mut e);
+        let enemy_hp_pre = e.actors[&enemy].hitpoints();
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_CURE_WOUNDS);
+        let aei = ActionExecutionInfo::new(
+            &READ_CURE_WOUNDS_SCROLL,
+            cleric,
+            Some(vec![enemy]),
+            None,
+            None,
+        );
+        assert!(
+            !aei.validate(&e),
+            "heal scroll should refuse to validate on an enemy target"
+        );
+        // Force-fire side_effects (skipping validate) to confirm the
+        // ally gate inside side_effects also blocks the heal + consume.
+        let effects = READ_CURE_WOUNDS_SCROLL.side_effects(&mut e, cleric, Some(&vec![enemy]), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&enemy].hitpoints(),
+            enemy_hp_pre,
+            "enemy must not gain HP from a heal scroll fired at them"
+        );
+        assert!(
+            e.actors[&cleric].has_item_named("Scroll of Cure Wounds"),
+            "scroll must not be consumed on an enemy-targeted fire"
+        );
+    }
+
+    /// Same gate, buff side: a single-target buff scroll targeted at an
+    /// enemy must NOT validate, must NOT consume, and must NOT install
+    /// the buff on the hostile target.
+    #[test]
+    fn single_target_buff_item_rejects_enemy_target() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_BLESS_SCROLL;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_BLESS;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_BLESS);
+        let aei = ActionExecutionInfo::new(
+            &READ_BLESS_SCROLL,
+            cleric,
+            Some(vec![enemy]),
+            None,
+            None,
+        );
+        assert!(
+            !aei.validate(&e),
+            "buff scroll should refuse to validate on an enemy target"
+        );
+        let effects = READ_BLESS_SCROLL.side_effects(&mut e, cleric, Some(&vec![enemy]), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&enemy].has_condition(Condition::Blessed),
+            "enemy must not pick up Blessed from a buff scroll fired at them"
+        );
+        assert!(
+            e.actors[&cleric].has_item_named("Scroll of Bless"),
+            "scroll must not be consumed on an enemy-targeted fire"
+        );
+    }
+
     /// Seeded sibling of `ei_with_terrain` — same hand-crafted terrain
     /// shape but the encounter's RNG is initialized from `seed` so callers
     /// can sweep seeds for probabilistic assertions while keeping a
