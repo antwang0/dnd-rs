@@ -39131,6 +39131,266 @@ mod tests {
         assert!(e.actors[&already_blessed].has_condition(Condition::Blessed));
     }
 
+    /// Wand of Stunning: single-target CON save vs DC 15, fail = Stunned
+    /// for 10 rounds. Sweeps seeds against a CON-weak target (Goblin,
+    /// CON 10, no proficiency); at least one seed must fail and land
+    /// the Stunned install. The wand is consumed on every use regardless.
+    #[test]
+    fn wand_of_stunning_installs_stunned_on_failed_save() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::USE_WAND_OF_STUNNING;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::WAND_OF_STUNNING;
+
+        let trials = 50u64;
+        let mut any_stunned = false;
+        for seed in 0..trials {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let caster = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&caster)
+                .unwrap()
+                .pickup_item(&WAND_OF_STUNNING);
+            let aei = ActionExecutionInfo::new(
+                &USE_WAND_OF_STUNNING,
+                caster,
+                Some(vec![goblin]),
+                None,
+                None,
+            );
+            assert!(aei.validate(&e), "wand in inventory + target in range");
+            e.push_action(aei);
+            e.process_stack();
+            assert!(
+                !e.actors[&caster].has_item_named("Wand of Stunning"),
+                "wand should be consumed on use (seed {})",
+                seed
+            );
+            if e.actors[&goblin].has_condition(Condition::Stunned) {
+                any_stunned = true;
+                break;
+            }
+        }
+        assert!(
+            any_stunned,
+            "wand of stunning never installed Stunned across {} seeds",
+            trials
+        );
+    }
+
+    /// Iron Bands of Bilarro: single-target STR save vs DC 17, fail =
+    /// Restrained for 10 rounds. Sweeps seeds against a STR-weak target
+    /// (Goblin); at least one seed must fail the save.
+    #[test]
+    fn iron_bands_of_bilarro_install_restrained_on_failed_save() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::USE_IRON_BANDS_OF_BILARRO;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::IRON_BANDS_OF_BILARRO;
+
+        let trials = 50u64;
+        let mut any_restrained = false;
+        for seed in 0..trials {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let caster = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&caster)
+                .unwrap()
+                .pickup_item(&IRON_BANDS_OF_BILARRO);
+            let aei = ActionExecutionInfo::new(
+                &USE_IRON_BANDS_OF_BILARRO,
+                caster,
+                Some(vec![goblin]),
+                None,
+                None,
+            );
+            assert!(aei.validate(&e));
+            e.push_action(aei);
+            e.process_stack();
+            assert!(
+                !e.actors[&caster].has_item_named("Iron Bands of Bilarro"),
+                "iron bands should be consumed on use (seed {})",
+                seed
+            );
+            if e.actors[&goblin].has_condition(Condition::Restrained) {
+                any_restrained = true;
+                break;
+            }
+        }
+        assert!(
+            any_restrained,
+            "iron bands never installed Restrained across {} seeds",
+            trials
+        );
+    }
+
+    /// Scroll of Sanctuary: bonus-action ally-target buff. Installs the
+    /// Sanctuary condition on the picked ally and consumes the scroll.
+    #[test]
+    fn scroll_of_sanctuary_installs_sanctuary_on_ally() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_SANCTUARY_SCROLL;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+        use crate::items::item_template::SCROLL_OF_SANCTUARY;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_SANCTUARY);
+        let aei = ActionExecutionInfo::new(
+            &READ_SANCTUARY_SCROLL,
+            cleric,
+            Some(vec![ally]),
+            None,
+            None,
+        );
+        assert_eq!(
+            aei.cost(&e),
+            vec![Resource::BonusAction],
+            "scroll of sanctuary costs one Bonus Action (no slot)"
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            e.actors[&ally].has_condition(Condition::Sanctuary),
+            "scroll of sanctuary installs Sanctuary on the ally"
+        );
+        assert!(
+            !e.actors[&cleric].has_item_named("Scroll of Sanctuary"),
+            "scroll should be consumed on use"
+        );
+    }
+
+    /// Wand of Mass Cure Wounds: heal up to 6 nearest allies for 5d8+5
+    /// HP each within a 12-tile burst. Verifies wounded allies in range
+    /// gain HP, full-HP allies are left alone when the cap room runs
+    /// out, and the wand is consumed.
+    #[test]
+    fn wand_of_mass_cure_wounds_heals_wounded_allies() {
+        use crate::actions::item_actions::USE_WAND_OF_MASS_CURE_WOUNDS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::side_effects::DealDamage;
+        use crate::items::item_template::WAND_OF_MASS_CURE_WOUNDS;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let wounded: Vec<usize> = (0..3)
+            .map(|i| {
+                let id = e
+                    .instantiate_creature(
+                        &FIGHTER_TEMPLATE,
+                        Coordinate::new(6 + i, 5),
+                        0,
+                        0,
+                    )
+                    .unwrap();
+                // Pre-damage so the heal lands on a non-full HP target.
+                DealDamage {
+                    actor_id: id,
+                    amount: 10,
+                    damage_type: DamageType::Slashing,
+                }
+                .apply(&mut e);
+                id
+            })
+            .collect();
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .pickup_item(&WAND_OF_MASS_CURE_WOUNDS);
+
+        let hp_before: Vec<u32> = wounded.iter().map(|&id| e.actors[&id].hitpoints()).collect();
+        for ef in USE_WAND_OF_MASS_CURE_WOUNDS.side_effects(&mut e, cleric, None, None, None) {
+            ef.apply(&mut e);
+        }
+        let hp_after: Vec<u32> = wounded.iter().map(|&id| e.actors[&id].hitpoints()).collect();
+
+        for i in 0..wounded.len() {
+            assert!(
+                hp_after[i] > hp_before[i],
+                "wounded ally {} should gain HP from the wand burst ({} -> {})",
+                i,
+                hp_before[i],
+                hp_after[i]
+            );
+        }
+        assert!(
+            !e.actors[&cleric].has_item_named("Wand of Mass Cure Wounds"),
+            "wand should be consumed on use"
+        );
+    }
+
+    /// Scroll of Crusader's Mantle: mass-buff variant. Installs
+    /// `CrusadersMantled` on the reader + up to 4 nearest allies within
+    /// a 12-tile burst; enemies in range are skipped.
+    #[test]
+    fn scroll_of_crusaders_mantle_buffs_allies_and_skips_enemies() {
+        use crate::actions::item_actions::READ_CRUSADERS_MANTLE_SCROLL;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_CRUSADERS_MANTLE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 6), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_CRUSADERS_MANTLE);
+
+        for ef in READ_CRUSADERS_MANTLE_SCROLL.side_effects(&mut e, cleric, None, None, None) {
+            ef.apply(&mut e);
+        }
+
+        assert!(
+            e.actors[&cleric].has_condition(Condition::CrusadersMantled),
+            "reader should pick up CrusadersMantled"
+        );
+        assert!(
+            e.actors[&ally].has_condition(Condition::CrusadersMantled),
+            "ally in range should pick up CrusadersMantled"
+        );
+        assert!(
+            !e.actors[&enemy].has_condition(Condition::CrusadersMantled),
+            "enemy in range should not pick up the ally buff"
+        );
+        assert!(
+            !e.actors[&cleric].has_item_named("Scroll of Crusader's Mantle"),
+            "scroll should be consumed on use"
+        );
+    }
+
     /// Seeded sibling of `ei_with_terrain` — same hand-crafted terrain
     /// shape but the encounter's RNG is initialized from `seed` so callers
     /// can sweep seeds for probabilistic assertions while keeping a

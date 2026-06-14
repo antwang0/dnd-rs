@@ -2317,6 +2317,73 @@ pub static DRUM_OF_INSPIRATION: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Wand of Stunning — Action; single-target CON save vs DC 15, fail =
+/// Stunned for 10 rounds. The only consumable in the loot pool that
+/// installs Stunned (blocks every action-economy slot AND movement RAW).
+/// Sibling to Wand of Hold Monster (Paralyzed DC 17) on the rare half of
+/// the single-target lockdown lane — distinct by Stunned's strictly
+/// stronger envelope (no movement either) and the lower CON DC tier.
+/// Fires through the shared `SingleSaveConditionItem` impl.
+pub static WAND_OF_STUNNING: Item = Item {
+    name: "Wand of Stunning",
+    glyph: '4',
+    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_STUNNING),
+    ..Item::DEFAULTS
+};
+
+/// Iron Bands of Bilarro — Action; throw at a target up to 24 tiles away
+/// (60 ft RAW), STR save vs DC 17, fail = Restrained for 10 rounds. Top
+/// of the single-target Restrained ladder — sibling to Scroll of Earthen
+/// Grasp (DC 13 STR-save Restrained) at the rare DC 17 tier. Single-use
+/// thrown consumable; the bands tighten on impact and lock the target in
+/// place. Fires through the shared `SingleSaveConditionItem` impl.
+pub static IRON_BANDS_OF_BILARRO: Item = Item {
+    name: "Iron Bands of Bilarro",
+    glyph: '5',
+    on_use: Some(&crate::actions::item_actions::USE_IRON_BANDS_OF_BILARRO),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Sanctuary — Bonus Action; install `Sanctuary` for 10 rounds
+/// on a single ally within 12 tiles (30 ft RAW). Sibling to Potion of
+/// Sanctuary (self-only, BA drink) — the scroll variant wards a different
+/// ally (the rogue in the back, the cleric setting up a heal) so the
+/// caster doesn't have to drink-then-attack. Fires through the shared
+/// `SingleTargetBuffItem` impl.
+pub static SCROLL_OF_SANCTUARY: Item = Item {
+    name: "Scroll of Sanctuary",
+    glyph: '6',
+    on_use: Some(&crate::actions::item_actions::READ_SANCTUARY_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Wand of Mass Cure Wounds — Action; heal up to 6 allies within a
+/// 12-tile burst (30 ft RAW) for 5d8+5 HP each. Top of the multi-target
+/// ally-heal ladder above Scroll of Mass Cure Wounds (3d8+5). 5e RAW:
+/// level-5 Mass Cure Wounds upcast pool; the wand variant collapses to a
+/// one-shot cast at the level-5 envelope. Single rare entry in the loot
+/// pool. Fires through the shared `MultiTargetHealItem` impl.
+pub static WAND_OF_MASS_CURE_WOUNDS: Item = Item {
+    name: "Wand of Mass Cure Wounds",
+    glyph: '7',
+    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_MASS_CURE_WOUNDS),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Crusader's Mantle — Action; install `CrusadersMantled` on
+/// up to 4 allies within a 12-tile burst (30 ft RAW) for 10 rounds. The
+/// condition rides the `ON_HIT_RIDERS` table in `engine::attack` to add
+/// +1d4 radiant to every weapon hit. Sibling to Scroll of Mass Bless on
+/// the multi-target offensive buff lane — distinct by the radiant
+/// damage rider vs. Bless's flat +1d4 attack / save modifier. Fires
+/// through the shared `MultiTargetBuffItem` impl.
+pub static SCROLL_OF_CRUSADERS_MANTLE: Item = Item {
+    name: "Scroll of Crusader's Mantle",
+    glyph: '8',
+    on_use: Some(&crate::actions::item_actions::READ_CRUSADERS_MANTLE_SCROLL),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -2839,4 +2906,23 @@ pub static LOOT_POOL: &[&Item] = &[
     &SCROLL_OF_MASS_BLESS,
     &BANNER_OF_VALOR,
     &DRUM_OF_INSPIRATION,
+    // Wand of Stunning — first item to install Stunned. Single rare entry
+    // alongside Wand of Hold Monster (Paralyzed DC 17) on the rare half of
+    // the single-target lockdown lane.
+    &WAND_OF_STUNNING,
+    // Iron Bands of Bilarro — top of the single-target Restrained ladder
+    // at DC 17. Sibling to Scroll of Earthen Grasp (DC 13) — same install,
+    // meaner save DC.
+    &IRON_BANDS_OF_BILARRO,
+    // Scroll of Sanctuary — ally-target counterpart to Potion of Sanctuary
+    // (self-only). Single entry on the Sanctuary lane.
+    &SCROLL_OF_SANCTUARY,
+    // Wand of Mass Cure Wounds — top of the multi-target ally-heal ladder
+    // above Scroll of Mass Cure Wounds. Single rare entry.
+    &WAND_OF_MASS_CURE_WOUNDS,
+    // Scroll of Crusader's Mantle — mass-buff variant of the paladin aura
+    // spell. Sits alongside Scroll of Mass Bless on the multi-target
+    // offensive buff lane; +1d4 radiant rider per hit rides
+    // `ON_HIT_RIDERS`.
+    &SCROLL_OF_CRUSADERS_MANTLE,
 ];

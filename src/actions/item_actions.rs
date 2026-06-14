@@ -4494,3 +4494,127 @@ pub static USE_DRUM_OF_INSPIRATION: MultiTargetBuffItem = MultiTargetBuffItem {
     max_targets: 4,
     temp_hp: None,
 };
+
+const WAND_OF_STUNNING_NAME: &str = "Wand of Stunning";
+const IRON_BANDS_OF_BILARRO_NAME: &str = "Iron Bands of Bilarro";
+const SCROLL_OF_SANCTUARY_NAME: &str = "Scroll of Sanctuary";
+const WAND_OF_MASS_CURE_WOUNDS_NAME: &str = "Wand of Mass Cure Wounds";
+const SCROLL_OF_CRUSADERS_MANTLE_NAME: &str = "Scroll of Crusader's Mantle";
+
+/// Wand of Stunning — Action; single-target CON save vs DC 15, fail =
+/// Stunned for 10 rounds. The only consumable in the loot pool that
+/// installs Stunned (which blocks Action, Bonus Action, Reaction AND
+/// movement RAW — strictly stronger than Paralyzed's Incapacitated +
+/// movement-pin since the auto-fail-STR/DEX-saves clause is the only
+/// piece Paralyzed adds on top). Sits in the rare half of the single-
+/// target lockdown lane alongside Wand of Hold Monster (Paralyzed DC 17)
+/// — distinct by Stunned's "no movement either" envelope and the
+/// cheaper CON DC tier. Fires through the shared `SingleSaveConditionItem`
+/// impl.
+pub static USE_WAND_OF_STUNNING: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "use wand of stunning",
+    action_aliases: &["stunning wand", "wand of stun"],
+    item_name: WAND_OF_STUNNING_NAME,
+    log_text: "{actor} flicks the wand of stunning; a sharp concussive pulse strikes.",
+    save: AbilityScoreType::Constitution,
+    dc: 15,
+    // 60 ft range RAW; 24 tiles in the 2.5ft grid.
+    reach: 24,
+    condition: Condition::Stunned,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Iron Bands of Bilarro — Action; throw at a target, STR save vs DC 17,
+/// fail = Restrained for 10 rounds. 5e RAW: the iron bands are a one-shot
+/// thrown item that wraps a Large-or-smaller creature in metal bands; we
+/// route the install through `SingleSaveConditionItem` for the Restrained
+/// install at the rare DC 17 tier. Sibling to Wand of Web (DC 15 burst
+/// Restrained) and Scroll of Earthen Grasp (DC 13 single-target
+/// Restrained) — the iron bands sit at the top of the Restrained single-
+/// target ladder with the meanest save DC. Fires through the shared
+/// `SingleSaveConditionItem` impl.
+pub static USE_IRON_BANDS_OF_BILARRO: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "throw iron bands of bilarro",
+    action_aliases: &["iron bands", "bilarro"],
+    item_name: IRON_BANDS_OF_BILARRO_NAME,
+    log_text: "{actor} hurls the Iron Bands of Bilarro; metal coils whip toward the target.",
+    save: AbilityScoreType::Strength,
+    dc: 17,
+    // 60 ft thrown range RAW; 24 tiles.
+    reach: 24,
+    condition: Condition::Restrained,
+    timer: ConditionTimer::Rounds(10),
+};
+
+/// Scroll of Sanctuary — Bonus Action; install `Sanctuary` for 10 rounds
+/// on a single ally within 24 tiles (60 ft RAW). 5e RAW: level-1
+/// abjuration, bonus action, target must be willing — the scroll
+/// envelope collapses the willing-target clause onto the existing ally-
+/// target gate that every `SingleTargetBuffItem` reads. Sibling to
+/// Potion of Sanctuary (self-only, bonus-action drink) on the Sanctuary
+/// lane — the scroll variant lets a caster ward a different ally (the
+/// rogue in the back, the cleric setting up a heal) without making the
+/// drinker themselves drop their concentration / action economy. Fires
+/// through the shared `SingleTargetBuffItem` impl; rejects re-cast
+/// when the target is already Sanctified so the consumable isn't burned
+/// on a no-op timer refresh.
+pub static READ_SANCTUARY_SCROLL: SingleTargetBuffItem = SingleTargetBuffItem {
+    action_name: "read sanctuary scroll",
+    action_aliases: &["sanctuary scroll", "sanc scroll"],
+    item_name: SCROLL_OF_SANCTUARY_NAME,
+    log_text: "{actor} reads a scroll of sanctuary; an unseen ward settles over the ally.",
+    condition: Condition::Sanctuary,
+    timer: ConditionTimer::Rounds(10),
+    // 30 ft range RAW; 12 tiles.
+    reach: 12,
+    bonus_action: true,
+    reject_when_active: true,
+};
+
+/// Wand of Mass Cure Wounds — Action; heal up to 6 allies within 12
+/// tiles (30 ft burst RAW) for 5d8+5 HP each. Top of the multi-target
+/// ally-heal ladder above Scroll of Mass Cure Wounds (3d8+5) — same
+/// envelope, larger pool. 5e RAW: 7 charges casting Mass Cure Wounds
+/// at the level-5 baseline (5d8 + caster mod, up to 6 targets); we
+/// collapse to a single-use cast at the level-5 envelope with the
+/// existing "scroll has no caster-ability tie, +5 stand-in" pattern
+/// every multi-heal item rides. Fires through the shared
+/// `MultiTargetHealItem` impl.
+pub static USE_WAND_OF_MASS_CURE_WOUNDS: MultiTargetHealItem = MultiTargetHealItem {
+    action_name: "use wand of mass cure wounds",
+    action_aliases: &["mcw wand", "mass cure wand"],
+    item_name: WAND_OF_MASS_CURE_WOUNDS_NAME,
+    log_label: "wand of mass cure wounds",
+    dice: Dice::new(5, 8),
+    flat_bonus: 5,
+    bonus_action: false,
+    range_tiles: 12,
+    max_targets: 6,
+};
+
+/// Scroll of Crusader's Mantle — Action; install `CrusadersMantled` for
+/// 10 rounds on up to 4 allies within 12 tiles (30 ft RAW aura). 5e RAW:
+/// level-3 evocation, self-aura with a 30-ft radius, concentration; every
+/// allied weapon hit gains +1d4 radiant. The scroll variant collapses to
+/// the engine's mass-buff envelope — picks up to 4 nearest allies and
+/// stamps the condition on each, dropping the concentration gate and
+/// the self-only self-aura RAW. The +1d4 radiant rider lives on
+/// `ON_HIT_RIDERS` in `engine::attack`, so the install lands the
+/// per-attack bonus the same way the self-cast spell already does.
+/// Sibling to Scroll of Mass Bless (Blessed mass install) on the
+/// multi-target offensive buff lane — distinct by the radiant damage
+/// rider vs. Bless's flat +1d4 attack / save modifier. Fires through
+/// the shared `MultiTargetBuffItem` impl.
+pub static READ_CRUSADERS_MANTLE_SCROLL: MultiTargetBuffItem = MultiTargetBuffItem {
+    action_name: "read crusader's mantle scroll",
+    action_aliases: &["mantle scroll", "crusader scroll"],
+    item_name: SCROLL_OF_CRUSADERS_MANTLE_NAME,
+    log_text: "{actor} reads a scroll of crusader's mantle; a holy radiance suffuses the line.",
+    condition: Condition::CrusadersMantled,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    // 30 ft self-aura RAW; 12 tiles.
+    range_tiles: 12,
+    max_targets: 4,
+    temp_hp: None,
+};
