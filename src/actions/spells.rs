@@ -12,6 +12,7 @@ use crate::{
         action_overrides::ActionOverride,
         dice::Dice,
         encounter::EncounterInstance,
+        saves::SaveDamagePolicy,
         side_effects::{
             ApplicableSideEffect, ApplyCondition, DealDamage, GainTempHp, Heal, Resource,
             StartConcentration,
@@ -301,36 +302,10 @@ impl BurstTargets {
     }
 }
 
-/// What a passing save does to the damage value: halve it (leveled
-/// save-for-half spells — Fireball / Cone of Cold / Tsunami) or zero
-/// it (cantrip-style save-or-nothing — Thunderclap / Sword Burst). The
-/// distinction is the 5e RAW split: cantrips don't half-on-save.
-#[derive(Clone, Copy)]
-enum SaveOutcome {
-    HalfOnSave,
-    NoneOnSave,
-}
-
-impl SaveOutcome {
-    fn damage_after(self, raw: u32, passed: bool) -> u32 {
-        match (self, passed) {
-            (_, false) => raw,
-            (SaveOutcome::HalfOnSave, true) => raw / 2,
-            (SaveOutcome::NoneOnSave, true) => 0,
-        }
-    }
-
-    /// Evasion-aware variant: on DEX saves for half, Evasion turns
-    /// pass → 0 and fail → half.
-    fn damage_after_evasion(self, raw: u32, passed: bool) -> u32 {
-        match (self, passed) {
-            (SaveOutcome::HalfOnSave, true) => 0,
-            (SaveOutcome::HalfOnSave, false) => raw / 2,
-            (SaveOutcome::NoneOnSave, true) => 0,
-            (SaveOutcome::NoneOnSave, false) => raw,
-        }
-    }
-}
+// `SaveDamagePolicy` (formerly the private `SaveOutcome` enum) lives in
+// `engine::saves` so the same post-save / evasion damage logic is shared
+// with the item-side `SingleSaveDamageItem` factor and the AoE-burst
+// helper in `actions::action_template`. Imported at the top of the file.
 
 /// Core shared-save burst resolver. Rolls a *shared* damage value once,
 /// logs the breakdown, then walks the target set picking the right
@@ -364,7 +339,7 @@ fn burst_save_damage(
     damage_type: DamageType,
     action_name: &str,
     targets: BurstTargets,
-    outcome: SaveOutcome,
+    outcome: SaveDamagePolicy,
 ) -> (Vec<Box<dyn ApplicableSideEffect>>, Vec<(usize, bool)>) {
     let raw = encounter.roll(&dice);
     encounter.log(format!(
@@ -405,9 +380,9 @@ fn burst_save_damage(
                 .get(&tid)
                 .is_some_and(|a| a.has_evasion());
         let dmg = if has_evasion {
-            outcome.damage_after_evasion(raw, passed)
+            outcome.apply_with_evasion(raw, passed)
         } else {
-            outcome.damage_after(raw, passed)
+            outcome.apply(raw, passed)
         };
         saves.push((tid, passed));
         if dmg == 0 {
@@ -428,7 +403,7 @@ fn burst_save_damage(
 /// Fire Storm / Tidal Wave / Mental Prison's burst-variant). Allies
 /// inside the radius are spared via `enemy_burst_targets`.
 ///
-/// Thin wrapper that picks `BurstTargets::Enemy` + `SaveOutcome::HalfOnSave`
+/// Thin wrapper that picks `BurstTargets::Enemy` + `SaveDamagePolicy::HalfOnSave`
 /// over the shared `burst_save_damage` resolver. See that function for
 /// the load-bearing loop body and logging shape.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
@@ -454,7 +429,7 @@ fn enemy_burst_save_for_half(
         damage_type,
         action_name,
         BurstTargets::Enemy,
-        SaveOutcome::HalfOnSave,
+        SaveDamagePolicy::HalfOnSave,
     )
 }
 
@@ -465,7 +440,7 @@ fn enemy_burst_save_for_half(
 /// Used by spells whose damage is non-discriminating shrapnel — Ice
 /// Knife's shatter, Circle of Death, Incendiary Cloud, Tsunami.
 ///
-/// Thin wrapper that picks `BurstTargets::Neutral` + `SaveOutcome::HalfOnSave`
+/// Thin wrapper that picks `BurstTargets::Neutral` + `SaveDamagePolicy::HalfOnSave`
 /// over the shared `burst_save_damage` resolver.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn neutral_burst_save_for_half(
@@ -490,7 +465,7 @@ fn neutral_burst_save_for_half(
         damage_type,
         action_name,
         BurstTargets::Neutral,
-        SaveOutcome::HalfOnSave,
+        SaveDamagePolicy::HalfOnSave,
     )
 }
 
@@ -499,7 +474,7 @@ fn neutral_burst_save_for_half(
 /// Failed save = full damage from a *shared* roll, success = no damage.
 /// Used by Thunderclap, Acid Splash, Sword Burst, Earth Tremor, etc.
 ///
-/// Thin wrapper that picks `BurstTargets::Neutral` + `SaveOutcome::NoneOnSave`
+/// Thin wrapper that picks `BurstTargets::Neutral` + `SaveDamagePolicy::NoneOnSave`
 /// over the shared `burst_save_damage` resolver — distinct from
 /// `neutral_burst_save_for_half` because cantrips canonically don't
 /// half-on-save (a passed save is a clean miss).
@@ -526,7 +501,7 @@ fn neutral_burst_save_only(
         damage_type,
         action_name,
         BurstTargets::Neutral,
-        SaveOutcome::NoneOnSave,
+        SaveDamagePolicy::NoneOnSave,
     )
 }
 
@@ -635,7 +610,7 @@ fn concentration_burst_with_rider(
     spell_name: &'static str,
     rider: Condition,
     rider_timer: ConditionTimer,
-    outcome: SaveOutcome,
+    outcome: SaveDamagePolicy,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
     let (mut effects, saves) = burst_save_damage(
         encounter,
@@ -15280,7 +15255,7 @@ impl Action for EvardsBlackTentacles {
             "Black Tentacles",
             Condition::Restrained,
             ConditionTimer::Rounds(10),
-            SaveOutcome::HalfOnSave,
+            SaveDamagePolicy::HalfOnSave,
         )
     }
 }
@@ -21889,7 +21864,7 @@ impl Action for TashasCausticBrew {
             "Tasha's Caustic Brew",
             Condition::CausticBrewed,
             ConditionTimer::Rounds(10),
-            SaveOutcome::NoneOnSave,
+            SaveDamagePolicy::NoneOnSave,
         )
     }
 }
@@ -22246,7 +22221,7 @@ impl Action for WallOfLight {
             "Wall of Light",
             Condition::Blinded,
             ConditionTimer::Rounds(10),
-            SaveOutcome::HalfOnSave,
+            SaveDamagePolicy::HalfOnSave,
         )
     }
 }
@@ -22899,7 +22874,7 @@ impl Action for PsychicScream {
             AbilityScoreType::Intelligence,
             dc,
             // 14d6 psychic shared roll; halved on save via the standard
-            // SaveOutcome::HalfOnSave lane that the helper picks.
+            // SaveDamagePolicy::HalfOnSave lane that the helper picks.
             Dice::new(14, 6),
             DamageType::Psychic,
             "psychic scream",
@@ -23137,7 +23112,7 @@ impl Action for StormSphere {
             // lifetime — dropping concentration ends the storm before
             // the timer expires.
             ConditionTimer::Rounds(10),
-            SaveOutcome::NoneOnSave,
+            SaveDamagePolicy::NoneOnSave,
         )
     }
 }
@@ -23238,7 +23213,7 @@ impl Action for MaddeningDarkness {
             AbilityScoreType::Wisdom,
             dc,
             // 8d8 psychic shared roll; halved on save via the standard
-            // SaveOutcome::HalfOnSave lane the helper picks.
+            // SaveDamagePolicy::HalfOnSave lane the helper picks.
             Dice::new(8, 8),
             DamageType::Psychic,
             "maddening darkness",

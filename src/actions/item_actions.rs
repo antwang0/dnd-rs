@@ -10,6 +10,7 @@ use crate::{
         action_overrides::ActionOverride,
         dice::Dice,
         encounter::EncounterInstance,
+        saves::SaveDamagePolicy,
         side_effects::{ApplicableSideEffect, ApplyCondition, DealDamage, Heal, Resource},
         types::{AbilityScoreType, Coordinate, DamageType},
     },
@@ -690,17 +691,15 @@ impl Action for SingleSaveDamageItem {
                 .actors
                 .get(&target_id)
                 .is_some_and(|a| a.has_evasion());
-        let dmg = match (passed, self.save_for_half, has_evasion) {
-            // Save passed with evasion (always save-for-half here).
-            (true, _, true) => 0,
-            // Save passed, save-for-half effect: half damage.
-            (true, true, false) => total / 2,
-            // Save passed, no-save-half effect: full block.
-            (true, false, false) => 0,
-            // Save failed with evasion (save-for-half): half damage.
-            (false, _, true) => total / 2,
-            // Save failed: full damage.
-            (false, _, false) => total,
+        let policy = if self.save_for_half {
+            SaveDamagePolicy::HalfOnSave
+        } else {
+            SaveDamagePolicy::NoneOnSave
+        };
+        let dmg = if has_evasion {
+            policy.apply_with_evasion(total, passed)
+        } else {
+            policy.apply(total, passed)
         };
         if dmg == 0 {
             if has_evasion && passed {

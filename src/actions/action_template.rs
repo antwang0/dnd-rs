@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use crate::engine::{
     action_overrides::ActionOverride,
     encounter::EncounterInstance,
+    saves::SaveDamagePolicy,
     side_effects::{ApplicableSideEffect, ConsumeResource, DealDamage, Resource},
     types::{AbilityScoreType, Coordinate, DamageType},
 };
@@ -52,11 +53,10 @@ pub fn resolve_burst_save_damage(
                 .actors
                 .get(&target_id)
                 .is_some_and(|a| a.has_evasion());
-        let dmg = match (save.passed(), has_evasion) {
-            (true, true) => 0,
-            (true, false) => damage / 2,
-            (false, true) => damage / 2,
-            (false, false) => damage,
+        let dmg = if has_evasion {
+            SaveDamagePolicy::HalfOnSave.apply_with_evasion(damage, save.passed())
+        } else {
+            SaveDamagePolicy::HalfOnSave.apply(damage, save.passed())
         };
         if dmg == 0 {
             if has_evasion && save.passed() {
