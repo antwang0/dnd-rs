@@ -2214,6 +2214,65 @@ pub static SCROLL_OF_CONTAGION: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Scroll of Spider Climb — Action; installs `SpiderClimbing` for 10
+/// rounds on the reader. Self-only mobility consumable: the holder gets
+/// a +20 ft climb speed and the wall-climb fiction the existing
+/// Slippers of Spider Climbing trinket rides. Sibling to Potion of
+/// Climbing on the cheap-mobility consumable lane.
+pub static SCROLL_OF_SPIDER_CLIMB: Item = Item {
+    name: "Scroll of Spider Climb",
+    glyph: 'C',
+    on_use: Some(&crate::actions::item_actions::READ_SPIDER_CLIMB_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Heroism — Action; installs `Heroic` for 10 rounds + 10
+/// temp HP on the reader. RAW: level-1 enchantment, concentration,
+/// touch; the scroll bypasses the concentration gate. Sibling to
+/// Potion of Heroism (same install, bonus-action cost) on the
+/// Frightened-immunity + temp-HP self-buff lane.
+pub static SCROLL_OF_HEROISM: Item = Item {
+    name: "Scroll of Heroism",
+    glyph: 'H',
+    on_use: Some(&crate::actions::item_actions::READ_HEROISM_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Wand of Bless — Bonus Action; single-target install of `Blessed`
+/// for 10 rounds. Sibling to Scroll of Bless on the support-buff lane;
+/// distinct from the scroll by the bonus-action cost (a wounded martial
+/// can buff AND swing on the same turn) and the longer 30-ft reach.
+pub static WAND_OF_BLESS: Item = Item {
+    name: "Wand of Bless",
+    glyph: 'b',
+    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_BLESS),
+    ..Item::DEFAULTS
+};
+
+/// Necklace of Lightning Bolts — 5d6 lightning DEX-save burst (DC 15,
+/// 2 radius). Sibling to Necklace of Fireballs on the lightning lane —
+/// same payload shape and consumable envelope, different damage type
+/// so the resistance landscape differs.
+pub static NECKLACE_OF_LIGHTNING_BOLTS: Item = Item {
+    name: "Necklace of Lightning Bolts",
+    glyph: 'N',
+    on_use: Some(&crate::actions::item_actions::USE_NECKLACE_OF_LIGHTNING_BOLTS),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Mind Blank — Action; installs `MindBlanked` for 10 rounds
+/// on the reader (Charmed + psychic immunity). 5e RAW: level-8
+/// abjuration, 24-hour duration; the scroll collapses to the engine's
+/// combat-scale envelope. Sibling to Potion of Mind Blank (same
+/// install, bonus-action cost) on the top-tier mental-defense
+/// consumable lane.
+pub static SCROLL_OF_MIND_BLANK: Item = Item {
+    name: "Scroll of Mind Blank",
+    glyph: 'M',
+    on_use: Some(&crate::actions::item_actions::READ_MIND_BLANK_SCROLL),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -2704,4 +2763,29 @@ pub static LOOT_POOL: &[&Item] = &[
     // (touch, DC 15). Top-tier single-target lockdown alongside Scroll of
     // Flesh to Stone / Wand of Polymorph; single low-weight entry.
     &SCROLL_OF_CONTAGION,
+    // Scroll of Spider Climb — cheap self-mobility consumable on the
+    // wall-climb lane (sibling to Potion of Climbing). Single low-weight
+    // entry; the install rides the existing `SpiderClimbing` condition
+    // that Slippers of Spider Climbing already grants as a passive.
+    &SCROLL_OF_SPIDER_CLIMB,
+    // Scroll of Heroism — self-buff (Heroic, 10 rounds, +10 temp HP).
+    // Sibling to Potion of Heroism on the Frightened-immunity lane —
+    // distinct from the potion by Action cost and the "any caster can
+    // read it" envelope.
+    &SCROLL_OF_HEROISM,
+    // Wand of Bless — bonus-action single-target Blessed installer.
+    // Sibling to Scroll of Bless on the support-buff scroll lane;
+    // distinct from the scroll by bonus-action cost (a wounded martial
+    // can buff AND swing on the same turn) and the longer 30-ft reach.
+    &WAND_OF_BLESS,
+    // Necklace of Lightning Bolts — 5d6 lightning DEX-save burst (DC 15,
+    // 2 radius). Sibling to Necklace of Fireballs on the lightning lane;
+    // same single-bead envelope, different damage type so the resistance
+    // landscape differs.
+    &NECKLACE_OF_LIGHTNING_BOLTS,
+    // Scroll of Mind Blank — top-tier mental-defense self-buff (Charmed
+    // + psychic immunity for 10 rounds). Sibling to Potion of Mind Blank
+    // on the rare half of the mental-defense lane; distinct from the
+    // potion by Action cost.
+    &SCROLL_OF_MIND_BLANK,
 ];

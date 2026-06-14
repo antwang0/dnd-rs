@@ -4196,3 +4196,117 @@ pub static READ_CONTAGION_SCROLL: SingleSaveConditionItem = SingleSaveConditionI
     condition: Condition::Poisoned,
     timer: ConditionTimer::Rounds(10),
 };
+
+const SCROLL_OF_SPIDER_CLIMB_NAME: &str = "Scroll of Spider Climb";
+const SCROLL_OF_HEROISM_NAME: &str = "Scroll of Heroism";
+const WAND_OF_BLESS_NAME: &str = "Wand of Bless";
+const NECKLACE_OF_LIGHTNING_BOLTS_NAME: &str = "Necklace of Lightning Bolts";
+const SCROLL_OF_MIND_BLANK_NAME: &str = "Scroll of Mind Blank";
+
+/// Scroll of Spider Climb — Action; install `SpiderClimbing` for 10
+/// rounds on the reader. 5e RAW (Spider Climb, level-2 transmutation,
+/// touch, concentration). The scroll bypasses the concentration gate.
+/// The `SpiderClimbing` condition routes through `condition_speed_bonus`
+/// for the +20 ft climb speed and through the engine's terrain-walk
+/// gates for the wall-climb fiction — same lane Slippers of Spider
+/// Climbing rides as a passive. Single-use consumable; rejects re-read
+/// while already up so the scroll isn't burned on a no-op refresh.
+/// Routes through the shared `SelfConditionItem` impl.
+pub static READ_SPIDER_CLIMB_SCROLL: SelfConditionItem = SelfConditionItem {
+    action_name: "read spider climb scroll",
+    action_aliases: &["sc scroll", "spider climb scroll"],
+    item_name: SCROLL_OF_SPIDER_CLIMB_NAME,
+    log_text: "{actor} reads a scroll of spider climb; their fingertips tingle with arachnid grip.",
+    condition: Condition::SpiderClimbing,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    reject_when_active: true,
+    temp_hp: None,
+};
+
+/// Scroll of Heroism — Action; self-install `Heroic` (Frightened
+/// immunity) for 10 rounds + 10 temp HP. 5e RAW: level-1 enchantment,
+/// concentration, touch; the scroll bypasses concentration and
+/// surfaces the Heroic-style buff envelope as a fire-and-forget self
+/// buff. Sibling to Potion of Heroism (same install, bonus-action
+/// cost) — distinct from the potion by Action cost and the "any class
+/// can read it" envelope. Routes through the shared
+/// `SelfConditionItem` impl via the `temp_hp` lane.
+pub static READ_HEROISM_SCROLL: SelfConditionItem = SelfConditionItem {
+    action_name: "read heroism scroll",
+    action_aliases: &["hr scroll", "heroism scroll"],
+    item_name: SCROLL_OF_HEROISM_NAME,
+    log_text: "{actor} reads a scroll of heroism; a swell of courage steels them.",
+    condition: Condition::Heroic,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    // Refresh allowed — a wounded reader whose temp-HP cushion ticked
+    // low can re-read for a fresh 10-HP cushion (mirrors the Potion of
+    // Heroism refresh stance; the install itself uses the timer-take-max
+    // semantics so the 10-round duration doesn't shrink either).
+    reject_when_active: false,
+    temp_hp: Some(10),
+};
+
+/// Wand of Bless — Bonus Action; single-target ally buff. Installs
+/// `Blessed` for 10 rounds (+1d4 to attack rolls and saves). 5e RAW:
+/// Bless is a level-1 concentration spell at Action cost hitting up to
+/// 3 creatures; the wand collapses to a single-target install with the
+/// standard fixed-duration timer all consumable buffs ride, AND
+/// surfaces the buff at bonus-action cost — distinct from Scroll of
+/// Bless (Action cost) in the action-economy lane. Fires through the
+/// shared `SingleTargetBuffItem` impl.
+pub static USE_WAND_OF_BLESS: SingleTargetBuffItem = SingleTargetBuffItem {
+    action_name: "use wand of bless",
+    action_aliases: &["bless wand", "bless+"],
+    item_name: WAND_OF_BLESS_NAME,
+    log_text: "{actor} waves the wand of bless; a soft golden light settles on the target.",
+    condition: Condition::Blessed,
+    timer: ConditionTimer::Rounds(10),
+    // 30 ft RAW; 12 tiles.
+    reach: 12,
+    bonus_action: true,
+    reject_when_active: true,
+};
+
+/// Necklace of Lightning Bolts — 5d6 lightning DEX-save burst (DC 15,
+/// 2 radius). Single-bead consumable. Mirror of Necklace of Fireballs
+/// on the lightning lane: same payload shape, different damage type so
+/// resistance landscape differs (fire-resistant enemies shrug Fireball
+/// beads, lightning-resistant enemies shrug these). Tighter burst
+/// radius (2 vs 4) matches the Lightning Bolt scroll envelope — the
+/// lightning lane RAW is a tight line, not a wide AoE. Routes through
+/// the shared `BurstSaveDamageItem` impl.
+pub static USE_NECKLACE_OF_LIGHTNING_BOLTS: BurstSaveDamageItem = BurstSaveDamageItem {
+    action_name: "use necklace of lightning bolts",
+    action_aliases: &["lightning necklace", "bolt bead"],
+    item_name: NECKLACE_OF_LIGHTNING_BOLTS_NAME,
+    log_label: "necklace of lightning bolts (bead)",
+    dice: Dice::new(5, 6),
+    damage_type: DamageType::Lightning,
+    save: AbilityScoreType::Dexterity,
+    dc: 15,
+    radius: 2,
+    // 100 ft RAW (Lightning Bolt range); 40 tiles.
+    reach: 40,
+};
+
+/// Scroll of Mind Blank — Action; self-install `MindBlanked` for 10
+/// rounds (Charmed-immunity + psychic-immunity). 5e RAW: level-8
+/// abjuration, 24-hour duration; the scroll collapses to the engine's
+/// combat-scale 10-round envelope. Sibling to Potion of Mind Blank
+/// (same install, bonus-action cost) — distinct from the potion by
+/// Action cost and the "any caster can read it" envelope. Top-tier
+/// mental-defense consumable. Rejects re-read while up to avoid the
+/// no-op refresh. Routes through the shared `SelfConditionItem` impl.
+pub static READ_MIND_BLANK_SCROLL: SelfConditionItem = SelfConditionItem {
+    action_name: "read mind blank scroll",
+    action_aliases: &["mb scroll", "mind blank scroll"],
+    item_name: SCROLL_OF_MIND_BLANK_NAME,
+    log_text: "{actor} reads a scroll of mind blank; a silvery psychic ward forms.",
+    condition: Condition::MindBlanked,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    reject_when_active: true,
+    temp_hp: None,
+};

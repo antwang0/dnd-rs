@@ -38601,6 +38601,255 @@ mod tests {
         );
     }
 
+    /// Scroll of Spider Climb — installs `SpiderClimbing` on the reader
+    /// for 10 rounds, consumes the scroll, and rejects a re-read while
+    /// the buff is already up. Validates the full read → install →
+    /// refresh-reject loop the SelfConditionItem factor delivers.
+    #[test]
+    fn scroll_of_spider_climb_installs_and_rejects_refresh() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_SPIDER_CLIMB_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_SPIDER_CLIMB;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_SPIDER_CLIMB);
+        let aei = ActionExecutionInfo::new(&READ_SPIDER_CLIMB_SCROLL, f, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            e.actors[&f].has_condition(Condition::SpiderClimbing),
+            "Scroll of Spider Climb installs SpiderClimbing on the reader"
+        );
+        assert!(
+            !e.actors[&f].has_item_named("Scroll of Spider Climb"),
+            "scroll should be consumed on use"
+        );
+        // Refresh-reject: a second copy should be refused while the buff
+        // is still up so the consumable isn't burned on a no-op refresh.
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_SPIDER_CLIMB);
+        let refresh =
+            ActionExecutionInfo::new(&READ_SPIDER_CLIMB_SCROLL, f, None, None, None);
+        assert!(
+            !refresh.validate(&e),
+            "Scroll of Spider Climb should reject re-read while already up"
+        );
+    }
+
+    /// Scroll of Heroism — installs `Heroic` for 10 rounds AND grants
+    /// 10 temp HP, consumes the scroll. Refresh is allowed (mirrors
+    /// the Potion of Heroism stance) so a wounded reader can re-arm the
+    /// temp-HP cushion; only the consume-and-install half is asserted
+    /// here.
+    #[test]
+    fn scroll_of_heroism_installs_heroic_and_temp_hp() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_HEROISM_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_HEROISM;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_HEROISM);
+        let aei = ActionExecutionInfo::new(&READ_HEROISM_SCROLL, f, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            e.actors[&f].has_condition(Condition::Heroic),
+            "Scroll of Heroism installs Heroic on the reader"
+        );
+        assert_eq!(
+            e.actors[&f].temp_hp(),
+            10,
+            "Scroll of Heroism grants 10 temp HP via the SelfConditionItem temp_hp lane"
+        );
+        assert!(
+            !e.actors[&f].has_item_named("Scroll of Heroism"),
+            "scroll should be consumed on use"
+        );
+    }
+
+    /// Wand of Bless — single-target ally buff at bonus-action cost.
+    /// Installs `Blessed` for 10 rounds on the picked ally and consumes
+    /// the wand. The bonus-action cost lane is the key differentiator
+    /// from Scroll of Bless (Action cost).
+    #[test]
+    fn wand_of_bless_installs_blessed_on_ally_at_bonus_action_cost() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::USE_WAND_OF_BLESS;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+        use crate::items::item_template::WAND_OF_BLESS;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .pickup_item(&WAND_OF_BLESS);
+        let aei = ActionExecutionInfo::new(
+            &USE_WAND_OF_BLESS,
+            cleric,
+            Some(vec![ally]),
+            None,
+            None,
+        );
+        assert_eq!(
+            aei.cost(&e),
+            vec![Resource::BonusAction],
+            "Wand of Bless costs one Bonus Action (no slot, no full Action)"
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            e.actors[&ally].has_condition(Condition::Blessed),
+            "Wand of Bless installs Blessed on the ally"
+        );
+        assert!(
+            !e.actors[&cleric].has_item_named("Wand of Bless"),
+            "wand should be consumed on use"
+        );
+    }
+
+    /// Necklace of Lightning Bolts — 5d6 lightning DEX-save burst on
+    /// the picked tile. Mirrors the Necklace of Fireballs test envelope:
+    /// at least one enemy in the burst takes some lightning damage
+    /// across a seed sweep, the necklace is consumed on use, and the
+    /// caster (allied side) is excluded from the blast.
+    #[test]
+    fn necklace_of_lightning_bolts_damages_enemies_and_is_consumed() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::USE_NECKLACE_OF_LIGHTNING_BOLTS;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::items::item_template::NECKLACE_OF_LIGHTNING_BOLTS;
+        let mut hit_anyone = false;
+        for seed in 0..30u64 {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let caster = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g1 = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+                .unwrap();
+            let g2 = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 8), 1, 0)
+                .unwrap();
+            let caster_hp_pre = e.actors[&caster].hitpoints();
+            let g1_hp_pre = e.actors[&g1].hitpoints();
+            let g2_hp_pre = e.actors[&g2].hitpoints();
+            e.actors
+                .get_mut(&caster)
+                .unwrap()
+                .pickup_item(&NECKLACE_OF_LIGHTNING_BOLTS);
+            let aei = ActionExecutionInfo::new(
+                &USE_NECKLACE_OF_LIGHTNING_BOLTS,
+                caster,
+                None,
+                Some(vec![Coordinate::new(8, 8)]),
+                None,
+            );
+            assert!(aei.validate(&e));
+            e.push_action(aei);
+            e.process_stack();
+            assert!(
+                !e.actors[&caster].has_item_named("Necklace of Lightning Bolts"),
+                "necklace bead should be consumed on use"
+            );
+            // The caster (allied/own-team) must never take damage from
+            // their own burst — the enemy-burst filter excludes them.
+            assert_eq!(
+                e.actors[&caster].hitpoints(),
+                caster_hp_pre,
+                "Necklace of Lightning Bolts must not damage its own caster"
+            );
+            if e.actors[&g1].hitpoints() < g1_hp_pre
+                || e.actors[&g2].hitpoints() < g2_hp_pre
+            {
+                hit_anyone = true;
+                break;
+            }
+        }
+        assert!(
+            hit_anyone,
+            "Necklace of Lightning Bolts should damage at least one enemy across 30 seeds"
+        );
+    }
+
+    /// Scroll of Mind Blank — installs `MindBlanked` for 10 rounds on
+    /// the reader (Charmed + psychic immunity), consumes the scroll, and
+    /// refuses to re-read while the buff is already up. Same shape as
+    /// Potion of Mind Blank but Action-cost.
+    #[test]
+    fn scroll_of_mind_blank_installs_and_rejects_refresh() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_MIND_BLANK_SCROLL;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_MIND_BLANK;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&wiz)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_MIND_BLANK);
+        let aei = ActionExecutionInfo::new(&READ_MIND_BLANK_SCROLL, wiz, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            e.actors[&wiz].has_condition(Condition::MindBlanked),
+            "Scroll of Mind Blank installs MindBlanked on the reader"
+        );
+        assert!(
+            !e.actors[&wiz].has_item_named("Scroll of Mind Blank"),
+            "scroll should be consumed on use"
+        );
+        // The install grants Charmed-immunity via the MindBlanked
+        // condition. Sanity-check the immunity gate so a regression on
+        // the condition's `effective_condition_immunities` wiring
+        // surfaces here instead of needing a follow-up Charm spell to
+        // land.
+        assert!(
+            e.actors[&wiz]
+                .effectively_immune_to_condition(Condition::Charmed),
+            "MindBlanked install should grant Charmed-immunity"
+        );
+        // Refresh reject — a second copy is refused while the buff is
+        // up so the rare consumable isn't burned on a no-op refresh.
+        e.actors
+            .get_mut(&wiz)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_MIND_BLANK);
+        let refresh =
+            ActionExecutionInfo::new(&READ_MIND_BLANK_SCROLL, wiz, None, None, None);
+        assert!(
+            !refresh.validate(&e),
+            "Scroll of Mind Blank should reject re-read while already up"
+        );
+    }
+
     /// Seeded sibling of `ei_with_terrain` — same hand-crafted terrain
     /// shape but the encounter's RNG is initialized from `seed` so callers
     /// can sweep seeds for probabilistic assertions while keeping a
