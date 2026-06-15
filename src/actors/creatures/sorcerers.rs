@@ -399,6 +399,19 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     adjacent enemies on each step. Mirrors the wizard list.
     actions.push(&*crate::actions::spells::PYROTECHNICS);
     actions.push(&*crate::actions::spells::ASHARDALONS_STRIDE);
+    // lv3 **Flame Arrows** (transmutation, XGtE): concentration self-buff
+    // that grants +1d6 fire on every ranged spell-attack hit (ranged-only
+    // via the OnHitRider table). The sorcerer gets it RAW; pairs with
+    // the sorcerer's at-will damage cantrips (Fire Bolt / Ray of Frost /
+    // Acid Splash) — though only ranged WEAPON attacks RAW, the engine's
+    // unified OnHitRider table fires on any qualifying swing.
+    actions.push(&*crate::actions::spells::FLAME_ARROWS);
+    // lv6 **Tasha's Otherworldly Guise** (transmutation, TCE): top-tier
+    // sorcerer self-buff. The full envelope (+2 AC, +60 ft fly, radiant/
+    // poison resistance, Charmed/Frightened/Poisoned immunity, +2d6
+    // radiant melee weapon rider) gives the sorcerer a legendary defense
+    // alongside Tenser's Transformation / Globe of Invulnerability.
+    actions.push(&*crate::actions::spells::OTHERWORLDLY_GUISE);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

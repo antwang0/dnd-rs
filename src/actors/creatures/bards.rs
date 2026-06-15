@@ -83,6 +83,11 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // single-target temp HP differentiates it from Bless's burst attack-
     // roll buff and Heroism's flat-mod temp HP.
     actions.push(&*crate::actions::spells::ENHANCE_ABILITY);
+    // lv2 **Pyrotechnics** (transmutation, XGtE): 2-radius CON-save fire
+    // burst (1d8) + Blinded-on-fail. Cheap entry-tier elemental burst on
+    // the bard's lv2 lane — complements the bard's existing crowd-control
+    // toolkit (Hold Person, Suggestion) with a typed-damage option.
+    actions.push(&*crate::actions::spells::PYROTECHNICS);
     CreatureTemplate {
         name: "Bard",
         glyph: 'B',

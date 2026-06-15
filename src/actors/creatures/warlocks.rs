@@ -166,6 +166,14 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     air control option.
     actions.push(&*crate::actions::spells::EXPEDITIOUS_RETREAT);
     actions.push(&*crate::actions::spells::EARTHBIND);
+    // lv6 **Tasha's Otherworldly Guise** (transmutation, TCE): the warlock's
+    // top-tier self-buff. The celestial-form envelope (+2 AC, +60 ft fly,
+    // radiant/poison resistance, Charmed/Frightened/Poisoned dynamic
+    // immunity, +2d6 radiant melee weapon rider) gives the warlock a
+    // single-spell legendary buff that pairs with Eldritch Blast's
+    // ranged kit (the rider is melee-only, but the resistance + flight +
+    // immunity envelope hardens the warlock against incoming damage).
+    actions.push(&*crate::actions::spells::OTHERWORLDLY_GUISE);
     CreatureTemplate {
         name: "Warlock",
         // 'L' (uppercase) — distinct from 'l' (Lich), 'W' (Wolf glyph),
