@@ -2384,6 +2384,57 @@ pub static SCROLL_OF_CRUSADERS_MANTLE: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Scroll of Pyrotechnics — Action; 1d8 fire CON-save burst at DC 13,
+/// 2-radius / 24-tile reach. XGE level-2 transmutation (Fireworks
+/// variant). Entry-tier elemental-burst consumable; sibling to Scroll
+/// of Burning Hands / Thunderwave on the cheap typed-damage burst lane.
+pub static SCROLL_OF_PYROTECHNICS: Item = Item {
+    name: "Scroll of Pyrotechnics",
+    glyph: '9',
+    on_use: Some(&crate::actions::item_actions::READ_PYROTECHNICS_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Flame Arrows — Action; self-buff. Installs `FlamingArrowed`
+/// for 10 rounds (the +1d6 fire ranged-only on-hit rider rides through
+/// `ON_HIT_RIDERS`). XGE level-3 transmutation, concentration RAW; the
+/// scroll bypasses the concentration gate. Sibling to Scroll of Spirit
+/// Shroud (melee-only cold rider) on the per-hit weapon buff scroll
+/// lane — distinct by the ranged-only gate.
+pub static SCROLL_OF_FLAME_ARROWS: Item = Item {
+    name: "Scroll of Flame Arrows",
+    glyph: '0',
+    on_use: Some(&crate::actions::item_actions::READ_FLAME_ARROWS_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Potion of Ashardalon's Stride — Bonus Action; self-buff. Installs
+/// `AshardalonStriding` for 10 rounds (+20 ft speed plus 1d6 fire trail
+/// damage to footprint-adjacent enemies per step). TCE level-3
+/// transmutation, concentration RAW; the potion bypasses the
+/// concentration gate. Sibling to Potion of Longstrider (passive speed)
+/// — distinct by the combat-flavored trail-damage hook.
+pub static POTION_OF_ASHARDALONS_STRIDE: Item = Item {
+    name: "Potion of Ashardalon's Stride",
+    glyph: 'a',
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_ASHARDALONS_STRIDE),
+    ..Item::DEFAULTS
+};
+
+/// Potion of Otherworldly Guise — Bonus Action; self-buff. Installs
+/// `OtherworldlyGuised` for 10 rounds: +2 AC, +60 ft fly speed,
+/// radiant / poison resistance, Charmed / Frightened / Poisoned dynamic
+/// immunity, +2d6 radiant per melee weapon hit (via `ON_HIT_RIDERS`).
+/// TCE level-6 transmutation, concentration RAW; the potion bypasses
+/// the concentration gate. Top-tier offensive / defensive consumable
+/// alongside Potion of Foresight.
+pub static POTION_OF_OTHERWORLDLY_GUISE: Item = Item {
+    name: "Potion of Otherworldly Guise",
+    glyph: 'O',
+    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_OTHERWORLDLY_GUISE),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -2925,4 +2976,27 @@ pub static LOOT_POOL: &[&Item] = &[
     // offensive buff lane; +1d4 radiant rider per hit rides
     // `ON_HIT_RIDERS`.
     &SCROLL_OF_CRUSADERS_MANTLE,
+    // Scroll of Pyrotechnics — XGE level-2 fire burst at the entry-tier
+    // CON-save 1d8 envelope. Sibling to Scroll of Burning Hands /
+    // Thunderwave on the cheap typed-damage burst lane; single low-weight
+    // entry.
+    &SCROLL_OF_PYROTECHNICS,
+    // Scroll of Flame Arrows — XGE level-3 self-buff scroll. The +1d6
+    // fire on-hit rider is ranged-only (`OnHitRider.ranged_only = true`)
+    // so the buff carves out a niche distinct from Spirit Shroud /
+    // Crusader's Mantle (melee + persistent) on the on-hit-buff lane.
+    // Single low-weight entry.
+    &SCROLL_OF_FLAME_ARROWS,
+    // Potion of Ashardalon's Stride — TCE level-3 mobility + trail-damage
+    // consumable. Sits alongside Potion of Longstrider on the speed-buff
+    // lane, but combat-flavored (the 1d6 fire trail to footprint-adjacent
+    // enemies per step is the spell's signature mechanic). Single
+    // low-weight entry.
+    &POTION_OF_ASHARDALONS_STRIDE,
+    // Potion of Otherworldly Guise — TCE level-6 legendary-tier self-buff
+    // consumable. The single most envelope-rich consumable in the loot
+    // pool: +2 AC, +60 ft fly, radiant + poison resistance, three-
+    // condition dynamic immunity, +2d6 radiant melee weapon rider. Single
+    // rare entry alongside Potion of Foresight on the legendary tier.
+    &POTION_OF_OTHERWORLDLY_GUISE,
 ];

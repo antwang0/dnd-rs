@@ -2074,6 +2074,34 @@ impl EncounterInstance {
         self.burst_targets_with(caster_id, point, radius, |id, _a, _ct| id != caster_id)
     }
 
+    /// Sorted ids of every combat-active enemy whose footprint is
+    /// touching `actor_id`'s footprint (gap 0). Used by per-step
+    /// "scorch everyone nearby" riders — Ashardalon's Stride's blazing
+    /// wake — that fire at the new tile after each move step. Uses
+    /// `footprint_distance` so both sides of the gap check honor the
+    /// actor's full size category; a Medium caster next to a Small
+    /// goblin reads as adjacent even though their origin tiles sit
+    /// one tile apart. Returns an empty vec when `actor_id` is missing.
+    pub fn combat_active_enemy_ids_adjacent(&self, actor_id: usize) -> Vec<usize> {
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return Vec::new();
+        };
+        let team = actor.team();
+        let mut ids: Vec<usize> = self
+            .actors
+            .iter()
+            .filter_map(|(id, a)| {
+                if *id == actor_id || !a.is_combat_active() || a.team() == team {
+                    return None;
+                }
+                let dist = self.footprint_distance(actor_id, *id)?;
+                if dist == 0 { Some(*id) } else { None }
+            })
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
     /// Footprint-Chebyshev distance between two living actors, or `None` if
     /// either id is unknown. 0 means they're touching/adjacent.
     pub fn footprint_distance(&self, a_id: usize, b_id: usize) -> Option<isize> {
@@ -39532,5 +39560,449 @@ mod tests {
             };
         }
         e
+    }
+
+    /// Flame Arrows: self-cast installs `FlamingArrowed` on the caster
+    /// AND starts concentration. Drops cleanly on concentration end.
+    #[test]
+    fn flame_arrows_self_install_and_concentration_drop() {
+        use crate::actions::spells::FLAME_ARROWS;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let effs = FLAME_ARROWS.side_effects(&mut e, wiz, None, None, None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&wiz].has_condition(Condition::FlamingArrowed),
+            "Flame Arrows installs FlamingArrowed on the caster"
+        );
+        assert!(
+            e.actors[&wiz].is_concentrating(),
+            "Flame Arrows is concentration-bound"
+        );
+        e.drop_concentration(wiz);
+        assert!(
+            !e.actors[&wiz].has_condition(Condition::FlamingArrowed),
+            "dropping concentration strips FlamingArrowed"
+        );
+    }
+
+    /// Flame Arrows is dispellable: Dispel Magic recognizes the buff via
+    /// `is_dispellable_buff` so a counter-caster can rip the rider mid-fight.
+    #[test]
+    fn flaming_arrowed_is_dispellable_buff() {
+        assert!(Condition::FlamingArrowed.is_dispellable_buff());
+    }
+
+    /// Ashardalon's Stride: bumps speed by +20 ft and joins
+    /// `is_dispellable_buff`. Concentration-bound on the caster.
+    #[test]
+    fn ashardalons_stride_bumps_speed_and_concentration() {
+        use crate::actions::spells::ASHARDALONS_STRIDE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base_speed = e.actors[&wiz].speed();
+        let effs = ASHARDALONS_STRIDE.side_effects(&mut e, wiz, None, None, None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&wiz].has_condition(Condition::AshardalonStriding),
+            "Ashardalon's Stride installs AshardalonStriding on the caster"
+        );
+        assert!(
+            e.actors[&wiz].speed() >= base_speed + 20.0,
+            "Ashardalon's Stride should bump speed by 20 ft (was {} → {})",
+            base_speed,
+            e.actors[&wiz].speed()
+        );
+        assert!(
+            e.actors[&wiz].is_concentrating(),
+            "Ashardalon's Stride is concentration-bound"
+        );
+        assert!(Condition::AshardalonStriding.is_dispellable_buff());
+    }
+
+    /// Otherworldly Guise: installs the buff with AC bump, fly speed,
+    /// dynamic immunities, and resistance to radiant/poison. Concentration-bound.
+    #[test]
+    fn otherworldly_guise_installs_full_envelope() {
+        use crate::actions::spells::OTHERWORLDLY_GUISE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base_ac = e.actors[&wiz].armor_class();
+        let base_speed = e.actors[&wiz].speed();
+        let effs = OTHERWORLDLY_GUISE.side_effects(&mut e, wiz, None, None, None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&wiz].has_condition(Condition::OtherworldlyGuised),
+            "Otherworldly Guise installs OtherworldlyGuised on the caster"
+        );
+        assert_eq!(
+            e.actors[&wiz].armor_class(),
+            base_ac + 2,
+            "Otherworldly Guise grants +2 AC"
+        );
+        assert!(
+            e.actors[&wiz].speed() >= base_speed + 60.0,
+            "Otherworldly Guise grants the +60 ft fly speed bump (was {} → {})",
+            base_speed,
+            e.actors[&wiz].speed()
+        );
+        assert!(
+            e.actors[&wiz].effectively_immune_to_condition(Condition::Charmed),
+            "Otherworldly Guise grants Charmed immunity"
+        );
+        assert!(
+            e.actors[&wiz].effectively_immune_to_condition(Condition::Frightened),
+            "Otherworldly Guise grants Frightened immunity"
+        );
+        assert!(
+            e.actors[&wiz].effectively_immune_to_condition(Condition::Poisoned),
+            "Otherworldly Guise grants Poisoned immunity"
+        );
+        assert!(
+            e.actors[&wiz].has_condition_resistance(DamageType::Radiant),
+            "Otherworldly Guise grants radiant resistance"
+        );
+        assert!(
+            e.actors[&wiz].has_condition_resistance(DamageType::Poison),
+            "Otherworldly Guise grants poison resistance"
+        );
+        assert!(
+            e.actors[&wiz].is_concentrating(),
+            "Otherworldly Guise is concentration-bound"
+        );
+    }
+
+    /// Pyrotechnics: a burst that deals 1d8 fire to enemies in the
+    /// 2-radius blast and blinds those who fail the CON save. Ally
+    /// adjacent to the blast point should be spared — enemy-only burst.
+    /// Sweeps multiple seeds since the goblin can save for half against
+    /// the modest spell DC, leaving the test deterministic per-seed but
+    /// probabilistic across seeds.
+    #[test]
+    fn pyrotechnics_damages_enemies_and_spares_allies() {
+        use crate::actions::spells::PYROTECHNICS;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut damaged_at_least_once = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let caster = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let enemy = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 7), 1, 0)
+                .unwrap();
+            let ally = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(8, 7), 0, 1)
+                .unwrap();
+            let ally_hp_before = e.actors[&ally].hitpoints();
+            let enemy_hp_before = e.actors[&enemy].hitpoints();
+            let center = vec![Coordinate::new(7, 7)];
+            let effs = PYROTECHNICS.side_effects(&mut e, caster, None, Some(&center), None);
+            for ef in effs {
+                ef.apply(&mut e);
+            }
+            assert_eq!(
+                e.actors[&ally].hitpoints(),
+                ally_hp_before,
+                "Pyrotechnics is an enemy-only burst — allies in radius are spared"
+            );
+            if e.actors[&enemy].hitpoints() < enemy_hp_before {
+                damaged_at_least_once = true;
+            }
+        }
+        assert!(
+            damaged_at_least_once,
+            "Pyrotechnics should damage the enemy on at least one of 30 seeds"
+        );
+    }
+
+    /// Scroll of Pyrotechnics: read consumes the scroll and deals 1d8
+    /// fire to enemies in the burst.
+    #[test]
+    fn scroll_of_pyrotechnics_consumes_and_damages_enemies() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_PYROTECHNICS_SCROLL;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_PYROTECHNICS;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 7), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_PYROTECHNICS);
+        let enemy_hp_before = e.actors[&enemy].hitpoints();
+        let center = vec![Coordinate::new(7, 7)];
+        let aei = ActionExecutionInfo::new(
+            &READ_PYROTECHNICS_SCROLL,
+            caster,
+            None,
+            Some(center),
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            e.actors[&enemy].hitpoints() < enemy_hp_before,
+            "Scroll of Pyrotechnics should damage the enemy in the blast"
+        );
+        assert!(
+            !e.actors[&caster].has_item_named("Scroll of Pyrotechnics"),
+            "scroll should be consumed on use"
+        );
+    }
+
+    /// Scroll of Flame Arrows: read installs `FlamingArrowed` on the
+    /// reader for 10 rounds and consumes the scroll. Refresh-rejected.
+    #[test]
+    fn scroll_of_flame_arrows_installs_and_rejects_refresh() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::READ_FLAME_ARROWS_SCROLL;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_FLAME_ARROWS;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&wiz)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_FLAME_ARROWS);
+        let aei = ActionExecutionInfo::new(&READ_FLAME_ARROWS_SCROLL, wiz, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            e.actors[&wiz].has_condition(Condition::FlamingArrowed),
+            "Scroll of Flame Arrows installs FlamingArrowed on the reader"
+        );
+        assert!(
+            !e.actors[&wiz].has_item_named("Scroll of Flame Arrows"),
+            "scroll should be consumed on use"
+        );
+        // Refresh-reject: a second copy is refused while the buff is up.
+        e.actors
+            .get_mut(&wiz)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_FLAME_ARROWS);
+        let refresh =
+            ActionExecutionInfo::new(&READ_FLAME_ARROWS_SCROLL, wiz, None, None, None);
+        assert!(
+            !refresh.validate(&e),
+            "Scroll of Flame Arrows should reject re-read while already up"
+        );
+    }
+
+    /// Potion of Ashardalon's Stride: drink installs the buff at bonus-
+    /// action cost, bumps speed by 20 ft, and consumes the potion.
+    #[test]
+    fn potion_of_ashardalons_stride_installs_and_bumps_speed() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::DRINK_POTION_OF_ASHARDALONS_STRIDE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::POTION_OF_ASHARDALONS_STRIDE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .pickup_item(&POTION_OF_ASHARDALONS_STRIDE);
+        let base_speed = e.actors[&f].speed();
+        let aei = ActionExecutionInfo::new(
+            &DRINK_POTION_OF_ASHARDALONS_STRIDE,
+            f,
+            None,
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            e.actors[&f].has_condition(Condition::AshardalonStriding),
+            "potion should install AshardalonStriding"
+        );
+        assert!(
+            e.actors[&f].speed() >= base_speed + 20.0,
+            "potion should grant +20 ft speed (was {} → {})",
+            base_speed,
+            e.actors[&f].speed()
+        );
+        assert!(
+            !e.actors[&f].has_item_named("Potion of Ashardalon's Stride"),
+            "potion should be consumed on use"
+        );
+    }
+
+    /// Potion of Otherworldly Guise: drink installs the buff (AC + fly +
+    /// dynamic immunity envelope) and consumes the potion.
+    #[test]
+    fn potion_of_otherworldly_guise_installs_full_envelope() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::item_actions::DRINK_POTION_OF_OTHERWORLDLY_GUISE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::POTION_OF_OTHERWORLDLY_GUISE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .pickup_item(&POTION_OF_OTHERWORLDLY_GUISE);
+        let base_ac = e.actors[&f].armor_class();
+        let aei = ActionExecutionInfo::new(
+            &DRINK_POTION_OF_OTHERWORLDLY_GUISE,
+            f,
+            None,
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            e.actors[&f].has_condition(Condition::OtherworldlyGuised),
+            "potion should install OtherworldlyGuised"
+        );
+        assert_eq!(
+            e.actors[&f].armor_class(),
+            base_ac + 2,
+            "potion should bump AC by 2"
+        );
+        assert!(
+            e.actors[&f].effectively_immune_to_condition(Condition::Frightened),
+            "potion grants Frightened immunity"
+        );
+        assert!(
+            !e.actors[&f].has_item_named("Potion of Otherworldly Guise"),
+            "potion should be consumed on use"
+        );
+    }
+
+    /// Ashardalon's Stride trail damage: an enemy adjacent to the
+    /// caster's footprint takes 1d6 fire on each step the caster takes.
+    /// The mover's HP stays the same; the enemy bleeds.
+    #[test]
+    fn ashardalons_stride_burns_adjacent_enemy_on_each_step() {
+        use crate::actions::spells::ASHARDALONS_STRIDE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::MoveActor;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Place the goblin so it stays adjacent after the step.
+        let enemy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+            .unwrap();
+        // Install the buff manually so we can test the move-trigger.
+        for ef in ASHARDALONS_STRIDE.side_effects(&mut e, wiz, None, None, None) {
+            ef.apply(&mut e);
+        }
+        let enemy_hp_before = e.actors[&enemy].hitpoints();
+        // Step one tile toward the enemy; gap stays 0 (adjacent).
+        let mover = MoveActor {
+            actor_id: wiz,
+            path: vec![Coordinate::new(6, 5)],
+        };
+        mover.apply(&mut e);
+        assert!(
+            e.actors[&enemy].hitpoints() < enemy_hp_before,
+            "Ashardalon's Stride should burn the adjacent enemy as the caster steps (was {} → {})",
+            enemy_hp_before,
+            e.actors[&enemy].hitpoints()
+        );
+    }
+
+    /// `combat_active_enemy_ids_adjacent` returns enemies whose footprint
+    /// is touching the actor's footprint (gap 0). Sanity-check the helper
+    /// against the new Ashardalon's Stride use site so the per-step
+    /// trail damage finds the right victims.
+    #[test]
+    fn combat_active_enemy_ids_adjacent_finds_touching_enemies() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let adj = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        let _ally = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(7, 3), 0, 1)
+            .unwrap();
+        let _far = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 12), 1, 2)
+            .unwrap();
+        let ids = e.combat_active_enemy_ids_adjacent(wiz);
+        assert_eq!(
+            ids,
+            vec![adj],
+            "should only return the enemy whose footprint is touching the caster's"
+        );
+    }
+
+    /// FlamingArrowed rider is gated to ranged attacks (the `ranged_only`
+    /// flag on the OnHitRider table entry). A melee swing while the buff
+    /// is up should not burn the buff or fire the rider. We can't
+    /// directly count log lines, but the buff is persistent so confirming
+    /// it stays installed after a melee swing is enough.
+    #[test]
+    fn flame_arrows_buff_persists_after_melee_swing() {
+        use crate::actions::monster_attacks::SCIMITAR;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let attacker = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::FlamingArrowed, ConditionTimer::Rounds(10));
+        let tv = vec![target];
+        let _ = SCIMITAR.side_effects(&mut e, attacker, Some(&tv), None, None);
+        // Persistent rider — buff stays installed regardless of melee /
+        // ranged. The key invariant is that the melee swing doesn't
+        // remove the buff (consume_on_trigger = false).
+        assert!(
+            e.actors[&attacker].has_condition(Condition::FlamingArrowed),
+            "FlamingArrowed should persist across melee swings (ranged-only rider)"
+        );
     }
 }

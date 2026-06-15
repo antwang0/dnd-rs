@@ -67,6 +67,14 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // an ally before the engagement and the speed boost composes with
     // any later Pass Without Trace / Spider Climb stack.
     actions.push(&*crate::actions::spells::LONGSTRIDER);
+    // lv3 **Flame Arrows** (transmutation, XGtE): concentration self-buff
+    // that grants +1d6 fire on every ranged weapon hit (ranged-only via
+    // the OnHitRider table). Slots cleanly into the ranger's lv3 lane
+    // alongside Lightning Arrow (single-shot +4d8 prime) — Flame Arrows
+    // is the sustained-DPS sibling that bleeds extra fire every swing
+    // for the duration. Mirrors Hunter's Mark's per-hit rider envelope
+    // but typed (fire) and gated to ranged.
+    actions.push(&*crate::actions::spells::FLAME_ARROWS);
     CreatureTemplate {
         name: "Ranger",
         glyph: 'R',

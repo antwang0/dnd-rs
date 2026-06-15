@@ -390,6 +390,15 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     same turn while the blink ward soaks attacker swings.
     actions.push(&*crate::actions::spells::ENHANCE_ABILITY);
     actions.push(&*crate::actions::spells::BLINK);
+    // Latest sorcerer additions (XGtE / TCE):
+    //   - lv2 **Pyrotechnics** (transmutation): cheap fire burst with
+    //     Blinded-on-fail rider. Sorcerer-flavored fire option at lv2
+    //     alongside Aganazzar's Scorcher / Snilloc's Snowball Swarm.
+    //   - lv3 **Ashardalon's Stride** (transmutation): mobility +
+    //     control combo at lv3 — +20 ft speed plus 1d6 fire trail to
+    //     adjacent enemies on each step. Mirrors the wizard list.
+    actions.push(&*crate::actions::spells::PYROTECHNICS);
+    actions.push(&*crate::actions::spells::ASHARDALONS_STRIDE);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

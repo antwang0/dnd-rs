@@ -247,6 +247,39 @@ impl ApplicableSideEffect for MoveActor {
                 }
                 .apply(ei);
             }
+            // 5e Ashardalon's Stride (TCE level-3 transmutation,
+            // concentration). The caster's blazing wake scorches every
+            // footprint-adjacent enemy as they pass: each tracked enemy
+            // takes 1d6 fire per step. Symmetric to Spike Growth's "step
+            // and burn" envelope, but the rider lives on the *mover*
+            // and damages everyone else nearby instead of the mover
+            // themselves — so the routine fires once per step, scanning
+            // for adjacent enemies on the new tile and rolling a fresh
+            // 1d6 per victim. Damage rolls through the standard
+            // pipeline so resistance / immunity is honored. The
+            // `combat_active_enemy_ids_adjacent` chokepoint keeps the
+            // caster-team / footprint-zero filter in one place.
+            let striding = ei
+                .actors
+                .get(&self.actor_id)
+                .is_some_and(|a| a.has_condition(Condition::AshardalonStriding));
+            if striding {
+                let adjacent = ei.combat_active_enemy_ids_adjacent(self.actor_id);
+                for tid in adjacent {
+                    let dmg = ei.roll(&crate::engine::dice::Dice::new(1, 6));
+                    ei.log(format!(
+                        "  ashardalon's stride: 1d6({}) fire as wake scorches {}",
+                        dmg,
+                        ei.actor_name(tid)
+                    ));
+                    DealDamage {
+                        actor_id: tid,
+                        amount: dmg,
+                        damage_type: DamageType::Fire,
+                    }
+                    .apply(ei);
+                }
+            }
         }
     }
 }

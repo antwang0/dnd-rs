@@ -1099,6 +1099,37 @@ pub enum Condition {
     /// burst. Joins `is_dispellable_buff` so Dispel Magic / Counterspell
     /// can rip it.
     ExpeditiouslyRetreating,
+    /// Flame-Arrowed (5e Flame Arrows spell, level-3 transmutation,
+    /// concentration). The caster has imbued a quiver of arrows / bolts /
+    /// spell-darts with elemental fire — every ranged weapon hit they land
+    /// deals +1d6 fire via the on_hit_riders table. Mirrors Spirit Shroud's
+    /// shape: persistent (non-consumed) per-hit rider, concentration-bound
+    /// on the caster, dispel-strippable. The `ranged_only` flag in the
+    /// OnHitRider table gates the rider to bow / crossbow swings so a
+    /// melee fallback can't burn the buff. Cleared on concentration drop.
+    FlamingArrowed,
+    /// Ashardalon-Striding (5e Ashardalon's Stride, level-3 transmutation,
+    /// concentration). The caster's body crackles with elemental power: their
+    /// speed jumps by 20 ft (routed through `condition_speed_bonus` alongside
+    /// Longstriding / Expeditious Retreat), and every footprint-adjacent
+    /// enemy takes 1d6 fire damage from the blazing wake on each step. We
+    /// model the trail damage on the `MoveActor` apply path next to the
+    /// Spike Growth / Booming Blade riders, but symmetric — the *caster*
+    /// damages adjacent enemies, not the mover. Concentration-bound on the
+    /// caster; dropping concentration drops the buff. Joins `is_dispellable_buff`.
+    AshardalonStriding,
+    /// Otherworldly-Guised (5e Tasha's Otherworldly Guise, level-6
+    /// transmutation, concentration). The caster shifts into a
+    /// celestial-style form: they gain +2 AC (read by
+    /// `condition_ac_bonus`), resistance to radiant and poison damage
+    /// (folded into `TYPED_RESISTANCE_CONDITIONS`), the Flying speed bump
+    /// (joins the `Flying` cohort in `is_flying` / `condition_speed_bonus`),
+    /// dynamic immunity to Charmed / Frightened (`dynamic_immunity_to`
+    /// chokepoint), and every melee weapon hit deals +2d6 radiant via the
+    /// on_hit_riders table. Concentration-bound on the caster; dropping
+    /// concentration drops the buff. Joins `is_dispellable_buff` so Dispel
+    /// Magic / Counterspell can rip it.
+    OtherworldlyGuised,
 }
 
 impl Condition {
@@ -1247,6 +1278,9 @@ impl Condition {
             Condition::WindBlasted => "wind-blasted",
             Condition::Longstriding => "longstriding",
             Condition::ExpeditiouslyRetreating => "expeditiously retreating",
+            Condition::FlamingArrowed => "wielding flame arrows",
+            Condition::AshardalonStriding => "striding with elemental power",
+            Condition::OtherworldlyGuised => "guised in otherworldly form",
         }
     }
 
@@ -1337,6 +1371,9 @@ impl Condition {
                 | Condition::Purified
                 | Condition::Longstriding
                 | Condition::ExpeditiouslyRetreating
+                | Condition::FlamingArrowed
+                | Condition::AshardalonStriding
+                | Condition::OtherworldlyGuised
         )
     }
 

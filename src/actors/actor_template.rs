@@ -51,6 +51,14 @@ const TYPED_RESISTANCE_CONDITIONS: &[(Condition, &[DamageType])] = &[
             DamageType::Slashing,
         ],
     ),
+    // 5e Tasha's Otherworldly Guise (celestial flavor): radiant + poison
+    // resistance from the divine-aligned form. Folded into the same lane
+    // as the other typed-resistance buffs so the damage pipeline halves
+    // both incoming radiant and incoming poison damage cleanly.
+    (
+        Condition::OtherworldlyGuised,
+        &[DamageType::Radiant, DamageType::Poison],
+    ),
 ];
 
 /// Lifecycle state of an actor's hit points. Replaces the previous
@@ -1513,15 +1521,20 @@ impl ActorInstance {
             Condition::Frightened => {
                 self.has_condition(Condition::Heroic)
                     || self.has_condition(Condition::Purified)
+                    || self.has_condition(Condition::OtherworldlyGuised)
                     || self.has_brave
             }
             Condition::Charmed => {
                 self.has_condition(Condition::MindBlanked)
                     || self.has_condition(Condition::Purified)
+                    || self.has_condition(Condition::OtherworldlyGuised)
                     || self.has_fey_ancestry
             }
             Condition::Asleep => self.has_fey_ancestry,
-            Condition::Poisoned => self.has_condition(Condition::Purified),
+            Condition::Poisoned => {
+                self.has_condition(Condition::Purified)
+                    || self.has_condition(Condition::OtherworldlyGuised)
+            }
             _ => false,
         }
     }
@@ -1859,6 +1872,11 @@ impl ActorInstance {
         if self.has_condition(Condition::WardingBonded) {
             bonus += 1;
         }
+        // 5e Tasha's Otherworldly Guise: the extraplanar form's shell
+        // grants a flat +2 AC bump while the buff is up.
+        if self.has_condition(Condition::OtherworldlyGuised) {
+            bonus += 2;
+        }
         bonus
     }
 
@@ -1945,6 +1963,7 @@ impl ActorInstance {
         // gate honors whichever is up.
         if self.has_condition(Condition::Flying)
             || self.has_condition(Condition::InvestedInWind)
+            || self.has_condition(Condition::OtherworldlyGuised)
         {
             bonus += 60.0;
         }
@@ -1956,6 +1975,9 @@ impl ActorInstance {
         }
         if self.has_condition(Condition::ExpeditiouslyRetreating) {
             bonus += 30.0;
+        }
+        if self.has_condition(Condition::AshardalonStriding) {
+            bonus += 20.0;
         }
         bonus
     }

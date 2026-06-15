@@ -24183,3 +24183,331 @@ impl Action for Contagion {
 }
 
 pub static CONTAGION: LazyLock<Contagion> = LazyLock::new(|| Contagion {});
+
+/// Pyrotechnics — XGE level-2 transmutation, action, no concentration.
+/// RAW: choose either Fireworks (bright burst → blinded) or Smoke (heavy
+/// obscurement). We model the Fireworks half (the load-bearing combat
+/// clause): a small burst at the target point deals 1d8 fire damage and
+/// blinds enemies that fail a CON save. The smoke variant has no in-
+/// engine clause (we don't model obscurement zones).
+///
+/// SinglePoint target, burst radius 2 (10ft), 60 ft (24-tile) range,
+/// INT-based DC. Enemies in the area roll a CON save: half damage on
+/// pass (Reflex Half via `enemy_burst_save_for_half`); on fail, also pick
+/// up `Blinded` for `Rounds(2)` (the short flash-blind envelope). Slots
+/// alongside Aganazzar's Scorcher / Snilloc's Snowball Swarm on the
+/// entry-tier elemental-burst lane.
+pub struct Pyrotechnics {}
+
+impl Action for Pyrotechnics {
+    fn name(&self) -> &str {
+        "pyrotechnics"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pyro", "flash"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 2 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]);
+        let (mut effects, saves) = enemy_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            2,
+            AbilityScoreType::Constitution,
+            dc,
+            Dice::new(1, 8),
+            DamageType::Fire,
+            "pyrotechnics",
+        );
+        // Failed-save enemies are flash-blinded for a brief window. RAW
+        // gates the blind on a CON save and lasts 1 minute — we collapse
+        // the duration to 2 rounds since the spell's "flash" flavor is
+        // a brief sear rather than a long install. Mirrors Tidal Wave's
+        // Prone follow-up shape.
+        push_condition_on_failed_save(
+            &mut effects,
+            &saves,
+            Condition::Blinded,
+            ConditionTimer::Rounds(2),
+        );
+        effects
+    }
+}
+
+pub static PYROTECHNICS: LazyLock<Pyrotechnics> = LazyLock::new(|| Pyrotechnics {});
+
+/// Flame Arrows — XGE level-3 transmutation, action, concentration.
+/// RAW: the caster touches a quiver of arrows / crossbow bolts; up to 12
+/// pieces of ammunition deal +1d6 fire on a hit until the spell ends or
+/// 12 hits land. We collapse the per-ammunition counter to a flat
+/// concentration self-buff: every ranged weapon hit the caster lands
+/// deals +1d6 fire via the on_hit_riders table (gated by `ranged_only`
+/// so a melee swing can't burn the buff). Drops cleanly on concentration
+/// end. Mirrors Spirit Shroud's shape but ranged-only.
+///
+/// Self-target (NoArgs); slots alongside Spirit Shroud / Crusader's
+/// Mantle on the per-hit weapon-buff lane. The `is_harmful = false` flag
+/// + `deals_damage = false` keeps the AI's heal / harm pipelines clean.
+pub struct FlameArrows {}
+
+impl Action for FlameArrows {
+    fn name(&self) -> &str {
+        "flame arrows"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fire arrows", "fa"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Already imbued → don't re-cast and burn another slot.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.has_condition(Condition::FlamingArrowed))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        encounter.log("  flame arrows: ammunition ignites with magical fire".to_string());
+        self_concentration_buff_effects(
+            caster_id,
+            "Flame Arrows",
+            Condition::FlamingArrowed,
+            ConditionTimer::Rounds(10),
+        )
+    }
+}
+
+pub static FLAME_ARROWS: LazyLock<FlameArrows> = LazyLock::new(|| FlameArrows {});
+
+/// Ashardalon's Stride — TCE level-3 transmutation, bonus action,
+/// concentration. RAW: the caster's body crackles with elemental fire,
+/// gaining +20 ft of speed; moving doesn't provoke opportunity attacks
+/// and any creature within 5 ft of the caster's path takes 1d6 fire
+/// damage from the blazing wake. We model the load-bearing combat
+/// clauses: the +20 ft speed bump (routed through
+/// `condition_speed_bonus`) and the per-step adjacent-enemy fire
+/// damage (hooked in `MoveActor`'s apply path next to Spike Growth /
+/// Booming Blade). The OA-exemption clause is *not* modeled (the
+/// engine doesn't have a per-action OA-exempt gate); the spell still
+/// reads well in combat without it.
+///
+/// Self-target (NoArgs); slots alongside Longstrider / Expeditious
+/// Retreat on the mobility-buff lane, but combat-flavored (the trail
+/// damage IS the spell's hook). Concentration-bound on the caster.
+pub struct AshardalonsStride {}
+
+impl Action for AshardalonsStride {
+    fn name(&self) -> &str {
+        "ashardalon's stride"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["stride", "ashardalon"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_and_slot(3)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Already striding → don't re-cast and burn another slot.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.has_condition(Condition::AshardalonStriding))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        encounter.log("  ashardalon's stride: a blazing wake erupts behind you".to_string());
+        self_concentration_buff_effects(
+            caster_id,
+            "Ashardalon's Stride",
+            Condition::AshardalonStriding,
+            ConditionTimer::Rounds(10),
+        )
+    }
+}
+
+pub static ASHARDALONS_STRIDE: LazyLock<AshardalonsStride> =
+    LazyLock::new(|| AshardalonsStride {});
+
+/// Tasha's Otherworldly Guise — TCE level-6 transmutation, bonus action,
+/// concentration. RAW: the caster transforms into a celestial or fiendish
+/// form: AC becomes 16 + CHA mod (we model as a flat +2 AC via
+/// `condition_ac_bonus`), they gain a fly speed of 40 ft, resistance to
+/// chosen damage types (we pick radiant + poison for the celestial
+/// flavor), immunity to Charmed and Frightened, and their melee weapon
+/// hits deal an extra 2d6 radiant damage via the on_hit_riders table.
+///
+/// Engine model — all four load-bearing clauses are wired through the
+/// existing chokepoints:
+/// - +2 AC: `condition_ac_bonus` reads the flag.
+/// - +60 ft fly speed: joins the `Flying` / `InvestedInWind` cohort in
+///   `condition_speed_bonus`.
+/// - Radiant + Poison resistance: `TYPED_RESISTANCE_CONDITIONS` row.
+/// - Charmed / Frightened / Poisoned dynamic immunity:
+///   `dynamic_immunity_to` chokepoint.
+/// - +2d6 radiant melee rider: `ON_HIT_RIDERS` entry with `melee_only: true`.
+///
+/// Self-target (NoArgs); slots at the top of the self-buff
+/// concentration ladder alongside Tenser's Transformation / Globe of
+/// Invulnerability on the legendary tier. Concentration-bound on the
+/// caster.
+pub struct OtherworldlyGuise {}
+
+impl Action for OtherworldlyGuise {
+    fn name(&self) -> &str {
+        "otherworldly guise"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["og", "guise"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_and_slot(6)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Already guised → don't re-cast and burn another slot.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.has_condition(Condition::OtherworldlyGuised))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        encounter.log("  otherworldly guise: form shifts into a celestial avatar".to_string());
+        self_concentration_buff_effects(
+            caster_id,
+            "Otherworldly Guise",
+            Condition::OtherworldlyGuised,
+            ConditionTimer::Rounds(10),
+        )
+    }
+}
+
+pub static OTHERWORLDLY_GUISE: LazyLock<OtherworldlyGuise> =
+    LazyLock::new(|| OtherworldlyGuise {});

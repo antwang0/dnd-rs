@@ -496,6 +496,29 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::ENHANCE_ABILITY);
     actions.push(&*crate::actions::spells::BLINK);
     actions.push(&*crate::actions::spells::CONTAGION);
+    // Latest wizard additions (XGtE / TCE):
+    //   - lv2 **Pyrotechnics** (transmutation, XGtE): 2-radius CON-save
+    //     fire burst (1d8) + Blinded-on-fail. Cheap entry-tier flash
+    //     burst alongside Aganazzar's Scorcher / Snilloc's Snowball Swarm
+    //     on the lv2 elemental-burst lane.
+    //   - lv3 **Flame Arrows** (transmutation, XGtE): self-buff that
+    //     grants +1d6 fire on every ranged weapon hit (ranged-only via
+    //     the OnHitRider table). Concentration-bound; sibling to Spirit
+    //     Shroud (melee cold rider) on the per-hit weapon buff lane.
+    //   - lv3 **Ashardalon's Stride** (transmutation, TCE): self-buff
+    //     that grants +20 ft speed and 1d6 fire trail damage to
+    //     footprint-adjacent enemies on each move step. Concentration-
+    //     bound; mobility + control combo at the lv3 slot.
+    //   - lv6 **Tasha's Otherworldly Guise** (transmutation, TCE): the
+    //     legendary-tier self-buff — +2 AC, +60 ft fly speed, radiant +
+    //     poison resistance, Charmed / Frightened / Poisoned dynamic
+    //     immunity, +2d6 radiant melee weapon rider. Concentration-bound;
+    //     sits at the top of the wizard's self-buff ladder alongside
+    //     Tenser's Transformation / Globe of Invulnerability.
+    actions.push(&*crate::actions::spells::PYROTECHNICS);
+    actions.push(&*crate::actions::spells::FLAME_ARROWS);
+    actions.push(&*crate::actions::spells::ASHARDALONS_STRIDE);
+    actions.push(&*crate::actions::spells::OTHERWORLDLY_GUISE);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

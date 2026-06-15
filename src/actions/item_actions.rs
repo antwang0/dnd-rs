@@ -4636,3 +4636,92 @@ pub static READ_CRUSADERS_MANTLE_SCROLL: MultiTargetBuffItem = MultiTargetBuffIt
     max_targets: 4,
     temp_hp: None,
 };
+
+const SCROLL_OF_PYROTECHNICS_NAME: &str = "Scroll of Pyrotechnics";
+const SCROLL_OF_FLAME_ARROWS_NAME: &str = "Scroll of Flame Arrows";
+const POTION_OF_ASHARDALONS_STRIDE_NAME: &str = "Potion of Ashardalon's Stride";
+const POTION_OF_OTHERWORLDLY_GUISE_NAME: &str = "Potion of Otherworldly Guise";
+
+/// Scroll of Pyrotechnics — Action; 1d8 fire DEX-save burst (DC 13,
+/// 2-radius / 10 ft RAW) at a point within 24 tiles (60 ft RAW). 5e RAW:
+/// XGE level-2 transmutation, Fireworks variant. The scroll collapses the
+/// rider Blinded clause of the spell to keep the consumable on the
+/// entry-tier elemental-burst lane alongside Scroll of Burning Hands /
+/// Scroll of Thunderwave. Fires through the shared `BurstSaveDamageItem`
+/// impl.
+pub static READ_PYROTECHNICS_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+    action_name: "read pyrotechnics scroll",
+    action_aliases: &["pyrotechnics scroll", "pyro scroll"],
+    item_name: SCROLL_OF_PYROTECHNICS_NAME,
+    log_label: "scroll of pyrotechnics",
+    dice: Dice::new(1, 8),
+    damage_type: DamageType::Fire,
+    save: AbilityScoreType::Constitution,
+    dc: 13,
+    radius: 2,
+    // 60 ft RAW range; 24 tiles.
+    reach: 24,
+};
+
+/// Scroll of Flame Arrows — Action; install `FlamingArrowed` for 10
+/// rounds on the reader. 5e RAW: XGE level-3 transmutation, concentration,
+/// touch — the scroll bypasses the concentration gate and surfaces the
+/// per-ranged-hit +1d6 fire rider via the `ON_HIT_RIDERS` table. Self-
+/// only ranged weapon buff; rejects re-read while up to avoid the no-op
+/// refresh. Sibling to Scroll of Crusader's Mantle / Spirit Shroud on
+/// the on-hit weapon buff scroll lane — distinct by the ranged-only
+/// gate (a melee fallback can't burn the buff). Routes through the
+/// shared `SelfConditionItem` impl.
+pub static READ_FLAME_ARROWS_SCROLL: SelfConditionItem = SelfConditionItem {
+    action_name: "read flame arrows scroll",
+    action_aliases: &["flame arrows scroll", "fa scroll"],
+    item_name: SCROLL_OF_FLAME_ARROWS_NAME,
+    log_text: "{actor} reads a scroll of flame arrows; their quiver ignites with magical fire.",
+    condition: Condition::FlamingArrowed,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    reject_when_active: true,
+    temp_hp: None,
+};
+
+/// Potion of Ashardalon's Stride — Bonus Action; install `AshardalonStriding`
+/// for 10 rounds on the drinker. 5e RAW: TCE level-3 transmutation,
+/// concentration, self; the potion bypasses concentration and surfaces
+/// the +20 ft speed bump + per-step adjacent-enemy fire trail damage as
+/// a fire-and-forget combat buff. Sibling to Potion of Longstrider
+/// (passive +10 ft speed) / Potion of Climbing (climb-speed bump) on
+/// the mobility-consumable lane — distinct by the combat-flavored
+/// trail-damage hook (the spell's signature mechanic). Rejects re-drink
+/// while up. Fires through the shared `SelfConditionItem` impl.
+pub static DRINK_POTION_OF_ASHARDALONS_STRIDE: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of ashardalon's stride",
+    action_aliases: &["ashardalon", "stride potion"],
+    item_name: POTION_OF_ASHARDALONS_STRIDE_NAME,
+    log_text: "{actor} drinks a potion of ashardalon's stride; their body crackles with elemental fire.",
+    condition: Condition::AshardalonStriding,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: true,
+    reject_when_active: true,
+    temp_hp: None,
+};
+
+/// Potion of Otherworldly Guise — Bonus Action; install `OtherworldlyGuised`
+/// for 10 rounds on the drinker. 5e RAW: TCE level-6 transmutation,
+/// concentration, self; the potion bypasses concentration and surfaces
+/// the full envelope (+2 AC, +60 ft fly speed, radiant + poison
+/// resistance, Charmed / Frightened / Poisoned dynamic immunity, +2d6
+/// radiant melee weapon rider) as a fire-and-forget combat buff. Sibling
+/// to Potion of Foresight on the legendary-tier offensive + defensive
+/// consumable lane. Rejects re-drink while up. Fires through the shared
+/// `SelfConditionItem` impl.
+pub static DRINK_POTION_OF_OTHERWORLDLY_GUISE: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of otherworldly guise",
+    action_aliases: &["guise potion", "og potion"],
+    item_name: POTION_OF_OTHERWORLDLY_GUISE_NAME,
+    log_text: "{actor} drinks a potion of otherworldly guise; their form shifts into a celestial avatar.",
+    condition: Condition::OtherworldlyGuised,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: true,
+    reject_when_active: true,
+    temp_hp: None,
+};

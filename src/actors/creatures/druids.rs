@@ -253,6 +253,13 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     debilitating-debuff ladder.
     actions.push(&*crate::actions::spells::ENHANCE_ABILITY);
     actions.push(&*crate::actions::spells::CONTAGION);
+    // Latest druid addition (TCE):
+    //   - lv3 **Ashardalon's Stride** (transmutation): mobility + control
+    //     combo at lv3 — +20 ft speed plus 1d6 fire trail damage to
+    //     footprint-adjacent enemies on each step. Pairs naturally with
+    //     the druid's wild-shape repositioning flavor; mirrors the
+    //     wizard / sorcerer additions on the same spell.
+    actions.push(&*crate::actions::spells::ASHARDALONS_STRIDE);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

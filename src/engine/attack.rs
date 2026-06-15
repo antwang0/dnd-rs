@@ -719,6 +719,41 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             consume_on_trigger: false,
             follow_up: None,
         },
+        // 5e Flame Arrows (XGE level-3 transmutation, concentration).
+        // Persistent +1d6 fire rider on every ranged swing the holder
+        // lands. Mirrors Spirit Shroud's shape but ranged-only — the
+        // `ranged_only` gate folds through the rider dispatch so a melee
+        // fallback can't burn the buff. Concentration-bound on the
+        // caster; persistent (non-consumed) per-hit rider that drops
+        // when the caster ends concentration.
+        OnHitRider {
+            condition: Condition::FlamingArrowed,
+            dice: Dice::new(1, 6),
+            label: "flame arrows",
+            damage_type: DamageType::Fire,
+            melee_only: false,
+            ranged_only: true,
+            consume_on_trigger: false,
+            follow_up: None,
+        },
+        // 5e Tasha's Otherworldly Guise (TCE level-6 concentration). The
+        // celestial-form flavor adds +2d6 radiant per melee weapon hit
+        // (RAW: "your weapon attacks deal extra radiant damage equal to
+        // your CHA mod"; we collapse to a flat 2d6 for the engine's
+        // rider-table envelope, sized between Spirit Shroud's 1d8 and
+        // Divine Smite's 2d8). Melee-only — the spell flavors the
+        // caster's weapon, not their ranged toolkit. Persistent (non-
+        // consumed) per-hit rider, concentration-bound on the caster.
+        OnHitRider {
+            condition: Condition::OtherworldlyGuised,
+            dice: Dice::new(2, 6),
+            label: "otherworldly guise",
+            damage_type: DamageType::Radiant,
+            melee_only: true,
+            ranged_only: false,
+            consume_on_trigger: false,
+            follow_up: None,
+        },
         OnHitRider {
             condition: Condition::Smiting,
             dice: Dice::new(2, 8),
