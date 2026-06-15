@@ -7274,3 +7274,208 @@ pub static HOBGOBLIN_WARLORD_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Mul
     sub_attack: &LONGSWORD,
     count: 3,
 });
+
+/// Giant Eagle beak — STR-based 1d6 piercing melee. Paired with
+/// `GIANT_EAGLE_TALONS` in a CompoundAttack: the multi opens with the beak
+/// peck and follows with two raking talon strikes.
+pub static GIANT_EAGLE_BEAK: SimpleWeapon = SimpleWeapon {
+    display_name: "beak",
+    aliases: &["peck"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 6),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Giant Eagle talons — STR-based 2d6 slashing melee. Heavier than the
+/// beak: the raptor's main damage source. Paired with `GIANT_EAGLE_BEAK`
+/// via the eagle's CompoundAttack multi.
+pub static GIANT_EAGLE_TALONS: SimpleWeapon = SimpleWeapon {
+    display_name: "talons",
+    aliases: &["claws", "rake"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Giant Eagle multiattack — one beak peck + one talon rake per Action,
+/// matching the SRD stat block's "one beak, one talons" multi. Implemented
+/// via the heterogeneous `CompoundAttack` wrapper since the two limbs
+/// have distinct damage dice (1d6 vs 2d6).
+pub static GIANT_EAGLE_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "beak + talons",
+    parts: vec![(&GIANT_EAGLE_BEAK, 1), (&GIANT_EAGLE_TALONS, 1)],
+});
+
+/// Sahuagin claws — STR-based 1d4 slashing melee. Paired with
+/// `SAHUAGIN_BITE` in the multi. The 1d4 keeps the base damage modest;
+/// the Blood Frenzy passive (advantage on melee attacks vs wounded
+/// targets) is the actual damage amp.
+pub static SAHUAGIN_CLAWS: SimpleWeapon = SimpleWeapon {
+    display_name: "claws",
+    aliases: &["scratch"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 4),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Sahuagin bite — STR-based 1d4 piercing melee. Symmetric with
+/// `SAHUAGIN_CLAWS`; together the multi resolves bite + claws.
+pub static SAHUAGIN_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "shark-tooth bite",
+    aliases: &["bite", "chomp"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 4),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Sahuagin multiattack — one bite + one claws per Action.
+pub static SAHUAGIN_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "bite + claws",
+    parts: vec![(&SAHUAGIN_BITE, 1), (&SAHUAGIN_CLAWS, 1)],
+});
+
+/// Lizardfolk bite — STR-based 1d6 piercing melee. The bite is the
+/// reptile's reliable always-available swing; the multi pairs it with a
+/// weapon swing for the "claws-and-teeth" hit profile in the SRD stat
+/// block.
+pub static LIZARDFOLK_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "lizard bite",
+    aliases: &["bite", "chomp"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 6),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Heavy Club — STR-based 1d6 bludgeoning melee. The lizardfolk's
+/// signature weapon: hits hard for a CR ½ humanoid when paired with the
+/// natural bite via Multiattack.
+pub static HEAVY_CLUB: SimpleWeapon = SimpleWeapon {
+    display_name: "heavy club",
+    aliases: &["club", "hc"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 6),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Lizardfolk multiattack — one bite + one club swing per Action.
+pub static LIZARDFOLK_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "bite + club",
+    parts: vec![(&LIZARDFOLK_BITE, 1), (&HEAVY_CLUB, 1)],
+});
+
+/// Giant Ape fist — STR-based 3d6 bludgeoning melee. Pure punch with no
+/// rider; the ape's brute melee is its calling card and dual fists land
+/// twice per Action via the multi.
+pub static GIANT_APE_FIST: SimpleWeapon = SimpleWeapon {
+    display_name: "fist",
+    aliases: &["punch", "slam"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(3, 6),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Giant Ape rock — STR-based 7d6 bludgeoning thrown rock with extreme
+/// range. Big single-die hit when the ape can't close — mirrors the Hill
+/// Giant boulder shape but tuned for CR 7 hp budgets.
+pub static GIANT_APE_ROCK: SimpleWeapon = SimpleWeapon {
+    display_name: "rock",
+    aliases: &["throw", "boulder"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(7, 6),
+    damage_type: DamageType::Bludgeoning,
+    reach: 24,
+    is_melee: false,
+    requires_los: true,
+    cost_resource: Resource::Action,
+    normal_range: Some(20),
+};
+
+/// Giant Ape multiattack — two fist slams per Action, mirroring the
+/// SRD stat block's "Multiattack: makes two fist attacks" entry.
+pub static GIANT_APE_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double fist",
+    sub_attack: &GIANT_APE_FIST,
+    count: 2,
+});
+
+/// Centaur pike — STR-based 1d10 piercing, reach 2 (10 ft polearm).
+/// Outranges every other martial weapon in the centaur's kit and slots
+/// neatly into the multi as the heavier of the two limbs.
+pub static CENTAUR_PIKE: SimpleWeapon = SimpleWeapon {
+    display_name: "pike",
+    aliases: &["polearm", "p"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 10),
+    damage_type: DamageType::Piercing,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Centaur hooves — STR-based 2d6 bludgeoning melee. The kicker
+/// follow-up to the pike thrust; pairs with `CENTAUR_PIKE` in the multi.
+pub static CENTAUR_HOOVES: SimpleWeapon = SimpleWeapon {
+    display_name: "hooves",
+    aliases: &["kick", "stomp"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Centaur multiattack — one pike thrust + one hoof kick per Action.
+pub static CENTAUR_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "pike + hooves",
+    parts: vec![(&CENTAUR_PIKE, 1), (&CENTAUR_HOOVES, 1)],
+});

@@ -119,3 +119,8 @@ pub mod wraiths;
 pub mod wyverns;
 pub mod yetis;
 pub mod zombies;
+pub mod giant_apes;
+pub mod giant_eagles;
+pub mod lizardfolk;
+pub mod sahuagins;
+pub mod centaurs;

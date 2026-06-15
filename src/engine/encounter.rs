@@ -94,6 +94,11 @@ use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
 use crate::actors::creatures::dragons::{
     ADULT_RED_DRAGON_TEMPLATE, ANCIENT_BLUE_DRAGON_TEMPLATE, YOUNG_WHITE_DRAGON_TEMPLATE,
 };
+use crate::actors::creatures::giant_apes::GIANT_APE_TEMPLATE;
+use crate::actors::creatures::giant_eagles::GIANT_EAGLE_TEMPLATE;
+use crate::actors::creatures::lizardfolk::LIZARDFOLK_TEMPLATE;
+use crate::actors::creatures::sahuagins::SAHUAGIN_TEMPLATE;
+use crate::actors::creatures::centaurs::CENTAUR_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -828,6 +833,22 @@ impl EncounterInstance {
                 if has_ally_adj {
                     mode = mode.combine(RollMode::Advantage);
                 }
+            }
+            // 5e Sahuagin Blood Frenzy: melee attacks against a wounded
+            // target (current HP < max HP) get advantage. Passive trait
+            // tagged via the features pool; the gate fires only on melee
+            // swings (RAW). We read the target's HP via `hitpoints` vs
+            // `max_hitpoints` rather than a dedicated "is_wounded" helper
+            // so the check stays close to the source of truth.
+            use crate::actions::class_features::BLOOD_FRENZY_TAG;
+            if is_melee
+                && attacker.has_passive_feature(BLOOD_FRENZY_TAG)
+                && self
+                    .actors
+                    .get(&target_id)
+                    .is_some_and(|t| t.hitpoints() < t.max_hitpoints())
+            {
+                mode = mode.combine(RollMode::Advantage);
             }
             // 5e Compelled Duel: an attacker tagged as Dueled is locked
             // onto their duelist — attacks against anyone *else* eat
@@ -2537,6 +2558,18 @@ impl EncounterInstance {
             &ADULT_RED_DRAGON_TEMPLATE,
             &YOUNG_WHITE_DRAGON_TEMPLATE,
             &ANCIENT_BLUE_DRAGON_TEMPLATE,
+            // Mid / low-CR fill-ins added alongside the new templates:
+            // Giant Eagle (CR 1 large beast — aerial), Sahuagin (CR ½
+            // humanoid w/ Blood Frenzy), Lizardfolk (CR ½ humanoid, sturdy
+            // melee), Giant Ape (CR 7 huge beast — fills the gap between
+            // Stone Giant and Frost Giant in the upper-mid pool), Centaur
+            // (CR 2 hybrid monstrosity — pike + hooves multi, longbow
+            // fallback).
+            &GIANT_EAGLE_TEMPLATE,
+            &SAHUAGIN_TEMPLATE,
+            &LIZARDFOLK_TEMPLATE,
+            &GIANT_APE_TEMPLATE,
+            &CENTAUR_TEMPLATE,
         ]
     }
 
@@ -40304,6 +40337,57 @@ mod tests {
         assert!(
             !e.actors[&enemy].has_condition(Condition::Darkened),
             "Dropping concentration strips Darkened from caught targets"
+        );
+    }
+
+    #[test]
+    fn sahuagin_blood_frenzy_grants_advantage_on_wounded_target() {
+        use crate::actors::creatures::sahuagins::SAHUAGIN_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let sah = e
+            .instantiate_creature(&SAHUAGIN_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 3), 1, 0)
+            .unwrap();
+        // Full-HP target — no Blood Frenzy yet.
+        let baseline = e.compute_attack_mode(sah, enemy, true);
+        assert_eq!(
+            baseline,
+            crate::engine::dice::RollMode::Normal,
+            "blood frenzy should NOT fire vs a full-HP target",
+        );
+        // Wound the enemy by chipping one HP.
+        e.actors.get_mut(&enemy).unwrap().take_damage(1);
+        // Now the next melee swing should land with advantage.
+        let frenzy = e.compute_attack_mode(sah, enemy, true);
+        assert_eq!(
+            frenzy,
+            crate::engine::dice::RollMode::Advantage,
+            "blood frenzy should grant advantage vs a wounded target",
+        );
+    }
+
+    #[test]
+    fn sahuagin_blood_frenzy_does_not_apply_to_ranged_attacks() {
+        use crate::actors::creatures::sahuagins::SAHUAGIN_TEMPLATE;
+        let mut e = ei_with_terrain(30, 20, &[]);
+        // Far apart so the ranged "adjacent hostile = disadvantage" clause
+        // can't fire and muddle the assertion.
+        let sah = e
+            .instantiate_creature(&SAHUAGIN_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(25, 3), 1, 0)
+            .unwrap();
+        // Wound the enemy by chipping one HP.
+        e.actors.get_mut(&enemy).unwrap().take_damage(1);
+        // Ranged swing: blood frenzy is melee-only per RAW.
+        let mode = e.compute_attack_mode(sah, enemy, false);
+        assert_eq!(
+            mode,
+            crate::engine::dice::RollMode::Normal,
+            "blood frenzy should NOT apply to ranged attacks",
         );
     }
 }

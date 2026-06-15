@@ -4760,6 +4760,26 @@ mod tests {
                         .is_some()
                 {}
             }
+            // Newest additions: low / mid-CR fillers added to round out
+            // the pool — Giant Eagle (CR 1, multi beak + talons), Sahuagin
+            // (CR ½ humanoid with Blood Frenzy: advantage on melee vs
+            // wounded targets — exercises the new compute_attack_mode
+            // gate), Lizardfolk (CR ½ humanoid, bite + heavy-club multi),
+            // Centaur (CR 2 hybrid: reach-2 pike + hooves multi with
+            // longbow fallback), Giant Ape (CR 7 huge brute: 2 fist multi
+            // or 7d6 boulder throw). Verifies the AI's picker handles the
+            // new compound attacks and the wounded-target advantage gate
+            // without stalling.
+            use crate::actors::creatures::centaurs::CENTAUR_TEMPLATE;
+            use crate::actors::creatures::giant_apes::GIANT_APE_TEMPLATE;
+            use crate::actors::creatures::giant_eagles::GIANT_EAGLE_TEMPLATE;
+            use crate::actors::creatures::lizardfolk::LIZARDFOLK_TEMPLATE;
+            use crate::actors::creatures::sahuagins::SAHUAGIN_TEMPLATE;
+            let _ = e.instantiate_creature(&GIANT_EAGLE_TEMPLATE, Coordinate::new(28, 14), 1, 43);
+            let _ = e.instantiate_creature(&SAHUAGIN_TEMPLATE, Coordinate::new(0, 12), 1, 44);
+            let _ = e.instantiate_creature(&LIZARDFOLK_TEMPLATE, Coordinate::new(0, 14), 1, 45);
+            let _ = e.instantiate_creature(&CENTAUR_TEMPLATE, Coordinate::new(0, 6), 0, 23);
+            let _ = e.instantiate_creature(&GIANT_APE_TEMPLATE, Coordinate::new(0, 9), 1, 46);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

@@ -1,0 +1,99 @@
+use crate::actions::class_features::BLOOD_FRENZY_TAG;
+use crate::actions::default_actions::DEFAULT_ACTIONS;
+use crate::actions::monster_attacks::{SAHUAGIN_BITE, SAHUAGIN_CLAWS, SAHUAGIN_MULTI};
+use crate::actors::actor_template::CreatureTemplate;
+use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
+use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
+
+/// Sahuagin — CR 1/2 shark-tooth raider. The signature trait is Blood
+/// Frenzy: melee attacks against any wounded target (current HP < max HP)
+/// roll with advantage. Wired into `compute_attack_mode` via the passive
+/// feature tag, so the first sahuagin hit doesn't get the bonus but every
+/// follow-up swing in the same encounter — once any sahuagin has scratched
+/// the target — does.
+pub static SAHUAGIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&SAHUAGIN_BITE);
+    actions.push(&SAHUAGIN_CLAWS);
+    actions.push(&*SAHUAGIN_MULTI);
+    CreatureTemplate {
+        name: "Sahuagin",
+        // 'S' — uppercase since lowercase 's' is Stirge; 'S' was free in
+        // the medium-humanoid lane.
+        glyph: 'S',
+        ac: 12,
+        hitpoints: "4d8+4".parse().unwrap(),
+        speed: 30.,
+        strength: 13,
+        intelligence: 12,
+        dexterity: 11,
+        wisdom: 13,
+        constitution: 12,
+        charisma: 9,
+        skills: HashSet::new(),
+        items: Vec::new(),
+        // 120 ft darkvision — sahuagin are abyssal-deep-water hunters
+        // in 5e and the darkvision range matches their MM stat block.
+        senses: HashSet::from([SpecialSense::Darkvision(120)]),
+        languages: HashSet::from([Language::Common]),
+        cr: 0.5,
+        size: Size::Medium,
+        creature_type: CreatureType::Humanoid,
+        actions,
+        spell_slots_by_level: Vec::new(),
+        rolls_death_saves: false,
+        damage_modifiers: HashMap::new(),
+        proficient_saves: HashSet::new(),
+        condition_immunities: HashSet::new(),
+        // Blood Frenzy passive: advantage on melee attacks vs wounded
+        // targets. Read by `compute_attack_mode`'s gate.
+        features: HashSet::from([BLOOD_FRENZY_TAG]),
+        regen_per_round: 0,
+        regen_suppressors: HashSet::new(),
+        legendary_resistances: 0,
+        has_evasion: false,
+        has_uncanny_dodge: false,
+        has_deflect_missiles: false,
+        has_displacement: false,
+        has_danger_sense: false,
+        has_pack_tactics: false,
+        has_magic_resistance: false,
+        recharge_abilities: Vec::new(),
+        legendary_actions_per_round: 0,
+        has_extra_attack: false,
+        brutal_critical_dice: 0,
+        crit_threshold: 20,
+        has_lucky: false,
+        has_brave: false,
+        has_fey_ancestry: false,
+        has_aura_of_protection: false,
+        has_aura_of_courage: false,
+        has_savage_attacks: false,
+        has_dwarven_resilience: false,
+        has_gnome_cunning: false,
+        draconic_ancestry: None,
+        sorcery_points: 0,
+    }
+});
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::actors::actor_template::ActorInstance;
+    use crate::engine::dice::FastRandRoller;
+    use crate::engine::types::Coordinate;
+
+    #[test]
+    fn sahuagin_has_blood_frenzy_feature() {
+        let a = ActorInstance::from_creature_template(
+            &SAHUAGIN_TEMPLATE,
+            Coordinate::new(0, 0),
+            1,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        assert!(a.has_passive_feature(BLOOD_FRENZY_TAG));
+    }
+}

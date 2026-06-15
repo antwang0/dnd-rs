@@ -71,6 +71,16 @@ pub const ACTION_SURGE_TAG: &str = "fighter.action_surge";
 /// short-duration condition.
 pub const RELENTLESS_ENDURANCE_TAG: &str = "half_orc.relentless_endurance";
 
+/// Tag for the Sahuagin Blood Frenzy racial trait. Passive always-on
+/// feature: the holder rolls melee attacks with advantage against any
+/// target that doesn't have all its hit points. We weave the gate into
+/// `compute_attack_mode` next to Pack Tactics — when the attacker has the
+/// tag, the swing is melee, and the target's `current_hp() <
+/// max_hitpoints()`, the swing gets advantage. The tag lives in the
+/// passive-feature pool so a long-rest never "spends" it (it's not a
+/// per-rest pool — it always fires on a wounded target).
+pub const BLOOD_FRENZY_TAG: &str = "sahuagin.blood_frenzy";
+
 /// Common gating shape for once-per-rest class features: the caster must
 /// exist, be combat-active, and have an unspent charge of `tag`. Returns
 /// true when all three hold. Centralizes the `is_some_and(|a|
