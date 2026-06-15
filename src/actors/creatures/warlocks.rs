@@ -174,6 +174,12 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // ranged kit (the rider is melee-only, but the resistance + flight +
     // immunity envelope hardens the warlock against incoming damage).
     actions.push(&*crate::actions::spells::OTHERWORLDLY_GUISE);
+    // lv2 **Darkness**: a warlock signature (Devil's Sight invocation
+    // historically lets warlocks see through their own darkness;
+    // engine-side we just install the concentration-bound symmetric-
+    // blind zone). Goes on the warlock list as part of their Pact of
+    // the Fiend / Pact of the Chain SRD baseline.
+    actions.push(&*crate::actions::spells::DARKNESS);
     CreatureTemplate {
         name: "Warlock",
         // 'L' (uppercase) — distinct from 'l' (Lich), 'W' (Wolf glyph),

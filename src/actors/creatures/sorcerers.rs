@@ -412,6 +412,12 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // radiant melee weapon rider) gives the sorcerer a legendary defense
     // alongside Tenser's Transformation / Globe of Invulnerability.
     actions.push(&*crate::actions::spells::OTHERWORLDLY_GUISE);
+    // Latest sorcerer utility additions: lv2 Silence (anti-caster zone),
+    // lv2 Darkness (concentration symmetric-blind zone), and lv4 Freedom
+    // of Movement (ally-buff cleanse + restraint immunity).
+    actions.push(&*crate::actions::spells::SILENCE);
+    actions.push(&*crate::actions::spells::DARKNESS);
+    actions.push(&*crate::actions::spells::FREEDOM_OF_MOVEMENT);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

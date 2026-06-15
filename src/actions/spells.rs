@@ -24511,3 +24511,377 @@ impl Action for OtherworldlyGuise {
 
 pub static OTHERWORLDLY_GUISE: LazyLock<OtherworldlyGuise> =
     LazyLock::new(|| OtherworldlyGuise {});
+
+/// Silence — level-2 illusion, no concentration. Pick a tile within range;
+/// a 20ft (8-tile) sphere of magical silence covers the area. Every actor
+/// caught in the burst (friend or foe — silence is non-discriminating)
+/// gains the `Silenced` condition for the duration. Mechanically:
+/// - Can't cast leveled spells (verbal-component proxy — gated in
+///   `can_consume_resource`'s SpellSlot lane via `blocks_spell_slots`).
+/// - Immune to thunder damage (the magical hush absorbs sonic effects —
+///   folded into `effective_damage`'s condition-driven immunity lane).
+///
+/// RAW also Deafens holders, but the engine's `Deafened` condition is a
+/// cosmetic marker today, so the silence install skips it to avoid
+/// piling a no-op flag onto every burst victim. Distinct from
+/// `Counterspell` (which fizzles a specific cast) — Silence is a
+/// persistent zone debuff that locks down spellcasters in a radius.
+pub struct Silence {}
+
+impl Action for Silence {
+    fn name(&self) -> &str {
+        "silence"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sil", "hush"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 20 ft radius = 8 tile-gaps.
+        TargetingSchema::Burst { radius: 8 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        // Non-discriminating zone — the picker UI doesn't apply the
+        // hostile-only filter, so a caster can drop it over their own
+        // melee allies if the tactic calls for it.
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let radius = match self.targeting_schema() {
+            TargetingSchema::Burst { radius } => radius,
+            _ => return Vec::new(),
+        };
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        // Non-discriminating burst — Silence covers allies and enemies
+        // alike (RAW: "any creature or object entirely inside the sphere").
+        // We route through `neutral_burst_targets` so the standard
+        // caster-exclusion + combat-active filter applies.
+        for tid in encounter.neutral_burst_targets(caster_id, point, radius) {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Silenced,
+                // 10 rounds ~ 1 minute RAW; no concentration so the buff
+                // can outlast a concentration drop on another spell.
+                timer: ConditionTimer::Rounds(10),
+            }));
+        }
+        effects
+    }
+}
+
+pub static SILENCE: LazyLock<Silence> = LazyLock::new(|| Silence {});
+
+/// Freedom of Movement — level-4 abjuration, no concentration. Touch a
+/// willing ally; for the duration they ignore difficult terrain and are
+/// immune to any magical effect that would Paralyze, Restrain, or
+/// Grapple them. We model the load-bearing combat half:
+/// - Install `Footloose` on the target, which `dynamic_immunity_to`
+///   reads to block future installs of those three conditions.
+/// - Strip any currently-active Paralyzed / Restrained / Grappled install
+///   so the target shrugs off the existing restraint at cast time too
+///   (RAW: "the target can use 5 feet of movement to automatically
+///   escape from nonmagical bonds" — we collapse to instant removal).
+///
+/// RAW is 1 hour without concentration; we install with `Rounds(100)`
+/// (~10 minutes engine time) which covers any plausible encounter.
+/// Joins `is_dispellable_buff` so Dispel Magic / Counterspell can
+/// strip the protection cleanly. Distinct from `Purified` (Aura of
+/// Purity) which blocks Charmed / Frightened / Poisoned — Freedom of
+/// Movement covers the physical-restraint cohort instead.
+pub struct FreedomOfMovement {}
+
+impl Action for FreedomOfMovement {
+    fn name(&self) -> &str {
+        "freedom of movement"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fom", "freedom"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch.
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::RemoveCondition;
+        // Ally-only target (the buff makes no sense to fling onto a
+        // hostile creature). Same gate as Aid / Longstrider / Enhance
+        // Ability — route through the shared helper for one chokepoint.
+        let Some(target_id) = first_ally_target_id(encounter, caster_id, target_ids) else {
+            return Vec::new();
+        };
+        // Install the Footloose buff (dynamic-immunity gate fires from
+        // here for the rest of the duration) and strip any active
+        // movement-restraint install so the target frees themselves
+        // at cast time too.
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Footloose,
+                timer: ConditionTimer::Rounds(100),
+            }),
+            Box::new(RemoveCondition {
+                actor_id: target_id,
+                condition: Condition::Paralyzed,
+            }),
+            Box::new(RemoveCondition {
+                actor_id: target_id,
+                condition: Condition::Restrained,
+            }),
+            Box::new(RemoveCondition {
+                actor_id: target_id,
+                condition: Condition::Grappled,
+            }),
+        ]
+    }
+}
+
+pub static FREEDOM_OF_MOVEMENT: LazyLock<FreedomOfMovement> =
+    LazyLock::new(|| FreedomOfMovement {});
+
+/// Raise Dead — level-5 necromancy. Touch a Dying ally; restore them to
+/// HP-floor (1 HP) and clear the death-save tally. Mirrors `Revivify`
+/// (level-3, ~10 minute window) and `Resurrection` (level-7, full-HP
+/// restore) — Raise Dead slots in the middle: same "touch a dying ally"
+/// envelope as Revivify, but at the level-5 slot it carries an
+/// implicit window stretch (RAW: 10 days vs Revivify's 1 minute). We
+/// don't model elapsed-death timers in combat, so the load-bearing
+/// difference vs Revivify is the higher slot cost — Raise Dead is
+/// what a cleric reaches for when their level-3 slots are spent.
+///
+/// Doesn't restore conditions / cleanses — pair with Lesser
+/// Restoration for the full revive-and-cleanse loop, or use
+/// Resurrection / True Resurrection (level-7/9) for the cleanse-bundled
+/// versions. Single-target, touch, action cost + level-5 slot.
+pub struct RaiseDead {}
+
+impl Action for RaiseDead {
+    fn name(&self) -> &str {
+        "raise dead"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["rd", "raise"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        // Only meaningful on a dying / stable target — pruning here
+        // keeps the AI's heal-pipeline from queueing the slot-burning
+        // cast onto a healthy ally.
+        encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| a.is_dying())
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ReviveDying;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // `ReviveDying` itself heals 1 HP and clears Unconscious / Prone
+        // — that's the Revivify-style 1-HP floor RAW. No additional Heal
+        // entry needed here (Resurrection / True Resurrection layer an
+        // additional max-HP heal on top; Raise Dead does not).
+        vec![Box::new(ReviveDying { actor_id: target_id })]
+    }
+}
+
+pub static RAISE_DEAD: LazyLock<RaiseDead> = LazyLock::new(|| RaiseDead {});
+
+/// Darkness — level-2 evocation, concentration. Pick a tile within range;
+/// a 15ft (6-tile) sphere of magical darkness drops over the area. Every
+/// actor caught in the burst — friend or foe — gains the `Darkened`
+/// condition: they swing blind (attacker disadvantage on their attacks
+/// via `imposes_attacker_disadvantage`) and attackers targeting them
+/// swing blind too (target-side disadvantage via
+/// `imposes_disadvantage_to_attackers`). RAW: the darkness blocks
+/// sight even for darkvision — we collapse to a symmetric attack-mode
+/// penalty mirroring how `Blinded` handles single-target sight loss.
+///
+/// Concentration-bound on the caster so re-cast / damage-drop cleanly
+/// strips the install via the standard concentration cleanup. Distinct
+/// from `Blinded` so cleanse pickers and dispel sweeps can target just
+/// the Darkness install. Non-discriminating zone — the caster's own
+/// allies caught in the burst eat the same blind / blind-on-attackers
+/// envelope, so the tactical use is shielding a melee-heavy frontline
+/// against ranged casters or blanket-blinding a tight enemy cluster.
+pub struct Darkness {}
+
+impl Action for Darkness {
+    fn name(&self) -> &str {
+        "darkness"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dark", "shroud"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // 15 ft radius = 6 tile-gaps.
+        TargetingSchema::Burst { radius: 6 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        // Non-discriminating zone — same hint as Silence so the picker
+        // UI doesn't apply hostile-only filtering.
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let radius = match self.targeting_schema() {
+            TargetingSchema::Burst { radius } => radius,
+            _ => return Vec::new(),
+        };
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut conditions: Vec<(usize, Condition)> = Vec::new();
+        for tid in encounter.neutral_burst_targets(caster_id, point, radius) {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Darkened,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            conditions.push((tid, Condition::Darkened));
+        }
+        // Concentration-bound — registering every install on the
+        // concentration so dropping it (damage / re-cast) strips the
+        // darkness from every caught target in one sweep.
+        if !conditions.is_empty() {
+            effects.push(Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions("Darkness", conditions),
+            }));
+        }
+        effects
+    }
+}
+
+pub static DARKNESS: LazyLock<Darkness> = LazyLock::new(|| Darkness {});

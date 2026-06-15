@@ -519,6 +519,19 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::FLAME_ARROWS);
     actions.push(&*crate::actions::spells::ASHARDALONS_STRIDE);
     actions.push(&*crate::actions::spells::OTHERWORLDLY_GUISE);
+    // Latest wizard utility additions:
+    //   - lv2 **Silence**: 20ft sphere of magical hush. Anti-caster zone
+    //     that locks down enemy spellslots via `blocks_spell_slots`.
+    //   - lv2 **Darkness**: 15ft sphere of magical darkness. Concentration-
+    //     bound symmetric blind zone (holders and attackers both eat
+    //     disadvantage) — good either as a defensive shroud over allies
+    //     or an offensive blind drop over a tight enemy cluster.
+    //   - lv4 **Freedom of Movement**: ally-buff that breaks any active
+    //     Paralyzed / Restrained / Grappled install and grants dynamic
+    //     immunity for the duration.
+    actions.push(&*crate::actions::spells::SILENCE);
+    actions.push(&*crate::actions::spells::DARKNESS);
+    actions.push(&*crate::actions::spells::FREEDOM_OF_MOVEMENT);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

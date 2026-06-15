@@ -27,6 +27,21 @@ const BLANKET_RESISTANCE_CONDITIONS: &[Condition] = &[
     Condition::Petrified,
 ];
 
+/// Conditions whose presence grants damage-type immunity. Each row is
+/// `(condition, &[damage types zeroed])`. Read by
+/// `has_condition_immunity` so adding a new "condition X makes you
+/// immune to damage type Y" rider lands as a one-line entry instead of
+/// another `if dt == ... && self.has_condition(...)` branch in
+/// `effective_damage`. The Mind Blank → psychic and Silenced → thunder
+/// immunities both live here.
+const TYPED_IMMUNITY_CONDITIONS: &[(Condition, &[DamageType])] = &[
+    // 5e Mind Blank: psychic-damage immunity for the duration.
+    (Condition::MindBlanked, &[DamageType::Psychic]),
+    // 5e Silence: any creature entirely inside the silence sphere is
+    // immune to thunder damage (the magical hush absorbs sonic effects).
+    (Condition::Silenced, &[DamageType::Thunder]),
+];
+
 /// Conditions whose resistance only applies to a curated damage-type
 /// subset. Each row is `(condition, &[damage types resisted])`. Read by
 /// `has_condition_resistance` so a new Investiture-style buff lands as a
@@ -1295,8 +1310,12 @@ impl ActorInstance {
         if matches!(modifier, Some(DamageModifier::Immunity)) {
             return 0;
         }
-        // 5e Mind Blank: psychic-damage immunity for the duration.
-        if dt == DamageType::Psychic && self.has_condition(Condition::MindBlanked) {
+        // Condition-driven typed immunity (Mind Blank → Psychic, Silenced
+        // → Thunder, future entries). Table-driven via
+        // `TYPED_IMMUNITY_CONDITIONS` so adding a new immunity rider is a
+        // one-line tuple instead of another `if dt == ... && ...` branch
+        // here. Mirrors the `TYPED_RESISTANCE_CONDITIONS` cohort.
+        if self.has_condition_immunity(dt) {
             return 0;
         }
         // Item-granted immunity (Periapt of Proof against Poison →
@@ -1339,6 +1358,17 @@ impl ActorInstance {
             amt /= 2;
         }
         amt
+    }
+
+    /// True iff the actor holds a condition that grants outright immunity
+    /// to damage of type `dt`. Walks `TYPED_IMMUNITY_CONDITIONS` — each
+    /// row pairs a condition with the damage types it zeroes. Currently
+    /// covers Mind Blank (psychic) and Silence (thunder); a new immunity
+    /// rider adds a one-line tuple entry.
+    pub fn has_condition_immunity(&self, dt: DamageType) -> bool {
+        TYPED_IMMUNITY_CONDITIONS
+            .iter()
+            .any(|(c, types)| self.has_condition(*c) && types.contains(&dt))
     }
 
     /// True iff the actor holds a condition that grants resistance to
@@ -1534,6 +1564,13 @@ impl ActorInstance {
             Condition::Poisoned => {
                 self.has_condition(Condition::Purified)
                     || self.has_condition(Condition::OtherworldlyGuised)
+            }
+            // 5e Freedom of Movement: holders are immune to magical
+            // movement restraint. Mirrors the Ring of Free Action item
+            // immunity (which goes through `item_immunity_to` instead),
+            // but condition-driven so concentration / dispel can rip it.
+            Condition::Paralyzed | Condition::Restrained | Condition::Grappled => {
+                self.has_condition(Condition::Footloose)
             }
             _ => false,
         }
@@ -1785,6 +1822,15 @@ impl ActorInstance {
             }
             Resource::SpellSlot(spell_lvl) => {
                 if action_blocked {
+                    return false;
+                }
+                // 5e Silence: holders inside the magical-silence sphere
+                // can't cast spells with verbal components (RAW). We
+                // approximate by blocking *all* leveled spells, since
+                // every leveled SRD spell has a V component by default
+                // and the few S-only outliers are non-combat utility.
+                // Cantrips are unaffected (no SpellSlot cost).
+                if self.conditions.keys().any(|c| c.blocks_spell_slots()) {
                     return false;
                 }
                 self.spell_slot_manager.spell_slots(spell_lvl).spell_slots >= 1

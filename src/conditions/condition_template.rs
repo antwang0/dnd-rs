@@ -1118,6 +1118,46 @@ pub enum Condition {
     /// damages adjacent enemies, not the mover. Concentration-bound on the
     /// caster; dropping concentration drops the buff. Joins `is_dispellable_buff`.
     AshardalonStriding,
+    /// Silenced (5e Silence spell, level-2 illusion, no concentration). A
+    /// 20ft sphere of magical silence covers the holder: no sound is made
+    /// inside, so the holder cannot cast any spell that has a verbal
+    /// component. We approximate the "no V-component spells" RAW clause by
+    /// blocking SpellSlot resource consumption — all leveled spells in
+    /// 5e have V components by default, and the few S-only spells in the
+    /// SRD are utility / out-of-combat (Find Familiar, Identify) so the
+    /// collapse is faithful for combat. Cantrips are unaffected (no slot
+    /// cost). Holders are also immune to thunder damage (the magical
+    /// silence absorbs sonic effects) — folded into `effective_damage` via
+    /// the condition lane. Tracked as a condition with a flat `Rounds(10)`
+    /// timer (1 minute RAW); the spell installs on every actor caught in
+    /// the burst at cast time. Distinct from `Deafened` (no spellcasting
+    /// gate; the caster just can't hear).
+    Silenced,
+    /// Free of bodily restraint (5e Freedom of Movement, level-4
+    /// abjuration). The target ignores difficult terrain and is dynamically
+    /// immune to Paralyzed / Restrained / Grappled installs (gated in
+    /// `dynamic_immunity_to`, same chokepoint as Heroic / MindBlanked).
+    /// The spell also frees the target from any active install of those
+    /// three conditions at cast time — the install side-effect issues
+    /// RemoveCondition for each. RAW: 1 hour, no concentration. We install
+    /// with a `Rounds(100)` timer so it lasts for any plausible encounter.
+    /// Joins `is_dispellable_buff` so Dispel Magic can rip the buff cleanly.
+    Footloose,
+    /// Darkened (5e Darkness spell, level-2 evocation). The holder is
+    /// inside a 15-foot magical-darkness sphere: they cannot see, and
+    /// nothing outside the sphere can see them. We approximate by
+    /// blanket-imposing disadvantage on the holder's attacks (joins
+    /// `imposes_attacker_disadvantage` — they're swinging blind) AND
+    /// imposing disadvantage on attackers targeting the holder (joins
+    /// `imposes_disadvantage_to_attackers` — the darkness shields them
+    /// too). Collapses the "you can't see / they can't see you" envelope
+    /// from RAW into a symmetric attack-mode penalty, mirroring how
+    /// `Blinded` handles a single-target sight loss. Distinct from
+    /// `Blinded` so cleanse pickers / dispel sweeps target just the
+    /// Darkness install. Concentration-bound on the caster; dropping
+    /// concentration ends the sphere and strips the flag from every
+    /// target caught in the initial burst.
+    Darkened,
     /// Otherworldly-Guised (5e Tasha's Otherworldly Guise, level-6
     /// transmutation, concentration). The caster shifts into a
     /// celestial-style form: they gain +2 AC (read by
@@ -1281,6 +1321,9 @@ impl Condition {
             Condition::FlamingArrowed => "wielding flame arrows",
             Condition::AshardalonStriding => "striding with elemental power",
             Condition::OtherworldlyGuised => "guised in otherworldly form",
+            Condition::Silenced => "silenced",
+            Condition::Footloose => "moving freely",
+            Condition::Darkened => "shrouded in darkness",
         }
     }
 
@@ -1374,6 +1417,7 @@ impl Condition {
                 | Condition::FlamingArrowed
                 | Condition::AshardalonStriding
                 | Condition::OtherworldlyGuised
+                | Condition::Footloose
         )
     }
 
@@ -1524,6 +1568,7 @@ impl Condition {
                 | Condition::EarthenGrasped
                 | Condition::Disarmed
                 | Condition::WaterSphered
+                | Condition::Darkened
         )
     }
 
@@ -1586,6 +1631,7 @@ impl Condition {
                 | Condition::Foreseen
                 | Condition::Untracked
                 | Condition::Displaced
+                | Condition::Darkened
         )
     }
 
@@ -1623,6 +1669,15 @@ impl Condition {
                 | Condition::Sphered
                 | Condition::Dominated
         )
+    }
+
+    /// True if the holder cannot consume any SpellSlot resource while
+    /// this condition is up. The canonical case is `Silenced` (5e
+    /// Silence spell): no verbal components means no leveled spells.
+    /// Read by `can_consume_resource`'s SpellSlot gate alongside the
+    /// action-blocked check. Cantrips (no slot cost) are unaffected.
+    pub fn blocks_spell_slots(&self) -> bool {
+        matches!(self, Condition::Silenced)
     }
 
     /// True if the holder auto-fails STR and DEX saving throws.

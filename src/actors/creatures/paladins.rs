@@ -97,6 +97,16 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // case: clear Hold Person / Charm / Fear off an ally without burning
     // a Greater Restoration slot.
     actions.push(&*CLEANSING_TOUCH);
+    // Latest paladin additions:
+    //   - lv4 **Freedom of Movement**: touch ally-buff that strips active
+    //     Paralyzed / Restrained / Grappled installs AND grants dynamic
+    //     immunity for the duration. Slots cleanly into the paladin's
+    //     touch-cleanse / touch-support kit alongside Lay on Hands.
+    //   - lv5 **Raise Dead**: touch revive a dying ally to 1 HP — the
+    //     paladin's high-tier panic option, costlier than Revivify but
+    //     usable when only level-5 slots remain.
+    actions.push(&*crate::actions::spells::FREEDOM_OF_MOVEMENT);
+    actions.push(&*crate::actions::spells::RAISE_DEAD);
     CreatureTemplate {
         name: "Paladin",
         glyph: 'P',

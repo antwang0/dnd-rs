@@ -260,6 +260,12 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     the druid's wild-shape repositioning flavor; mirrors the
     //     wizard / sorcerer additions on the same spell.
     actions.push(&*crate::actions::spells::ASHARDALONS_STRIDE);
+    // Latest druid additions: lv4 Freedom of Movement (ally-buff
+    // restraint cleanse + immunity) and lv2 Darkness (concentration
+    // symmetric-blind zone). Both are druid SRD staples that pair with
+    // the wild-shape / Entangle control kit.
+    actions.push(&*crate::actions::spells::FREEDOM_OF_MOVEMENT);
+    actions.push(&*crate::actions::spells::DARKNESS);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

@@ -165,6 +165,21 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     a CON-save lane bites a different stat profile.
     actions.push(&*crate::actions::spells::ENHANCE_ABILITY);
     actions.push(&*crate::actions::spells::CONTAGION);
+    // Latest cleric utility additions:
+    //   - lv2 **Silence**: 20ft sphere of magical silence. Locks down
+    //     enemy spellcasters caught in the burst (verbal-component proxy
+    //     via the SpellSlot gate) and grants thunder-damage immunity to
+    //     everyone inside. The cleric's anti-caster zone option.
+    //   - lv4 **Freedom of Movement**: ally-buff that grants dynamic
+    //     immunity to Paralyzed / Restrained / Grappled AND strips any
+    //     active install of those three. Pairs with the cleric's
+    //     frontline-support kit alongside Aid / Aura of Purity.
+    //   - lv5 **Raise Dead**: touch revive a dying ally to 1 HP. Slots
+    //     between Revivify (lv3) and Resurrection (lv7) — same touch
+    //     envelope, higher slot, no cleanse rider.
+    actions.push(&*crate::actions::spells::SILENCE);
+    actions.push(&*crate::actions::spells::FREEDOM_OF_MOVEMENT);
+    actions.push(&*crate::actions::spells::RAISE_DEAD);
     // Preserve Life — Cleric Channel Divinity (Life Domain in RAW; we
     // expose it generically here). Once per short rest pool of 5 × level
     // HP, healing the most-wounded allies first up to half max HP each.

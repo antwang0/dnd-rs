@@ -88,6 +88,11 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // the bard's lv2 lane — complements the bard's existing crowd-control
     // toolkit (Hold Person, Suggestion) with a typed-damage option.
     actions.push(&*crate::actions::spells::PYROTECHNICS);
+    // Latest bard utility additions: lv2 Silence (illusion zone that
+    // shuts down rival casters — a bard's signature anti-magic option)
+    // and lv4 Freedom of Movement (ally-buff restraint cleanse).
+    actions.push(&*crate::actions::spells::SILENCE);
+    actions.push(&*crate::actions::spells::FREEDOM_OF_MOVEMENT);
     CreatureTemplate {
         name: "Bard",
         glyph: 'B',

@@ -40005,4 +40005,305 @@ mod tests {
             "FlamingArrowed should persist across melee swings (ranged-only rider)"
         );
     }
+
+    /// Silence — non-discriminating burst installs the `Silenced`
+    /// condition on every actor caught in the radius (except the caster
+    /// per `neutral_burst_targets` semantics — though caster is also
+    /// excluded RAW so this matches the spell).
+    #[test]
+    fn silence_installs_silenced_on_burst_targets() {
+        use crate::actions::spells::SILENCE;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 6), 1, 0)
+            .unwrap();
+        let pt = vec![Coordinate::new(6, 6)];
+        let effs = SILENCE.side_effects(&mut e, cleric, None, Some(&pt), None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&enemy].has_condition(Condition::Silenced),
+            "Silence installs Silenced on a burst target"
+        );
+    }
+
+    /// Silence blocks SpellSlot resource consumption — a Silenced actor
+    /// can't burn a leveled spell slot regardless of whether they have
+    /// one available. Cantrips (no slot cost) are unaffected.
+    #[test]
+    fn silenced_actor_cannot_consume_spell_slot() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&cleric].can_consume_resource(crate::engine::side_effects::Resource::SpellSlot(1)),
+            "baseline: cleric has level-1 slots"
+        );
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .add_condition(Condition::Silenced, crate::conditions::ConditionTimer::Rounds(10));
+        assert!(
+            !e.actors[&cleric].can_consume_resource(crate::engine::side_effects::Resource::SpellSlot(1)),
+            "Silenced should block SpellSlot consumption"
+        );
+        // Actions / movement are still allowed (Silence doesn't gate
+        // the action lane — only verbal-component spells).
+        assert!(
+            e.actors[&cleric].can_consume_resource(crate::engine::side_effects::Resource::Action),
+            "Silenced should not block Action consumption"
+        );
+    }
+
+    /// Silenced actors are immune to thunder damage (RAW: the magical
+    /// silence absorbs sonic effects).
+    #[test]
+    fn silenced_actor_immune_to_thunder() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&cleric].effective_damage(10, DamageType::Thunder) > 0,
+            "baseline: cleric takes thunder damage"
+        );
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .add_condition(Condition::Silenced, crate::conditions::ConditionTimer::Rounds(10));
+        assert_eq!(
+            e.actors[&cleric].effective_damage(10, DamageType::Thunder),
+            0,
+            "Silenced makes thunder damage zero"
+        );
+        // Other damage types are unaffected.
+        assert!(
+            e.actors[&cleric].effective_damage(10, DamageType::Fire) > 0,
+            "Silenced does not affect non-thunder damage"
+        );
+    }
+
+    /// Freedom of Movement: ally-buff cast installs `Footloose` and
+    /// strips any active Paralyzed / Restrained / Grappled installs.
+    #[test]
+    fn freedom_of_movement_strips_restraints_and_grants_immunity() {
+        use crate::actions::spells::FREEDOM_OF_MOVEMENT;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        // Pre-install Restrained on the ally — Freedom of Movement
+        // should strip it at cast time.
+        e.actors
+            .get_mut(&ally)
+            .unwrap()
+            .add_condition(Condition::Restrained, crate::conditions::ConditionTimer::Rounds(5));
+        let tv = vec![ally];
+        let effs = FREEDOM_OF_MOVEMENT.side_effects(&mut e, cleric, Some(&tv), None, None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&ally].has_condition(Condition::Footloose),
+            "Freedom of Movement installs the Footloose marker"
+        );
+        assert!(
+            !e.actors[&ally].has_condition(Condition::Restrained),
+            "Freedom of Movement strips active Restrained install"
+        );
+        // Dynamic immunity: a fresh Paralyzed install should bounce.
+        e.actors
+            .get_mut(&ally)
+            .unwrap()
+            .add_condition(Condition::Paralyzed, crate::conditions::ConditionTimer::Rounds(5));
+        assert!(
+            !e.actors[&ally].has_condition(Condition::Paralyzed),
+            "Footloose grants dynamic immunity to Paralyzed installs"
+        );
+    }
+
+    /// Freedom of Movement won't buff a hostile target. Mirrors the
+    /// Enhance Ability / Aid hostile-target rejection.
+    #[test]
+    fn freedom_of_movement_rejects_hostile_target() {
+        use crate::actions::spells::FREEDOM_OF_MOVEMENT;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        let tv = vec![enemy];
+        let effs = FREEDOM_OF_MOVEMENT.side_effects(&mut e, cleric, Some(&tv), None, None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&enemy].has_condition(Condition::Footloose),
+            "Freedom of Movement must not buff a hostile target"
+        );
+    }
+
+    /// Raise Dead: cast on a dying ally revives them to 1 HP. Validate
+    /// gates on `is_dying` — a healthy target rejects the cast.
+    #[test]
+    fn raise_dead_revives_dying_ally_to_1_hp() {
+        use crate::actions::spells::RAISE_DEAD;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        // Knock the ally to dying via a massive damage hit.
+        let max_hp = e.actors[&ally].max_hitpoints();
+        e.actors.get_mut(&ally).unwrap().take_damage(max_hp);
+        assert!(
+            e.actors[&ally].is_dying(),
+            "ally should be dying after massive damage"
+        );
+        let tv = vec![ally];
+        assert!(
+            RAISE_DEAD.validate_input(&e, cleric, Some(&tv), None, None),
+            "Raise Dead should validate on a dying ally"
+        );
+        let effs = RAISE_DEAD.side_effects(&mut e, cleric, Some(&tv), None, None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&ally].is_dying(),
+            "Raise Dead pulls the ally out of dying"
+        );
+        assert_eq!(
+            e.actors[&ally].hitpoints(),
+            1,
+            "Raise Dead restores to 1 HP (Revivify-style floor)"
+        );
+    }
+
+    /// Raise Dead rejects a healthy target — slot-burning Cure Wounds
+    /// would be the wrong tool. Mirrors True Resurrection's gate.
+    #[test]
+    fn raise_dead_rejects_healthy_target() {
+        use crate::actions::spells::RAISE_DEAD;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        let tv = vec![ally];
+        assert!(
+            !RAISE_DEAD.validate_input(&e, cleric, Some(&tv), None, None),
+            "Raise Dead must reject a healthy target"
+        );
+    }
+
+    /// Darkened actors swing with disadvantage AND attackers targeting
+    /// them get disadvantage too. Mirrors `Blinded`'s symmetric
+    /// envelope but distinct so cleanse / dispel sweeps can target just
+    /// the Darkness install.
+    #[test]
+    fn darkened_actor_swings_and_is_attacked_at_disadvantage() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::encounter::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        // Baseline: a non-Darkened attacker rolls normally.
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Normal,
+            "baseline attack mode is Normal"
+        );
+        // Attacker-side Darkened → disadvantage on swings.
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Darkened, crate::conditions::ConditionTimer::Rounds(10));
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage,
+            "Darkened attacker swings with disadvantage"
+        );
+        // Clear and test target-side Darkened.
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .remove_condition(Condition::Darkened);
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Darkened, crate::conditions::ConditionTimer::Rounds(10));
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage,
+            "attacks against a Darkened target also have disadvantage"
+        );
+    }
+
+    /// Darkness: concentration-bound burst installs the `Darkened`
+    /// condition on every actor caught in the radius. Dropping
+    /// concentration strips the install from every caught target.
+    #[test]
+    fn darkness_installs_darkened_under_concentration() {
+        use crate::actions::spells::DARKNESS;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 6), 1, 0)
+            .unwrap();
+        let pt = vec![Coordinate::new(6, 6)];
+        let effs = DARKNESS.side_effects(&mut e, wiz, None, Some(&pt), None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&enemy].has_condition(Condition::Darkened),
+            "Darkness installs Darkened on a burst target"
+        );
+        assert!(
+            e.actors[&wiz].is_concentrating(),
+            "Darkness is concentration-bound"
+        );
+        e.drop_concentration(wiz);
+        assert!(
+            !e.actors[&enemy].has_condition(Condition::Darkened),
+            "Dropping concentration strips Darkened from caught targets"
+        );
+    }
 }

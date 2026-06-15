@@ -75,6 +75,14 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // for the duration. Mirrors Hunter's Mark's per-hit rider envelope
     // but typed (fire) and gated to ranged.
     actions.push(&*crate::actions::spells::FLAME_ARROWS);
+    // Latest ranger additions:
+    //   - lv2 **Silence**: ranger SRD lv2 staple; perfect for shutting
+    //     down enemy spellcasters from sniping range.
+    //   - lv4 **Freedom of Movement**: ranger SRD lv4 staple; ally-buff
+    //     that breaks Paralyzed / Restrained / Grappled installs and
+    //     locks out future ones for the duration.
+    actions.push(&*crate::actions::spells::SILENCE);
+    actions.push(&*crate::actions::spells::FREEDOM_OF_MOVEMENT);
     CreatureTemplate {
         name: "Ranger",
         glyph: 'R',
