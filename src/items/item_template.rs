@@ -2498,6 +2498,19 @@ pub static SCROLL_OF_BESTOW_CURSE: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Scroll of Conjure Animals — Action; summons two spectral wolves on
+/// the caster's team adjacent to them. Concentration-bound; dropping
+/// concentration despawns the cohort via the shared `Conjured` cleanup
+/// path. Surfaces the CONJURE_ANIMALS spell envelope as a consumable
+/// for non-druid loot drops — distinct from Animate Dead's permanent
+/// skeleton minion in that the wolves vanish when the spell ends.
+pub static SCROLL_OF_CONJURE_ANIMALS: Item = Item {
+    name: "Scroll of Conjure Animals",
+    glyph: '0',
+    on_use: Some(&crate::actions::item_actions::READ_CONJURE_ANIMALS_SCROLL),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -3085,4 +3098,11 @@ pub static LOOT_POOL: &[&Item] = &[
     // WIS DC 15 tier. Sibling to Scroll of Bane (burst DC 13) on the
     // Baned lane.
     &SCROLL_OF_BESTOW_CURSE,
+    // Scroll of Conjure Animals — summons two spectral wolves adjacent
+    // to the reader, concentration-bound. The first action-economy
+    // multiplier in the consumable loot pool — every other consumable
+    // pays a single one-shot effect; this one adds two attacker bodies
+    // to the caster's team for the rest of the concentration window.
+    // Single low-weight entry.
+    &SCROLL_OF_CONJURE_ANIMALS,
 ];

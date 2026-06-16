@@ -532,6 +532,14 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::SILENCE);
     actions.push(&*crate::actions::spells::DARKNESS);
     actions.push(&*crate::actions::spells::FREEDOM_OF_MOVEMENT);
+    // lv5 **Conjure Elemental** (conjuration): summon a single Large fire
+    // elemental ally adjacent to the caster, concentration-bound. Fills
+    // the wizard's lv5 summon slot — the wizard's existing lv5 lane
+    // already has Cone of Cold (burst) and Hold Monster (single-target
+    // lockdown); the elemental adds an action-economy multiplier in the
+    // same tier. Despawns via the shared `Conjured` cleanup path when
+    // concentration drops.
+    actions.push(&*crate::actions::spells::CONJURE_ELEMENTAL);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

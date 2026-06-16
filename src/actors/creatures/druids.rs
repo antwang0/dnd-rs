@@ -266,6 +266,13 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // the wild-shape / Entangle control kit.
     actions.push(&*crate::actions::spells::FREEDOM_OF_MOVEMENT);
     actions.push(&*crate::actions::spells::DARKNESS);
+    // lv5 **Conjure Elemental** (conjuration): summon a single Large fire
+    // elemental ally adjacent to the caster, concentration-bound. Sibling
+    // to Conjure Animals (lv3, 2× wolves) on the druid's summon lane —
+    // higher slot for a single bigger minion with fire immunity and
+    // resistance to non-magical physical damage. Dropping concentration
+    // despawns the elemental via the shared `Conjured` cleanup path.
+    actions.push(&*crate::actions::spells::CONJURE_ELEMENTAL);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

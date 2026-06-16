@@ -751,6 +751,100 @@ fn ally_aura_concentration_effects(
     effects
 }
 
+/// Spawn up to `max_count` instances of `template` on free anchors
+/// adjacent to the caster's footprint, joining the caster's team. Each
+/// successful spawn is logged through the standard "<spell>: a <name>
+/// appears at <coord> (actor #<id>)" line. Returns the list of new
+/// actor ids in spawn order — empty when the caster has vanished or the
+/// arena has no legal adjacent slot.
+///
+/// Factor for the recurring summon-adjacent pattern: previously each
+/// summoning spell (Animate Dead, Conjure Animals) re-inlined the
+/// team-lookup → find_adjacent_spawn → instantiate_creature → log
+/// chain. The shared helper keeps the spawn cap, search radius, and
+/// failure-mode logging consistent across every summon spell — and
+/// gives Conjure Elemental (and any future "summon N adjacent
+/// creatures of size S") a one-line entry point.
+///
+/// `search_radius` widens the find_adjacent_spawn ring after the first
+/// successful spawn (each new minion occupies its anchor, so later
+/// spawns need a slightly wider search to find an open slot). The
+/// caller passes the same value used by their RAW envelope — Conjure
+/// Animals uses radius 3 for the 30 ft RAW range; Animate Dead uses
+/// radius 2 for the touch-range envelope.
+#[allow(clippy::too_many_arguments)]
+fn spawn_adjacent_summons(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    template: &'static crate::actors::actor_template::CreatureTemplate,
+    size: crate::engine::types::Size,
+    max_count: usize,
+    search_radius: isize,
+    base_instance_id: usize,
+    spell_label: &str,
+) -> Vec<usize> {
+    let team = match encounter.actors.get(&caster_id) {
+        Some(c) => c.team(),
+        None => return Vec::new(),
+    };
+    let mut spawned: Vec<usize> = Vec::new();
+    for _ in 0..max_count {
+        let Some(anchor) = encounter.find_adjacent_spawn(caster_id, size, search_radius) else {
+            break;
+        };
+        match encounter.instantiate_creature(template, anchor, team, base_instance_id + spawned.len())
+        {
+            Ok(new_id) => {
+                encounter.log(format!(
+                    "  {}: a {} appears at {} (actor #{})",
+                    spell_label,
+                    template.name.to_lowercase(),
+                    anchor,
+                    new_id
+                ));
+                spawned.push(new_id);
+            }
+            Err(e) => {
+                encounter.log(format!("  {} failed: {}", spell_label, e));
+                break;
+            }
+        }
+    }
+    spawned
+}
+
+/// Build the concentration-tag effects for a freshly spawned summon
+/// cohort. Each id picks up the `Conjured` marker (long timer — the
+/// concentration anchor is what actually controls duration), and the
+/// caster takes a single `StartConcentration` anchored to the full
+/// list. Dropping concentration runs through the engine's
+/// `Condition::Conjured` cleanup path, which despawns every conjured
+/// minion via `despawn_actor` rather than just stripping the flag.
+///
+/// Caller is expected to skip this when `spawned` is empty — a no-op
+/// summon shouldn't burn the caster's concentration slot.
+fn conjured_summon_concentration_effects(
+    caster_id: usize,
+    spawned: &[usize],
+    spell_name: &'static str,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+    let mut tags = Vec::new();
+    for id in spawned {
+        effects.push(Box::new(ApplyCondition {
+            actor_id: *id,
+            condition: Condition::Conjured,
+            timer: ConditionTimer::Rounds(100),
+        }));
+        tags.push((*id, Condition::Conjured));
+    }
+    effects.push(Box::new(StartConcentration {
+        caster_id,
+        data: ConcentrationData::with_conditions(spell_name, tags),
+    }));
+    effects
+}
+
 /// Single-target "save-or-condition with concentration" install. Routes the
 /// save through `roll_save_against_caster` so Heightened Spell metamagic
 /// can force disadvantage; on pass returns an empty effect list (the
@@ -12002,22 +12096,22 @@ impl Action for AnimateDead {
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
 
-        let team = match encounter.actors.get(&caster_id) {
-            Some(c) => c.team(),
-            None => return Vec::new(),
-        };
-        let Some(spawn) =
-            encounter.find_adjacent_spawn(caster_id, crate::engine::types::Size::Medium, 2)
-        else {
-            return Vec::new();
-        };
-        match encounter.instantiate_creature(&SKELETON_TEMPLATE, spawn, team, 99) {
-            Ok(new_id) => encounter.log(format!(
-                "  animate dead: raises a skeleton minion at {} (actor #{})",
-                spawn, new_id
-            )),
-            Err(e) => encounter.log(format!("  animate dead failed: {}", e)),
-        }
+        // Single skeleton minion at touch range. Routes through the
+        // shared `spawn_adjacent_summons` helper so the team-lookup,
+        // find_adjacent_spawn search, instantiate + log chain stays
+        // consistent with Conjure Animals / Conjure Elemental. Animate
+        // Dead doesn't use concentration so the minion is permanent for
+        // the encounter and gets no `Conjured` tag.
+        spawn_adjacent_summons(
+            encounter,
+            caster_id,
+            &SKELETON_TEMPLATE,
+            crate::engine::types::Size::Medium,
+            1,
+            2,
+            99,
+            "animate dead",
+        );
         Vec::new()
     }
 }
@@ -13356,57 +13450,117 @@ impl Action for ConjureAnimals {
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::actors::creatures::wolves::WOLF_TEMPLATE;
 
-        let team = match encounter.actors.get(&caster_id) {
-            Some(c) => c.team(),
-            None => return Vec::new(),
-        };
-        // Spawn up to two wolves on free adjacent slots — find one,
-        // spawn it (it occupies its slot), then look for the next slot.
-        let mut spawned: Vec<usize> = Vec::new();
-        for _ in 0..2 {
-            let Some(anchor) = encounter
-                .find_adjacent_spawn(caster_id, crate::engine::types::Size::Medium, 3)
-            else {
-                break;
-            };
-            match encounter.instantiate_creature(&WOLF_TEMPLATE, anchor, team, 90 + spawned.len()) {
-                Ok(new_id) => {
-                    encounter.log(format!(
-                        "  conjure animals: a spectral wolf appears at {} (actor #{})",
-                        anchor, new_id
-                    ));
-                    spawned.push(new_id);
-                }
-                Err(e) => {
-                    encounter.log(format!("  conjure animals failed: {}", e));
-                    break;
-                }
-            }
-        }
+        // Two spectral wolves on free adjacent slots (radius 3 — RAW
+        // 30 ft envelope). Shared summon helper handles team lookup,
+        // adjacent-spawn search, instantiate + log chain.
+        let spawned = spawn_adjacent_summons(
+            encounter,
+            caster_id,
+            &WOLF_TEMPLATE,
+            crate::engine::types::Size::Medium,
+            2,
+            3,
+            90,
+            "conjure animals",
+        );
         if spawned.is_empty() {
             return Vec::new();
         }
-        // Tag each wolf with the Conjured condition so the engine's
-        // concentration drop can prune them, then start concentration.
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        let mut tags = Vec::new();
-        for id in &spawned {
-            effects.push(Box::new(ApplyCondition {
-                actor_id: *id,
-                condition: Condition::Conjured,
-                timer: ConditionTimer::Rounds(100),
-            }));
-            tags.push((*id, Condition::Conjured));
-        }
-        effects.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::with_conditions("Conjure Animals", tags),
-        }));
-        effects
+        conjured_summon_concentration_effects(caster_id, &spawned, "Conjure Animals")
     }
 }
 
 pub static CONJURE_ANIMALS: LazyLock<ConjureAnimals> = LazyLock::new(|| ConjureAnimals {});
+
+/// Conjure Elemental — 5e level-5 conjuration, concentration, action.
+/// The caster summons a single Large elemental ally. RAW lets the caster
+/// pick an element matching nearby terrain (water, fire, air, earth); the
+/// engine collapses this to a single Fire Elemental conjuration since
+/// the FIRE_ELEMENTAL_TEMPLATE already sits in the live creature pool
+/// and its melee touch + Burning rider matches the spell's "destructive
+/// elemental ally" feel.
+///
+/// Sibling to Conjure Animals (lv3, 2× Medium wolves) on the summon
+/// lane — Conjure Elemental costs a higher slot for a single
+/// CR-5 Large minion with fire immunity / poison immunity and
+/// resistance to non-magical physical damage. The Conjured-on-drop
+/// despawn path (added in `drop_concentration`) cleans up the
+/// elemental when the caster's concentration ends. Touch range RAW —
+/// the elemental appears in an unoccupied space within 90 ft RAW; we
+/// reuse the same adjacent-spawn search the rest of the summon family
+/// uses, search radius widened to 4 to accommodate the Large
+/// footprint.
+pub struct ConjureElemental {}
+
+impl Action for ConjureElemental {
+    fn name(&self) -> &str {
+        "conjure elemental"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["conjure-elem", "ce"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Need a free Large (4-tile) slot adjacent to the caster.
+        encounter
+            .find_adjacent_spawn(caster_id, crate::engine::types::Size::Large, 4)
+            .is_some()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actors::creatures::fire_elementals::FIRE_ELEMENTAL_TEMPLATE;
+
+        // Single Large elemental ally. Shared summon helper handles
+        // team lookup, adjacent-spawn search, instantiate + log.
+        let spawned = spawn_adjacent_summons(
+            encounter,
+            caster_id,
+            &FIRE_ELEMENTAL_TEMPLATE,
+            crate::engine::types::Size::Large,
+            1,
+            4,
+            80,
+            "conjure elemental",
+        );
+        if spawned.is_empty() {
+            return Vec::new();
+        }
+        conjured_summon_concentration_effects(caster_id, &spawned, "Conjure Elemental")
+    }
+}
+
+pub static CONJURE_ELEMENTAL: LazyLock<ConjureElemental> = LazyLock::new(|| ConjureElemental {});
 
 /// Power Word Pain — 5e level-7 enchantment, action. Single target;
 /// no save, no attack roll — but the spell only takes effect if the

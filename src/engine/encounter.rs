@@ -3698,6 +3698,16 @@ impl EncounterInstance {
             actor_name, spell_name
         ));
         for (target_id, condition) in data.conditions {
+            // 5e Conjure Animals / Conjure Elemental cleanup: the
+            // summoned minion holds the `Conjured` flag, and dropping
+            // concentration dispels it outright (the spell ends). Vanish
+            // the actor instead of just stripping the marker — leaving
+            // them around as a free-team-member would warp the encounter
+            // balance after the spell drops.
+            if condition == Condition::Conjured {
+                self.despawn_actor(target_id, "vanishes as the conjuration ends");
+                continue;
+            }
             let Some(target) = self.actors.get_mut(&target_id) else {
                 continue;
             };
@@ -4256,6 +4266,33 @@ impl EncounterInstance {
             .collect();
         for id in dead {
             self.remove_actor(id);
+        }
+    }
+
+    /// Remove an actor from the world *without* awarding XP or rolling
+    /// loot, then write a custom log line ("vanishes", "is dispelled",
+    /// etc.). Used by summon-cleanup paths (Conjure Animals / Elemental
+    /// concentration drop) where the minion isn't really dying — it's
+    /// being unsummoned, so the kill rewards lane shouldn't fire.
+    ///
+    /// Carried items are intentionally dropped on the despawn tile so a
+    /// minion that picked something up mid-fight doesn't void the loot
+    /// silently — matches the `remove_actor` policy for the same reason.
+    pub fn despawn_actor(&mut self, id: usize, log_verb: &str) {
+        let Some(actor) = self.actors.remove(&id) else {
+            return;
+        };
+        self.log(format!("{} {}.", actor.name(), log_verb));
+        let size = actor.size();
+        let loc = actor.location();
+        let carried: Vec<&'static crate::items::item_template::Item> =
+            actor.items().to_vec();
+        drop(actor);
+        self.write_footprint(None, loc, size);
+        self.initiative_tracker.remove_actor(id);
+        for item in carried {
+            self.drop_item(loc, item);
+            self.log(format!("  drops {}.", item.name));
         }
     }
 
@@ -24710,6 +24747,158 @@ mod tests {
         assert!(e.actors[&druid].is_concentrating());
     }
 
+    /// Dropping concentration on Conjure Animals despawns the conjured
+    /// wolves entirely (vs. just stripping the `Conjured` marker). The
+    /// engine's `drop_concentration` path routes Conjured-tagged
+    /// targets through `despawn_actor` so the summon vanishes when the
+    /// spell ends — leaving them around would warp encounter balance.
+    #[test]
+    fn conjure_animals_despawns_on_concentration_drop() {
+        use crate::actions::spells::CONJURE_ANIMALS;
+        use crate::actors::creatures::druids::DRUID_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let druid = e
+            .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let before = e.actors.len();
+        let effects = CONJURE_ANIMALS.side_effects(&mut e, druid, None, None, None);
+        for x in effects {
+            x.apply(&mut e);
+        }
+        assert_eq!(e.actors.len(), before + 2, "two wolves spawned");
+        // Drop concentration — every conjured wolf should vanish.
+        e.drop_concentration(druid);
+        assert_eq!(
+            e.actors.len(),
+            before,
+            "wolves should despawn when concentration drops"
+        );
+        assert!(!e.actors[&druid].is_concentrating());
+    }
+
+    /// Conjure Elemental summons a single Large Fire Elemental on the
+    /// caster's team and installs concentration. Sibling test to
+    /// `conjure_animals_spawns_wolves_on_caster_team` — the lv5
+    /// counterpart on the summon lane.
+    #[test]
+    fn conjure_elemental_spawns_fire_elemental_on_caster_team() {
+        use crate::actions::spells::CONJURE_ELEMENTAL;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let team = e.actors[&wizard].team();
+        let before = e.actors.len();
+        let effects = CONJURE_ELEMENTAL.side_effects(&mut e, wizard, None, None, None);
+        for x in effects {
+            x.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors.len(),
+            before + 1,
+            "expected one conjured fire elemental"
+        );
+        let mut conjured = 0;
+        for (id, a) in e.actors.iter() {
+            if *id == wizard {
+                continue;
+            }
+            if a.has_condition(Condition::Conjured) {
+                conjured += 1;
+                assert_eq!(
+                    a.team(),
+                    team,
+                    "elemental joins the caster's team"
+                );
+                assert_eq!(a.size(), Size::Large);
+            }
+        }
+        assert_eq!(conjured, 1);
+        assert!(e.actors[&wizard].is_concentrating());
+    }
+
+    /// Concentration drop on Conjure Elemental despawns the summoned
+    /// elemental — same cleanup path as Conjure Animals.
+    #[test]
+    fn conjure_elemental_despawns_on_concentration_drop() {
+        use crate::actions::spells::CONJURE_ELEMENTAL;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let before = e.actors.len();
+        let effects = CONJURE_ELEMENTAL.side_effects(&mut e, wizard, None, None, None);
+        for x in effects {
+            x.apply(&mut e);
+        }
+        assert_eq!(e.actors.len(), before + 1);
+        e.drop_concentration(wizard);
+        assert_eq!(
+            e.actors.len(),
+            before,
+            "elemental despawns on concentration drop"
+        );
+    }
+
+    /// Conjure Elemental's validate gate fizzles when there's no room
+    /// to spawn a Large (4-tile) footprint adjacent to the caster.
+    /// Mirrors the Conjure Animals validate gate.
+    #[test]
+    fn conjure_elemental_fails_when_no_adjacent_space() {
+        use crate::actions::spells::CONJURE_ELEMENTAL;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        // 6x6 walled box around the wizard — no Large slot fits.
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        // Wall everything except the wizard's 2x2 footprint at (4,4).
+        for x in 0..10 {
+            for y in 0..10 {
+                let in_wiz = (4..=5).contains(&x) && (4..=5).contains(&y);
+                if in_wiz {
+                    continue;
+                }
+                let idx = e.idx(Coordinate::new(x, y)).unwrap();
+                e.terrain[idx].terrain_type = TerrainType::Wall;
+            }
+        }
+        assert!(
+            !CONJURE_ELEMENTAL.validate_input(&e, wizard, None, None, None),
+            "validate should fail when no adjacent Large slot is free"
+        );
+    }
+
+    /// `despawn_actor` removes an actor from the world without rolling
+    /// loot or awarding XP. Sibling of `remove_actor` (the death path)
+    /// — used by summon cleanup so a vanishing minion doesn't gift the
+    /// party a kill they didn't earn.
+    #[test]
+    fn despawn_actor_drops_carried_items_but_no_loot_or_xp() {
+        use crate::actors::creatures::wolves::WOLF_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wolf = e
+            .instantiate_creature(&WOLF_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        // PC on team 0 to receive any XP if it leaked through.
+        let _pc = e
+            .instantiate_creature(&crate::actors::creatures::wizards::WIZARD_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+            .unwrap();
+        let before = e.actors.len();
+        e.despawn_actor(wolf, "vanishes");
+        assert_eq!(
+            e.actors.len(),
+            before - 1,
+            "actor should be removed from the encounter"
+        );
+        // The dispel doesn't crash and the actor table no longer
+        // contains the despawned id.
+        assert!(e.actors.get(&wolf).is_none());
+    }
+
     /// Otto's Irresistible Dance installs Dancing on failed save and a
     /// concentration mark on the caster. We force the save to fail by
     /// stacking the dance against an actor with auto-fail-prone WIS
@@ -40783,5 +40972,55 @@ mod tests {
             saw_install,
             "Scroll of Bestow Curse should install Baned on at least one fail across seeds"
         );
+    }
+
+    /// Scroll of Conjure Animals: read by any caster, summons two
+    /// spectral wolves on the caster's team adjacent to them and starts
+    /// concentration. Mirrors the spell-side `CONJURE_ANIMALS` envelope
+    /// without needing a spell slot. Verifies the scroll is consumed
+    /// and the wolves are properly tagged.
+    #[test]
+    fn scroll_of_conjure_animals_summons_two_wolves_and_consumes_scroll() {
+        use crate::actions::item_actions::READ_CONJURE_ANIMALS_SCROLL;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_CONJURE_ANIMALS;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let team = e.actors[&fighter].team();
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_CONJURE_ANIMALS);
+        let before = e.actors.len();
+        let aei = ActionExecutionInfo::new(&READ_CONJURE_ANIMALS_SCROLL, fighter, None, None, None);
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert_eq!(
+            e.actors.len(),
+            before + 2,
+            "two wolves should spawn from the scroll"
+        );
+        assert!(
+            !e.actors[&fighter].has_item_named("Scroll of Conjure Animals"),
+            "scroll should be consumed on read"
+        );
+        let mut conjured = 0;
+        for (id, a) in e.actors.iter() {
+            if *id == fighter {
+                continue;
+            }
+            if a.has_condition(Condition::Conjured) {
+                conjured += 1;
+                assert_eq!(a.team(), team);
+            }
+        }
+        assert_eq!(conjured, 2);
+        assert!(e.actors[&fighter].is_concentrating());
+        // Dropping concentration despawns the cohort.
+        e.drop_concentration(fighter);
+        assert_eq!(e.actors.len(), before);
     }
 }

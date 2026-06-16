@@ -4646,6 +4646,7 @@ const JAVELIN_OF_LIGHTNING_NAME: &str = "Javelin of Lightning";
 const BEAD_OF_FORCE_NAME: &str = "Bead of Force";
 const SCROLL_OF_FLY_NAME: &str = "Scroll of Fly";
 const SCROLL_OF_BESTOW_CURSE_NAME: &str = "Scroll of Bestow Curse";
+const SCROLL_OF_CONJURE_ANIMALS_NAME: &str = "Scroll of Conjure Animals";
 
 /// Scroll of Pyrotechnics — Action; 1d8 fire DEX-save burst (DC 13,
 /// 2-radius / 10 ft RAW) at a point within 24 tiles (60 ft RAW). 5e RAW:
@@ -4940,3 +4941,121 @@ pub static READ_BESTOW_CURSE_SCROLL: SingleSaveConditionItem = SingleSaveConditi
     condition: Condition::Baned,
     timer: ConditionTimer::Rounds(10),
 };
+
+/// Scroll of Conjure Animals — Action; summons two spectral wolves on
+/// the caster's team adjacent to them, concentration-bound. 5e RAW:
+/// Conjure Animals is a level-3 conjuration; the scroll surfaces the
+/// same envelope without needing a slot. Validates that the caster
+/// still has at least one free adjacent slot for a Medium wolf
+/// footprint (the second wolf is best-effort). On success the scroll
+/// is consumed and the caster takes concentration tracking the
+/// `Conjured` flag on each summon — dropping concentration despawns
+/// the cohort via the shared cleanup path. Distinct from `ANIMATE_DEAD`
+/// (no concentration, skeleton team-permanent minion) in that the
+/// scroll's wolves are concentration-bound and vanish when the spell
+/// ends.
+pub static READ_CONJURE_ANIMALS_SCROLL: ReadConjureAnimalsScrollItem = ReadConjureAnimalsScrollItem {};
+
+pub struct ReadConjureAnimalsScrollItem {}
+
+impl Action for ReadConjureAnimalsScrollItem {
+    fn name(&self) -> &str {
+        "read conjure animals scroll"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["conjure scroll", "wolf scroll"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !caster_holds(encounter, caster_id, SCROLL_OF_CONJURE_ANIMALS_NAME) {
+            return false;
+        }
+        // At least one free Medium slot adjacent to the caster.
+        encounter
+            .find_adjacent_spawn(caster_id, crate::engine::types::Size::Medium, 3)
+            .is_some()
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::actors::creatures::wolves::WOLF_TEMPLATE;
+        use crate::engine::side_effects::StartConcentration;
+        if !consume_caster_item(encounter, caster_id, SCROLL_OF_CONJURE_ANIMALS_NAME) {
+            return Vec::new();
+        }
+        // Reuse the same spawn → tag → concentration path the spell-
+        // side `CONJURE_ANIMALS.side_effects` uses. The scroll fires
+        // the spell envelope without spending a slot.
+        let team = match encounter.actors.get(&caster_id) {
+            Some(c) => c.team(),
+            None => return Vec::new(),
+        };
+        let mut spawned: Vec<usize> = Vec::new();
+        for _ in 0..2 {
+            let Some(anchor) = encounter
+                .find_adjacent_spawn(caster_id, crate::engine::types::Size::Medium, 3)
+            else {
+                break;
+            };
+            match encounter.instantiate_creature(&WOLF_TEMPLATE, anchor, team, 90 + spawned.len())
+            {
+                Ok(new_id) => {
+                    encounter.log(format!(
+                        "  scroll of conjure animals: a spectral wolf appears at {} (actor #{})",
+                        anchor, new_id
+                    ));
+                    spawned.push(new_id);
+                }
+                Err(e) => {
+                    encounter.log(format!("  scroll of conjure animals failed: {}", e));
+                    break;
+                }
+            }
+        }
+        if spawned.is_empty() {
+            return Vec::new();
+        }
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let mut tags = Vec::new();
+        for id in &spawned {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: *id,
+                condition: Condition::Conjured,
+                timer: ConditionTimer::Rounds(100),
+            }));
+            tags.push((*id, Condition::Conjured));
+        }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Scroll of Conjure Animals", tags),
+        }));
+        effects
+    }
+}
