@@ -3353,307 +3353,200 @@ impl Action for GelatinousCubeEngulf {
 pub static GELATINOUS_CUBE_ENGULF: LazyLock<GelatinousCubeEngulf> =
     LazyLock::new(|| GelatinousCubeEngulf {});
 
+/// Generic burst breath weapon — the data-only Action behind every
+/// "Recharge 5-6: cone/area of damage type X, save Y for half" creature
+/// ability in the engine. Each instance carries its own name, alias
+/// table, damage roll, damage type, save ability, DC, burst radius, max
+/// range, and recharge-pool key, so adding a new breath (Behir's
+/// lightning line, a Wyvern's poison cone, a future hydra breath, etc.)
+/// is a single static declaration rather than a fresh struct + 60-line
+/// Action impl pair.
+///
+/// Replaces the four near-identical `DragonBreath{Fire,Cold,Lightning,
+/// Poison}` structs that previously sat here — they all routed through
+/// the same `resolve_burst_save_damage` chokepoint and only differed in
+/// damage type / save ability / log label, so the per-element struct
+/// was pure boilerplate. Recharge gating + DEX-vs-CON save shape lives
+/// in this one place now; the abbreviation aliases ("fb", "cb", "lb",
+/// "pb") survive verbatim.
+pub struct BreathWeapon {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub damage_dice: Dice,
+    pub damage_type: DamageType,
+    pub save_ability: AbilityScoreType,
+    pub dc: i32,
+    pub radius: isize,
+    /// Max distance (in tile gaps) from the caster's footprint to the
+    /// burst center. RAW dragon breath: 60 ft cone collapses to a
+    /// burst-4 / range-6 envelope in this 2.5 ft grid.
+    pub range: isize,
+    /// Key passed to `is_recharge_available` / `spend_recharge`. Every
+    /// vanilla breath weapon shares the `"breath_weapon"` pool so a
+    /// chromatic dragon can't double-tap with two different elements.
+    pub recharge_key: &'static str,
+}
+
+impl Action for BreathWeapon {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst {
+            radius: self.radius,
+        }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.range)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![self.damage_type]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_recharge_available(self.recharge_key))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        // Spend the recharge resource before resolving damage so a
+        // mid-resolution failure can't leave the breath both spent AND
+        // damage-applied.
+        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
+            caster.spend_recharge(self.recharge_key);
+        }
+        let raw = encounter.roll(&self.damage_dice);
+        encounter.log(format!(
+            "  {}: {}({}) = {} {} area (DC {} {}, half on save)",
+            self.display_name,
+            self.damage_dice,
+            raw,
+            raw,
+            self.damage_type,
+            self.dc,
+            self.save_ability,
+        ));
+        crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            point,
+            self.radius,
+            self.save_ability,
+            self.dc,
+            raw,
+            self.damage_type,
+        )
+    }
+}
+
 /// Dragon Fire Breath — Adult Red Dragon signature. Burst-4 radius
-/// (range 6) of searing flame. Every creature in the area makes a DEX
-/// save vs DC 21: failed save takes 12d6 fire, success halves. Gated
-/// behind the "breath_weapon" recharge ability (Recharge 5-6): the
-/// custom_validate_input check blocks the action when spent, and
-/// side_effects calls spend_recharge so the dragon must wait for the
-/// start-of-turn d6 roll to get it back.
-pub struct DragonBreathFire {}
+/// (range 6) of searing flame. 12d6 fire, DC 21 DEX, half on save.
+/// Recharge 5-6 via the `"breath_weapon"` pool. The dragon templates
+/// reach the action via this static; a fresh Behir breath / Wyvern
+/// cone / future poison breath becomes a one-line declaration on the
+/// same chassis.
+pub static DRAGON_BREATH_FIRE: BreathWeapon = BreathWeapon {
+    display_name: "fire breath",
+    aliases: &["fb", "breath"],
+    damage_dice: Dice::new(12, 6),
+    damage_type: DamageType::Fire,
+    save_ability: AbilityScoreType::Dexterity,
+    dc: 21,
+    radius: 4,
+    range: 6,
+    recharge_key: "breath_weapon",
+};
 
-impl Action for DragonBreathFire {
-    fn name(&self) -> &str {
-        "fire breath"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["fb", "breath"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(6)
-    }
-    fn requires_los(&self) -> bool {
-        true
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Fire]
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_recharge_available("breath_weapon"))
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = first_target_location(target_locations) else {
-            return Vec::new();
-        };
-        // Spend the recharge resource before resolving damage.
-        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
-            caster.spend_recharge("breath_weapon");
-        }
-        const DC: i32 = 21;
-        let raw = encounter.roll(&Dice::new(12, 6));
-        encounter.log(format!(
-            "  fire breath: 12d6({}) = {} fire area (DC {} DEX, half on save)",
-            raw, raw, DC
-        ));
-        crate::actions::action_template::resolve_burst_save_damage(
-            encounter,
-            caster_id,
-            point,
-            4,
-            AbilityScoreType::Dexterity,
-            DC,
-            raw,
-            DamageType::Fire,
-        )
-    }
-}
+/// Alias for the same fire breath under the older name some sites still
+/// reach for. Kept here so legacy references compile; both point at the
+/// same `BreathWeapon` value.
+pub static DRAGON_FIRE_BREATH: &BreathWeapon = &DRAGON_BREATH_FIRE;
 
-pub static DRAGON_BREATH_FIRE: LazyLock<DragonBreathFire> =
-    LazyLock::new(|| DragonBreathFire {});
+/// Dragon Cold Breath — burst-4 / range-6 of freezing cold. 12d6 cold,
+/// DC 21 DEX, half on save. Recharge 5-6.
+pub static DRAGON_BREATH_COLD: BreathWeapon = BreathWeapon {
+    display_name: "cold breath",
+    aliases: &["cb", "breath"],
+    damage_dice: Dice::new(12, 6),
+    damage_type: DamageType::Cold,
+    save_ability: AbilityScoreType::Dexterity,
+    dc: 21,
+    radius: 4,
+    range: 6,
+    recharge_key: "breath_weapon",
+};
 
-/// Keep the old name around as an alias so existing templates that
-/// reference `DRAGON_FIRE_BREATH` still compile. Points to the same
-/// action with recharge gating.
-pub static DRAGON_FIRE_BREATH: LazyLock<DragonBreathFire> =
-    LazyLock::new(|| DragonBreathFire {});
+/// Dragon Lightning Breath — burst-4 / range-6 of crackling lightning.
+/// 12d6 lightning, DC 21 DEX, half on save. Recharge 5-6.
+pub static DRAGON_BREATH_LIGHTNING: BreathWeapon = BreathWeapon {
+    display_name: "lightning breath",
+    aliases: &["lb", "breath"],
+    damage_dice: Dice::new(12, 6),
+    damage_type: DamageType::Lightning,
+    save_ability: AbilityScoreType::Dexterity,
+    dc: 21,
+    radius: 4,
+    range: 6,
+    recharge_key: "breath_weapon",
+};
 
-/// Dragon Cold Breath — burst-4 radius (range 6) of freezing cold.
-/// 12d6 cold, DEX save DC 21 for half. Recharge 5-6.
-pub struct DragonBreathCold {}
+/// Dragon Poison Breath — burst-4 / range-6 of noxious gas. 12d6
+/// poison, DC 21 CON, half on save. Recharge 5-6. Note: poison breath
+/// uses a CON save (inhaled toxin) rather than the DEX save the
+/// elemental breaths route through — the shared chassis carries that
+/// per-instance difference cleanly.
+pub static DRAGON_BREATH_POISON: BreathWeapon = BreathWeapon {
+    display_name: "poison breath",
+    aliases: &["pb", "breath"],
+    damage_dice: Dice::new(12, 6),
+    damage_type: DamageType::Poison,
+    save_ability: AbilityScoreType::Constitution,
+    dc: 21,
+    radius: 4,
+    range: 6,
+    recharge_key: "breath_weapon",
+};
 
-impl Action for DragonBreathCold {
-    fn name(&self) -> &str {
-        "cold breath"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["cb", "breath"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(6)
-    }
-    fn requires_los(&self) -> bool {
-        true
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Cold]
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_recharge_available("breath_weapon"))
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = first_target_location(target_locations) else {
-            return Vec::new();
-        };
-        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
-            caster.spend_recharge("breath_weapon");
-        }
-        const DC: i32 = 21;
-        let raw = encounter.roll(&Dice::new(12, 6));
-        encounter.log(format!(
-            "  cold breath: 12d6({}) = {} cold area (DC {} DEX, half on save)",
-            raw, raw, DC
-        ));
-        crate::actions::action_template::resolve_burst_save_damage(
-            encounter,
-            caster_id,
-            point,
-            4,
-            AbilityScoreType::Dexterity,
-            DC,
-            raw,
-            DamageType::Cold,
-        )
-    }
-}
-
-pub static DRAGON_BREATH_COLD: LazyLock<DragonBreathCold> =
-    LazyLock::new(|| DragonBreathCold {});
-
-/// Dragon Lightning Breath — burst-4 radius (range 6) of crackling
-/// lightning. 12d6 lightning, DEX save DC 21 for half. Recharge 5-6.
-pub struct DragonBreathLightning {}
-
-impl Action for DragonBreathLightning {
-    fn name(&self) -> &str {
-        "lightning breath"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["lb", "breath"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(6)
-    }
-    fn requires_los(&self) -> bool {
-        true
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Lightning]
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_recharge_available("breath_weapon"))
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = first_target_location(target_locations) else {
-            return Vec::new();
-        };
-        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
-            caster.spend_recharge("breath_weapon");
-        }
-        const DC: i32 = 21;
-        let raw = encounter.roll(&Dice::new(12, 6));
-        encounter.log(format!(
-            "  lightning breath: 12d6({}) = {} lightning area (DC {} DEX, half on save)",
-            raw, raw, DC
-        ));
-        crate::actions::action_template::resolve_burst_save_damage(
-            encounter,
-            caster_id,
-            point,
-            4,
-            AbilityScoreType::Dexterity,
-            DC,
-            raw,
-            DamageType::Lightning,
-        )
-    }
-}
-
-pub static DRAGON_BREATH_LIGHTNING: LazyLock<DragonBreathLightning> =
-    LazyLock::new(|| DragonBreathLightning {});
-
-/// Dragon Poison Breath — burst-4 radius (range 6) of noxious gas.
-/// 12d6 poison, CON save DC 21 for half. Recharge 5-6. Note: poison
-/// breath uses a CON save (inhaled toxin) rather than the DEX save
-/// used by the elemental breath weapons.
-pub struct DragonBreathPoison {}
-
-impl Action for DragonBreathPoison {
-    fn name(&self) -> &str {
-        "poison breath"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["pb", "breath"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(6)
-    }
-    fn requires_los(&self) -> bool {
-        true
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Poison]
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_recharge_available("breath_weapon"))
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(point) = first_target_location(target_locations) else {
-            return Vec::new();
-        };
-        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
-            caster.spend_recharge("breath_weapon");
-        }
-        const DC: i32 = 21;
-        let raw = encounter.roll(&Dice::new(12, 6));
-        encounter.log(format!(
-            "  poison breath: 12d6({}) = {} poison area (DC {} CON, half on save)",
-            raw, raw, DC
-        ));
-        crate::actions::action_template::resolve_burst_save_damage(
-            encounter,
-            caster_id,
-            point,
-            4,
-            AbilityScoreType::Constitution,
-            DC,
-            raw,
-            DamageType::Poison,
-        )
-    }
-}
-
-pub static DRAGON_BREATH_POISON: LazyLock<DragonBreathPoison> =
-    LazyLock::new(|| DragonBreathPoison {});
+/// Behir lightning breath — burst-3 / range-5, 12d10 lightning, DC 16
+/// DEX, half on save. Recharge 5-6. Behir's signature: a 20 ft line
+/// of lightning that approximates as a small burst here. CR-11
+/// damage with the same recharge-pool key the dragons use so a
+/// dragon-led ambush can't double-tap with two breaths from different
+/// actors via the same key.
+pub static BEHIR_LIGHTNING_BREATH: BreathWeapon = BreathWeapon {
+    display_name: "lightning breath",
+    aliases: &["lb", "breath", "blast"],
+    damage_dice: Dice::new(12, 10),
+    damage_type: DamageType::Lightning,
+    save_ability: AbilityScoreType::Dexterity,
+    dc: 16,
+    radius: 3,
+    range: 5,
+    recharge_key: "breath_weapon",
+};
 
 /// Dragon Bite — Adult Red Dragon's signature melee. d20 + 14 vs AC
 /// (STR+prof at CR 17), on hit 2d10+8 piercing + 4d6 fire. The fire
@@ -7478,4 +7371,339 @@ pub static CENTAUR_HOOVES: SimpleWeapon = SimpleWeapon {
 pub static CENTAUR_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
     display_name: "pike + hooves",
     parts: vec![(&CENTAUR_PIKE, 1), (&CENTAUR_HOOVES, 1)],
+});
+
+/// Brown Bear bite — STR 1d8+4 piercing. The grindy half of the bear's
+/// MultiAttack; pairs with the claws for the standard "one bite, one
+/// rake" Action turn.
+pub static BROWN_BEAR_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "bite",
+    aliases: &["b", "chomp"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Brown Bear claws — STR 2d6+4 slashing. The heavier half of the
+/// bear's multi; the rake follow-up after the bite.
+pub static BROWN_BEAR_CLAWS: SimpleWeapon = SimpleWeapon {
+    display_name: "claws",
+    aliases: &["c", "rake"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Brown Bear multiattack — one bite + one claw rake per Action.
+pub static BROWN_BEAR_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "bite + claws",
+    parts: vec![(&BROWN_BEAR_BITE, 1), (&BROWN_BEAR_CLAWS, 1)],
+});
+
+/// Tiger bite — STR 1d10+5 piercing. Bigger jaw than the bear; the
+/// damage half of the cat's pounce-and-bite combo.
+pub static TIGER_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "bite",
+    aliases: &["b", "chomp"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 10),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Tiger claws — STR 1d8+5 slashing. The lighter half of the multi
+/// pair; the rake after the bite lands.
+pub static TIGER_CLAWS: SimpleWeapon = SimpleWeapon {
+    display_name: "claws",
+    aliases: &["c", "rake"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Tiger multiattack — one bite + one claw per Action.
+pub static TIGER_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "bite + claws",
+    parts: vec![(&TIGER_BITE, 1), (&TIGER_CLAWS, 1)],
+});
+
+/// Boar tusks — STR 1d6+1 slashing. The CR-1/4 boar's only swing.
+/// RAW has a Charge rider (extra 1d6 + DC-11 STR save vs Prone after
+/// a 20 ft straight-line dash); not modeled here — the boar still
+/// behaves correctly without it, and the engine's movement layer
+/// doesn't track "this turn's move was straight."
+pub static BOAR_TUSKS: SimpleWeapon = SimpleWeapon {
+    display_name: "tusks",
+    aliases: &["t", "tusk", "gore"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 6),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Giant Toad bite — STR 1d10+2 piercing + 1d10 poison splash on hit
+/// (the engine bypasses RAW's "on a successful CON save it takes half
+/// the poison" wrinkle and just lands the rider; the toad is a CR-1
+/// monster and the rider is the iconic flavor). RAW also grapples
+/// Medium-or-smaller targets on hit — that grapple half isn't modeled.
+pub struct GiantToadBite {}
+
+impl Action for GiantToadBite {
+    fn name(&self) -> &str {
+        "bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["b", "chomp"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Poison]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let target_id = first_target_id(target_ids);
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            self.name(),
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(1, 10),
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        let Some(target_id) = target_id else {
+            return effects;
+        };
+        let poison_raw = encounter.roll(&Dice::new(1, 10));
+        encounter.log(format!(
+            "  bite poison: 1d10({}) = {} poison",
+            poison_raw, poison_raw
+        ));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: poison_raw,
+            damage_type: DamageType::Poison,
+        }));
+        effects
+    }
+}
+
+pub static GIANT_TOAD_BITE: LazyLock<GiantToadBite> = LazyLock::new(|| GiantToadBite {});
+
+/// Pseudodragon sting — DEX 1d4+2 piercing + a DC-11 CON save against
+/// magical sleep. On fail: target falls Unconscious for 1 hour OR until
+/// it takes damage. The engine collapses the "or until damage" clause
+/// to a fixed 10-round timer (matching the Sleep cantrip envelope) so
+/// the bookkeeping stays simple. The bite + sting pair plus the
+/// poison-sleep rider is the iconic pseudodragon kit; the bite half is
+/// a SimpleWeapon below.
+pub struct PseudodragonSting {}
+
+impl Action for PseudodragonSting {
+    fn name(&self) -> &str {
+        "sting"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["s", "tail"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::ApplyCondition;
+
+        let target_id = first_target_id(target_ids);
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            self.name(),
+            AbilityScoreType::Dexterity,
+            Some(AbilityScoreType::Dexterity),
+            Dice::new(1, 4),
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        let Some(target_id) = target_id else {
+            return effects;
+        };
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 11);
+        if !save.passed() {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Asleep,
+                timer: ConditionTimer::Rounds(10),
+            }));
+        }
+        effects
+    }
+}
+
+pub static PSEUDODRAGON_STING: LazyLock<PseudodragonSting> =
+    LazyLock::new(|| PseudodragonSting {});
+
+/// Pseudodragon bite — DEX-based 1d4+0 piercing. Lightweight follow-up
+/// to the sting; the dragonling's tiny jaws don't add the DEX modifier
+/// to damage (RAW: 1 piercing flat for a CR-1/4 stat block).
+pub static PSEUDODRAGON_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "bite",
+    aliases: &["b", "nip"],
+    attack_ability: AbilityScoreType::Dexterity,
+    damage_ability: None,
+    damage_dice: Dice::new(1, 4),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Behir bite — STR 3d10+6 piercing. The lightning serpent's signature
+/// melee chomp; pairs with the constrict in the multi.
+pub static BEHIR_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "bite",
+    aliases: &["b", "chomp"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(3, 10),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Behir constrict — STR 2d10+6 bludgeoning + 2d10 slashing on hit.
+/// RAW grapples Huge-or-smaller targets on hit; the grapple half isn't
+/// modeled — the constrict still lands both damage components via the
+/// dedicated action below.
+pub struct BehirConstrict {}
+
+impl Action for BehirConstrict {
+    fn name(&self) -> &str {
+        "constrict"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["c", "coil", "crush"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning, DamageType::Slashing]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let target_id = first_target_id(target_ids);
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            self.name(),
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(2, 10),
+            DamageType::Bludgeoning,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        let Some(target_id) = target_id else {
+            return effects;
+        };
+        let slash_raw = encounter.roll(&Dice::new(2, 10));
+        encounter.log(format!(
+            "  constrict slash: 2d10({}) = {} slashing",
+            slash_raw, slash_raw
+        ));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: slash_raw,
+            damage_type: DamageType::Slashing,
+        }));
+        effects
+    }
+}
+
+pub static BEHIR_CONSTRICT: LazyLock<BehirConstrict> = LazyLock::new(|| BehirConstrict {});
+
+/// Behir multiattack — one bite + one constrict per Action. The
+/// signature melee burst the serpent leads with when its lightning
+/// breath is on cooldown.
+pub static BEHIR_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "bite + constrict",
+    parts: vec![(&BEHIR_BITE, 1), (&*BEHIR_CONSTRICT, 1)],
 });

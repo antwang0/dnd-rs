@@ -406,6 +406,92 @@ pub struct CreatureTemplate {
     pub sorcery_points: u32,
 }
 
+impl CreatureTemplate {
+    /// Returns a `CreatureTemplate` populated with sensible defaults —
+    /// empty item / sense / skill / spell-slot / language / damage-modifier
+    /// collections, 10 across every ability, Medium beast with a 1d8 hit-die
+    /// pool, AC 10, speed 30 ft, every passive feature off, the standard
+    /// DEFAULT_ACTIONS pool pre-populated, and the natural-20 crit floor.
+    /// Designed for use with struct update syntax so creature definitions
+    /// only need to list fields that differ from the baseline:
+    ///
+    /// ```ignore
+    /// let mut actions = DEFAULT_ACTIONS.clone();
+    /// actions.push(&BROWN_BEAR_BITE);
+    /// CreatureTemplate {
+    ///     name: "Brown Bear",
+    ///     glyph: 'B',
+    ///     ac: 11,
+    ///     hitpoints: "4d10+12".parse().unwrap(),
+    ///     speed: 40.,
+    ///     strength: 19,
+    ///     // ... only the fields that differ from defaults ...
+    ///     actions,
+    ///     ..CreatureTemplate::defaults()
+    /// }
+    /// ```
+    ///
+    /// Cuts the ~50-line "default tail" each creature file had to spell out
+    /// by hand, and lets new template fields (added in future work) land
+    /// without an N-file mechanical edit — old templates pick up the new
+    /// field's default automatically via `..defaults()`.
+    pub fn defaults() -> Self {
+        use crate::actions::default_actions::DEFAULT_ACTIONS;
+        Self {
+            name: "",
+            glyph: '?',
+            ac: 10,
+            hitpoints: "1d8".parse().unwrap(),
+            speed: 30.0,
+            strength: 10,
+            intelligence: 10,
+            dexterity: 10,
+            wisdom: 10,
+            constitution: 10,
+            charisma: 10,
+            skills: HashSet::new(),
+            items: Vec::new(),
+            senses: HashSet::new(),
+            languages: HashSet::new(),
+            cr: 0.0,
+            size: Size::Medium,
+            creature_type: CreatureType::Beast,
+            actions: DEFAULT_ACTIONS.clone(),
+            spell_slots_by_level: Vec::new(),
+            rolls_death_saves: false,
+            damage_modifiers: HashMap::new(),
+            proficient_saves: HashSet::new(),
+            condition_immunities: HashSet::new(),
+            features: HashSet::new(),
+            regen_per_round: 0,
+            regen_suppressors: HashSet::new(),
+            legendary_resistances: 0,
+            has_evasion: false,
+            has_uncanny_dodge: false,
+            has_deflect_missiles: false,
+            has_displacement: false,
+            has_danger_sense: false,
+            has_pack_tactics: false,
+            has_magic_resistance: false,
+            recharge_abilities: Vec::new(),
+            legendary_actions_per_round: 0,
+            has_extra_attack: false,
+            brutal_critical_dice: 0,
+            crit_threshold: 20,
+            has_lucky: false,
+            has_brave: false,
+            has_fey_ancestry: false,
+            has_aura_of_protection: false,
+            has_aura_of_courage: false,
+            has_savage_attacks: false,
+            has_dwarven_resilience: false,
+            has_gnome_cunning: false,
+            draconic_ancestry: None,
+            sorcery_points: 0,
+        }
+    }
+}
+
 #[derive(Clone, PartialEq)]
 pub struct SpellSlotInfo {
     pub max_spell_slots: u32,

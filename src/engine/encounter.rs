@@ -99,6 +99,12 @@ use crate::actors::creatures::giant_eagles::GIANT_EAGLE_TEMPLATE;
 use crate::actors::creatures::lizardfolk::LIZARDFOLK_TEMPLATE;
 use crate::actors::creatures::sahuagins::SAHUAGIN_TEMPLATE;
 use crate::actors::creatures::centaurs::CENTAUR_TEMPLATE;
+use crate::actors::creatures::behirs::BEHIR_TEMPLATE;
+use crate::actors::creatures::boars::BOAR_TEMPLATE;
+use crate::actors::creatures::brown_bears::BROWN_BEAR_TEMPLATE;
+use crate::actors::creatures::giant_toads::GIANT_TOAD_TEMPLATE;
+use crate::actors::creatures::pseudodragons::PSEUDODRAGON_TEMPLATE;
+use crate::actors::creatures::tigers::TIGER_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -2570,6 +2576,19 @@ impl EncounterInstance {
             &LIZARDFOLK_TEMPLATE,
             &GIANT_APE_TEMPLATE,
             &CENTAUR_TEMPLATE,
+            // Low-CR beast fillers — common druid Conjure Animals
+            // picks and standard wilderness encounter material. Boar
+            // (CR ¼), Brown Bear / Tiger / Giant Toad (CR 1), plus
+            // the Tiny Pseudodragon (CR ¼ dragon, magic resistance).
+            // Behir (CR 11 huge monstrosity) plugs the lightning-
+            // immune slot above the giants and below the ancient
+            // dragons in the upper-mid pool.
+            &BOAR_TEMPLATE,
+            &BROWN_BEAR_TEMPLATE,
+            &TIGER_TEMPLATE,
+            &GIANT_TOAD_TEMPLATE,
+            &PSEUDODRAGON_TEMPLATE,
+            &BEHIR_TEMPLATE,
         ]
     }
 
@@ -21073,6 +21092,158 @@ mod tests {
         assert_eq!(e.actors[&drg].legendary_actions_per_round(), 3);
         assert!(e.actors[&drg].has_magic_resistance());
         assert!(e.actors[&drg].has_extra_attack());
+    }
+
+    /// Behir template: huge CR-11 monstrosity, lightning-immune, lightning
+    /// breath wired through the recharge pool. Confirms the recharge gate
+    /// blocks a second cast in the same turn after one fires.
+    #[test]
+    fn behir_template_lightning_immune_and_recharge_gated() {
+        use crate::actions::monster_attacks::BEHIR_LIGHTNING_BREATH;
+        use crate::actors::creatures::behirs::BEHIR_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let bh = e
+            .instantiate_creature(&BEHIR_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&bh].is_immune_to(crate::engine::types::DamageType::Lightning));
+        assert!(e.actors[&bh].is_recharge_available("breath_weapon"));
+        // First cast lands; the recharge pool flips off.
+        let _ = BEHIR_LIGHTNING_BREATH.side_effects(
+            &mut e,
+            bh,
+            None,
+            Some(&vec![Coordinate::new(6, 2)]),
+            None,
+        );
+        assert!(!e.actors[&bh].is_recharge_available("breath_weapon"));
+        // Second cast: validation should now reject since the recharge
+        // pool is spent.
+        assert!(!BEHIR_LIGHTNING_BREATH.custom_validate_input(
+            &e,
+            bh,
+            None,
+            Some(&vec![Coordinate::new(6, 2)]),
+            None,
+        ));
+    }
+
+    /// Behir's lightning breath drops the breath into an enemy and chips
+    /// HP on a CR-1 goblin. Sanity-check that the new BreathWeapon
+    /// chassis routes through `resolve_burst_save_damage` correctly.
+    #[test]
+    fn behir_lightning_breath_burns_area() {
+        use crate::actions::monster_attacks::BEHIR_LIGHTNING_BREATH;
+        use crate::actors::creatures::behirs::BEHIR_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let bh = e
+            .instantiate_creature(&BEHIR_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+            .unwrap();
+        let hp_before = e.actors[&goblin].hitpoints();
+        let effects = BEHIR_LIGHTNING_BREATH.side_effects(
+            &mut e,
+            bh,
+            None,
+            Some(&vec![Coordinate::new(6, 2)]),
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let hp_after = e
+            .actors
+            .get(&goblin)
+            .map(|a| a.hitpoints())
+            .unwrap_or(0);
+        assert!(
+            hp_after < hp_before,
+            "goblin should burn under Behir's lightning breath (had {}, now {})",
+            hp_before,
+            hp_after,
+        );
+    }
+
+    /// Pseudodragon template: Tiny dragon, Magic Resistance flag wired,
+    /// blindsight + darkvision senses present. The sting's CON-save-vs-
+    /// Sleep rider is exercised by `pseudodragon_sting_sleeps_on_fail`.
+    #[test]
+    fn pseudodragon_template_kit() {
+        use crate::actors::creatures::pseudodragons::PSEUDODRAGON_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let p = e
+            .instantiate_creature(&PSEUDODRAGON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert_eq!(e.actors[&p].size(), crate::engine::types::Size::Tiny);
+        assert!(e.actors[&p].has_magic_resistance());
+        // CR is float-keyed; the template pins it at 0.25.
+        assert!((e.actors[&p].cr() - 0.25).abs() < f32::EPSILON);
+    }
+
+    /// Brown Bear, Tiger, Boar, Giant Toad: low-CR beast fillers. Smoke
+    /// test that each template instantiates and lands non-zero HP — the
+    /// CompoundAttack multis are exercised by the simple_weapon_attack
+    /// pipeline tests elsewhere.
+    #[test]
+    fn low_cr_beast_templates_instantiate() {
+        use crate::actors::creatures::boars::BOAR_TEMPLATE;
+        use crate::actors::creatures::brown_bears::BROWN_BEAR_TEMPLATE;
+        use crate::actors::creatures::giant_toads::GIANT_TOAD_TEMPLATE;
+        use crate::actors::creatures::tigers::TIGER_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        for (i, t) in [
+            &*BOAR_TEMPLATE,
+            &*BROWN_BEAR_TEMPLATE,
+            &*TIGER_TEMPLATE,
+            &*GIANT_TOAD_TEMPLATE,
+        ]
+        .iter()
+        .enumerate()
+        {
+            let id = e
+                .instantiate_creature(t, Coordinate::new(i as isize * 2 + 2, 2), 0, i)
+                .unwrap();
+            assert!(
+                e.actors[&id].hitpoints() > 0,
+                "{} should roll non-zero HP",
+                t.name,
+            );
+        }
+    }
+
+    /// Pseudodragon sting on fail applies the Asleep condition via the
+    /// DC-11 CON save rider. Sweeps seeds to find a fail roll so the
+    /// rider path is observed.
+    #[test]
+    fn pseudodragon_sting_sleeps_on_save_fail() {
+        use crate::actions::monster_attacks::PSEUDODRAGON_STING;
+        use crate::actors::creatures::pseudodragons::PSEUDODRAGON_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::Condition;
+        for seed in 0..40u64 {
+            let mut e = ei_seeded(15, 15, &[], seed);
+            // Zombie is CHARM-immune but not SLEEP-immune in this engine,
+            // and has a low CON modifier, so a fail save is common.
+            let p = e
+                .instantiate_creature(&PSEUDODRAGON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let z = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let effects = PSEUDODRAGON_STING.side_effects(&mut e, p, Some(&vec![z]), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e.actors
+                .get(&z)
+                .is_some_and(|a| a.has_condition(Condition::Asleep))
+            {
+                return;
+            }
+        }
+        panic!("expected at least one save-fail across 40 seeds; sleep rider never fired");
     }
 
     /// Beholder: prone-immune (it floats) and CON / INT / WIS save proficient.
@@ -41022,5 +41193,106 @@ mod tests {
         // Dropping concentration despawns the cohort.
         e.drop_concentration(fighter);
         assert_eq!(e.actors.len(), before);
+    }
+
+    /// Scroll of Longstrider installs the Longstriding speed buff on
+    /// a touched ally and refuses to refresh when the buff is already
+    /// up, mirroring Scroll of Fly's reject-on-active gate.
+    #[test]
+    fn scroll_of_longstrider_installs_and_rejects_refresh() {
+        use crate::actions::item_actions::READ_LONGSTRIDER_SCROLL;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_LONGSTRIDER;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_LONGSTRIDER);
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_LONGSTRIDER);
+        let aei = ActionExecutionInfo::new(
+            &READ_LONGSTRIDER_SCROLL,
+            cleric,
+            Some(vec![fighter]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            e.actors[&fighter].has_condition(Condition::Longstriding),
+            "Scroll of Longstrider should install Longstriding on the ally",
+        );
+        let aei2 = ActionExecutionInfo::new(
+            &READ_LONGSTRIDER_SCROLL,
+            cleric,
+            Some(vec![fighter]),
+            None,
+            None,
+        );
+        assert!(
+            !aei2.validate(&e),
+            "Scroll of Longstrider should reject re-cast when target already Longstriding",
+        );
+    }
+
+    /// Scroll of Barkskin installs the Barkskinned AC-floor buff on a
+    /// touched ally and refuses to refresh when the buff is already up.
+    #[test]
+    fn scroll_of_barkskin_installs_and_rejects_refresh() {
+        use crate::actions::item_actions::READ_BARKSKIN_SCROLL;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_BARKSKIN;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_BARKSKIN);
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_BARKSKIN);
+        let aei = ActionExecutionInfo::new(
+            &READ_BARKSKIN_SCROLL,
+            cleric,
+            Some(vec![fighter]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            e.actors[&fighter].has_condition(Condition::Barkskinned),
+            "Scroll of Barkskin should install Barkskinned on the ally",
+        );
+        let aei2 = ActionExecutionInfo::new(
+            &READ_BARKSKIN_SCROLL,
+            cleric,
+            Some(vec![fighter]),
+            None,
+            None,
+        );
+        assert!(
+            !aei2.validate(&e),
+            "Scroll of Barkskin should reject re-cast when target already Barkskinned",
+        );
     }
 }

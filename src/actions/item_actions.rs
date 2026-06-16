@@ -4647,6 +4647,8 @@ const BEAD_OF_FORCE_NAME: &str = "Bead of Force";
 const SCROLL_OF_FLY_NAME: &str = "Scroll of Fly";
 const SCROLL_OF_BESTOW_CURSE_NAME: &str = "Scroll of Bestow Curse";
 const SCROLL_OF_CONJURE_ANIMALS_NAME: &str = "Scroll of Conjure Animals";
+const SCROLL_OF_LONGSTRIDER_NAME: &str = "Scroll of Longstrider";
+const SCROLL_OF_BARKSKIN_NAME: &str = "Scroll of Barkskin";
 
 /// Scroll of Pyrotechnics — Action; 1d8 fire DEX-save burst (DC 13,
 /// 2-radius / 10 ft RAW) at a point within 24 tiles (60 ft RAW). 5e RAW:
@@ -4955,6 +4957,50 @@ pub static READ_BESTOW_CURSE_SCROLL: SingleSaveConditionItem = SingleSaveConditi
 /// scroll's wolves are concentration-bound and vanish when the spell
 /// ends.
 pub static READ_CONJURE_ANIMALS_SCROLL: ReadConjureAnimalsScrollItem = ReadConjureAnimalsScrollItem {};
+
+/// Scroll of Longstrider — Action; install `Longstriding` (+10 ft
+/// walking speed) for 100 rounds on a single ally within 1 tile (touch
+/// RAW). 5e RAW: Longstrider is a level-1 transmutation; the scroll
+/// surfaces the Tasha's-tier mobility buff without needing a slot.
+/// Sibling to `READ_FLY_SCROLL` on the movement-buff lane — distinct
+/// from Fly by sitting at the lower tier (speed bump rather than
+/// vertical lift). Rejects re-cast when the target is already
+/// Longstriding so the consumable isn't burned on a no-op refresh.
+/// Fires through the shared `SingleTargetBuffItem` impl.
+pub static READ_LONGSTRIDER_SCROLL: SingleTargetBuffItem = SingleTargetBuffItem {
+    action_name: "read longstrider scroll",
+    action_aliases: &["longstrider scroll", "scroll longstrider"],
+    item_name: SCROLL_OF_LONGSTRIDER_NAME,
+    log_text: "{actor} reads a scroll of longstrider; their target's stride lengthens.",
+    condition: Condition::Longstriding,
+    timer: ConditionTimer::Rounds(100),
+    // Touch RAW; 1 tile.
+    reach: crate::actions::action_template::MELEE_REACH,
+    bonus_action: false,
+    reject_when_active: true,
+};
+
+/// Scroll of Barkskin — Action; install `Barkskinned` (AC floor of 16
+/// while active — see the condition impl for the exact math) for 100
+/// rounds on a single ally within 1 tile (touch RAW). 5e RAW: Barkskin
+/// is a level-2 transmutation, concentration; the scroll bypasses
+/// concentration and surfaces the AC-floor envelope as a fire-and-
+/// forget ally buff. Common ranger / druid trinket — pairs naturally
+/// with `READ_LONGSTRIDER_SCROLL` for a low-tier mobility + defense
+/// kit. Rejects re-cast when the target is already Barkskinned so
+/// the consumable isn't burned on a no-op refresh.
+pub static READ_BARKSKIN_SCROLL: SingleTargetBuffItem = SingleTargetBuffItem {
+    action_name: "read barkskin scroll",
+    action_aliases: &["barkskin scroll", "scroll barkskin"],
+    item_name: SCROLL_OF_BARKSKIN_NAME,
+    log_text: "{actor} reads a scroll of barkskin; their target's hide hardens like oak.",
+    condition: Condition::Barkskinned,
+    timer: ConditionTimer::Rounds(100),
+    // Touch RAW; 1 tile.
+    reach: crate::actions::action_template::MELEE_REACH,
+    bonus_action: false,
+    reject_when_active: true,
+};
 
 pub struct ReadConjureAnimalsScrollItem {}
 

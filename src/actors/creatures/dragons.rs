@@ -28,7 +28,7 @@ pub static ADULT_RED_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
     actions.push(&*DRAGON_MULTI);
     actions.push(&*DRAGON_BITE);
     actions.push(&DRAGON_CLAW);
-    actions.push(&*DRAGON_BREATH_FIRE);
+    actions.push(&DRAGON_BREATH_FIRE);
     actions.push(&*FRIGHTFUL_PRESENCE);
     CreatureTemplate {
         name: "Adult Red Dragon",
@@ -111,7 +111,7 @@ pub static YOUNG_WHITE_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*DRAGON_BITE);
     actions.push(&DRAGON_CLAW);
-    actions.push(&*DRAGON_BREATH_COLD);
+    actions.push(&DRAGON_BREATH_COLD);
     CreatureTemplate {
         name: "Young White Dragon",
         glyph: 'W',
@@ -190,7 +190,7 @@ pub static ANCIENT_BLUE_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
     actions.push(&*DRAGON_MULTI);
     actions.push(&*DRAGON_BITE);
     actions.push(&DRAGON_CLAW);
-    actions.push(&*DRAGON_BREATH_LIGHTNING);
+    actions.push(&DRAGON_BREATH_LIGHTNING);
     actions.push(&*FRIGHTFUL_PRESENCE);
     CreatureTemplate {
         name: "Ancient Blue Dragon",

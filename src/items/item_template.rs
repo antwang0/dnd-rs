@@ -2511,6 +2511,35 @@ pub static SCROLL_OF_CONJURE_ANIMALS: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Scroll of Longstrider — Action consumable that installs the
+/// `Longstriding` condition (+10 ft walking speed) for 100 rounds on a
+/// touched ally. 5e RAW: Longstrider is a level-1 transmutation; the
+/// scroll surfaces the mobility buff as a fire-and-forget consumable.
+/// Lower-tier sibling of `SCROLL_OF_FLY` (vertical lift via the Flying
+/// condition) — Longstrider's flat-ground speed bump slots in below
+/// the level-3 fly tier so the loot pool covers both ends of the
+/// movement-buff range.
+pub static SCROLL_OF_LONGSTRIDER: Item = Item {
+    name: "Scroll of Longstrider",
+    glyph: '0',
+    on_use: Some(&crate::actions::item_actions::READ_LONGSTRIDER_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Barkskin — Action consumable that installs the
+/// `Barkskinned` condition (AC floor of 16 — see the condition impl)
+/// for 100 rounds on a touched ally. 5e RAW: Barkskin is a level-2
+/// transmutation, concentration; the scroll bypasses the concentration
+/// cost and surfaces the AC-floor envelope as a fire-and-forget ally
+/// buff. Common druid / ranger trinket — pairs with
+/// `SCROLL_OF_LONGSTRIDER` for a low-tier mobility + defense kit.
+pub static SCROLL_OF_BARKSKIN: Item = Item {
+    name: "Scroll of Barkskin",
+    glyph: '0',
+    on_use: Some(&crate::actions::item_actions::READ_BARKSKIN_SCROLL),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -3105,4 +3134,13 @@ pub static LOOT_POOL: &[&Item] = &[
     // to the caster's team for the rest of the concentration window.
     // Single low-weight entry.
     &SCROLL_OF_CONJURE_ANIMALS,
+    // Low-tier ally-buff scrolls — Longstrider (+10 ft speed) and
+    // Barkskin (AC floor 16) ride the existing SingleTargetBuffItem
+    // factor for 100-round installs at touch range. Single entry each
+    // — the loot pool already weights Bless / Mass Bless / Crusader's
+    // Mantle for the heavier buff tier, so these two slot in as
+    // cheaper utility consumables a martial can hand to the rogue or
+    // wizard for a swift first-round setup.
+    &SCROLL_OF_LONGSTRIDER,
+    &SCROLL_OF_BARKSKIN,
 ];
