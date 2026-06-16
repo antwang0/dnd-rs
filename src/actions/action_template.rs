@@ -188,6 +188,48 @@ pub fn first_ally_target_id(
     }
 }
 
+/// Buff "don't double-cast" gate. Returns `true` when `actor_id` exists
+/// in the encounter AND does NOT currently hold `condition`. Used by
+/// self-buff spells (Spirit Shroud, Investiture of Flame / Ice / Stone /
+/// Wind, Otherworldly Guise, Shadow of Moil, Ashardalon's Stride, Flame
+/// Arrows) inside their `custom_validate_input` to avoid burning the
+/// slot on a no-op refresh — `add_condition` keeps the longer of the two
+/// timers, so re-casting while the buff is up just spends the slot for
+/// nothing.
+///
+/// Also used by ally-target buff spells (Guidance → Inspired, Barkskin)
+/// to short-circuit when the picked ally already has the buff up. The
+/// helper takes any actor id so the same chokepoint serves both lanes —
+/// self-buff (`actor_id == caster_id`) and ally-buff (`actor_id ==
+/// target_id`).
+///
+/// Routes through the standard "actor missing → fail" shape so a
+/// vanished caster / target fails the validate (matching every other
+/// actor-touch gate in this file). Centralizes the recurring three-line
+/// pattern:
+///
+/// ```ignore
+/// encounter
+///     .actors
+///     .get(&caster_id)
+///     .is_some_and(|a| !a.has_condition(Condition::SpiritShrouded))
+/// ```
+///
+/// Single source of truth: future changes to the "don't refresh while
+/// active" semantics (e.g. allowing refresh when the timer has < N
+/// rounds left) land here once instead of being scattered across the
+/// ~13 buff impls.
+pub fn actor_lacks_condition(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    condition: crate::conditions::Condition,
+) -> bool {
+    encounter
+        .actors
+        .get(&actor_id)
+        .is_some_and(|a| !a.has_condition(condition))
+}
+
 /// Standard leveled-spell cost shape: one Action plus a level-`lvl` slot.
 /// Used by ~60 leveled-spell impls; the helper keeps the cost block to
 /// one line at the call site and gives us a single chokepoint for any

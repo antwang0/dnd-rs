@@ -4641,6 +4641,11 @@ const SCROLL_OF_PYROTECHNICS_NAME: &str = "Scroll of Pyrotechnics";
 const SCROLL_OF_FLAME_ARROWS_NAME: &str = "Scroll of Flame Arrows";
 const POTION_OF_ASHARDALONS_STRIDE_NAME: &str = "Potion of Ashardalon's Stride";
 const POTION_OF_OTHERWORLDLY_GUISE_NAME: &str = "Potion of Otherworldly Guise";
+const HORN_OF_BLASTING_NAME: &str = "Horn of Blasting";
+const JAVELIN_OF_LIGHTNING_NAME: &str = "Javelin of Lightning";
+const BEAD_OF_FORCE_NAME: &str = "Bead of Force";
+const SCROLL_OF_FLY_NAME: &str = "Scroll of Fly";
+const SCROLL_OF_BESTOW_CURSE_NAME: &str = "Scroll of Bestow Curse";
 
 /// Scroll of Pyrotechnics — Action; 1d8 fire DEX-save burst (DC 13,
 /// 2-radius / 10 ft RAW) at a point within 24 tiles (60 ft RAW). 5e RAW:
@@ -4724,4 +4729,214 @@ pub static DRINK_POTION_OF_OTHERWORLDLY_GUISE: SelfConditionItem = SelfCondition
     bonus_action: true,
     reject_when_active: true,
     temp_hp: None,
+};
+
+/// Horn of Blasting — Action; self-centered 6-tile (15 ft) thunder burst,
+/// 5d6 damage, CON save vs DC 15 for half. 5e RAW: emits a thunderous
+/// note in a 30-ft cone dealing 5d6 thunder; creatures that fail also
+/// take a `Deafened` rider. We collapse the cone to a friend-or-foe
+/// burst centered on the wielder (the engine has no cone primitive
+/// today; the 6-tile burst's radius approximates the cone's footprint
+/// for combat purposes) and ride the existing Deafened install on a
+/// failed save. The horn is a multi-use trinket in RAW; we collapse to
+/// a single-use consumable so the loot pool keeps a flat "one fire per
+/// drop" semantics — matching Necklace of Fireballs / Lightning Bolts.
+///
+/// Schema is `NoArgs` (self-centered like Thunderwave); the burst sits
+/// at the wielder's footprint center. Does NOT use the
+/// `BurstSaveDamageItem` factor because that factor requires a picked
+/// target tile; folding a self-centered burst variant into the factor
+/// would muddy its single-purpose semantics, so a small custom impl
+/// keeps both lanes orthogonal.
+pub struct HornOfBlastingItem {}
+
+impl Action for HornOfBlastingItem {
+    fn name(&self) -> &str {
+        "blow horn of blasting"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["horn", "blast"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Thunder]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, HORN_OF_BLASTING_NAME)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if !consume_caster_item(encounter, caster_id, HORN_OF_BLASTING_NAME) {
+            return Vec::new();
+        }
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let center = caster.location();
+        const RADIUS: isize = 6;
+        const DC: i32 = 15;
+        let damage = encounter.roll(&Dice::new(5, 6));
+        let name = encounter.actor_name(caster_id);
+        encounter.log(format!(
+            "{} sounds the Horn of Blasting; a thunderous note erupts.",
+            name
+        ));
+        encounter.log(format!(
+            "  horn of blasting: 5d6 = {} damage",
+            damage
+        ));
+        // 5e Sorcerer Careful Spell metamagic: shielded allies in the
+        // burst auto-pass AND take 0 damage. Mirrors the `resolve_burst_save_damage`
+        // chokepoint; we re-route to it for parity with every other
+        // burst item.
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        let shielded = encounter.careful_spell_shielded(caster_id, center, RADIUS);
+        for tid in encounter.neutral_burst_targets(caster_id, center, RADIUS) {
+            if shielded.contains(&tid) {
+                continue;
+            }
+            let save = encounter.roll_save_against_caster(
+                tid,
+                AbilityScoreType::Constitution,
+                DC,
+                caster_id,
+            );
+            let passed = save.passed();
+            // No evasion shortcut — CON saves never trigger evasion
+            // (which is DEX-only RAW).
+            let dmg = SaveDamagePolicy::HalfOnSave.apply(damage, passed);
+            if dmg > 0 {
+                effects.push(Box::new(DealDamage {
+                    actor_id: tid,
+                    amount: dmg,
+                    damage_type: DamageType::Thunder,
+                }));
+            }
+            // Deafened rider on failed save (RAW: 1 minute → 10 rounds).
+            // Independent of damage rolls landing — even a 0-damage fail
+            // still installs the deafness.
+            if !passed {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: tid,
+                    condition: Condition::Deafened,
+                    timer: ConditionTimer::Rounds(10),
+                }));
+            }
+        }
+        effects
+    }
+}
+
+pub static BLOW_HORN_OF_BLASTING: HornOfBlastingItem = HornOfBlastingItem {};
+
+/// Javelin of Lightning — Action; thrown 120 ft (48 tiles), 4d6 lightning
+/// in a 2-tile (10 ft) burst centered on the targeted tile, DEX save vs
+/// DC 13 for half. 5e RAW: the javelin transforms into a 5-ft-wide bolt
+/// of lightning along the throw path; we collapse the line to a small
+/// burst centered on the target tile (matching the Necklace of Lightning
+/// Bolts shape so the lightning lane stays consistent). Single-use
+/// consumable — the javelin is destroyed on hit per RAW's "the javelin
+/// reverts to its normal form after the bolt" clause (we just consume
+/// the item to keep the loot pool flat). Fires through the shared
+/// `BurstSaveDamageItem` impl.
+pub static THROW_JAVELIN_OF_LIGHTNING: BurstSaveDamageItem = BurstSaveDamageItem {
+    action_name: "throw javelin of lightning",
+    action_aliases: &["javelin lightning", "lightning javelin"],
+    item_name: JAVELIN_OF_LIGHTNING_NAME,
+    log_label: "javelin of lightning",
+    dice: Dice::new(4, 6),
+    damage_type: DamageType::Lightning,
+    save: AbilityScoreType::Dexterity,
+    dc: 13,
+    radius: 2,
+    // 120 ft thrown RAW; 48 tiles in the 2.5ft grid.
+    reach: 48,
+};
+
+/// Bead of Force — Action; a single bead torn from a Necklace of Beads
+/// is hurled at a tile within 60 ft (24 tiles). 5d4 force damage, DEX
+/// save vs DC 15 for half, in a small 2-tile burst. 5e RAW: the bead
+/// creates a 10-ft-diameter sphere of force that bursts on landing,
+/// trapping failed-save targets inside; we collapse to a damage burst
+/// (the trapping clause would need a new condition — and the load-bearing
+/// effect is the force damage). Fills the force-burst niche in the loot
+/// pool: force is the rarely-resisted typed-damage lane (vs Fireball's
+/// fire-resisted lane), so the bead lands consistently against most
+/// resistance loadouts. Fires through the shared `BurstSaveDamageItem`
+/// impl.
+pub static THROW_BEAD_OF_FORCE: BurstSaveDamageItem = BurstSaveDamageItem {
+    action_name: "throw bead of force",
+    action_aliases: &["bead force", "force bead"],
+    item_name: BEAD_OF_FORCE_NAME,
+    log_label: "bead of force",
+    dice: Dice::new(5, 4),
+    damage_type: DamageType::Force,
+    save: AbilityScoreType::Dexterity,
+    dc: 15,
+    radius: 2,
+    // 60 ft RAW; 24 tiles.
+    reach: 24,
+};
+
+/// Scroll of Fly — Action; install `Flying` for 10 rounds on a single
+/// ally within 1 tile (touch RAW). 5e RAW: Fly is a level-3 transmutation,
+/// concentration; the scroll bypasses concentration and surfaces the
+/// +60 ft fly speed bump as a fire-and-forget ally buff. Sibling to
+/// Winged Boots (passive Flying trinket) and Potion of Flying
+/// (self-only consumable) on the flight-buff lane — distinct from
+/// both by the ally-target envelope (a non-flying martial can hand
+/// the scroll to the rogue / fighter and let them sky-dance). Rejects
+/// re-cast when the target is already Flying so the consumable isn't
+/// burned on a no-op refresh. Fires through the shared
+/// `SingleTargetBuffItem` impl.
+pub static READ_FLY_SCROLL: SingleTargetBuffItem = SingleTargetBuffItem {
+    action_name: "read fly scroll",
+    action_aliases: &["fly scroll", "scroll fly"],
+    item_name: SCROLL_OF_FLY_NAME,
+    log_text: "{actor} reads a scroll of fly; their target's feet rise from the ground.",
+    condition: Condition::Flying,
+    timer: ConditionTimer::Rounds(10),
+    // Touch RAW; 1 tile.
+    reach: crate::actions::action_template::MELEE_REACH,
+    bonus_action: false,
+    reject_when_active: true,
+};
+
+/// Scroll of Bestow Curse — Action; touch a single target, WIS save vs
+/// DC 15. On fail, install `Baned` (–1d4 / –2 to attack rolls and saves)
+/// for 10 rounds. 5e RAW: Bestow Curse is a level-3 necromancy,
+/// concentration, that lets the caster pick one of four cursed effects
+/// (one of which is the "attack rolls have disadvantage" clause we proxy
+/// here via Baned's flat penalty). The scroll bypasses concentration
+/// and bakes in the Baned proxy so dispel sweeps can strip it cleanly.
+/// Sibling to Scroll of Bane (burst Baned at DC 13) on the Baned lane —
+/// distinct from the burst-scroll by the single-target shape and the
+/// meaner DC 15 tier. Routes through the shared `SingleSaveConditionItem`
+/// impl.
+pub static READ_BESTOW_CURSE_SCROLL: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "read bestow curse scroll",
+    action_aliases: &["bestow curse scroll", "curse scroll"],
+    item_name: SCROLL_OF_BESTOW_CURSE_NAME,
+    log_text: "{actor} reads a scroll of bestow curse; a malign whisper coils around the target.",
+    save: AbilityScoreType::Wisdom,
+    dc: 15,
+    // Touch RAW; 1 tile.
+    reach: crate::actions::action_template::MELEE_REACH,
+    condition: Condition::Baned,
+    timer: ConditionTimer::Rounds(10),
 };

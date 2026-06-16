@@ -40390,4 +40390,398 @@ mod tests {
             "blood frenzy should NOT apply to ranged attacks",
         );
     }
+
+    /// Horn of Blasting: self-centered thunder burst that damages enemies
+    /// in radius, spares the wielder, and consumes the trinket. Sweeps
+    /// seeds to confirm at least one fail (Deafened install on a tough
+    /// enemy that survives the damage) lands across runs.
+    #[test]
+    fn horn_of_blasting_damages_enemies_and_deafens_on_fail() {
+        use crate::actions::item_actions::BLOW_HORN_OF_BLASTING;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::items::item_template::HORN_OF_BLASTING;
+        let mut saw_damage = false;
+        let mut saw_deaf = false;
+        for seed in 0..30u64 {
+            let mut e = ei_seeded(15, 15, &[], seed);
+            let user = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            // Ogre is tough enough (~59 HP) to survive 5d6 thunder so we
+            // can observe the Deafened rider — a Goblin would die first.
+            let ogre = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&user)
+                .unwrap()
+                .pickup_item(&HORN_OF_BLASTING);
+            let user_hp_pre = e.actors[&user].hitpoints();
+            let ogre_hp_pre = e.actors[&ogre].hitpoints();
+            let aei = ActionExecutionInfo::new(&BLOW_HORN_OF_BLASTING, user, None, None, None);
+            assert!(aei.validate(&e));
+            e.push_action(aei);
+            e.process_stack();
+            // Horn consumed regardless of save outcomes.
+            assert!(
+                !e.actors[&user].has_item_named("Horn of Blasting"),
+                "horn should be consumed on use"
+            );
+            // Wielder must never eat their own burst — neutral_burst_targets
+            // excludes the caster.
+            assert_eq!(
+                e.actors[&user].hitpoints(),
+                user_hp_pre,
+                "Horn of Blasting must not damage its wielder"
+            );
+            let ogre_hp_post = e
+                .actors
+                .get(&ogre)
+                .map(|a| a.hitpoints())
+                .unwrap_or(0);
+            if ogre_hp_post < ogre_hp_pre {
+                saw_damage = true;
+            }
+            if e.actors
+                .get(&ogre)
+                .is_some_and(|a| a.has_condition(Condition::Deafened))
+            {
+                saw_deaf = true;
+            }
+            if saw_damage && saw_deaf {
+                break;
+            }
+        }
+        assert!(saw_damage, "horn should damage the ogre across seeds");
+        assert!(saw_deaf, "horn should deafen the ogre on at least one fail");
+    }
+
+    /// Javelin of Lightning: thrown lightning burst, BurstSaveDamageItem
+    /// shape. Damages enemies in the small burst, spares the caster, and
+    /// consumes the javelin.
+    #[test]
+    fn javelin_of_lightning_damages_enemies_and_is_consumed() {
+        use crate::actions::item_actions::THROW_JAVELIN_OF_LIGHTNING;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::items::item_template::JAVELIN_OF_LIGHTNING;
+        let mut saw_damage = false;
+        for seed in 0..30u64 {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let caster = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&caster)
+                .unwrap()
+                .pickup_item(&JAVELIN_OF_LIGHTNING);
+            let caster_hp_pre = e.actors[&caster].hitpoints();
+            let goblin_hp_pre = e.actors[&goblin].hitpoints();
+            let aei = ActionExecutionInfo::new(
+                &THROW_JAVELIN_OF_LIGHTNING,
+                caster,
+                None,
+                Some(vec![Coordinate::new(8, 8)]),
+                None,
+            );
+            assert!(aei.validate(&e));
+            e.push_action(aei);
+            e.process_stack();
+            assert!(
+                !e.actors[&caster].has_item_named("Javelin of Lightning"),
+                "javelin should be consumed on throw"
+            );
+            assert_eq!(
+                e.actors[&caster].hitpoints(),
+                caster_hp_pre,
+                "Javelin of Lightning must not damage its thrower"
+            );
+            let goblin_hp_post = e
+                .actors
+                .get(&goblin)
+                .map(|a| a.hitpoints())
+                .unwrap_or(0);
+            if goblin_hp_post < goblin_hp_pre {
+                saw_damage = true;
+                break;
+            }
+        }
+        assert!(
+            saw_damage,
+            "Javelin of Lightning should damage at least one enemy across seeds"
+        );
+    }
+
+    /// Bead of Force: small force-typed burst. Force is the rarely-resisted
+    /// damage lane — verify the bead damages an enemy and consumes itself.
+    #[test]
+    fn bead_of_force_damages_enemies_and_is_consumed() {
+        use crate::actions::item_actions::THROW_BEAD_OF_FORCE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::items::item_template::BEAD_OF_FORCE;
+        let mut saw_damage = false;
+        for seed in 0..30u64 {
+            let mut e = ei_seeded(20, 20, &[], seed);
+            let caster = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&caster)
+                .unwrap()
+                .pickup_item(&BEAD_OF_FORCE);
+            let goblin_hp_pre = e.actors[&goblin].hitpoints();
+            let aei = ActionExecutionInfo::new(
+                &THROW_BEAD_OF_FORCE,
+                caster,
+                None,
+                Some(vec![Coordinate::new(8, 8)]),
+                None,
+            );
+            assert!(aei.validate(&e));
+            e.push_action(aei);
+            e.process_stack();
+            assert!(
+                !e.actors[&caster].has_item_named("Bead of Force"),
+                "bead should be consumed on use"
+            );
+            let goblin_hp_post = e
+                .actors
+                .get(&goblin)
+                .map(|a| a.hitpoints())
+                .unwrap_or(0);
+            if goblin_hp_post < goblin_hp_pre {
+                saw_damage = true;
+                break;
+            }
+        }
+        assert!(
+            saw_damage,
+            "Bead of Force should damage at least one enemy across seeds"
+        );
+    }
+
+    /// Scroll of Fly: ally-target Flying install. Verifies the install
+    /// lands, the scroll is consumed, and re-cast is rejected while the
+    /// target is already Flying.
+    #[test]
+    fn scroll_of_fly_installs_flying_on_ally_and_rejects_refresh() {
+        use crate::actions::item_actions::READ_FLY_SCROLL;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_FLY;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_FLY);
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .pickup_item(&SCROLL_OF_FLY);
+        let aei = ActionExecutionInfo::new(
+            &READ_FLY_SCROLL,
+            cleric,
+            Some(vec![fighter]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e));
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            e.actors[&fighter].has_condition(Condition::Flying),
+            "Scroll of Fly should install Flying on the ally"
+        );
+        // Second scroll still in inventory; the validator should reject
+        // the refresh since Flying is already up on the ally.
+        let aei2 = ActionExecutionInfo::new(
+            &READ_FLY_SCROLL,
+            cleric,
+            Some(vec![fighter]),
+            None,
+            None,
+        );
+        assert!(
+            !aei2.validate(&e),
+            "Scroll of Fly should reject re-cast when target already Flying"
+        );
+    }
+
+    /// Shadow of Moil: installs `MoilShrouded` on the caster under
+    /// concentration. Verifies the install lands, the buff imposes
+    /// attacker disadvantage (via `imposes_disadvantage_to_attackers`),
+    /// and dropping concentration strips the install. The melee-reflect
+    /// rider is covered by the existing reflect-rider tests for the
+    /// `MELEE_REFLECT_RIDERS` table — Shadow of Moil joins via the same
+    /// shape as Fire Shield / Investiture of Flame.
+    #[test]
+    fn shadow_of_moil_installs_and_drops_on_concentration() {
+        use crate::actions::spells::SHADOW_OF_MOIL;
+        use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let warlock = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let effs = SHADOW_OF_MOIL.side_effects(&mut e, warlock, None, None, None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&warlock].has_condition(Condition::MoilShrouded),
+            "Shadow of Moil installs the MoilShrouded condition"
+        );
+        assert!(
+            e.actors[&warlock].is_concentrating(),
+            "Shadow of Moil is concentration-bound"
+        );
+        // The condition should impose disadvantage on attackers via the
+        // shared cohort helper.
+        assert!(
+            Condition::MoilShrouded.imposes_disadvantage_to_attackers(),
+            "MoilShrouded should impose attacker disadvantage"
+        );
+        // Dropping concentration strips the install via the standard
+        // concentration cleanup hook.
+        e.drop_concentration(warlock);
+        assert!(
+            !e.actors[&warlock].has_condition(Condition::MoilShrouded),
+            "Dropping concentration strips MoilShrouded"
+        );
+    }
+
+    /// Shadow of Moil: a melee attacker that connects with the shrouded
+    /// holder eats the 2d8 necrotic retaliation rider through the
+    /// existing `MELEE_REFLECT_RIDERS` table. Mirrors the
+    /// `fire_shield_reflects_melee_damage` test shape.
+    #[test]
+    fn shadow_of_moil_reflects_melee_damage_as_necrotic() {
+        use crate::actions::monster_attacks::SLAM;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::MoilShrouded, ConditionTimer::Rounds(10));
+        let attacker_hp_pre = e.actors[&attacker].hitpoints();
+
+        // Many seeds — at least one swing should land and trigger the
+        // shroud. The MoilShrouded buff also imposes attacker disadvantage
+        // so hits are rarer than baseline, but 200 attempts is plenty.
+        let mut shroud_fired = false;
+        for _ in 0..200 {
+            // Heal both back so the loop doesn't drain HP across swings.
+            let a_max = e.actors[&attacker].max_hitpoints();
+            let t_max = e.actors[&target].max_hitpoints();
+            e.actors.get_mut(&attacker).unwrap().heal(a_max);
+            e.actors.get_mut(&target).unwrap().heal(t_max);
+            let target_vec = vec![target];
+            let effects = SLAM.side_effects(&mut e, attacker, Some(&target_vec), None, None);
+            let had_hit = !effects.is_empty();
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if had_hit
+                && e.actors.get(&attacker).is_some_and(|a| a.hitpoints() < attacker_hp_pre)
+            {
+                shroud_fired = true;
+                break;
+            }
+        }
+        assert!(shroud_fired, "shadow of moil never reflected in 200 swings");
+    }
+
+    /// Shadow of Moil: re-casting while the buff is already up is rejected
+    /// by `custom_validate_input` so the warlock doesn't burn a level-4
+    /// slot on a no-op refresh. Mirrors the Fire Shield / Otherworldly
+    /// Guise gate.
+    #[test]
+    fn shadow_of_moil_rejects_double_cast_while_active() {
+        use crate::actions::spells::SHADOW_OF_MOIL;
+        use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let warlock = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let aei1 = ActionExecutionInfo::new(&*SHADOW_OF_MOIL, warlock, None, None, None);
+        assert!(aei1.validate(&e), "first cast should validate");
+        e.push_action(aei1);
+        e.process_stack();
+        assert!(e.actors[&warlock].has_condition(Condition::MoilShrouded));
+        let aei2 = ActionExecutionInfo::new(&*SHADOW_OF_MOIL, warlock, None, None, None);
+        assert!(
+            !aei2.validate(&e),
+            "re-cast while MoilShrouded is up should be rejected"
+        );
+    }
+
+    /// Scroll of Bestow Curse: WIS save vs DC 15; on fail, target gains
+    /// Baned for 10 rounds. Verifies the scroll is consumed and the
+    /// failed-save install lands across seeds.
+    #[test]
+    fn scroll_of_bestow_curse_installs_baned_on_failed_save() {
+        use crate::actions::item_actions::READ_BESTOW_CURSE_SCROLL;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::items::item_template::SCROLL_OF_BESTOW_CURSE;
+        let mut saw_install = false;
+        for seed in 0..30u64 {
+            let mut e = ei_seeded(15, 15, &[], seed);
+            let cleric = e
+                .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            // Adjacent so the touch reach (1 tile) clears.
+            let zombie = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&cleric)
+                .unwrap()
+                .pickup_item(&SCROLL_OF_BESTOW_CURSE);
+            let aei = ActionExecutionInfo::new(
+                &READ_BESTOW_CURSE_SCROLL,
+                cleric,
+                Some(vec![zombie]),
+                None,
+                None,
+            );
+            assert!(aei.validate(&e));
+            e.push_action(aei);
+            e.process_stack();
+            assert!(
+                !e.actors[&cleric].has_item_named("Scroll of Bestow Curse"),
+                "scroll should be consumed on read"
+            );
+            if e.actors[&zombie].has_condition(Condition::Baned) {
+                saw_install = true;
+                break;
+            }
+        }
+        assert!(
+            saw_install,
+            "Scroll of Bestow Curse should install Baned on at least one fail across seeds"
+        );
+    }
 }

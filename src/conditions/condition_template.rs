@@ -1170,6 +1170,17 @@ pub enum Condition {
     /// concentration drops the buff. Joins `is_dispellable_buff` so Dispel
     /// Magic / Counterspell can rip it.
     OtherworldlyGuised,
+    /// Wreathed in shadows (5e XGE Shadow of Moil, level-4 warlock evocation,
+    /// concentration). The caster is enveloped by clinging darkness: any
+    /// creature that hits them with a melee attack takes 2d8 necrotic damage
+    /// in retaliation (the reflect rider lives in `MELEE_REFLECT_RIDERS`
+    /// alongside Fire Shield / Armor of Agathys / Investiture of Flame), AND
+    /// attacks against them have disadvantage (the holder is dim — joins the
+    /// `imposes_disadvantage_to_attackers` cohort). RAW: the caster also
+    /// sheds dim light but is otherwise illuminated normally to themselves.
+    /// We collapse the lighting clause since the engine has no sight system.
+    /// Concentration-bound on the caster.
+    MoilShrouded,
 }
 
 impl Condition {
@@ -1324,6 +1335,7 @@ impl Condition {
             Condition::Silenced => "silenced",
             Condition::Footloose => "moving freely",
             Condition::Darkened => "shrouded in darkness",
+            Condition::MoilShrouded => "shrouded in moil",
         }
     }
 
@@ -1418,6 +1430,7 @@ impl Condition {
                 | Condition::AshardalonStriding
                 | Condition::OtherworldlyGuised
                 | Condition::Footloose
+                | Condition::MoilShrouded
         )
     }
 
@@ -1632,6 +1645,7 @@ impl Condition {
                 | Condition::Untracked
                 | Condition::Displaced
                 | Condition::Darkened
+                | Condition::MoilShrouded
         )
     }
 

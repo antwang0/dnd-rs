@@ -180,6 +180,12 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // blind zone). Goes on the warlock list as part of their Pact of
     // the Fiend / Pact of the Chain SRD baseline.
     actions.push(&*crate::actions::spells::DARKNESS);
+    // lv4 **Shadow of Moil** (XGtE evocation, concentration). Self-only
+    // shadow wrap: 2d8 necrotic retaliation on every melee hit AND
+    // attackers swing with disadvantage. Sibling to Fire Shield (radiant
+    // tier, no attacker-debuff) on the self-shield lane — the necrotic
+    // typing leans into the warlock's death-flavored kit.
+    actions.push(&*crate::actions::spells::SHADOW_OF_MOIL);
     CreatureTemplate {
         name: "Warlock",
         // 'L' (uppercase) — distinct from 'l' (Lich), 'W' (Wolf glyph),

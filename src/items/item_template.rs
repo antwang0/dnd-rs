@@ -2435,6 +2435,69 @@ pub static POTION_OF_OTHERWORLDLY_GUISE: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Horn of Blasting — self-centered 6-tile thunder burst (5d6, CON DC 15
+/// save-for-half) plus a Deafened rider on failed save. Single-use
+/// consumable in this engine (RAW: 7 charges with recharge — we collapse
+/// to a one-shot drop so the loot pool stays flat). Sibling to Necklace
+/// of Fireballs / Lightning Bolts on the elemental-burst consumable lane —
+/// distinct by the self-centered shape (no targeted tile) and the thunder
+/// damage type.
+pub static HORN_OF_BLASTING: Item = Item {
+    name: "Horn of Blasting",
+    glyph: 'H',
+    on_use: Some(&crate::actions::item_actions::BLOW_HORN_OF_BLASTING),
+    ..Item::DEFAULTS
+};
+
+/// Javelin of Lightning — thrown 120-ft (48 tile) lightning burst
+/// (4d6, DEX DC 13 save-for-half, 2-tile radius). Single-use consumable.
+/// Mirror of Necklace of Lightning Bolts (5d6 DC 15) at a cheaper save
+/// DC + smaller payload tier — fills the entry-level lightning-burst
+/// niche above Scroll of Lightning Bolt (which is 8d6 DC 15 burst, no
+/// throw envelope) and below the necklace's per-bead tier.
+pub static JAVELIN_OF_LIGHTNING: Item = Item {
+    name: "Javelin of Lightning",
+    glyph: 'J',
+    on_use: Some(&crate::actions::item_actions::THROW_JAVELIN_OF_LIGHTNING),
+    ..Item::DEFAULTS
+};
+
+/// Bead of Force — small force-typed burst consumable (5d4 force, DEX
+/// DC 15 save-for-half, 2-tile radius). Drops the rarely-resisted force
+/// damage type into the burst-scroll lane. Sibling to Scroll of Magic
+/// Missile (auto-hit force darts) on the force-damage consumable lane —
+/// distinct by the burst envelope (vs single-target dart pile) and the
+/// per-target save semantics.
+pub static BEAD_OF_FORCE: Item = Item {
+    name: "Bead of Force",
+    glyph: 'q',
+    on_use: Some(&crate::actions::item_actions::THROW_BEAD_OF_FORCE),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Fly — Action; install `Flying` for 10 rounds on a single
+/// ally within touch (1 tile). Sibling to Winged Boots (passive Flying)
+/// and Potion of Flying (self-only consumable) — distinct by the
+/// ally-target envelope (let the rogue / fighter sky-dance without their
+/// own caster needing a free hand).
+pub static SCROLL_OF_FLY: Item = Item {
+    name: "Scroll of Fly",
+    glyph: '0',
+    on_use: Some(&crate::actions::item_actions::READ_FLY_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Bestow Curse — touch single-target, WIS save vs DC 15 or
+/// `Baned` for 10 rounds. Sibling to Scroll of Bane (burst Baned DC 13)
+/// on the Baned lane — distinct by the single-target shape and the
+/// meaner DC tier.
+pub static SCROLL_OF_BESTOW_CURSE: Item = Item {
+    name: "Scroll of Bestow Curse",
+    glyph: '0',
+    on_use: Some(&crate::actions::item_actions::READ_BESTOW_CURSE_SCROLL),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -2999,4 +3062,27 @@ pub static LOOT_POOL: &[&Item] = &[
     // condition dynamic immunity, +2d6 radiant melee weapon rider. Single
     // rare entry alongside Potion of Foresight on the legendary tier.
     &POTION_OF_OTHERWORLDLY_GUISE,
+    // Horn of Blasting — self-centered thunder burst (5d6 CON DC 15
+    // save-for-half + Deafened on fail). Sibling to Necklace of Fireballs /
+    // Lightning Bolts on the elemental-burst consumable lane; distinct
+    // by the self-centered no-target shape.
+    &HORN_OF_BLASTING,
+    // Javelin of Lightning — thrown lightning burst (4d6 DEX DC 13). Mid-
+    // tier lightning consumable between Scroll of Lightning Bolt (8d6
+    // DC 15) and Necklace of Lightning Bolts (5d6 DC 15) on the lightning
+    // burst lane.
+    &JAVELIN_OF_LIGHTNING,
+    // Bead of Force — small force-typed burst (5d4 DEX DC 15). The only
+    // force-damage burst in the loot pool; fills the rarely-resisted
+    // force lane that Scroll of Magic Missile already pioneers in the
+    // auto-hit family.
+    &BEAD_OF_FORCE,
+    // Scroll of Fly — ally-target Flying install for 10 rounds. Sibling
+    // to Winged Boots (passive) and Potion of Flying (self-only) on the
+    // flight-buff lane; distinct by the ally-target envelope.
+    &SCROLL_OF_FLY,
+    // Scroll of Bestow Curse — single-target Baned install at the rare
+    // WIS DC 15 tier. Sibling to Scroll of Bane (burst DC 13) on the
+    // Baned lane.
+    &SCROLL_OF_BESTOW_CURSE,
 ];

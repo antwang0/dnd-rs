@@ -559,6 +559,17 @@ const MELEE_REFLECT_RIDERS: &[MeleeReflectRider] = &[
         damage_type: DamageType::Force,
         label: "investiture of stone",
     },
+    // 5e Shadow of Moil — 2d8 necrotic on melee contact. The clinging
+    // shadows lash out at anyone who reaches into them. Concentration-
+    // bound on the caster (paired with the attacker-disadvantage half
+    // via `imposes_disadvantage_to_attackers`). Same shape as Fire
+    // Shield, swapped element — necrotic-typed.
+    MeleeReflectRider {
+        condition: Condition::MoilShrouded,
+        damage: ReflectDamage::Dice(Dice::new(2, 8)),
+        damage_type: DamageType::Necrotic,
+        label: "shadow of moil",
+    },
 ];
 
 /// Roll a single rider die for an on-hit bonus, doubling on crit per

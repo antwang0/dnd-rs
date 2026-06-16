@@ -3,8 +3,9 @@ use std::sync::LazyLock;
 
 use crate::{
     actions::action_template::{
-        action_and_slot, action_only, bonus_action_and_slot, bonus_action_only,
-        first_ally_target_id, first_target_id, first_target_location, Action, TargetingSchema,
+        action_and_slot, action_only, actor_lacks_condition, bonus_action_and_slot,
+        bonus_action_only, first_ally_target_id, first_target_id, first_target_location, Action,
+        TargetingSchema,
     },
     actors::actor_template::ConcentrationData,
     conditions::{Condition, ConditionTimer},
@@ -11706,10 +11707,7 @@ impl Action for SpiritShroud {
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
         // Already wreathed → don't re-cast and burn another slot.
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| !a.has_condition(Condition::SpiritShrouded))
+        actor_lacks_condition(encounter, caster_id, Condition::SpiritShrouded)
     }
     fn side_effects(
         &self,
@@ -14750,10 +14748,7 @@ impl Action for InvestitureOfFlame {
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
         // Already invested → don't re-cast and burn a level-6 slot.
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| !a.has_condition(Condition::InvestedInFlame))
+        actor_lacks_condition(encounter, caster_id, Condition::InvestedInFlame)
     }
     fn side_effects(
         &self,
@@ -16220,10 +16215,7 @@ impl Action for Guidance {
         let Some(target_id) = first_target_id(target_ids) else {
             return false;
         };
-        encounter
-            .actors
-            .get(&target_id)
-            .is_some_and(|a| !a.has_condition(Condition::Inspired))
+        actor_lacks_condition(encounter, target_id, Condition::Inspired)
     }
     // Cantrip — uses the default `cost()` (single Action, no slot).
     fn side_effects(
@@ -16775,10 +16767,7 @@ impl Action for BladeWard {
         // Don't burn the action re-warding an already-warded caster —
         // the buff doesn't stack and an unspent Action is more valuable
         // than refreshing the timer (which is already short).
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| !a.has_condition(Condition::DamageResistant))
+        actor_lacks_condition(encounter, caster_id, Condition::DamageResistant)
     }
     // Cantrip — uses the default `cost()` (single Action, no spell slot).
     fn side_effects(
@@ -19200,10 +19189,7 @@ impl Action for MindBlank {
         let Some(tid) = first_target_id(target_ids) else {
             return false;
         };
-        encounter
-            .actors
-            .get(&tid)
-            .is_some_and(|a| !a.has_condition(Condition::MindBlanked))
+        actor_lacks_condition(encounter, tid, Condition::MindBlanked)
     }
     fn side_effects(
         &self,
@@ -19557,10 +19543,7 @@ impl Action for Barkskin {
         let Some(target_id) = first_target_id(target_ids) else {
             return false;
         };
-        encounter
-            .actors
-            .get(&target_id)
-            .is_some_and(|a| !a.has_condition(Condition::Barkskinned))
+        actor_lacks_condition(encounter, target_id, Condition::Barkskinned)
     }
     fn side_effects(
         &self,
@@ -21586,10 +21569,7 @@ impl Action for InvestitureOfIce {
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
         // Already invested → don't re-cast and burn a level-6 slot.
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| !a.has_condition(Condition::InvestedInIce))
+        actor_lacks_condition(encounter, caster_id, Condition::InvestedInIce)
     }
     fn side_effects(
         &self,
@@ -21668,10 +21648,7 @@ impl Action for InvestitureOfStone {
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
         // Already invested → don't re-cast and burn a level-6 slot.
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| !a.has_condition(Condition::InvestedInStone))
+        actor_lacks_condition(encounter, caster_id, Condition::InvestedInStone)
     }
     fn side_effects(
         &self,
@@ -22376,10 +22353,7 @@ impl Action for InvestitureOfWind {
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
         // Already invested → don't re-cast and burn a level-6 slot.
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| !a.has_condition(Condition::InvestedInWind))
+        actor_lacks_condition(encounter, caster_id, Condition::InvestedInWind)
     }
     fn side_effects(
         &self,
@@ -24324,10 +24298,7 @@ impl Action for FlameArrows {
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
         // Already imbued → don't re-cast and burn another slot.
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| !a.has_condition(Condition::FlamingArrowed))
+        actor_lacks_condition(encounter, caster_id, Condition::FlamingArrowed)
     }
     fn side_effects(
         &self,
@@ -24401,10 +24372,7 @@ impl Action for AshardalonsStride {
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
         // Already striding → don't re-cast and burn another slot.
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| !a.has_condition(Condition::AshardalonStriding))
+        actor_lacks_condition(encounter, caster_id, Condition::AshardalonStriding)
     }
     fn side_effects(
         &self,
@@ -24486,10 +24454,7 @@ impl Action for OtherworldlyGuise {
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
         // Already guised → don't re-cast and burn another slot.
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| !a.has_condition(Condition::OtherworldlyGuised))
+        actor_lacks_condition(encounter, caster_id, Condition::OtherworldlyGuised)
     }
     fn side_effects(
         &self,
@@ -24885,3 +24850,86 @@ impl Action for Darkness {
 }
 
 pub static DARKNESS: LazyLock<Darkness> = LazyLock::new(|| Darkness {});
+
+/// Shadow of Moil — XGE level-4 warlock evocation, concentration, self-only.
+/// The caster wraps themselves in clinging shadow: any creature that hits
+/// them with a melee attack takes 2d8 necrotic damage in retaliation, AND
+/// attacks against them have disadvantage (the holder is hard to see).
+/// We model the load-bearing pieces via the `MoilShrouded` condition:
+/// - The melee-reflect rider lives in `MELEE_REFLECT_RIDERS` next to the
+///   Fire Shield / Investiture entries — symmetric shape, swapped damage
+///   type (necrotic). Fires on every melee hit, no save.
+/// - The attacker-disadvantage half rides
+///   `imposes_disadvantage_to_attackers` so every swing against the holder
+///   eats the standard mode penalty (single source of truth alongside
+///   Blur / Displaced / Holy Aura).
+/// - Concentration-bound on the caster; dropping concentration strips
+///   the install via the standard cleanup hook.
+///
+/// Sibling to Fire Shield (2d8 fire melee reflect) on the self-shield
+/// lane — distinct by the necrotic damage type AND the bundled attacker-
+/// disadvantage clause (Fire Shield doesn't carry the dimness rider).
+/// RAW also gives the holder dim-light illumination + 10 ft of
+/// surrounding darkness; we collapse the lighting clause since the
+/// engine has no sight system.
+pub struct ShadowOfMoil {}
+
+impl Action for ShadowOfMoil {
+    fn name(&self) -> &str {
+        "shadow of moil"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["moil", "shadow-moil"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Don't double-cast: refreshing while the buff is already up
+        // wastes a level-4 slot. Mirrors the FireShielded / Investiture
+        // / Otherworldly Guise self-buff gate.
+        actor_lacks_condition(encounter, caster_id, Condition::MoilShrouded)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // Concentration-bound self-buff. Mirrors Blur / Globe of
+        // Invulnerability / Crusader's Mantle via `self_concentration_buff_effects`.
+        self_concentration_buff_effects(
+            caster_id,
+            "Shadow of Moil",
+            Condition::MoilShrouded,
+            ConditionTimer::Rounds(10),
+        )
+    }
+}
+
+pub static SHADOW_OF_MOIL: LazyLock<ShadowOfMoil> = LazyLock::new(|| ShadowOfMoil {});
