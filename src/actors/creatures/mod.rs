@@ -131,3 +131,8 @@ pub mod giant_toads;
 pub mod pseudodragons;
 pub mod tigers;
 pub mod tiny_animated_objects;
+pub mod polar_bears;
+pub mod lions;
+pub mod fire_giants;
+pub mod cyclopes;
+pub mod rocs;

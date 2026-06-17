@@ -6,6 +6,26 @@ use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, S
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
+/// The 9-condition immunity envelope every elemental in this engine
+/// shares (Charmed / Frightened / Paralyzed / Petrified / Poisoned /
+/// Asleep / Prone / Grappled / Restrained). Lifted to a `LazyLock` so
+/// each elemental template clones the same value rather than repeating
+/// a 9-line literal — a new elemental added later opts in by cloning
+/// this set into `condition_immunities`.
+pub static ELEMENTAL_CONDITION_IMMUNITIES: LazyLock<HashSet<Condition>> = LazyLock::new(|| {
+    HashSet::from([
+        Condition::Charmed,
+        Condition::Frightened,
+        Condition::Paralyzed,
+        Condition::Petrified,
+        Condition::Poisoned,
+        Condition::Asleep,
+        Condition::Prone,
+        Condition::Grappled,
+        Condition::Restrained,
+    ])
+});
+
 /// Fire Elemental — CR 5 elemental. Walking inferno: fire-touch melee
 /// for 2d6 + ignite (Burning DOT). Immune to fire and poison, resistant
 /// to non-magical physical damage (we collapse to "physical resistance"
@@ -30,16 +50,12 @@ pub static FIRE_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         wisdom: 10,
         constitution: 16,
         charisma: 7,
-        skills: HashSet::new(),
-        items: Vec::new(),
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
         languages: HashSet::from([Language::Primordial]),
         cr: 5.0,
         size: Size::Large,
         creature_type: CreatureType::Elemental,
         actions,
-        spell_slots_by_level: Vec::new(),
-        rolls_death_saves: false,
         damage_modifiers: HashMap::from([
             (DamageType::Fire, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
@@ -50,43 +66,7 @@ pub static FIRE_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
             (DamageType::Piercing, DamageModifier::Resistance),
             (DamageType::Slashing, DamageModifier::Resistance),
         ]),
-        proficient_saves: HashSet::new(),
-        condition_immunities: HashSet::from([
-            Condition::Charmed,
-            Condition::Frightened,
-            Condition::Paralyzed,
-            Condition::Petrified,
-            Condition::Poisoned,
-            Condition::Asleep,
-            Condition::Prone,
-            Condition::Grappled,
-            Condition::Restrained,
-        ]),
-        features: HashSet::new(),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
-        legendary_resistances: 0,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
-        has_magic_resistance: false,
-        recharge_abilities: Vec::new(),
-        legendary_actions_per_round: 0,
-        has_extra_attack: false,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
+        ..CreatureTemplate::defaults()
     }
 });

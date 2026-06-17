@@ -11,6 +11,19 @@ use crate::engine::types::{
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
+/// The DEX / CON / WIS / CHA save profile every dragon in this engine
+/// shares (Legendary save profile in MM). Lifted to a `LazyLock` because
+/// `HashSet` isn't `const`-constructible from a literal; the three
+/// dragon templates below thread the same value through `proficient_saves`.
+static DRAGON_LEGENDARY_SAVES: LazyLock<HashSet<AbilityScoreType>> = LazyLock::new(|| {
+    HashSet::from([
+        AbilityScoreType::Dexterity,
+        AbilityScoreType::Constitution,
+        AbilityScoreType::Wisdom,
+        AbilityScoreType::Charisma,
+    ])
+});
+
 /// Adult Red Dragon — CR 17 dragon, the marquee boss profile. Huge size
 /// (4×4 footprint), AC 19, ~256 average HP. Three action lanes:
 /// - Multiattack (3x claws against a single target) — the bursty melee
@@ -45,8 +58,6 @@ pub static ADULT_RED_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         wisdom: 13,
         constitution: 25,
         charisma: 21,
-        skills: HashSet::new(),
-        items: Vec::new(),
         senses: HashSet::from([
             SpecialSense::Blindsight(60),
             SpecialSense::Darkvision(120),
@@ -56,50 +67,19 @@ pub static ADULT_RED_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         size: Size::Large,
         creature_type: CreatureType::Dragon,
         actions,
-        spell_slots_by_level: Vec::new(),
-        rolls_death_saves: false,
-        damage_modifiers: HashMap::from([
-            // Fire immunity is the dragon's signature defense.
-            (DamageType::Fire, DamageModifier::Immunity),
-        ]),
-        // 5e Adult Red Dragon proficient saves: DEX, CON, WIS, CHA.
-        proficient_saves: HashSet::from([
-            AbilityScoreType::Dexterity,
-            AbilityScoreType::Constitution,
-            AbilityScoreType::Wisdom,
-            AbilityScoreType::Charisma,
-        ]),
+        // Fire immunity is the dragon's signature defense.
+        damage_modifiers: HashMap::from([(DamageType::Fire, DamageModifier::Immunity)]),
+        proficient_saves: DRAGON_LEGENDARY_SAVES.clone(),
         // 5e: dragons are immune to Frightened (they fear nothing) and
         // Charmed (their wills are too strong).
         condition_immunities: HashSet::from([Condition::Frightened, Condition::Charmed]),
-        features: HashSet::new(),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
         // 5e Legendary Resistance (3/Day) — RAW per MM. Lets the dragon
         // shrug off a mid-fight Hold Monster / Banishment / Slow.
         legendary_resistances: 3,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
         has_magic_resistance: true,
         recharge_abilities: vec![("breath_weapon", 5)],
         legendary_actions_per_round: 3,
-        has_extra_attack: false,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });
 
@@ -125,8 +105,6 @@ pub static YOUNG_WHITE_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
         wisdom: 11,
         constitution: 18,
         charisma: 12,
-        skills: HashSet::new(),
-        items: Vec::new(),
         senses: HashSet::from([
             SpecialSense::Blindsight(30),
             SpecialSense::Darkvision(120),
@@ -136,48 +114,13 @@ pub static YOUNG_WHITE_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
         size: Size::Large,
         creature_type: CreatureType::Dragon,
         actions,
-        spell_slots_by_level: Vec::new(),
-        rolls_death_saves: false,
-        damage_modifiers: HashMap::from([
-            (DamageType::Cold, DamageModifier::Immunity),
-        ]),
-        // 5e Young White Dragon proficient saves: DEX, CON, WIS, CHA.
-        proficient_saves: HashSet::from([
-            AbilityScoreType::Dexterity,
-            AbilityScoreType::Constitution,
-            AbilityScoreType::Wisdom,
-            AbilityScoreType::Charisma,
-        ]),
-        // Young dragons have no special condition immunities.
-        condition_immunities: HashSet::new(),
-        features: HashSet::new(),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
-        // Young dragons have NO legendary resistances.
-        legendary_resistances: 0,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
-        has_magic_resistance: false,
+        damage_modifiers: HashMap::from([(DamageType::Cold, DamageModifier::Immunity)]),
+        proficient_saves: DRAGON_LEGENDARY_SAVES.clone(),
+        // Young dragons have NO legendary resistances or actions; the
+        // breath weapon is still on a 5-6 recharge.
         recharge_abilities: vec![("breath_weapon", 5)],
-        // Young dragons have NO legendary actions.
-        legendary_actions_per_round: 0,
         has_extra_attack: true,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });
 
@@ -205,8 +148,6 @@ pub static ANCIENT_BLUE_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
         wisdom: 17,
         constitution: 27,
         charisma: 21,
-        skills: HashSet::new(),
-        items: Vec::new(),
         senses: HashSet::from([
             SpecialSense::Blindsight(60),
             SpecialSense::Darkvision(120),
@@ -216,46 +157,15 @@ pub static ANCIENT_BLUE_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
         size: Size::Large,
         creature_type: CreatureType::Dragon,
         actions,
-        spell_slots_by_level: Vec::new(),
-        rolls_death_saves: false,
-        damage_modifiers: HashMap::from([
-            (DamageType::Lightning, DamageModifier::Immunity),
-        ]),
-        // 5e Ancient Blue Dragon proficient saves: DEX, CON, WIS, CHA.
-        proficient_saves: HashSet::from([
-            AbilityScoreType::Dexterity,
-            AbilityScoreType::Constitution,
-            AbilityScoreType::Wisdom,
-            AbilityScoreType::Charisma,
-        ]),
+        damage_modifiers: HashMap::from([(DamageType::Lightning, DamageModifier::Immunity)]),
+        proficient_saves: DRAGON_LEGENDARY_SAVES.clone(),
         // Ancient dragons are immune to Frightened and Charmed.
         condition_immunities: HashSet::from([Condition::Frightened, Condition::Charmed]),
-        features: HashSet::new(),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
-        // 5e Legendary Resistance (3/Day).
         legendary_resistances: 3,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
         has_magic_resistance: true,
         recharge_abilities: vec![("breath_weapon", 5)],
         legendary_actions_per_round: 3,
         has_extra_attack: true,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });

@@ -7723,3 +7723,217 @@ pub static TINY_ANIMATED_OBJECT_SLAM: SimpleWeapon = SimpleWeapon {
     cost_resource: Resource::Action,
     normal_range: None,
 };
+
+/// Polar Bear bite — STR 1d8+5 piercing. Bigger jaw than the Brown Bear
+/// (CR 1) bite; the grindy half of the polar's multi. Slots between Brown
+/// Bear (1d8+4 / 2d6+4) and Tiger (1d10+5 / 1d8+5) on the bear-claws
+/// ladder, with the heavier polar-specific +1 STR mod.
+pub static POLAR_BEAR_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "bite",
+    aliases: &["b", "chomp"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Polar Bear claws — STR 2d6+5 slashing. Heavier rake than the Brown
+/// Bear thanks to the polar's bigger STR (20 vs 19). Pairs with the bite
+/// in the standard "bite + claws" Multiattack chassis.
+pub static POLAR_BEAR_CLAWS: SimpleWeapon = SimpleWeapon {
+    display_name: "claws",
+    aliases: &["c", "rake"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Polar Bear multiattack — one bite + one claw rake per Action. Same
+/// shape as Brown Bear / Tiger; the polar's +5 STR mod is the
+/// CR-2-vs-CR-1 step.
+pub static POLAR_BEAR_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "bite + claws",
+    parts: vec![(&POLAR_BEAR_BITE, 1), (&POLAR_BEAR_CLAWS, 1)],
+});
+
+/// Lion bite — STR 1d8+3 piercing. The first half of the pride hunter's
+/// multi. Lions are CR 1 large beasts; pairs with the claws for the
+/// standard "bite + rake" turn against a focused target.
+pub static LION_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "bite",
+    aliases: &["b", "chomp"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Lion claws — STR 1d6+3 slashing. Lighter rake; the lion compensates
+/// with Pack Tactics so an adjacent ally gives advantage on every swing.
+pub static LION_CLAWS: SimpleWeapon = SimpleWeapon {
+    display_name: "claws",
+    aliases: &["c", "rake"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 6),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Lion multiattack — one bite + one claw per Action. RAW also has a
+/// Pounce option (CR-1 STR-save Prone on a 20 ft straight charge); the
+/// engine doesn't track straight-line movement so we collapse to the
+/// vanilla bite + claws chassis (Pack Tactics handles the Lion's
+/// advantage-on-attack flavor on its own).
+pub static LION_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "bite + claws",
+    parts: vec![(&LION_BITE, 1), (&LION_CLAWS, 1)],
+});
+
+/// Fire Giant Greatsword — STR-based 6d6+STR slashing, reach 2 (10ft).
+/// Sibling to the Storm Giant Greatsword (6d6 + STR at reach 3): a touch
+/// shorter reach because the fire giant's signature is "anvil-and-hammer
+/// blacksmith" rather than the storm giant's celestial scale. CR-9 melee
+/// damage; mirrors the Frost Giant Greataxe (3d12) at the dice tier but
+/// in dice-count-vs-die-size shape.
+pub static FIRE_GIANT_GREATSWORD: SimpleWeapon = SimpleWeapon {
+    display_name: "fire giant greatsword",
+    aliases: &["fgs", "fire-sword"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(6, 6),
+    damage_type: DamageType::Slashing,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Fire Giant Rock — STR-based 4d10+STR bludgeoning thrown rock, reach
+/// 24 (60ft). Same chassis as the Hill/Frost/Stone Giant Rock; the Fire
+/// Giant gets the heavier 4d10 die (matches Frost Giant's 4d10) at the
+/// CR-9 tier.
+pub static FIRE_GIANT_ROCK: SimpleWeapon = SimpleWeapon {
+    display_name: "fire rock",
+    aliases: &["fgrock", "firock"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(4, 10),
+    damage_type: DamageType::Bludgeoning,
+    reach: 24,
+    is_melee: false,
+    requires_los: true,
+    cost_resource: Resource::Action,
+    normal_range: Some(16),
+};
+
+/// Cyclops Greatclub — STR-based 3d8+STR bludgeoning, reach 3 (15ft).
+/// Same dice as Stone Giant's club; the Cyclops sits a tier lower (CR 6
+/// vs CR 7) on lower CON/INT but the same melee envelope. The one-eyed
+/// brute's single signature swing.
+pub static CYCLOPS_GREATCLUB: SimpleWeapon = SimpleWeapon {
+    display_name: "cyclops greatclub",
+    aliases: &["cgc", "cyclub"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(3, 8),
+    damage_type: DamageType::Bludgeoning,
+    reach: 3,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Cyclops Rock — STR-based 4d10+STR bludgeoning thrown rock, reach 24
+/// (60ft). The Cyclops is a notoriously poor shot in 5e (their one eye
+/// gives disadvantage on ranged attacks vs distant targets) but we model
+/// the rock as a clean ranged option — the AI rarely picks it when
+/// melee is available, and the disadvantage flavor reads through the
+/// normal_range cap that already imposes disadvantage at long range.
+pub static CYCLOPS_ROCK: SimpleWeapon = SimpleWeapon {
+    display_name: "cyclops rock",
+    aliases: &["crock"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(4, 10),
+    damage_type: DamageType::Bludgeoning,
+    reach: 24,
+    is_melee: false,
+    requires_los: true,
+    cost_resource: Resource::Action,
+    normal_range: Some(12),
+};
+
+/// Cyclops Multiattack — 2 greatclub swings per Action. Mirrors the
+/// Stone Giant / Frost Giant Multiattack: pure physical thresher, no
+/// rider effects.
+pub static CYCLOPS_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "cyclops multiattack",
+    sub_attack: &CYCLOPS_GREATCLUB,
+    count: 2,
+});
+
+/// Roc Beak — STR-based 4d8+STR piercing, reach 2 (10ft). The first
+/// half of the gargantuan eagle's multi. RAW has the Roc as Gargantuan
+/// (4x4 footprint) but Huge (3x3) is the largest size the engine
+/// supports cleanly — we use Huge here so the spawn placement code
+/// doesn't choke on the 4x4 footprint.
+pub static ROC_BEAK: SimpleWeapon = SimpleWeapon {
+    display_name: "roc beak",
+    aliases: &["rbeak"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(4, 8),
+    damage_type: DamageType::Piercing,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Roc Talons — STR-based 4d6+STR slashing, reach 2 (10ft). The second
+/// half of the multi; the talons rake after the beak strike. Mirrors
+/// the Giant Eagle beak + talons shape at much higher dice.
+pub static ROC_TALONS: SimpleWeapon = SimpleWeapon {
+    display_name: "roc talons",
+    aliases: &["rtalons"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(4, 6),
+    damage_type: DamageType::Slashing,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Roc multiattack — 1 beak + 1 talons per Action. CR-11 dice tier:
+/// the Roc bursts an unguarded target down hard in a single round.
+pub static ROC_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "beak + talons",
+    parts: vec![(&ROC_BEAK, 1), (&ROC_TALONS, 1)],
+});

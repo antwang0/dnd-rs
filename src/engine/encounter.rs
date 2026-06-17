@@ -105,6 +105,11 @@ use crate::actors::creatures::brown_bears::BROWN_BEAR_TEMPLATE;
 use crate::actors::creatures::giant_toads::GIANT_TOAD_TEMPLATE;
 use crate::actors::creatures::pseudodragons::PSEUDODRAGON_TEMPLATE;
 use crate::actors::creatures::tigers::TIGER_TEMPLATE;
+use crate::actors::creatures::polar_bears::POLAR_BEAR_TEMPLATE;
+use crate::actors::creatures::lions::LION_TEMPLATE;
+use crate::actors::creatures::fire_giants::FIRE_GIANT_TEMPLATE;
+use crate::actors::creatures::cyclopes::CYCLOPS_TEMPLATE;
+use crate::actors::creatures::rocs::ROC_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -2589,6 +2594,20 @@ impl EncounterInstance {
             &GIANT_TOAD_TEMPLATE,
             &PSEUDODRAGON_TEMPLATE,
             &BEHIR_TEMPLATE,
+            // Beast / giant fill-ins added alongside the new templates:
+            // Polar Bear (CR 2, large beast — heavier sibling of Brown
+            // Bear), Lion (CR 1, large beast with Pack Tactics — pride
+            // hunter counterpart to Tiger), Fire Giant (CR 9, huge
+            // giant — fire-immune sibling between Frost Giant and
+            // Storm Giant in the giant ladder), Cyclops (CR 6, huge
+            // giant — one-eyed brute slotting between Hill Giant and
+            // Stone Giant), Roc (CR 11, huge beast — gargantuan eagle
+            // pairing with Behir as a non-dragon upper-mid threat).
+            &POLAR_BEAR_TEMPLATE,
+            &LION_TEMPLATE,
+            &FIRE_GIANT_TEMPLATE,
+            &CYCLOPS_TEMPLATE,
+            &ROC_TEMPLATE,
         ]
     }
 
@@ -21254,6 +21273,48 @@ mod tests {
             }
         }
         panic!("expected at least one save-fail across 40 seeds; sleep rider never fired");
+    }
+
+    /// Polar Bear / Lion / Fire Giant / Cyclops / Roc: instantiate cleanly
+    /// from their templates and surface the marquee marker field that
+    /// distinguishes each from neighboring entries on the CR ladder
+    /// (Pack Tactics on Lion, fire immunity on Fire Giant, etc.).
+    #[test]
+    fn polar_bear_lion_fire_giant_cyclops_roc_templates_instantiate() {
+        use crate::actors::creatures::cyclopes::CYCLOPS_TEMPLATE;
+        use crate::actors::creatures::fire_giants::FIRE_GIANT_TEMPLATE;
+        use crate::actors::creatures::lions::LION_TEMPLATE;
+        use crate::actors::creatures::polar_bears::POLAR_BEAR_TEMPLATE;
+        use crate::actors::creatures::rocs::ROC_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let polar = e
+            .instantiate_creature(&POLAR_BEAR_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&polar].hitpoints() > 0);
+        assert_eq!(e.actors[&polar].size(), crate::engine::types::Size::Large);
+        let lion = e
+            .instantiate_creature(&LION_TEMPLATE, Coordinate::new(6, 2), 0, 1)
+            .unwrap();
+        assert!(e.actors[&lion].has_pack_tactics());
+        let fg = e
+            .instantiate_creature(&FIRE_GIANT_TEMPLATE, Coordinate::new(10, 2), 0, 2)
+            .unwrap();
+        // Fire Giant: fire immunity halves a 20 fire hit to 0.
+        assert_eq!(e.actors[&fg].effective_damage(20, DamageType::Fire), 0);
+        // Charmed-immune like the other giants.
+        assert!(e.actors[&fg].is_immune_to_condition(Condition::Charmed));
+        let cy = e
+            .instantiate_creature(&CYCLOPS_TEMPLATE, Coordinate::new(15, 2), 0, 3)
+            .unwrap();
+        assert_eq!(e.actors[&cy].size(), crate::engine::types::Size::Huge);
+        assert!((e.actors[&cy].cr() - 6.0).abs() < f32::EPSILON);
+        let roc = e
+            .instantiate_creature(&ROC_TEMPLATE, Coordinate::new(20, 2), 0, 4)
+            .unwrap();
+        assert!(e.actors[&roc].is_immune_to_condition(Condition::Charmed));
+        assert!((e.actors[&roc].cr() - 11.0).abs() < f32::EPSILON);
     }
 
     /// Beholder: prone-immune (it floats) and CON / INT / WIS save proficient.
