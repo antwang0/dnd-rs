@@ -146,30 +146,14 @@ impl Action for SimpleWeapon {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let mut effects = simple_weapon_attack_ranged(
-            encounter,
-            caster_id,
-            target_ids,
-            self.name(),
-            self.attack_ability,
-            self.damage_ability,
-            self.damage_dice,
-            self.damage_type,
-            self.is_melee,
-            self.normal_range,
-        );
-        // 5e Extra Attack: when the Attack action costs an Action resource
-        // and the caster has Extra Attack, resolve a second swing against
-        // the same target as part of the same action.
-        if self.cost_resource == Resource::Action
-            && encounter
-                .actors
-                .get(&caster_id)
-                .is_some_and(|a| a.has_extra_attack())
-        {
-            encounter.log("  Extra Attack:");
-            effects.extend(simple_weapon_attack_ranged(
-                encounter,
+        // Folds the "one swing + optional Extra-Attack second swing"
+        // chain into a single closure so the eight `self.*` arguments
+        // don't have to be enumerated twice. The Extra Attack rider
+        // only fires on Action-cost swings: bonus-action bow shots and
+        // reaction strikes don't get the second hit per RAW.
+        let swing = |e: &mut EncounterInstance| {
+            simple_weapon_attack_ranged(
+                e,
                 caster_id,
                 target_ids,
                 self.name(),
@@ -179,7 +163,17 @@ impl Action for SimpleWeapon {
                 self.damage_type,
                 self.is_melee,
                 self.normal_range,
-            ));
+            )
+        };
+        let mut effects = swing(encounter);
+        if self.cost_resource == Resource::Action
+            && encounter
+                .actors
+                .get(&caster_id)
+                .is_some_and(|a| a.has_extra_attack())
+        {
+            encounter.log("  Extra Attack:");
+            effects.extend(swing(encounter));
         }
         effects
     }
@@ -7707,3 +7701,25 @@ pub static BEHIR_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAtta
     display_name: "bite + constrict",
     parts: vec![(&BEHIR_BITE, 1), (&*BEHIR_CONSTRICT, 1)],
 });
+
+/// Tiny Animated Object slam — STR-based 1d4+STR force. The signature
+/// touch attack of the conjured swarm the Animate Objects spell summons.
+/// Force damage (RAW: "magical bludgeoning damage" — force is the
+/// closest engine match since it has no resistance lane below
+/// Mind-Blanked) keeps the minions relevant against the standard
+/// physical-resistant cohort (skeletons, golems, undead with the
+/// Bludgeoning-resistant block) and against summons targeting
+/// non-magical-weapon-resistant fiends.
+pub static TINY_ANIMATED_OBJECT_SLAM: SimpleWeapon = SimpleWeapon {
+    display_name: "animated slam",
+    aliases: &["aslam", "object slam"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 4),
+    damage_type: DamageType::Force,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};

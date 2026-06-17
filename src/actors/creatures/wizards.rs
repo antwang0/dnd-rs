@@ -540,6 +540,13 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // same tier. Despawns via the shared `Conjured` cleanup path when
     // concentration drops.
     actions.push(&*crate::actions::spells::CONJURE_ELEMENTAL);
+    // lv5 **Animate Objects** (transmutation): summon ten Tiny Construct
+    // minions adjacent to the caster. Trades the per-target damage of
+    // Cone of Cold or the single-target lockdown of Hold Monster for
+    // ten independent action-economy threats — each minion swings a
+    // 1d4 force slam every round under the caster's command. Despawns
+    // via the shared `Conjured` cleanup path when concentration drops.
+    actions.push(&*crate::actions::spells::ANIMATE_OBJECTS);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

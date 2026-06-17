@@ -425,6 +425,11 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // (lockdown). Despawns via the shared `Conjured` cleanup path when
     // concentration drops.
     actions.push(&*crate::actions::spells::CONJURE_ELEMENTAL);
+    // lv5 **Animate Objects** (transmutation): summon ten Tiny Construct
+    // minions adjacent to the caster, concentration-bound. RAW sorcerer
+    // spell list — pairs with the sorcerer's metamagic kit, since
+    // Extended Spell doubles the swarm's duration on the same lv5 slot.
+    actions.push(&*crate::actions::spells::ANIMATE_OBJECTS);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

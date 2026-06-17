@@ -153,6 +153,56 @@ impl ApplicableSideEffect for GiveResource {
     }
 }
 
+/// Apply a "step through hostile terrain" damage rider to `mover_id` if
+/// they currently carry `condition`. Rolls `dice`, logs
+/// `  {label}: NdM(roll) {damage_type} {trailer}`, then deals the rolled
+/// damage to the mover through the standard `DealDamage` pipeline
+/// (resistance / immunity / death-save transitions all honored). If
+/// `consume` is true the condition is stripped after the rider fires
+/// — Booming Blade is single-shot; Spike Growth fires on every step
+/// for the rest of the move.
+///
+/// Centralizes the recurring "if mover has cond X, roll Y dice, log,
+/// damage self" shape used by the in-loop step riders in `MoveActor`.
+/// Adding a new per-step self-damage rider becomes a single
+/// `apply_per_step_self_rider(...)` call instead of another three-line
+/// `has_condition → roll → log → DealDamage` block in the loop body.
+#[allow(clippy::too_many_arguments)]
+fn apply_per_step_self_rider(
+    ei: &mut EncounterInstance,
+    mover_id: usize,
+    condition: Condition,
+    dice: crate::engine::dice::Dice,
+    damage_type: DamageType,
+    label: &str,
+    trailer: &str,
+    consume: bool,
+) {
+    let active = ei
+        .actors
+        .get(&mover_id)
+        .is_some_and(|a| a.has_condition(condition));
+    if !active {
+        return;
+    }
+    let dmg = ei.roll(&dice);
+    ei.log(format!(
+        "  {}: {}({}) {:?} {}",
+        label, dice, dmg, damage_type, trailer
+    ));
+    if consume
+        && let Some(a) = ei.actors.get_mut(&mover_id)
+    {
+        a.remove_condition(condition);
+    }
+    DealDamage {
+        actor_id: mover_id,
+        amount: dmg,
+        damage_type,
+    }
+    .apply(ei);
+}
+
 /// Walks an actor through a sequence of tiles, one step at a time, firing
 /// opportunity attacks on every step that exits a threatened square. `path`
 /// excludes the actor's starting tile and includes the final destination.
@@ -204,49 +254,32 @@ impl ApplicableSideEffect for MoveActor {
             // We resolve mid-loop so a creature with low HP can be downed
             // by spike damage and stop the walk via the is_combat_active
             // check at the top of the next iteration.
-            let spiked = ei
-                .actors
-                .get(&self.actor_id)
-                .is_some_and(|a| a.has_condition(Condition::Spiked));
-            if spiked {
-                let dmg = ei.roll(&crate::engine::dice::Dice::new(2, 4));
-                ei.log(format!(
-                    "  spike growth: 2d4({}) piercing as they step through",
-                    dmg
-                ));
-                DealDamage {
-                    actor_id: self.actor_id,
-                    amount: dmg,
-                    damage_type: DamageType::Piercing,
-                }
-                .apply(ei);
-            }
+            apply_per_step_self_rider(
+                ei,
+                self.actor_id,
+                Condition::Spiked,
+                crate::engine::dice::Dice::new(2, 4),
+                DamageType::Piercing,
+                "spike growth",
+                "as they step through",
+                false,
+            );
             // 5e Booming Blade: the mark fires the *first* time the marked
             // creature moves voluntarily, dealing the rider damage and
             // burning off the mark (single-shot). We trip on any walked
             // step — bursts from forced movement (Telekinesis pull,
             // Thorn Whip) route through `TeleportActor` / `PullActor`
             // which skip this hook by RAW.
-            let booming = ei
-                .actors
-                .get(&self.actor_id)
-                .is_some_and(|a| a.has_condition(Condition::BoomingBladeMarked));
-            if booming {
-                let dmg = ei.roll(&crate::engine::dice::Dice::new(1, 8));
-                ei.log(format!(
-                    "  booming blade: 1d8({}) thunder as they step away",
-                    dmg
-                ));
-                if let Some(a) = ei.actors.get_mut(&self.actor_id) {
-                    a.remove_condition(Condition::BoomingBladeMarked);
-                }
-                DealDamage {
-                    actor_id: self.actor_id,
-                    amount: dmg,
-                    damage_type: DamageType::Thunder,
-                }
-                .apply(ei);
-            }
+            apply_per_step_self_rider(
+                ei,
+                self.actor_id,
+                Condition::BoomingBladeMarked,
+                crate::engine::dice::Dice::new(1, 8),
+                DamageType::Thunder,
+                "booming blade",
+                "as they step away",
+                true,
+            );
             // 5e Ashardalon's Stride (TCE level-3 transmutation,
             // concentration). The caster's blazing wake scorches every
             // footprint-adjacent enemy as they pass: each tracked enemy

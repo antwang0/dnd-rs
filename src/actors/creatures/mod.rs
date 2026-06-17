@@ -130,3 +130,4 @@ pub mod brown_bears;
 pub mod giant_toads;
 pub mod pseudodragons;
 pub mod tigers;
+pub mod tiny_animated_objects;

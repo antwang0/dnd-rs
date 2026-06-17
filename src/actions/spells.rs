@@ -25087,3 +25087,102 @@ impl Action for ShadowOfMoil {
 }
 
 pub static SHADOW_OF_MOIL: LazyLock<ShadowOfMoil> = LazyLock::new(|| ShadowOfMoil {});
+
+/// Animate Objects — level-5 transmutation, action, concentration. The
+/// caster gives life to up to ten Tiny inanimate objects within range;
+/// each becomes a Construct minion under the caster's control. We
+/// collapse the RAW per-size object table (10× Tiny, 5× Small, 2×
+/// Medium, 1× Large, 1× Huge — each with its own AC / HP / slam dice)
+/// down to the most-numerous Tiny tier since it's the load-bearing
+/// flavor: a swarm of ten construct minions chipping the frontline
+/// is the spell's iconic moment.
+///
+/// Sibling to Conjure Animals (lv3, 2× Medium wolves) and Conjure
+/// Elemental (lv5, 1× Large elemental) on the summon lane —
+/// distinguished by the burst-count: ten Tiny minions trade per-target
+/// damage for action-economy pressure (each one swings independently
+/// every round). Routed through the shared `spawn_adjacent_summons` +
+/// `conjured_summon_concentration_effects` helpers so the team-lookup,
+/// adjacent-spawn search, Conjured-on-drop despawn, and concentration-
+/// anchoring all behave identically to the other summon spells.
+///
+/// The 5e RAW range is 120 ft with each object dropping into an
+/// unoccupied space within range; we reuse the spawn helper's
+/// adjacent-anchor search (radius 4 — enough room for ten Tiny
+/// footprints around the caster) so the placement stays inside the
+/// existing summon envelope.
+pub struct AnimateObjects {}
+
+impl Action for AnimateObjects {
+    fn name(&self) -> &str {
+        "animate objects"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ao", "animate-obj", "objects"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Need at least one free Tiny anchor adjacent to the caster —
+        // a tightly-walled caster (no free adjacent tile inside the
+        // search radius) shouldn't burn the level-5 slot on a no-op
+        // cast. Mirrors the Conjure Animals / Conjure Elemental gate.
+        encounter
+            .find_adjacent_spawn(caster_id, crate::engine::types::Size::Tiny, 4)
+            .is_some()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actors::creatures::tiny_animated_objects::TINY_ANIMATED_OBJECT_TEMPLATE;
+
+        // Up to ten Tiny construct minions on free adjacent slots.
+        // Shared summon helper handles team lookup, adjacent-spawn
+        // search, instantiate + log chain.
+        let spawned = spawn_adjacent_summons(
+            encounter,
+            caster_id,
+            &TINY_ANIMATED_OBJECT_TEMPLATE,
+            crate::engine::types::Size::Tiny,
+            10,
+            4,
+            500,
+            "animate objects",
+        );
+        if spawned.is_empty() {
+            return Vec::new();
+        }
+        conjured_summon_concentration_effects(caster_id, &spawned, "Animate Objects")
+    }
+}
+
+pub static ANIMATE_OBJECTS: LazyLock<AnimateObjects> = LazyLock::new(|| AnimateObjects {});

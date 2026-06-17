@@ -3737,20 +3737,30 @@ impl EncounterInstance {
         }
         // Negate any flat buffs the spell installed (Bless, etc.). The
         // delta stored is the original adjustment; we subtract it to
-        // restore the actor's pre-spell stats.
-        for (target_id, delta) in data.attack_buffs {
+        // restore the actor's pre-spell stats. Each lane (attack / save /
+        // damage) walks the same `(target_id, delta)` vec, so the
+        // negation routes through `rollback_buffs` with a per-lane
+        // setter — adding a new buff lane (e.g. an AC delta) is one
+        // call here plus the new vec field on `ConcentrationData`.
+        self.rollback_buffs(&data.attack_buffs, |a, d| a.add_attack_bonus_buff(d));
+        self.rollback_buffs(&data.save_buffs, |a, d| a.add_save_bonus_buff(d));
+        self.rollback_buffs(&data.damage_buffs, |a, d| a.add_damage_bonus_buff(d));
+    }
+
+    /// Walk a `(target_id, delta)` buff vec and apply the *negated*
+    /// delta to each target via `setter`. Missing targets (despawned
+    /// since the buff installed) are skipped silently — the buff was
+    /// already lost with the actor. Shared by every concentration-buff
+    /// lane in `drop_concentration` (attack / save / damage today; any
+    /// future flat-buff lane lands as one call instead of a hand-rolled
+    /// for-loop).
+    fn rollback_buffs<F>(&mut self, buffs: &[(usize, i32)], setter: F)
+    where
+        F: Fn(&mut ActorInstance, i32),
+    {
+        for &(target_id, delta) in buffs {
             if let Some(target) = self.actors.get_mut(&target_id) {
-                target.add_attack_bonus_buff(-delta);
-            }
-        }
-        for (target_id, delta) in data.save_buffs {
-            if let Some(target) = self.actors.get_mut(&target_id) {
-                target.add_save_bonus_buff(-delta);
-            }
-        }
-        for (target_id, delta) in data.damage_buffs {
-            if let Some(target) = self.actors.get_mut(&target_id) {
-                target.add_damage_bonus_buff(-delta);
+                setter(target, -delta);
             }
         }
     }
@@ -25043,6 +25053,102 @@ mod tests {
         );
     }
 
+    /// Animate Objects spawns up to ten Tiny construct minions on the
+    /// caster's team and installs concentration. Mirrors the
+    /// Conjure Animals / Conjure Elemental spawn tests — same shared
+    /// summon helpers, just with the Tiny footprint and the larger
+    /// per-cast count.
+    #[test]
+    fn animate_objects_spawns_ten_tiny_constructs_on_caster_team() {
+        use crate::actions::spells::ANIMATE_OBJECTS;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::Condition;
+        // Big arena so all ten Tiny anchors can fit around the caster.
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(15, 15), 0, 0)
+            .unwrap();
+        let team = e.actors[&wizard].team();
+        let before = e.actors.len();
+        let effects = ANIMATE_OBJECTS.side_effects(&mut e, wizard, None, None, None);
+        for x in effects {
+            x.apply(&mut e);
+        }
+        // All ten tiny objects should have spawned in the clear arena.
+        assert_eq!(
+            e.actors.len(),
+            before + 10,
+            "expected ten animated objects to spawn"
+        );
+        let mut conjured = 0;
+        for (id, a) in e.actors.iter() {
+            if *id == wizard {
+                continue;
+            }
+            if a.has_condition(Condition::Conjured) {
+                conjured += 1;
+                assert_eq!(a.team(), team, "animated objects join the caster's team");
+                assert_eq!(a.size(), Size::Tiny);
+            }
+        }
+        assert_eq!(conjured, 10);
+        assert!(e.actors[&wizard].is_concentrating());
+    }
+
+    /// Concentration drop on Animate Objects despawns every conjured
+    /// object — same `Conjured`-on-drop cleanup path that Conjure
+    /// Animals / Conjure Elemental ride.
+    #[test]
+    fn animate_objects_despawns_on_concentration_drop() {
+        use crate::actions::spells::ANIMATE_OBJECTS;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(15, 15), 0, 0)
+            .unwrap();
+        let before = e.actors.len();
+        let effects = ANIMATE_OBJECTS.side_effects(&mut e, wizard, None, None, None);
+        for x in effects {
+            x.apply(&mut e);
+        }
+        assert_eq!(e.actors.len(), before + 10, "ten objects spawned");
+        e.drop_concentration(wizard);
+        assert_eq!(
+            e.actors.len(),
+            before,
+            "every conjured object should despawn on concentration drop"
+        );
+        assert!(!e.actors[&wizard].is_concentrating());
+    }
+
+    /// Animate Objects's validate gate fizzles when there's no room
+    /// for even a single Tiny footprint adjacent to the caster.
+    /// Mirrors the Conjure Animals / Conjure Elemental validate gates.
+    #[test]
+    fn animate_objects_fails_when_no_adjacent_space() {
+        use crate::actions::spells::ANIMATE_OBJECTS;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        // Wall everything except the wizard's 2x2 footprint at (4,4).
+        for x in 0..10 {
+            for y in 0..10 {
+                let in_wiz = (4..=5).contains(&x) && (4..=5).contains(&y);
+                if in_wiz {
+                    continue;
+                }
+                let idx = e.idx(Coordinate::new(x, y)).unwrap();
+                e.terrain[idx].terrain_type = TerrainType::Wall;
+            }
+        }
+        assert!(
+            !ANIMATE_OBJECTS.validate_input(&e, wizard, None, None, None),
+            "validate should fail when no adjacent Tiny slot is free"
+        );
+    }
+
     /// `despawn_actor` removes an actor from the world without rolling
     /// loot or awarding XP. Sibling of `remove_actor` (the death path)
     /// — used by summon cleanup so a vanishing minion doesn't gift the
@@ -25067,7 +25173,7 @@ mod tests {
         );
         // The dispel doesn't crash and the actor table no longer
         // contains the despawned id.
-        assert!(e.actors.get(&wolf).is_none());
+        assert!(!e.actors.contains_key(&wolf));
     }
 
     /// Otto's Irresistible Dance installs Dancing on failed save and a
