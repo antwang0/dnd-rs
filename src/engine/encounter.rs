@@ -41401,4 +41401,168 @@ mod tests {
             "Scroll of Barkskin should reject re-cast when target already Barkskinned",
         );
     }
+
+    /// Elemental Weapon installs the ElementallyWeaponed condition AND
+    /// the +1 attack buff via the shared concentration ledger. Dropping
+    /// concentration cleanly clears both — verifies the spell mirrors
+    /// Magic Weapon's symmetric attack-buff + concentration-rollback
+    /// shape while routing the per-hit fire rider through the condition
+    /// lane.
+    #[test]
+    fn elemental_weapon_buffs_ally_and_drops_cleanly() {
+        use crate::actions::spells::ELEMENTAL_WEAPON;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 3), 0, 1)
+            .unwrap();
+        let base_attack = e.actors[&ally].attack_bonus_buff();
+        let tv = vec![ally];
+        let effs = ELEMENTAL_WEAPON.side_effects(&mut e, wizard, Some(&tv), None, None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&ally].has_condition(Condition::ElementallyWeaponed),
+            "Elemental Weapon should install ElementallyWeaponed on the ally"
+        );
+        assert_eq!(
+            e.actors[&ally].attack_bonus_buff(),
+            base_attack + 1,
+            "Elemental Weapon should grant a +1 attack buff"
+        );
+        assert!(
+            e.actors[&wizard].is_concentrating(),
+            "Elemental Weapon is concentration-bound"
+        );
+        e.drop_concentration(wizard);
+        assert!(
+            !e.actors[&ally].has_condition(Condition::ElementallyWeaponed),
+            "dropping concentration strips the ElementallyWeaponed condition"
+        );
+        assert_eq!(
+            e.actors[&ally].attack_bonus_buff(),
+            base_attack,
+            "dropping concentration rolls back the attack buff"
+        );
+    }
+
+    /// Elemental Weapon refuses to refresh an already-buffed target —
+    /// burning a level-3 slot on a no-op re-cast wastes the action
+    /// economy. Mirrors the `custom_validate_input` gate on Spirit Shroud
+    /// / Shadow of Moil (adapted for the ally-target lane).
+    #[test]
+    fn elemental_weapon_rejects_double_cast() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::ELEMENTAL_WEAPON;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 3), 0, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&ally)
+            .unwrap()
+            .add_condition(
+                Condition::ElementallyWeaponed,
+                crate::conditions::ConditionTimer::Rounds(100),
+            );
+        let tv = vec![ally];
+        assert!(
+            !ELEMENTAL_WEAPON.validate_input(&e, wizard, Some(&tv), None, None),
+            "Elemental Weapon should reject a re-cast on an already-buffed ally"
+        );
+    }
+
+    /// Magnify Gravity is a friend-or-foe burst — every actor in the
+    /// 1-tile radius (caster excluded) takes 2d8 force on a failed STR
+    /// save. We scan multiple instances; across enough runs at least one
+    /// low-STR goblin should fail their save and pick up the Slowed
+    /// rider AND take some damage. This catches regressions to either
+    /// half of the spell (burst damage OR rider install).
+    #[test]
+    fn magnify_gravity_damages_burst_and_slows_on_fail() {
+        use crate::actions::spells::MAGNIFY_GRAVITY;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut slowed_landed = false;
+        let mut damaged = false;
+        for _ in 0..32 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            let wizard = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+                .unwrap();
+            let pre_hp = e.actors[&goblin].hitpoints();
+            let tl = vec![Coordinate::new(5, 2)];
+            let effs = MAGNIFY_GRAVITY.side_effects(&mut e, wizard, None, Some(&tl), None);
+            for ef in effs {
+                ef.apply(&mut e);
+            }
+            let post_hp = e.actors.get(&goblin).map(|a| a.hitpoints()).unwrap_or(0);
+            assert!(
+                post_hp <= pre_hp,
+                "Magnify Gravity must never heal: pre={}, post={}",
+                pre_hp,
+                post_hp
+            );
+            if post_hp < pre_hp {
+                damaged = true;
+            }
+            if e.actors
+                .get(&goblin)
+                .is_some_and(|a| a.has_condition(Condition::Slowed))
+            {
+                slowed_landed = true;
+            }
+            if slowed_landed && damaged {
+                break;
+            }
+        }
+        assert!(damaged, "Magnify Gravity should deal force damage across 32 runs");
+        assert!(
+            slowed_landed,
+            "Magnify Gravity should land Slowed on at least one failed-save \
+             goblin across 32 runs"
+        );
+    }
+
+    /// Magnify Gravity excludes the caster from its own burst — the
+    /// `neutral_burst_save_for_half` helper folds the caster-exempt
+    /// filter into the shared chokepoint; verifying it here keeps the
+    /// safety net explicit.
+    #[test]
+    fn magnify_gravity_excludes_caster_from_its_own_burst() {
+        use crate::actions::spells::MAGNIFY_GRAVITY;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let pre_hp = e.actors[&wizard].hitpoints();
+        let tl = vec![Coordinate::new(5, 5)];
+        let effs = MAGNIFY_GRAVITY.side_effects(&mut e, wizard, None, Some(&tl), None);
+        for ef in effs {
+            ef.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&wizard].hitpoints(),
+            pre_hp,
+            "Magnify Gravity must not damage its own caster"
+        );
+        assert!(
+            !e.actors[&wizard].has_condition(Condition::Slowed),
+            "Magnify Gravity must not Slow its own caster"
+        );
+    }
 }

@@ -765,6 +765,26 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
             consume_on_trigger: false,
             follow_up: None,
         },
+        // 5e Elemental Weapon (level-3 transmutation, concentration). The
+        // weapon is sheathed in elemental energy: +1d4 fire per melee
+        // weapon hit. The matching `+1 attack` half rides the standard
+        // `attack_bonus_buff` lane via the Elemental Weapon spell's
+        // `with_attack_buffs` ledger — kept off the OnHitRider table since
+        // that's a damage-only chokepoint. Melee-only (RAW: "the next time
+        // you hit a creature with this weapon," but we honor the spell's
+        // melee weapon-imbue flavor by gating ranged swings out — distinct
+        // from Flame Arrows which exists for the ranged lane). Persistent
+        // (non-consumed); drops when the caster ends concentration.
+        OnHitRider {
+            condition: Condition::ElementallyWeaponed,
+            dice: Dice::new(1, 4),
+            label: "elemental weapon",
+            damage_type: DamageType::Fire,
+            melee_only: true,
+            ranged_only: false,
+            consume_on_trigger: false,
+            follow_up: None,
+        },
         OnHitRider {
             condition: Condition::Smiting,
             dice: Dice::new(2, 8),

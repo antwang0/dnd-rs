@@ -4649,6 +4649,8 @@ const SCROLL_OF_BESTOW_CURSE_NAME: &str = "Scroll of Bestow Curse";
 const SCROLL_OF_CONJURE_ANIMALS_NAME: &str = "Scroll of Conjure Animals";
 const SCROLL_OF_LONGSTRIDER_NAME: &str = "Scroll of Longstrider";
 const SCROLL_OF_BARKSKIN_NAME: &str = "Scroll of Barkskin";
+const SCROLL_OF_MAGNIFY_GRAVITY_NAME: &str = "Scroll of Magnify Gravity";
+const SCROLL_OF_ELEMENTAL_WEAPON_NAME: &str = "Scroll of Elemental Weapon";
 
 /// Scroll of Pyrotechnics — Action; 1d8 fire DEX-save burst (DC 13,
 /// 2-radius / 10 ft RAW) at a point within 24 tiles (60 ft RAW). 5e RAW:
@@ -5105,3 +5107,55 @@ impl Action for ReadConjureAnimalsScrollItem {
         effects
     }
 }
+
+/// Scroll of Magnify Gravity — Action; 1-tile burst (5 ft RAW), STR save
+/// vs DC 13, save-for-half 2d8 force damage. 5e RAW (TCE): the spell also
+/// halves failed-save targets' speed until the end of the caster's next
+/// turn; the scroll variant collapses to damage-only since the engine's
+/// `BurstSaveDamageItem` chassis is the cleanest factor for the shape.
+/// The follow-up Slowed rider sits exclusively on the spell-side
+/// `MAGNIFY_GRAVITY` impl — accepting the small consumable / spell delta
+/// keeps the shared scroll factor on its single-effect chokepoint
+/// (mirrors how `READ_PYROTECHNICS_SCROLL` drops the spell's Blinded
+/// rider to stay on the damage-only `BurstSaveDamageItem` lane).
+/// Friend-or-foe agnostic via `resolve_burst_save_damage` (the gravity
+/// well doesn't discriminate); 24-tile reach matches the spell.
+pub static READ_MAGNIFY_GRAVITY_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+    action_name: "read magnify gravity scroll",
+    action_aliases: &["magnify gravity scroll", "gravity scroll", "mg scroll"],
+    item_name: SCROLL_OF_MAGNIFY_GRAVITY_NAME,
+    log_label: "scroll of magnify gravity",
+    dice: crate::engine::dice::Dice::new(2, 8),
+    damage_type: DamageType::Force,
+    save: AbilityScoreType::Strength,
+    dc: 13,
+    radius: 1,
+    // 60 ft RAW = 24 tiles.
+    reach: 24,
+};
+
+/// Scroll of Elemental Weapon — Action; install `ElementallyWeaponed` for
+/// 100 rounds (≈ 10 minutes engine time) on a single ally within 1 tile
+/// (touch RAW). 5e RAW: Elemental Weapon is a level-3 transmutation,
+/// concentration; the scroll bypasses concentration and surfaces the
+/// per-hit damage rider (the `ON_HIT_RIDERS` entry adds +1d4 fire per
+/// melee weapon hit) as a fire-and-forget buff. The spell's +1 attack-
+/// roll bonus is dropped on the scroll variant since the `SingleTargetBuffItem`
+/// chassis is condition-only — accepting the small consumable / spell delta
+/// keeps the shared factor on its single-effect chokepoint (mirrors how
+/// `READ_BARKSKIN_SCROLL` drops the spell's concentration anchor while
+/// keeping the load-bearing AC-floor condition). Rejects re-cast when
+/// the target already carries the buff so the consumable isn't burned on
+/// a no-op refresh.
+pub static READ_ELEMENTAL_WEAPON_SCROLL: SingleTargetBuffItem = SingleTargetBuffItem {
+    action_name: "read elemental weapon scroll",
+    action_aliases: &["elemental weapon scroll", "ew scroll", "scroll ew"],
+    item_name: SCROLL_OF_ELEMENTAL_WEAPON_NAME,
+    log_text: "{actor} reads a scroll of elemental weapon; flickering flames sheathe their target's blade.",
+    condition: Condition::ElementallyWeaponed,
+    timer: ConditionTimer::Rounds(100),
+    // Touch RAW; 1 tile.
+    reach: crate::actions::action_template::MELEE_REACH,
+    bonus_action: false,
+    reject_when_active: true,
+};

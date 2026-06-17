@@ -532,15 +532,13 @@ fn push_condition_on_failed_save(
     condition: Condition,
     timer: ConditionTimer,
 ) {
-    for &(tid, passed) in saves {
-        if !passed {
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition,
-                timer,
-            }));
-        }
-    }
+    // Delegate to the concentration variant and discard the collected
+    // pair vec — keeps both helpers driving off a single chokepoint so
+    // adding (e.g.) a per-target log line or a new install side-effect
+    // lands in one place.
+    let _ = push_condition_on_failed_save_for_concentration(
+        effects, saves, condition, timer,
+    );
 }
 
 /// Concentration-tracking sibling of `push_condition_on_failed_save`.
@@ -25186,3 +25184,236 @@ impl Action for AnimateObjects {
 }
 
 pub static ANIMATE_OBJECTS: LazyLock<AnimateObjects> = LazyLock::new(|| AnimateObjects {});
+
+/// Magnify Gravity — level-1 evocation (TCE / SAiS / EGtW spell list).
+/// A 5ft-radius (1-tile burst) crushing gravity well snaps down at a point
+/// within range: every creature in the burst makes a STR save vs the
+/// caster's spell DC. On fail they take 2d8 force damage AND their speed
+/// is halved until the end of the caster's next turn (we model the
+/// movement-halve via the existing `Slowed` condition with `Rounds(1)`).
+/// On a passed save they take half damage and shrug off the slow rider.
+///
+/// Friend-or-foe agnostic (the gravity well doesn't discriminate) —
+/// routes through the neutral-burst helper alongside Ice Knife / Circle
+/// of Death / Thunderclap. Single-action cast, no concentration — RAW
+/// the spell is a single-target instant burst rather than a sustained
+/// zone. The Slowed rider piggybacks on the heavier Slow-spell condition
+/// (RAW Slow imposes -2 AC and -2 DEX saves alongside the speed halving;
+/// we accept the small over-modeling at the lv1 tier since the engine's
+/// condition cohort prefers a single Slowed flag over a dedicated
+/// "gravity-slow" variant — the 1-round timer keeps the over-bake brief).
+///
+/// Sibling to Earth Tremor (lv1, self-centered 1d6 + prone burst) on the
+/// lv1 force / bludgeoning lane: Magnify Gravity's targeted-point reach
+/// (60 ft RAW = 24 tiles) trades the self-centered convenience for
+/// pinpoint placement and the slow follow-up rather than the prone tag.
+pub struct MagnifyGravity {}
+
+impl Action for MagnifyGravity {
+    fn name(&self) -> &str {
+        "magnify gravity"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mg", "magnify", "gravity"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 1 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft RAW = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Force]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(1)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // RAW: STR save vs the caster's spell save DC. We pick the best of
+        // the standard caster ability scores so the spell reads cleanly on
+        // any class with the TCE list (sorcerer / wizard / artificer).
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]);
+        let (mut effects, saves) = neutral_burst_save_for_half(
+            encounter,
+            caster_id,
+            point,
+            1,
+            AbilityScoreType::Strength,
+            dc,
+            Dice::new(2, 8),
+            DamageType::Force,
+            "magnify gravity",
+        );
+        // Failed-save targets pick up Slowed for 1 round (= until end of
+        // caster's next turn RAW). Routes through the shared helper so any
+        // future change to the "burst → save → rider" plumbing lands in
+        // one place instead of per-spell.
+        push_condition_on_failed_save(
+            &mut effects,
+            &saves,
+            Condition::Slowed,
+            ConditionTimer::Rounds(1),
+        );
+        effects
+    }
+}
+
+pub static MAGNIFY_GRAVITY: LazyLock<MagnifyGravity> = LazyLock::new(|| MagnifyGravity {});
+
+/// Elemental Weapon — level-3 transmutation (paladin / artificer / ranger
+/// / artificer-style multiclass), action, concentration. The caster
+/// touches a single weapon-wielding ally; their weapon glows with
+/// elemental energy for the spell's duration. RAW: +1 attack rolls AND
+/// +1d4 extra damage of the caster's chosen element (acid / cold / fire /
+/// lightning / thunder) on every hit.
+///
+/// Engine model: install two parallel buff lanes via the shared
+/// concentration ledger so dropping concentration rolls back both halves
+/// cleanly:
+///   1. **+1 attack** — routes through `AdjustAttackBuff` and the
+///      `with_attack_buffs` concentration vec (mirrors Magic Weapon's
+///      attack buff lane).
+///   2. **+1d4 fire on hit** — installs `ElementallyWeaponed` on the
+///      target; the `ON_HIT_RIDERS` entry in `attack.rs` reads the flag
+///      and adds +1d4 fire to every melee weapon hit the holder lands.
+///      Persistent (non-consumed), melee-only. RAW lets the caster pick
+///      the element at cast time; we collapse to fire as the signature
+///      flavor since the engine's per-cast picker UI doesn't yet surface
+///      a damage-type selection — the lv3 slot cost still differentiates
+///      cleanly from the lv2 Magic Weapon (+1 attack +1 damage, no
+///      typed rider).
+///
+/// Touch range, SingleActor target, `is_harmful = false` so the AI's
+/// support pipeline considers it alongside Bless / Magic Weapon. The
+/// `actor_lacks_condition` gate stops double-cast refreshes (same shape
+/// as Spirit Shroud / Investiture of Flame / Holy Weapon's self-buff
+/// dodge — adapted for the ally-target case so a paladin can't burn the
+/// slot re-priming an already-buffed fighter).
+pub struct ElementalWeapon {}
+
+impl Action for ElementalWeapon {
+    fn name(&self) -> &str {
+        "elemental weapon"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ew", "elemental-weapon"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Don't burn the slot refreshing a target that already has the
+        // buff up. Mirrors the self-buff `actor_lacks_condition` gate in
+        // Shadow of Moil / Investiture of Flame / Otherworldly Guise,
+        // adapted for the ally-target case (gates on the target id
+        // rather than the caster).
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        actor_lacks_condition(encounter, target_id, Condition::ElementallyWeaponed)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::AdjustAttackBuff;
+        // Buff-only — reject hostile targets at side-effect time as a
+        // safety net (the `is_harmful = false` flag should already steer
+        // the picker UI to allies). Shared `first_ally_target_id` helper
+        // collapses the id-extract + ally-check into one early-return,
+        // mirroring Aid / Longstrider / Enhance Ability.
+        let Some(target_id) = first_ally_target_id(encounter, caster_id, target_ids) else {
+            return Vec::new();
+        };
+        // +1 attack via AdjustAttackBuff (rolled back by concentration
+        // drop), plus the ElementallyWeaponed condition (read by the
+        // OnHitRider table for +1d4 fire per melee hit). Concentration
+        // anchored to both halves so dropping the spell cleanly removes
+        // the condition AND negates the attack-buff delta.
+        vec![
+            Box::new(AdjustAttackBuff {
+                actor_id: target_id,
+                delta: 1,
+            }) as Box<dyn ApplicableSideEffect>,
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::ElementallyWeaponed,
+                // 1 hour RAW; capped here at 100 rounds (≈ 10 minutes
+                // engine time) to match the other long-duration buffs
+                // (Mage Armor, Mind Blank, Longstrider).
+                timer: ConditionTimer::Rounds(100),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Elemental Weapon",
+                    vec![(target_id, Condition::ElementallyWeaponed)],
+                )
+                .with_attack_buffs(vec![(target_id, 1)]),
+            }),
+        ]
+    }
+}
+
+pub static ELEMENTAL_WEAPON: LazyLock<ElementalWeapon> = LazyLock::new(|| ElementalWeapon {});

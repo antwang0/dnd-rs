@@ -2540,6 +2540,36 @@ pub static SCROLL_OF_BARKSKIN: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Scroll of Magnify Gravity — Action consumable: 1-tile (5 ft RAW) burst
+/// 2d8 force DEX-save-for-half at a point within 24 tiles (60 ft RAW).
+/// Friend-or-foe agnostic (the gravity well doesn't discriminate). Fills
+/// the lv1 force-burst niche in the loot pool alongside the auto-hit
+/// Scroll of Magic Missile — distinguished by the targeted-point reach +
+/// burst envelope. Skips the spell-side Slowed rider in trade for fitting
+/// the shared `BurstSaveDamageItem` chassis (see the action impl for the
+/// consumable / spell delta rationale).
+pub static SCROLL_OF_MAGNIFY_GRAVITY: Item = Item {
+    name: "Scroll of Magnify Gravity",
+    glyph: '0',
+    on_use: Some(&crate::actions::item_actions::READ_MAGNIFY_GRAVITY_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Elemental Weapon — Action consumable: install the
+/// `ElementallyWeaponed` condition (read by `ON_HIT_RIDERS` for +1d4 fire
+/// per melee weapon hit) for 100 rounds on a touched ally. 5e RAW: lv3
+/// transmutation, concentration; the scroll drops concentration and
+/// surfaces just the per-hit fire rider as a fire-and-forget weapon buff.
+/// Sibling to `SCROLL_OF_BARKSKIN` / `SCROLL_OF_LONGSTRIDER` on the
+/// touch-ally buff scroll lane — distinguished by the damage rider rather
+/// than a defensive / mobility install.
+pub static SCROLL_OF_ELEMENTAL_WEAPON: Item = Item {
+    name: "Scroll of Elemental Weapon",
+    glyph: '0',
+    on_use: Some(&crate::actions::item_actions::READ_ELEMENTAL_WEAPON_SCROLL),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -3143,4 +3173,21 @@ pub static LOOT_POOL: &[&Item] = &[
     // wizard for a swift first-round setup.
     &SCROLL_OF_LONGSTRIDER,
     &SCROLL_OF_BARKSKIN,
+    // Newest scroll additions:
+    //   - **Scroll of Magnify Gravity** (TCE / EGtW lv1, evocation): 1-tile
+    //     burst, 2d8 force STR-save-for-half. Friend-or-foe agnostic
+    //     gravity well; fills the lv1 force-burst lane between Earth
+    //     Tremor (self-centered 1d6 + prone) and Magic Missile (auto-hit
+    //     single-target). Distinguished from `SCROLL_OF_MAGIC_MISSILE`
+    //     by the burst envelope + DEX-save lane.
+    //   - **Scroll of Elemental Weapon** (PHB lv3, transmutation): touch
+    //     ally buff installing `ElementallyWeaponed` (read by the
+    //     `ON_HIT_RIDERS` table for +1d4 fire per melee weapon hit) for
+    //     100 rounds. Slots between Scroll of Bless (single-target +1d4
+    //     attack / save buff) and the rare-tier weapon-buff items —
+    //     trades the universal save / attack rider for typed per-hit
+    //     damage that compounds on the wielder's existing damage
+    //     output.
+    &SCROLL_OF_MAGNIFY_GRAVITY,
+    &SCROLL_OF_ELEMENTAL_WEAPON,
 ];

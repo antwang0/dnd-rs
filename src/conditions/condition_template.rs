@@ -1181,6 +1181,21 @@ pub enum Condition {
     /// We collapse the lighting clause since the engine has no sight system.
     /// Concentration-bound on the caster.
     MoilShrouded,
+    /// Elementally-Weaponed (5e Elemental Weapon, level-3 transmutation,
+    /// concentration). The target's weapon is sheathed in elemental energy:
+    /// +1 attack and +1d4 fire damage on every melee weapon hit. The +1
+    /// attack-roll bump rides the standard `attack_bonus_buff` lane (paired
+    /// with the concentration's `with_attack_buffs` ledger so dropping the
+    /// spell rolls back the bump); the +1d4 fire per-hit rider lives in the
+    /// `ON_HIT_RIDERS` table next to Spirit Shroud / Crusader's Mantle —
+    /// persistent (non-consumed), melee-only. RAW lets the caster pick the
+    /// element (acid / cold / fire / lightning / thunder); we collapse to
+    /// fire as the flavor default since the engine's per-cast picker UI
+    /// doesn't yet surface a damage-type selection. Cleared on concentration
+    /// drop via the standard `Condition` cleanup hook + the `attack_buffs`
+    /// rollback in `drop_concentration`. Joins `is_dispellable_buff` so
+    /// Dispel Magic / Counterspell can rip it.
+    ElementallyWeaponed,
 }
 
 impl Condition {
@@ -1336,6 +1351,7 @@ impl Condition {
             Condition::Footloose => "moving freely",
             Condition::Darkened => "shrouded in darkness",
             Condition::MoilShrouded => "shrouded in moil",
+            Condition::ElementallyWeaponed => "wielding an elemental weapon",
         }
     }
 
@@ -1431,6 +1447,7 @@ impl Condition {
                 | Condition::OtherworldlyGuised
                 | Condition::Footloose
                 | Condition::MoilShrouded
+                | Condition::ElementallyWeaponed
         )
     }
 

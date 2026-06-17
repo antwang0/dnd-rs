@@ -430,6 +430,17 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // spell list — pairs with the sorcerer's metamagic kit, since
     // Extended Spell doubles the swarm's duration on the same lv5 slot.
     actions.push(&*crate::actions::spells::ANIMATE_OBJECTS);
+    // Latest sorcerer additions:
+    //   - lv1 **Magnify Gravity** (evocation, TCE): 5ft burst, STR save
+    //     for half + Slowed-1-round on fail. Pairs natively with the
+    //     sorcerer's Heightened Spell metamagic (the first STR save in
+    //     the burst rolls at disadvantage).
+    //   - lv3 **Elemental Weapon** (transmutation, PHB): touch ally buff,
+    //     +1 attack and +1d4 fire per melee hit (concentration). Slots
+    //     between the sorcerer's lv2 Magic Weapon analog and the lv4
+    //     enchantment / illusion lane.
+    actions.push(&*crate::actions::spells::MAGNIFY_GRAVITY);
+    actions.push(&*crate::actions::spells::ELEMENTAL_WEAPON);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

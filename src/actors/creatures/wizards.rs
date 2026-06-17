@@ -547,6 +547,22 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // 1d4 force slam every round under the caster's command. Despawns
     // via the shared `Conjured` cleanup path when concentration drops.
     actions.push(&*crate::actions::spells::ANIMATE_OBJECTS);
+    // Latest evocation / transmutation additions:
+    //   - lv1 **Magnify Gravity** (evocation, TCE / EGtW): 5ft burst,
+    //     STR save vs the wizard's spell DC; failed-save targets eat 2d8
+    //     force AND pick up `Slowed` for 1 round. Friend-or-foe agnostic
+    //     burst that slots cleanly between Earth Tremor (self-centered
+    //     1d6 + prone) and Magic Missile (auto-hit force) on the lv1
+    //     force-damage lane — distinguished by the targeted-point reach
+    //     (24 tiles RAW) + the slow-rider follow-up.
+    //   - lv3 **Elemental Weapon** (transmutation, PHB): touch-range
+    //     concentration buff for a single ally weapon-wielder; +1 attack
+    //     AND +1d4 fire per melee hit via the OnHitRider table. Sibling
+    //     to Magic Weapon (lv2 +1/+1) on the weapon-buff lane; distinct
+    //     by the typed per-hit rider that chips through resistance the
+    //     flat +1 damage rider can't touch.
+    actions.push(&*crate::actions::spells::MAGNIFY_GRAVITY);
+    actions.push(&*crate::actions::spells::ELEMENTAL_WEAPON);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

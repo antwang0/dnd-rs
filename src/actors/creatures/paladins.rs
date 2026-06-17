@@ -107,6 +107,15 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     usable when only level-5 slots remain.
     actions.push(&*crate::actions::spells::FREEDOM_OF_MOVEMENT);
     actions.push(&*crate::actions::spells::RAISE_DEAD);
+    // lv3 **Elemental Weapon** — touch ally weapon-buff: +1 attack and
+    // +1d4 fire per melee hit (concentration). RAW paladin spell list.
+    // Sibling to Holy Weapon (lv5 self-only +2d8 radiant rider) on the
+    // paladin's weapon-buff lane; distinguished by the ally-target reach
+    // (lets the paladin power up the party's fighter / barbarian) AND
+    // the cheaper lv3 slot cost. Mutually exclusive with Holy Weapon at
+    // the concentration lane — the AI's smite picker steers around it
+    // when it's already up.
+    actions.push(&*crate::actions::spells::ELEMENTAL_WEAPON);
     CreatureTemplate {
         name: "Paladin",
         glyph: 'P',
