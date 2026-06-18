@@ -110,6 +110,11 @@ use crate::actors::creatures::lions::LION_TEMPLATE;
 use crate::actors::creatures::fire_giants::FIRE_GIANT_TEMPLATE;
 use crate::actors::creatures::cyclopes::CYCLOPS_TEMPLATE;
 use crate::actors::creatures::rocs::ROC_TEMPLATE;
+use crate::actors::creatures::pegasi::PEGASUS_TEMPLATE;
+use crate::actors::creatures::winter_wolves::WINTER_WOLF_TEMPLATE;
+use crate::actors::creatures::triceratopses::TRICERATOPS_TEMPLATE;
+use crate::actors::creatures::tyrannosauruses::T_REX_TEMPLATE;
+use crate::actors::creatures::carrion_crawlers::CARRION_CRAWLER_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -503,6 +508,18 @@ pub struct EncounterInstance {
     rng: Rng,
     messages: Vec<String>,
     outcome_tracker: OutcomeTracker,
+    /// Non-zero while resolution is nested inside a `Multiattack` /
+    /// `CompoundAttack` invocation. Incremented before delegating to a
+    /// sub-attack and decremented after. Read by `SimpleWeapon` /
+    /// `Greataxe` / etc. to gate the Extra Attack rider: a creature with
+    /// both a Multiattack action AND `has_extra_attack: true` (e.g.
+    /// Ancient Blue Dragon) should not have each sub-claw of its
+    /// multiattack fire an additional swing — Multiattack already
+    /// encodes the per-Action swing count. Bare swings outside any
+    /// Multi (the standalone DRAGON_CLAW or DRAGON_BITE the AI picks
+    /// when Multi is on cooldown) still chain correctly because depth
+    /// is 0.
+    multiattack_depth: u32,
 }
 
 impl EncounterInstance {
@@ -2458,6 +2475,33 @@ impl EncounterInstance {
             rng,
             messages: Vec::new(),
             outcome_tracker: OutcomeTracker::new(),
+            multiattack_depth: 0,
+        }
+    }
+
+    /// True if attack resolution is currently nested inside a Multiattack
+    /// / CompoundAttack expansion. SimpleWeapon-shaped attacks read this
+    /// to decide whether to fire their Extra Attack rider: bare invocations
+    /// (depth 0) chain into a second swing for creatures with
+    /// `has_extra_attack: true`; calls from within a Multi (depth > 0)
+    /// suppress the rider so the Multi's count isn't accidentally doubled.
+    pub fn in_multiattack(&self) -> bool {
+        self.multiattack_depth > 0
+    }
+
+    /// Increment / decrement the multi-attack nesting counter. Multiattack
+    /// / CompoundAttack call `enter_multiattack` before delegating to a
+    /// sub-attack and `exit_multiattack` after — symmetric guard pattern
+    /// so a panic inside a sub-attack still leaves a well-formed counter
+    /// when the test harness moves on. The counter is `u32` (not `bool`)
+    /// so a hypothetical Multi-of-Multis doesn't deadlock the gate.
+    pub fn enter_multiattack(&mut self) {
+        self.multiattack_depth += 1;
+    }
+
+    pub fn exit_multiattack(&mut self) {
+        if self.multiattack_depth > 0 {
+            self.multiattack_depth -= 1;
         }
     }
 
@@ -2608,6 +2652,21 @@ impl EncounterInstance {
             &FIRE_GIANT_TEMPLATE,
             &CYCLOPS_TEMPLATE,
             &ROC_TEMPLATE,
+            // Mid-tier fill-ins added alongside the new dinosaur /
+            // celestial / arctic-predator templates: Pegasus (CR 2,
+            // large celestial — winged horse, single hooves swing),
+            // Winter Wolf (CR 3, large monstrosity — cold-immune
+            // sibling of Wolf with a cold breath weapon), Carrion
+            // Crawler (CR 2, large monstrosity — paralyzing tentacles
+            // + bite multi, ceiling-dweller dungeon staple),
+            // Triceratops (CR 5, huge beast — dinosaur option in the
+            // upper-mid melee pool), Tyrannosaurus Rex (CR 8, huge
+            // beast — apex predator with bite + tail multi).
+            &PEGASUS_TEMPLATE,
+            &WINTER_WOLF_TEMPLATE,
+            &CARRION_CRAWLER_TEMPLATE,
+            &TRICERATOPS_TEMPLATE,
+            &T_REX_TEMPLATE,
         ]
     }
 
@@ -21317,6 +21376,50 @@ mod tests {
         assert!((e.actors[&roc].cr() - 11.0).abs() < f32::EPSILON);
     }
 
+    /// Pegasus / Winter Wolf / Triceratops / T-Rex / Carrion Crawler: each
+    /// instantiates cleanly from its template and surfaces the marquee
+    /// marker field (Celestial type on Pegasus, cold immunity on Winter
+    /// Wolf, huge size on Triceratops / T-Rex, etc.) that distinguishes
+    /// the entry from its CR-ladder neighbors.
+    #[test]
+    fn new_dinos_celestials_winter_creatures_instantiate() {
+        use crate::actors::creatures::carrion_crawlers::CARRION_CRAWLER_TEMPLATE;
+        use crate::actors::creatures::pegasi::PEGASUS_TEMPLATE;
+        use crate::actors::creatures::triceratopses::TRICERATOPS_TEMPLATE;
+        use crate::actors::creatures::tyrannosauruses::T_REX_TEMPLATE;
+        use crate::actors::creatures::winter_wolves::WINTER_WOLF_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::types::{CreatureType, DamageType, Size};
+        let mut e = ei_with_terrain(40, 30, &[]);
+        let peg = e
+            .instantiate_creature(&PEGASUS_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&peg].hitpoints() > 0);
+        assert_eq!(e.actors[&peg].creature_type(), CreatureType::Celestial);
+        let ww = e
+            .instantiate_creature(&WINTER_WOLF_TEMPLATE, Coordinate::new(6, 2), 0, 1)
+            .unwrap();
+        // Cold immunity reduces a 20-cold hit to 0.
+        assert_eq!(e.actors[&ww].effective_damage(20, DamageType::Cold), 0);
+        assert!(e.actors[&ww].has_pack_tactics());
+        assert!(e.actors[&ww].is_immune_to_condition(Condition::Charmed));
+        let tri = e
+            .instantiate_creature(&TRICERATOPS_TEMPLATE, Coordinate::new(10, 2), 0, 2)
+            .unwrap();
+        assert_eq!(e.actors[&tri].size(), Size::Huge);
+        assert!((e.actors[&tri].cr() - 5.0).abs() < f32::EPSILON);
+        let trex = e
+            .instantiate_creature(&T_REX_TEMPLATE, Coordinate::new(15, 2), 0, 3)
+            .unwrap();
+        assert_eq!(e.actors[&trex].size(), Size::Huge);
+        assert!((e.actors[&trex].cr() - 8.0).abs() < f32::EPSILON);
+        let cc = e
+            .instantiate_creature(&CARRION_CRAWLER_TEMPLATE, Coordinate::new(20, 2), 0, 4)
+            .unwrap();
+        assert_eq!(e.actors[&cc].size(), Size::Large);
+        assert!((e.actors[&cc].cr() - 2.0).abs() < f32::EPSILON);
+    }
+
     /// Beholder: prone-immune (it floats) and CON / INT / WIS save proficient.
     #[test]
     fn beholder_template_immunities() {
@@ -32265,6 +32368,70 @@ mod tests {
         for eff in effects {
             eff.apply(&mut e);
         }
+    }
+
+    /// Extra Attack must NOT fire on each sub-attack when the swing is
+    /// resolved through a Multiattack wrapper. Regression guard for
+    /// double-counting on creatures with both a Multi action and
+    /// `has_extra_attack: true` (Ancient Blue Dragon, Young White
+    /// Dragon's bare claws). Builds a synthetic Multi { sub: &SCIMITAR,
+    /// count: 3 } and drives it from a Fighter (extra-attack-bearing)
+    /// — expects exactly 3 scimitar d20 lines (one per Multi step) and
+    /// zero "Extra Attack:" log lines.
+    #[test]
+    fn multiattack_suppresses_inner_extra_attack() {
+        use crate::actions::monster_attacks::{Multiattack, SCIMITAR};
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use std::sync::LazyLock;
+
+        static SCIMITAR_TRIPLE: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+            display_name: "scimitar triple",
+            sub_attack: &SCIMITAR,
+            count: 3,
+        });
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let fighter_id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target_id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        assert!(e.actors[&fighter_id].has_extra_attack());
+
+        let log_before = e.messages().len();
+        let target_vec = vec![target_id];
+        let effects = SCIMITAR_TRIPLE.side_effects(
+            &mut e,
+            fighter_id,
+            Some(&target_vec),
+            None,
+            None,
+        );
+
+        let extra_attack_logs = e.messages()[log_before..]
+            .iter()
+            .filter(|line| line.contains("Extra Attack:"))
+            .count();
+        assert_eq!(
+            extra_attack_logs, 0,
+            "Extra Attack must not fire on sub-attacks of a Multiattack"
+        );
+        let scimitar_roll_logs = e.messages()[log_before..]
+            .iter()
+            .filter(|line| line.contains("scimitar: 1d20"))
+            .count();
+        assert_eq!(
+            scimitar_roll_logs, 3,
+            "Multi with count=3 should produce exactly 3 scimitar swings (not 6)"
+        );
+
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        // Depth counter must return to 0 after the multi resolves so a
+        // later bare swing chains its Extra Attack correctly.
+        assert!(!e.in_multiattack(), "depth gate must close after the Multi");
     }
 
     // ── Legendary action tests ──────────────────────────────────────

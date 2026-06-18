@@ -136,3 +136,8 @@ pub mod lions;
 pub mod fire_giants;
 pub mod cyclopes;
 pub mod rocs;
+pub mod pegasi;
+pub mod winter_wolves;
+pub mod triceratopses;
+pub mod tyrannosauruses;
+pub mod carrion_crawlers;

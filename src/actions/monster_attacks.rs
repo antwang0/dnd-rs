@@ -166,7 +166,13 @@ impl Action for SimpleWeapon {
             )
         };
         let mut effects = swing(encounter);
+        // Suppress Extra Attack when this swing was invoked from inside
+        // a Multiattack / CompoundAttack expansion — the wrapper already
+        // encodes the per-Action swing count, and double-counting it
+        // (e.g. Ancient Blue Dragon's 3-claw Multi) silently doubles a
+        // boss creature's per-turn damage budget.
         if self.cost_resource == Resource::Action
+            && !encounter.in_multiattack()
             && encounter
                 .actors
                 .get(&caster_id)
@@ -657,10 +663,13 @@ impl Action for Greataxe {
         );
         // 5e Extra Attack: Greataxe costs an Action, so if the caster has
         // Extra Attack, resolve a second swing against the same target.
-        if encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.has_extra_attack())
+        // Suppress when called from inside a Multiattack — the wrapper
+        // already encodes the swing count.
+        if !encounter.in_multiattack()
+            && encounter
+                .actors
+                .get(&caster_id)
+                .is_some_and(|a| a.has_extra_attack())
         {
             encounter.log("  Extra Attack:");
             effects.extend(simple_weapon_attack(
@@ -940,6 +949,13 @@ impl Action for Multiattack {
         // dying creature). cleanup_dead_actors only runs *after* all
         // side-effects in this batch are queued, so the target is always
         // present here regardless.
+        //
+        // Enter / exit the multiattack-depth gate so sub-attacks know to
+        // suppress their own Extra Attack rider (a creature with both a
+        // Multiattack and `has_extra_attack: true` would otherwise
+        // double-count its per-Action swing budget — see
+        // `EncounterInstance::in_multiattack`).
+        encounter.enter_multiattack();
         let mut all = Vec::new();
         for _ in 0..self.count {
             all.extend(self.sub_attack.side_effects(
@@ -950,6 +966,7 @@ impl Action for Multiattack {
                 overrides,
             ));
         }
+        encounter.exit_multiattack();
         all
     }
 }
@@ -1057,6 +1074,8 @@ impl Action for CompoundAttack {
         target_locations: Option<&Vec<Coordinate>>,
         overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // Same depth-gate as Multiattack — see in_multiattack docs.
+        encounter.enter_multiattack();
         let mut all = Vec::new();
         for (sub, count) in &self.parts {
             for _ in 0..*count {
@@ -1069,6 +1088,7 @@ impl Action for CompoundAttack {
                 ));
             }
         }
+        encounter.exit_multiattack();
         all
     }
 }
@@ -1214,10 +1234,11 @@ impl Action for FrightfulPresence {
             .enemy_burst_targets(caster_id, caster_loc, RADIUS)
             .into_iter()
             .filter(|id| {
-                encounter
-                    .actors
-                    .get(id)
-                    .is_some_and(|a| !a.has_condition(Condition::Frightened))
+                crate::actions::action_template::actor_lacks_condition(
+                    encounter,
+                    *id,
+                    Condition::Frightened,
+                )
             })
             .collect();
         if victims.is_empty() {
@@ -7937,3 +7958,282 @@ pub static ROC_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack
     display_name: "beak + talons",
     parts: vec![(&ROC_BEAK, 1), (&ROC_TALONS, 1)],
 });
+
+/// Pegasus Hooves — STR-based 2d6+STR bludgeoning, reach 1. Large
+/// celestial steed: only one attack lane per turn, so the dice are
+/// tuned a hair above a CR-1 brown bear claw to land on the CR-2 line
+/// alongside Polar Bear. RAW has Hooves as the only Action; the
+/// pegasus's profile leans on movement (90 ft fly) and the Celestial
+/// type rather than rider effects.
+pub static PEGASUS_HOOVES: SimpleWeapon = SimpleWeapon {
+    display_name: "hooves",
+    aliases: &["hv", "kick"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Winter Wolf bite — STR-based 2d6+STR piercing + a 1d8 cold rider on
+/// hit. RAW: bite + cold rider + trip; we collapse the trip rider here
+/// to keep the action shape close to the vanilla Wolf bite (which already
+/// has a STR-save Prone rider) — the Winter Wolf's distinguishing
+/// signature is the cold breath weapon, not yet-another-prone trigger.
+/// The cold damage applies through the same DealDamage chain so target
+/// cold resistance / immunity halves / nullifies it independently of
+/// the piercing.
+pub struct WinterWolfBite {}
+
+impl Action for WinterWolfBite {
+    fn name(&self) -> &str {
+        "winter wolf bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wwb", "frostbite"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Cold]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "winter wolf bite",
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(2, 6),
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        let cold = encounter.roll(&Dice::new(1, 8));
+        encounter.log(format!("  frost rider: 1d8({}) cold", cold));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: cold,
+            damage_type: DamageType::Cold,
+        }));
+        effects
+    }
+}
+
+pub static WINTER_WOLF_BITE: LazyLock<WinterWolfBite> =
+    LazyLock::new(|| WinterWolfBite {});
+
+/// Winter Wolf cold breath — burst-3 / range-4, 4d8 cold, DC 12 CON,
+/// half on save. Recharge 5-6 via the shared `"breath_weapon"` pool.
+/// RAW: 15-ft cone; we model it as a small burst at moderate range so
+/// the AI can still aim it at clustered targets. CR-3 dice tier — well
+/// below dragon breath, well above the wolf trip.
+pub static WINTER_WOLF_BREATH: BreathWeapon = BreathWeapon {
+    display_name: "cold breath",
+    aliases: &["wwc", "frost-breath"],
+    damage_dice: Dice::new(4, 8),
+    damage_type: DamageType::Cold,
+    save_ability: AbilityScoreType::Constitution,
+    dc: 12,
+    radius: 2,
+    range: 4,
+    recharge_key: "breath_weapon",
+};
+
+/// Triceratops Gore — STR-based 4d8+STR piercing, reach 2 (10 ft). The
+/// huge ceratopsian's signature charge: high single-die damage that
+/// rewards reach over multi-strike spam. RAW also has a Trampling
+/// Charge rider on a straight-line move-then-hit (Prone on STR save);
+/// we collapse to the vanilla high-damage hit since the engine doesn't
+/// track straight-line movement for trampling-style triggers.
+pub static TRICERATOPS_GORE: SimpleWeapon = SimpleWeapon {
+    display_name: "gore",
+    aliases: &["gr", "horn-charge"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(4, 8),
+    damage_type: DamageType::Piercing,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Triceratops Stomp — STR-based 3d10+STR bludgeoning, reach 1. RAW
+/// only triggers vs Prone targets; we expose it as a vanilla swing the
+/// AI can pick when the gore is out of reach (the Triceratops's full
+/// envelope: gore at reach 2 OR stomp at reach 1, never both per turn).
+pub static TRICERATOPS_STOMP: SimpleWeapon = SimpleWeapon {
+    display_name: "stomp",
+    aliases: &["st", "trample"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(3, 10),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Tyrannosaurus Rex Bite — STR-based 4d12+STR piercing, reach 2 (10 ft).
+/// The apex predator's marquee swing. RAW also has a Bite-and-Grapple
+/// rider (grappled + restrained vs Large or smaller); we collapse to
+/// the vanilla high-die hit since grapple-from-monster is a niche the
+/// engine doesn't currently use on huge predators.
+pub static T_REX_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "rex bite",
+    aliases: &["rb", "trex-bite"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(4, 12),
+    damage_type: DamageType::Piercing,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Tyrannosaurus Rex Tail — STR-based 3d8+STR bludgeoning, reach 2.
+/// The second multi-lane attack. Lower dice than the bite (no grapple
+/// risk on the RAW lane), so the tail is the "everything not in front
+/// of me also dies" sweep.
+pub static T_REX_TAIL: SimpleWeapon = SimpleWeapon {
+    display_name: "rex tail",
+    aliases: &["rt", "trex-tail"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(3, 8),
+    damage_type: DamageType::Bludgeoning,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// T-Rex multiattack — 1 bite + 1 tail per Action. RAW: can't target
+/// the same creature with both attacks; we don't enforce that because
+/// the engine resolves Compound parts as independent target slots so
+/// the AI naturally splits the swings when two enemies are in reach.
+pub static T_REX_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "bite + tail",
+    parts: vec![(&T_REX_BITE, 1), (&T_REX_TAIL, 1)],
+});
+
+/// Carrion Crawler tentacles — DEX-based 1d4 + DEX poison melee with a
+/// CON save (DC 13) on hit. Fail = Paralyzed for 1 round. The damage
+/// is trivial; the paralysis lockout is the threat — same shape as the
+/// Cockatrice's petrifying bite or the Ghoul's claws (which apply
+/// Paralyzed RAW on a 3d8 ghoul-touch rider). Paralyzed locks the
+/// target's action economy AND auto-fails STR/DEX saves, so a single
+/// hit can swing the round if the save misses.
+pub struct CarrionCrawlerTentacles {}
+
+impl Action for CarrionCrawlerTentacles {
+    fn name(&self) -> &str {
+        "tentacles"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["tn", "lash"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 10 ft RAW = 2 tiles. Tentacles are longer than the bite below.
+        Some(2)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Poison]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "tentacles",
+            AbilityScoreType::Dexterity,
+            Some(AbilityScoreType::Dexterity),
+            Dice::new(1, 4),
+            DamageType::Poison,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 13);
+        if !save.passed() {
+            encounter.log("  tentacles: target seizes up, paralyzed");
+            effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Paralyzed,
+                timer: ConditionTimer::Rounds(1),
+            }));
+        }
+        effects
+    }
+}
+
+pub static CARRION_CRAWLER_TENTACLES: LazyLock<CarrionCrawlerTentacles> =
+    LazyLock::new(|| CarrionCrawlerTentacles {});
+
+/// Carrion Crawler bite — STR-based 1d6+STR piercing, reach 1. The
+/// crawler's secondary swing once it's already in melee. No rider,
+/// just clean-up damage after the tentacle paralysis sticks.
+pub static CARRION_CRAWLER_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "crawler bite",
+    aliases: &["cb", "crawl-bite"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 6),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Carrion Crawler multiattack — 1 tentacles + 1 bite per Action. RAW
+/// uses CompoundAttack so the lock-then-chew rhythm reads as two
+/// distinct log lines.
+pub static CARRION_CRAWLER_MULTI: LazyLock<CompoundAttack> =
+    LazyLock::new(|| CompoundAttack {
+        display_name: "tentacles + bite",
+        parts: vec![(&*CARRION_CRAWLER_TENTACLES, 1), (&CARRION_CRAWLER_BITE, 1)],
+    });

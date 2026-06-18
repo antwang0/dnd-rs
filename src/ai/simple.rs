@@ -4780,6 +4780,23 @@ mod tests {
             let _ = e.instantiate_creature(&LIZARDFOLK_TEMPLATE, Coordinate::new(0, 14), 1, 45);
             let _ = e.instantiate_creature(&CENTAUR_TEMPLATE, Coordinate::new(0, 6), 0, 23);
             let _ = e.instantiate_creature(&GIANT_APE_TEMPLATE, Coordinate::new(0, 9), 1, 46);
+            // Newest additions: Pegasus (CR 2 celestial — Hooves), Winter
+            // Wolf (CR 3 monstrosity — cold-breath weapon + Pack Tactics),
+            // Carrion Crawler (CR 2 monstrosity — paralyzing tentacles +
+            // bite multi), Triceratops (CR 5 huge beast — gore / stomp),
+            // T-Rex (CR 8 huge beast — bite + tail multi). Verifies the
+            // AI picker doesn't stall on the breath-recharge gate or the
+            // CON-save paralysis rider in a mid-tier fight.
+            use crate::actors::creatures::carrion_crawlers::CARRION_CRAWLER_TEMPLATE;
+            use crate::actors::creatures::pegasi::PEGASUS_TEMPLATE;
+            use crate::actors::creatures::triceratopses::TRICERATOPS_TEMPLATE;
+            use crate::actors::creatures::tyrannosauruses::T_REX_TEMPLATE;
+            use crate::actors::creatures::winter_wolves::WINTER_WOLF_TEMPLATE;
+            let _ = e.instantiate_creature(&PEGASUS_TEMPLATE, Coordinate::new(28, 2), 0, 24);
+            let _ = e.instantiate_creature(&WINTER_WOLF_TEMPLATE, Coordinate::new(28, 5), 1, 47);
+            let _ = e.instantiate_creature(&CARRION_CRAWLER_TEMPLATE, Coordinate::new(28, 8), 1, 48);
+            let _ = e.instantiate_creature(&TRICERATOPS_TEMPLATE, Coordinate::new(26, 10), 1, 49);
+            let _ = e.instantiate_creature(&T_REX_TEMPLATE, Coordinate::new(22, 10), 1, 50);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;
