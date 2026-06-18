@@ -115,6 +115,11 @@ use crate::actors::creatures::winter_wolves::WINTER_WOLF_TEMPLATE;
 use crate::actors::creatures::triceratopses::TRICERATOPS_TEMPLATE;
 use crate::actors::creatures::tyrannosauruses::T_REX_TEMPLATE;
 use crate::actors::creatures::carrion_crawlers::CARRION_CRAWLER_TEMPLATE;
+use crate::actors::creatures::water_elementals::WATER_ELEMENTAL_TEMPLATE;
+use crate::actors::creatures::saber_toothed_tigers::SABER_TOOTHED_TIGER_TEMPLATE;
+use crate::actors::creatures::hyenas::HYENA_TEMPLATE;
+use crate::actors::creatures::giant_hyenas::GIANT_HYENA_TEMPLATE;
+use crate::actors::creatures::green_hags::GREEN_HAG_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -2667,6 +2672,19 @@ impl EncounterInstance {
             &CARRION_CRAWLER_TEMPLATE,
             &TRICERATOPS_TEMPLATE,
             &T_REX_TEMPLATE,
+            // Newest additions rounding out the elemental quartet and
+            // the low-to-mid pack-tactics ladder: Water Elemental (CR 5,
+            // completing the four primordial flavors with the signature
+            // `WHELM` burst), Saber-toothed Tiger (CR 2, heavier Pounce
+            // cousin of Tiger), Hyena (CR 0, cheapest pack-tactics
+            // biter), Giant Hyena (CR 1, large pack-tactics biter), and
+            // Green Hag (CR 3, fey saver with Magic Resistance — the
+            // first medium-CR fey-typed monster in the pool).
+            &WATER_ELEMENTAL_TEMPLATE,
+            &SABER_TOOTHED_TIGER_TEMPLATE,
+            &HYENA_TEMPLATE,
+            &GIANT_HYENA_TEMPLATE,
+            &GREEN_HAG_TEMPLATE,
         ]
     }
 
@@ -41762,6 +41780,156 @@ mod tests {
             slowed_landed,
             "Magnify Gravity should land Slowed on at least one failed-save \
              goblin across 32 runs"
+        );
+    }
+
+    /// Water Elemental shares the elemental damage-modifier base (BPS
+    /// resistance + poison immunity) and overlays acid resistance.
+    /// Regression guard for the new `elemental_damage_modifiers`
+    /// helper: each variant must still expose the BPS triple after
+    /// the refactor extracted the base.
+    #[test]
+    fn water_elemental_inherits_elemental_damage_base() {
+        use crate::actors::creatures::water_elementals::WATER_ELEMENTAL_TEMPLATE;
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let el = e
+            .instantiate_creature(&WATER_ELEMENTAL_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&el).unwrap();
+        // Overlay: water-specific acid resistance.
+        assert!(actor.is_resistant_to(DamageType::Acid));
+        // Inherited from the elemental base.
+        assert!(actor.is_immune_to(DamageType::Poison));
+        assert!(actor.is_resistant_to(DamageType::Bludgeoning));
+        assert!(actor.is_resistant_to(DamageType::Piercing));
+        assert!(actor.is_resistant_to(DamageType::Slashing));
+    }
+
+    /// Earth Elemental's thunder vulnerability must survive the
+    /// `elemental_damage_modifiers` refactor — its overlay extends the
+    /// shared base without dropping the signature weakness.
+    #[test]
+    fn earth_elemental_retains_thunder_vulnerability_after_refactor() {
+        use crate::actors::creatures::earth_elementals::EARTH_ELEMENTAL_TEMPLATE;
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let el = e
+            .instantiate_creature(&EARTH_ELEMENTAL_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&el).unwrap();
+        assert!(actor.is_vulnerable_to(DamageType::Thunder));
+        assert!(actor.is_immune_to(DamageType::Poison));
+        assert!(actor.is_resistant_to(DamageType::Bludgeoning));
+    }
+
+    /// Green Hag carries the Magic Resistance flag — advantage on every
+    /// save vs spells / magical effects. Regression guard for the new
+    /// fey template's flag plumbing.
+    #[test]
+    fn green_hag_has_magic_resistance() {
+        use crate::actors::creatures::green_hags::GREEN_HAG_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let hag = e
+            .instantiate_creature(&GREEN_HAG_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        assert!(e.actors[&hag].has_magic_resistance());
+    }
+
+    /// Both hyena templates carry the Pack Tactics flag, which is the
+    /// load-bearing kit at their CR tier — verifies the flag survived
+    /// the `..defaults()` struct-update spread.
+    #[test]
+    fn hyena_templates_carry_pack_tactics() {
+        use crate::actors::creatures::giant_hyenas::GIANT_HYENA_TEMPLATE;
+        use crate::actors::creatures::hyenas::HYENA_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let h = e
+            .instantiate_creature(&HYENA_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let gh = e
+            .instantiate_creature(&GIANT_HYENA_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        assert!(e.actors[&h].has_pack_tactics());
+        assert!(e.actors[&gh].has_pack_tactics());
+    }
+
+    /// Water Elemental Whelm — the recharge slot must drop to "spent"
+    /// after a single use (RAW: 4-6 recharge). Regression guard against
+    /// re-using Whelm twice on the same turn. Also verifies the burst
+    /// catches an adjacent enemy and applies the Bludgeoning damage.
+    #[test]
+    fn whelm_consumes_recharge_and_hits_adjacent_enemy() {
+        use crate::actions::monster_attacks::WATER_ELEMENTAL_WHELM;
+        use crate::actors::creatures::water_elementals::WATER_ELEMENTAL_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let elemental = e
+            .instantiate_creature(&WATER_ELEMENTAL_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        assert!(
+            e.actors[&elemental].is_recharge_available("whelm"),
+            "Whelm should be available fresh out of instantiation"
+        );
+        let pre_hp = e.actors[&zombie].hitpoints();
+        let origin = vec![e.actors[&elemental].location()];
+        let effects = WATER_ELEMENTAL_WHELM.side_effects(
+            &mut e,
+            elemental,
+            None,
+            Some(&origin),
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&elemental].is_recharge_available("whelm"),
+            "Whelm must spend its recharge slot on use"
+        );
+        assert!(
+            e.actors[&zombie].hitpoints() < pre_hp,
+            "Whelm should have dealt damage to the adjacent zombie"
+        );
+    }
+
+    /// Whelm targets enemies only — a friendly actor inside the burst
+    /// must NOT take damage. The implementation reads
+    /// `enemy_burst_targets` which excludes the caster's team; this test
+    /// pins that contract.
+    #[test]
+    fn whelm_spares_allied_actors_in_the_burst() {
+        use crate::actions::monster_attacks::WATER_ELEMENTAL_WHELM;
+        use crate::actors::creatures::water_elementals::WATER_ELEMENTAL_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let elemental = e
+            .instantiate_creature(&WATER_ELEMENTAL_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Friendly zombie on the same team as the elemental, also
+        // adjacent to the burst origin.
+        let ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        let pre_hp = e.actors[&ally].hitpoints();
+        let origin = vec![e.actors[&elemental].location()];
+        let effects = WATER_ELEMENTAL_WHELM.side_effects(
+            &mut e,
+            elemental,
+            None,
+            Some(&origin),
+            None,
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&ally].hitpoints(),
+            pre_hp,
+            "Whelm must not damage allies on the caster's team"
         );
     }
 

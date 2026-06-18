@@ -26,6 +26,36 @@ pub static ELEMENTAL_CONDITION_IMMUNITIES: LazyLock<HashSet<Condition>> = LazyLo
     ])
 });
 
+/// Damage-modifier baseline every elemental in this engine shares:
+/// poison immunity (elementals don't have biology to poison) plus
+/// resistance to bludgeoning / piercing / slashing (the magical-vs-
+/// non-magical split is collapsed since the engine doesn't track
+/// weapon magicality). Each elemental template starts from this base
+/// via `elemental_damage_modifiers([...])` and overlays its own
+/// signature entries (Fire / Cold / Lightning / Acid immunity or
+/// resistance, Earth's thunder vulnerability, etc.).
+///
+/// Replaces five hand-copied `(BPS triplet + Poison)` literals — the
+/// four existing elementals plus future ones — with a single source
+/// of truth. A new resistance / immunity added to the base lands
+/// uniformly across every elemental.
+pub fn elemental_damage_modifiers(
+    overlays: impl IntoIterator<Item = (DamageType, DamageModifier)>,
+) -> HashMap<DamageType, DamageModifier> {
+    let mut m = HashMap::from([
+        (DamageType::Poison, DamageModifier::Immunity),
+        (DamageType::Bludgeoning, DamageModifier::Resistance),
+        (DamageType::Piercing, DamageModifier::Resistance),
+        (DamageType::Slashing, DamageModifier::Resistance),
+    ]);
+    // Overlays win on collision — an Earth Elemental's
+    // (Thunder, Vulnerability) doesn't conflict with the base; an
+    // overlay that promotes BPS to Immunity (e.g. a future creature
+    // built on the elemental chassis) replaces the base resistance.
+    m.extend(overlays);
+    m
+}
+
 /// Fire Elemental — CR 5 elemental. Walking inferno: fire-touch melee
 /// for 2d6 + ignite (Burning DOT). Immune to fire and poison, resistant
 /// to non-magical physical damage (we collapse to "physical resistance"
@@ -56,16 +86,13 @@ pub static FIRE_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         size: Size::Large,
         creature_type: CreatureType::Elemental,
         actions,
-        damage_modifiers: HashMap::from([
-            (DamageType::Fire, DamageModifier::Immunity),
-            (DamageType::Poison, DamageModifier::Immunity),
-            // RAW: "resistance to bludgeoning, piercing, slashing from
-            // non-magical attacks." We don't track magical-weapon
-            // distinction so we apply the broader resistance.
-            (DamageType::Bludgeoning, DamageModifier::Resistance),
-            (DamageType::Piercing, DamageModifier::Resistance),
-            (DamageType::Slashing, DamageModifier::Resistance),
-        ]),
+        // Base BPS + Poison entries live in
+        // `elemental_damage_modifiers`; this overlay just adds the fire
+        // immunity that distinguishes the variant.
+        damage_modifiers: elemental_damage_modifiers([(
+            DamageType::Fire,
+            DamageModifier::Immunity,
+        )]),
         condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
         ..CreatureTemplate::defaults()
     }

@@ -1,9 +1,11 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{EARTH_ELEMENTAL_MULTI, EARTH_ELEMENTAL_SLAM};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::actors::creatures::fire_elementals::ELEMENTAL_CONDITION_IMMUNITIES;
+use crate::actors::creatures::fire_elementals::{
+    ELEMENTAL_CONDITION_IMMUNITIES, elemental_damage_modifiers,
+};
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Earth Elemental — CR 5 elemental. A slow-moving boulder of fury:
@@ -38,17 +40,14 @@ pub static EARTH_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         size: Size::Large,
         creature_type: CreatureType::Elemental,
         actions,
-        damage_modifiers: HashMap::from([
-            (DamageType::Poison, DamageModifier::Immunity),
-            // 5e RAW: vulnerable to thunder. Modeled directly — the
-            // earth elemental cracks like stone under sonic strikes.
-            (DamageType::Thunder, DamageModifier::Vulnerability),
-            // Mundane-physical resistance per MM (collapsed to flat
-            // resistance; engine doesn't track magical-weapon distinction).
-            (DamageType::Bludgeoning, DamageModifier::Resistance),
-            (DamageType::Piercing, DamageModifier::Resistance),
-            (DamageType::Slashing, DamageModifier::Resistance),
-        ]),
+        // Base BPS + Poison entries live in
+        // `elemental_damage_modifiers`; thunder vulnerability is the
+        // earth variant's signature overlay (5e RAW: cracks like stone
+        // under sonic strikes).
+        damage_modifiers: elemental_damage_modifiers([(
+            DamageType::Thunder,
+            DamageModifier::Vulnerability,
+        )]),
         condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
         ..CreatureTemplate::defaults()
     }

@@ -8237,3 +8237,260 @@ pub static CARRION_CRAWLER_MULTI: LazyLock<CompoundAttack> =
         display_name: "tentacles + bite",
         parts: vec![(&*CARRION_CRAWLER_TENTACLES, 1), (&CARRION_CRAWLER_BITE, 1)],
     });
+
+/// Water Elemental Slam — STR-based 2d8 + STR bludgeoning melee, reach 1.
+/// Same per-swing dice as the Air Elemental's slam, but the water
+/// variant's signature kit is the `WATER_ELEMENTAL_WHELM` burst rather
+/// than a stronger single-target hit. Slam is the fallback for situations
+/// where Whelm is on cooldown or there's a single target out of burst
+/// reach.
+pub static WATER_ELEMENTAL_SLAM: SimpleWeapon = SimpleWeapon {
+    display_name: "water slam",
+    aliases: &["wslam"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 8),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Water Elemental Multiattack — 2 slams per Action. Mirrors the Air /
+/// Earth elemental wrappers; the water variant's `WHELM` recharge ability
+/// is its distinguishing burst.
+pub static WATER_ELEMENTAL_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "water elemental multiattack",
+    sub_attack: &WATER_ELEMENTAL_SLAM,
+    count: 2,
+});
+
+/// Water Elemental Whelm — STR save burst around the elemental: every
+/// hostile in a 1-tile radius (RAW: each creature in the elemental's
+/// space) makes a STR save vs DC 15 or takes 2d8 + STR bludgeoning
+/// (half on save) and is knocked Prone (only on fail — the surge
+/// staggers off-balance victims into the muck). Recharge 4-6 per RAW;
+/// the recharge key plugs into the shared `"whelm"` slot on the
+/// template's recharge_abilities so the start-of-turn roller flips it
+/// back on a 4+. The 1-tile radius keeps the burst small (a 5-ft
+/// surge around the elemental's footprint) so it functions as a
+/// "punish anyone who crowded in" reaction rather than a full AoE
+/// wash.
+pub struct WaterElementalWhelm {}
+
+impl Action for WaterElementalWhelm {
+    fn name(&self) -> &str {
+        "whelm"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wh", "surge"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // Caster-centered Burst with radius 1 — the AI passes the
+        // elemental's own footprint as the burst origin so the surge
+        // catches anyone crowded into its space.
+        TargetingSchema::Burst { radius: 1 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Recharge gate. The encounter's start-of-turn roller flips the
+        // "whelm" slot back on a 4+; until then the action is hidden
+        // from the picker via `validate_input`.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_recharge_available("whelm"))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+
+        let origin = first_target_location(target_locations).unwrap_or_else(|| {
+            encounter
+                .actors
+                .get(&caster_id)
+                .map(|a| a.location())
+                .unwrap_or(Coordinate::new(0, 0))
+        });
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let str_mod = caster.ability_modifier(AbilityScoreType::Strength);
+        const DC: i32 = 15;
+        const RADIUS: isize = 1;
+
+        // Spend the recharge slot up-front so a mid-resolution early
+        // return can't leave Whelm both "spent" and "damage applied" out
+        // of sync — matches the BreathWeapon shape above.
+        if let Some(a) = encounter.actors.get_mut(&caster_id) {
+            a.spend_recharge("whelm");
+        }
+
+        let victims = encounter.enemy_burst_targets(caster_id, origin, RADIUS);
+        encounter.log(format!(
+            "  whelm: surge of water bursts around the elemental, {} caught",
+            victims.len()
+        ));
+
+        // Burst damage rolled once and shared (5e shared-AoE-roll); each
+        // victim halves on save. Save failure also tags the victim Prone
+        // for the standard 5e knock-down rider that the RAW grapple /
+        // restrain clauses collapse to in this engine's simpler movement
+        // layer.
+        let raw = encounter.roll(&Dice::new(2, 8)) + str_mod.max(0) as u32;
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for vid in victims {
+            let save = encounter.roll_save(vid, AbilityScoreType::Strength, DC);
+            let dmg = if save.passed() { raw / 2 } else { raw };
+            if dmg > 0 {
+                effects.push(Box::new(DealDamage {
+                    actor_id: vid,
+                    amount: dmg,
+                    damage_type: DamageType::Bludgeoning,
+                }));
+            }
+            if !save.passed() {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: vid,
+                    condition: Condition::Prone,
+                    timer: ConditionTimer::Permanent,
+                }));
+            }
+        }
+        effects
+    }
+}
+
+pub static WATER_ELEMENTAL_WHELM: LazyLock<WaterElementalWhelm> =
+    LazyLock::new(|| WaterElementalWhelm {});
+
+/// Saber-toothed Tiger Bite — STR-based 1d10 + STR piercing melee. The
+/// heavier-jawed cousin of the Tiger's bite: same die size but the
+/// CR-bump comes from the multi pairing and the higher STR mod from
+/// the +1 STR on the stat block (rather than a bigger single die).
+pub static SABER_TIGER_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "saber bite",
+    aliases: &["sb", "saber-bite"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 10),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Saber-toothed Tiger Claws — STR-based 2d6 + STR slashing. Heavier
+/// rake than the vanilla Tiger's 1d8 claws — the saber-toothed sibling
+/// invests its CR bump into the secondary swing rather than the bite.
+pub static SABER_TIGER_CLAWS: SimpleWeapon = SimpleWeapon {
+    display_name: "saber claws",
+    aliases: &["sc", "saber-claws"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Saber-toothed Tiger multiattack — one bite + one claws per Action.
+/// Mirrors the Tiger's compound pair (bite + claws) with the heavier
+/// per-limb dice; RAW: 5e MM saber-tooth uses the same multi shape but
+/// per-limb dice are upgraded.
+pub static SABER_TIGER_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "bite + claws",
+    parts: vec![(&SABER_TIGER_BITE, 1), (&SABER_TIGER_CLAWS, 1)],
+});
+
+/// Hyena Bite — STR-based 1d6 + STR piercing melee. The CR-0 pack
+/// hunter's only swing. Its `has_pack_tactics: true` template flag
+/// converts adjacent allies into advantage; the bite itself stays
+/// vanilla so the dice tier matches the CR-0 chassis (kobolds /
+/// stirges / sprite-tier monsters).
+pub static HYENA_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "hyena bite",
+    aliases: &["hb", "yip"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 6),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Giant Hyena Bite — STR-based 2d6 + STR piercing melee. The CR-1 large
+/// pack hunter: heavier dice than the vanilla hyena, no rider effects.
+/// Combined with `has_pack_tactics: true` for the canonical "if a friend
+/// is adjacent, it lands at advantage" loop.
+pub static GIANT_HYENA_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "giant hyena bite",
+    aliases: &["ghb", "giant-bite"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Green Hag Claws — STR-based 2d8 + STR slashing melee. The classic
+/// fey witch's primary swing: chunky dice paired with the hag's
+/// magic-resistance / fey-resistance envelope. No rider — the hag's
+/// kit lives in the claws-plus-resistance envelope; spell mimicry and
+/// invisible-passage clauses from RAW are skipped (the engine doesn't
+/// model the "vanishing into the swamp" exit).
+pub static GREEN_HAG_CLAWS: SimpleWeapon = SimpleWeapon {
+    display_name: "hag claws",
+    aliases: &["ghc", "talons"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 8),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};

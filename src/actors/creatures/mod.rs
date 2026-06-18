@@ -141,3 +141,8 @@ pub mod winter_wolves;
 pub mod triceratopses;
 pub mod tyrannosauruses;
 pub mod carrion_crawlers;
+pub mod water_elementals;
+pub mod saber_toothed_tigers;
+pub mod hyenas;
+pub mod giant_hyenas;
+pub mod green_hags;

@@ -1,9 +1,11 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{AIR_ELEMENTAL_MULTI, AIR_ELEMENTAL_SLAM};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::actors::creatures::fire_elementals::ELEMENTAL_CONDITION_IMMUNITIES;
+use crate::actors::creatures::fire_elementals::{
+    ELEMENTAL_CONDITION_IMMUNITIES, elemental_damage_modifiers,
+};
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Air Elemental — CR 5 elemental. A churning vortex of wind: slam
@@ -36,16 +38,12 @@ pub static AIR_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         size: Size::Large,
         creature_type: CreatureType::Elemental,
         actions,
-        damage_modifiers: HashMap::from([
-            (DamageType::Poison, DamageModifier::Immunity),
+        // Base BPS + Poison entries live in
+        // `elemental_damage_modifiers`; lightning + thunder resistance
+        // are the air variant's signature overlays.
+        damage_modifiers: elemental_damage_modifiers([
             (DamageType::Lightning, DamageModifier::Resistance),
             (DamageType::Thunder, DamageModifier::Resistance),
-            // 5e RAW: resistance to bludgeoning / piercing / slashing from
-            // non-magical attacks — we collapse to a flat physical
-            // resistance since the engine doesn't track magical-weapon.
-            (DamageType::Bludgeoning, DamageModifier::Resistance),
-            (DamageType::Piercing, DamageModifier::Resistance),
-            (DamageType::Slashing, DamageModifier::Resistance),
         ]),
         condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
         ..CreatureTemplate::defaults()

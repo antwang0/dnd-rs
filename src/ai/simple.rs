@@ -4797,6 +4797,29 @@ mod tests {
             let _ = e.instantiate_creature(&CARRION_CRAWLER_TEMPLATE, Coordinate::new(28, 8), 1, 48);
             let _ = e.instantiate_creature(&TRICERATOPS_TEMPLATE, Coordinate::new(26, 10), 1, 49);
             let _ = e.instantiate_creature(&T_REX_TEMPLATE, Coordinate::new(22, 10), 1, 50);
+            // Newest additions: Water Elemental (CR 5 — completes the
+            // elemental quartet, exercises the new `WHELM` recharge
+            // burst), Saber-toothed Tiger (CR 2 — heavier Pounce
+            // beast), Hyena / Giant Hyena (CR 0 / CR 1 — pack-tactics
+            // pair pressuring the Pack Tactics gate inside
+            // `compute_attack_mode`), Green Hag (CR 3 — first medium-
+            // CR fey with Magic Resistance, exercises the spell-save
+            // advantage clause inside `compute_save_mode`).
+            use crate::actors::creatures::giant_hyenas::GIANT_HYENA_TEMPLATE;
+            use crate::actors::creatures::green_hags::GREEN_HAG_TEMPLATE;
+            use crate::actors::creatures::hyenas::HYENA_TEMPLATE;
+            use crate::actors::creatures::saber_toothed_tigers::SABER_TOOTHED_TIGER_TEMPLATE;
+            use crate::actors::creatures::water_elementals::WATER_ELEMENTAL_TEMPLATE;
+            let _ = e.instantiate_creature(&WATER_ELEMENTAL_TEMPLATE, Coordinate::new(18, 10), 1, 51);
+            let _ = e.instantiate_creature(
+                &SABER_TOOTHED_TIGER_TEMPLATE,
+                Coordinate::new(14, 10),
+                1,
+                52,
+            );
+            let _ = e.instantiate_creature(&HYENA_TEMPLATE, Coordinate::new(10, 12), 1, 53);
+            let _ = e.instantiate_creature(&GIANT_HYENA_TEMPLATE, Coordinate::new(8, 12), 1, 54);
+            let _ = e.instantiate_creature(&GREEN_HAG_TEMPLATE, Coordinate::new(6, 12), 1, 55);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;
