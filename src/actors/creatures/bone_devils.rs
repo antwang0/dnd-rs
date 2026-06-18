@@ -43,16 +43,12 @@ pub static BONE_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         wisdom: 14,
         constitution: 18,
         charisma: 16,
-        skills: HashSet::new(),
-        items: Vec::new(),
         senses: HashSet::from([SpecialSense::Darkvision(120)]),
         languages: HashSet::from([Language::Infernal, Language::Common]),
         cr: 9.0,
         size: Size::Large,
         creature_type: CreatureType::Fiend,
         actions,
-        spell_slots_by_level: Vec::new(),
-        rolls_death_saves: false,
         // MM Bone Devil: immune to fire + poison; resistant to cold +
         // non-magical B/P/S. We omit the magical-vs-mundane distinction.
         damage_modifiers: HashMap::from([
@@ -67,34 +63,8 @@ pub static BONE_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Wisdom,
             AbilityScoreType::Charisma,
         ]),
-        // Devil envelope: can't be poisoned (an immunity granted by
-        // their fiendish constitution).
         condition_immunities: HashSet::from([Condition::Poisoned]),
-        features: HashSet::new(),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
-        legendary_resistances: 0,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
         has_magic_resistance: true,
-        recharge_abilities: Vec::new(),
-        legendary_actions_per_round: 0,
-        has_extra_attack: false,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });

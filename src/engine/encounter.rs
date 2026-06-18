@@ -120,6 +120,11 @@ use crate::actors::creatures::saber_toothed_tigers::SABER_TOOTHED_TIGER_TEMPLATE
 use crate::actors::creatures::hyenas::HYENA_TEMPLATE;
 use crate::actors::creatures::giant_hyenas::GIANT_HYENA_TEMPLATE;
 use crate::actors::creatures::green_hags::GREEN_HAG_TEMPLATE;
+use crate::actors::creatures::gorgons::GORGON_TEMPLATE;
+use crate::actors::creatures::yuan_ti::YUAN_TI_MALISON_TEMPLATE;
+use crate::actors::creatures::cambions::CAMBION_TEMPLATE;
+use crate::actors::creatures::dryads::DRYAD_TEMPLATE;
+use crate::actors::creatures::bullywugs::BULLYWUG_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -2685,6 +2690,24 @@ impl EncounterInstance {
             &HYENA_TEMPLATE,
             &GIANT_HYENA_TEMPLATE,
             &GREEN_HAG_TEMPLATE,
+            // Newest additions filling the cr-1 to cr-5 gap in the
+            // monstrosity / fiend / fey lanes:
+            //   - Gorgon (CR 5 large monstrosity): petrifying-breath
+            //     cone with the shared `"breath_weapon"` recharge key.
+            //   - Yuan-Ti Malison (CR 3 fiend hybrid): poison-immune
+            //     scimitar+bite multi with magic resistance.
+            //   - Cambion (CR 5 fiend half-devil): fire-rider spear,
+            //     ranged fire ray, mid-tier resistance envelope.
+            //   - Dryad (CR 1 fey): WIS-DC fey charm + magic resistance
+            //     + fey ancestry — first single-target fey charmer in
+            //     the pool at the low CR tier.
+            //   - Bullywug (CR ¼ humanoid): low-CR amphibian pack
+            //     fodder with a spear + bite compound multi.
+            &GORGON_TEMPLATE,
+            &YUAN_TI_MALISON_TEMPLATE,
+            &CAMBION_TEMPLATE,
+            &DRYAD_TEMPLATE,
+            &BULLYWUG_TEMPLATE,
         ]
     }
 

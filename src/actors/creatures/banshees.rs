@@ -2,7 +2,9 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{BANSHEE_WAIL, CORRUPTING_TOUCH};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
-use crate::engine::types::{AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
+use crate::engine::types::{
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -30,23 +32,19 @@ pub static BANSHEE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         wisdom: 11,
         constitution: 10,
         charisma: 17, // primary stat — drives CORRUPTING_TOUCH
-        skills: HashSet::new(),
-        items: Vec::new(),
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
         languages: HashSet::from([Language::Common]),
         cr: 4.0,
         size: Size::Medium,
         creature_type: CreatureType::Undead,
         actions,
-        spell_slots_by_level: Vec::new(),
-        rolls_death_saves: false,
+        // 5e: resistance to non-magical bludgeoning/piercing/slashing.
+        // We don't track magical weapon flags so we apply the resistance
+        // directly (mirrors the wraith / specter pattern).
         damage_modifiers: HashMap::from([
             (DamageType::Necrotic, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Cold, DamageModifier::Resistance),
-            // 5e: resistance to non-magical bludgeoning/piercing/slashing.
-            // We don't track magical weapon flags so we apply the
-            // resistance directly (mirrors the wraith / specter pattern).
             (DamageType::Bludgeoning, DamageModifier::Resistance),
             (DamageType::Piercing, DamageModifier::Resistance),
             (DamageType::Slashing, DamageModifier::Resistance),
@@ -60,31 +58,6 @@ pub static BANSHEE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Prone,
             Condition::Restrained,
         ]),
-        features: HashSet::new(),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
-        legendary_resistances: 0,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
-        has_magic_resistance: false,
-        recharge_abilities: Vec::new(),
-        legendary_actions_per_round: 0,
-        has_extra_attack: false,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });

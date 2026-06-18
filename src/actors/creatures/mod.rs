@@ -146,3 +146,8 @@ pub mod saber_toothed_tigers;
 pub mod hyenas;
 pub mod giant_hyenas;
 pub mod green_hags;
+pub mod gorgons;
+pub mod yuan_ti;
+pub mod cambions;
+pub mod dryads;
+pub mod bullywugs;

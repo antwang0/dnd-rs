@@ -81,6 +81,46 @@ pub fn resolve_burst_save_damage(
 /// reach weapons would be 2. Ranged actions return their max range here.
 pub const MELEE_REACH: isize = 1;
 
+/// Sister helper to `resolve_burst_save_damage` for the "save-or-pick-up-
+/// a-condition" burst shape: every enemy in `radius` of `center` rolls
+/// `save_ability` vs `dc`; failed-save targets pick up `condition` for
+/// `timer`. Damage-free — the load-bearing effect is the condition install.
+///
+/// Used by monster save-or-condition AoEs (Gorgon's Petrifying Breath
+/// burst, future gaze / shout / aura abilities) where the spell-shape
+/// `concentration_burst_condition_only` doesn't fit (no concentration to
+/// anchor — monster abilities just fire-and-forget). Keeps the recurring
+/// "iterate enemy_burst_targets → roll save → install on fail" loop in
+/// one place so future tweaks (e.g. a caster-aware save helper for the
+/// Heightened-Spell metamagic prime on the first save in the burst) land
+/// once.
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_burst_save_condition(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    center: Coordinate,
+    radius: isize,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    condition: crate::conditions::Condition,
+    timer: crate::conditions::ConditionTimer,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    use crate::engine::side_effects::ApplyCondition;
+    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+    for tid in encounter.enemy_burst_targets(caster_id, center, radius) {
+        let save = encounter.roll_save(tid, save_ability, dc);
+        if save.passed() {
+            continue;
+        }
+        effects.push(Box::new(ApplyCondition {
+            actor_id: tid,
+            condition,
+            timer,
+        }));
+    }
+    effects
+}
+
 /// Sweep targets in a `radius` burst centered on `point` and return their
 /// ids in ascending current-HP order — a target whose current HP exceeds
 /// the running pool stops the sweep (5e Sleep / Color Spray semantics).

@@ -32,62 +32,27 @@ pub static MUMMY_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         wisdom: 10,
         constitution: 14,
         charisma: 12,
-        skills: HashSet::new(),
-        items: Vec::new(),
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
-        languages: HashSet::new(),
         cr: 3.0,
         size: Size::Medium,
         creature_type: CreatureType::Undead,
         actions,
-        spell_slots_by_level: Vec::new(),
-        rolls_death_saves: false,
         // Mummies: necrotic + poison immunity, resistance to physical
-        // (non-magical) damage, immune to fire while wrapped (per MM,
-        // bandages would burn but the mummy itself resists). We model
-        // fire resistance to keep them tough vs spell pool.
+        // (non-magical) damage; vulnerable to fire (their wrappings burn).
         damage_modifiers: HashMap::from([
             (DamageType::Necrotic, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Bludgeoning, DamageModifier::Resistance),
             (DamageType::Piercing, DamageModifier::Resistance),
             (DamageType::Slashing, DamageModifier::Resistance),
-            // Mummies are vulnerable to fire — their wrappings burn.
             (DamageType::Fire, DamageModifier::Vulnerability),
         ]),
-        proficient_saves: HashSet::new(),
-        // Standard undead condition immunities, plus exhaustion (we
-        // don't model exhaustion explicitly).
+        // Standard undead condition immunities.
         condition_immunities: HashSet::from([
             Condition::Poisoned,
             Condition::Charmed,
             Condition::Frightened,
         ]),
-        features: HashSet::new(),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
-        legendary_resistances: 0,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
-        has_magic_resistance: false,
-        recharge_abilities: Vec::new(),
-        legendary_actions_per_round: 0,
-        has_extra_attack: false,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });

@@ -8494,3 +8494,497 @@ pub static GREEN_HAG_CLAWS: SimpleWeapon = SimpleWeapon {
     cost_resource: Resource::Action,
     normal_range: None,
 };
+
+// ─── Gorgon ──────────────────────────────────────────────────────────
+
+/// Gorgon Gore — STR-based 2d12+STR piercing melee, reach 1. The iron
+/// bull's signature charge swing. RAW has a Trampling Charge rider
+/// (Prone on STR save after a straight-line move); we collapse to the
+/// vanilla high-die hit since the engine doesn't track straight-line
+/// movement for tramples.
+pub static GORGON_GORE: SimpleWeapon = SimpleWeapon {
+    display_name: "gorgon gore",
+    aliases: &["gg", "iron-gore"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 12),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Gorgon Hooves — STR-based 2d10+STR bludgeoning melee, reach 1. The
+/// follow-up trampling stomp paired with Gore in the multi. Slightly
+/// lower dice than the gore but typed bludgeoning so a fully-armored
+/// target with piercing-resistance still takes full damage from the
+/// stomp lane.
+pub static GORGON_HOOVES: SimpleWeapon = SimpleWeapon {
+    display_name: "gorgon hooves",
+    aliases: &["gh", "stomp"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 10),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Gorgon Petrifying Breath — 30-foot cone (radius 2 / range 4 in this
+/// 2.5ft grid) targeted at a tile. Every actor caught in the burst
+/// makes a CON save vs DC 13; on fail, the target picks up Petrified
+/// for 1 round (the action-economy lockout is the threat — we cap at
+/// 1 round so a single hit doesn't game-over the target, matching the
+/// Cockatrice / Medusa / Basilisk shape).
+///
+/// Recharge 5-6 via the shared `"breath_weapon"` pool so the gorgon
+/// can't double-tap with this and a second breath option (it has none,
+/// but the shared key keeps the start-of-turn roller uniform).
+pub struct GorgonPetrifyingBreath {}
+
+impl Action for GorgonPetrifyingBreath {
+    fn name(&self) -> &str {
+        "petrifying breath"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pb", "stone-breath"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 2 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(4)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_recharge_available("breath_weapon"))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(origin) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        const DC: i32 = 13;
+        const RADIUS: isize = 2;
+        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
+            caster.spend_recharge("breath_weapon");
+        }
+        encounter.log("  petrifying breath: gorgon exhales a cloud of stoning vapor");
+        // Route through the shared `resolve_burst_save_condition` helper —
+        // same chokepoint that future save-or-condition AoEs will use.
+        crate::actions::action_template::resolve_burst_save_condition(
+            encounter,
+            caster_id,
+            origin,
+            RADIUS,
+            AbilityScoreType::Constitution,
+            DC,
+            Condition::Petrified,
+            ConditionTimer::Rounds(1),
+        )
+    }
+}
+
+pub static GORGON_PETRIFYING_BREATH: LazyLock<GorgonPetrifyingBreath> =
+    LazyLock::new(|| GorgonPetrifyingBreath {});
+
+/// Gorgon Multiattack — 1 gore + 1 hooves per Action. RAW MM has the
+/// gorgon's full Action as "Multiattack: The gorgon makes two attacks
+/// with its gore" but the visual reading (charge + stomp) reads better
+/// as a heterogeneous compound; we keep one gore + one hooves so the
+/// damage envelope (≈2d12+2d10+2*STR ≈ 38 average) matches RAW's
+/// 2-gore total cleanly.
+pub static GORGON_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "gore + hooves",
+    parts: vec![(&GORGON_GORE, 1), (&GORGON_HOOVES, 1)],
+});
+
+// ─── Yuan-Ti Malison ─────────────────────────────────────────────────
+
+/// Yuan-Ti Malison Bite — STR-based 1d4+STR piercing melee plus a CON
+/// save (DC 12) for Poisoned (1 minute / 10 rounds) on hit. Mirrors the
+/// Giant Scorpion's "hit + Poisoned" rider: the petty damage is the
+/// hook for the poison lockout (attack-roll disadvantage stacks against
+/// the malison's other strikes).
+pub struct YuanTiMalisonBite {}
+
+impl Action for YuanTiMalisonBite {
+    fn name(&self) -> &str {
+        "yuan-ti bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ytb", "fang"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Poison]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "yuan-ti bite",
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(1, 4),
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        // Poison rider: 1d4 typed poison + CON save vs Poisoned. The
+        // poison damage typing means a poison-resistant target still
+        // halves the rider while taking the full piercing.
+        let poison = encounter.roll(&Dice::new(1, 4));
+        encounter.log(format!("  yuan-ti bite: 1d4({}) poison rider", poison));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: poison,
+            damage_type: DamageType::Poison,
+        }));
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 12);
+        if !save.passed() {
+            encounter.log("  yuan-ti bite: venom courses through the target");
+            effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Poisoned,
+                timer: ConditionTimer::Rounds(10),
+            }));
+        }
+        effects
+    }
+}
+
+pub static YUAN_TI_MALISON_BITE: LazyLock<YuanTiMalisonBite> =
+    LazyLock::new(|| YuanTiMalisonBite {});
+
+/// Yuan-Ti Malison Multiattack — 1 scimitar + 1 bite per Action. Hybrid
+/// fiend warrior signature: the scimitar lands the load-bearing damage
+/// while the bite probes for the Poisoned lockout. Routes through the
+/// shared `SCIMITAR` simple weapon (1d6+STR slashing).
+pub static YUAN_TI_MALISON_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "scimitar + bite",
+    parts: vec![(&SCIMITAR, 1), (&*YUAN_TI_MALISON_BITE, 1)],
+});
+
+// ─── Cambion ─────────────────────────────────────────────────────────
+
+/// Cambion Spear — STR-based 1d6+STR piercing melee + 2d6 fire rider on
+/// hit (the cambion's weapon glows with infernal flame). The fire rider
+/// is a separate `DealDamage` so per-target resistance / immunity
+/// applies independently from the piercing (a fire-immune target still
+/// takes the spear's piercing damage; a fire-vulnerable one takes
+/// double on the rider).
+pub struct CambionSpear {}
+
+impl Action for CambionSpear {
+    fn name(&self) -> &str {
+        "infernal spear"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cs", "fire-spear"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Fire]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "infernal spear",
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(1, 6),
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        let fire = encounter.roll(&Dice::new(2, 6));
+        encounter.log(format!(
+            "  infernal spear: 2d6({}) = {} fire rider",
+            fire, fire
+        ));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: fire,
+            damage_type: DamageType::Fire,
+        }));
+        effects
+    }
+}
+
+pub static CAMBION_SPEAR: LazyLock<CambionSpear> = LazyLock::new(|| CambionSpear {});
+
+/// Cambion Fire Ray — ranged spell-attack at 24-tile range. CHA-based
+/// attack roll vs target AC, 4d6 fire on hit. No ability mod to damage
+/// (it's a pure fire-bolt-style cantrip, scaled to the cambion's CR-5
+/// damage tier). Sits alongside the spear in the cambion's loadout so
+/// the AI can keep up pressure when the target kites out of melee.
+pub struct CambionFireRay {}
+
+impl Action for CambionFireRay {
+    fn name(&self) -> &str {
+        "fire ray"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fr", "cambion-bolt"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // CHA-based ranged spell attack (matches the cambion's primary
+        // casting stat). No ability mod to damage — the rider IS the
+        // damage, no martial bonus stacks.
+        simple_weapon_attack_ranged(
+            encounter,
+            caster_id,
+            target_ids,
+            "fire ray",
+            AbilityScoreType::Charisma,
+            None,
+            Dice::new(4, 6),
+            DamageType::Fire,
+            false,
+            Some(24),
+        )
+    }
+}
+
+pub static CAMBION_FIRE_RAY: LazyLock<CambionFireRay> = LazyLock::new(|| CambionFireRay {});
+
+/// Cambion Multiattack — 2 infernal spears per Action. Mirrors the MM
+/// stat block's "two melee attacks" envelope; the AI naturally chains
+/// the spear's fire rider twice for clustered burst.
+pub static CAMBION_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double infernal spear",
+    sub_attack: &*CAMBION_SPEAR,
+    count: 2,
+});
+
+// ─── Dryad ───────────────────────────────────────────────────────────
+
+/// Dryad Club — STR-based 1d4+STR bludgeoning melee. RAW: the dryad
+/// casts Shillelagh as a cantrip to imbue the club with a 1d8+WIS
+/// magical force-typed swing; we collapse to the plain 1d4+STR base
+/// since the cantrip-prime path requires a separate prime turn and the
+/// club is the dryad's fallback when its charm fails (the load-bearing
+/// kit is `DRYAD_FEY_CHARM`).
+pub static DRYAD_CLUB: SimpleWeapon = SimpleWeapon {
+    display_name: "dryad club",
+    aliases: &["dc", "wood-club"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 4),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Dryad Fey Charm — single-target action at 12-tile (30 ft) range.
+/// WIS save vs DC 14; on fail the target is Charmed by the dryad until
+/// the dryad takes damage or the spell drops (10-round timer in our
+/// engine; RAW: 24 hours). Mirrors the Vampire Charm shape: rolls
+/// `SetCharmedBy` so the charmed target can't take hostile actions
+/// against the dryad. Charm-immune creatures (constructs / undead /
+/// fey themselves per RAW) shrug it off via the standard add_condition
+/// gate.
+pub struct DryadFeyCharm {}
+
+impl Action for DryadFeyCharm {
+    fn name(&self) -> &str {
+        "fey charm"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fc", "charm"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft RAW = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::{ApplyCondition, SetCharmedBy};
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // Charm-immune targets shrug it off without even rolling — match
+        // the LURING_SONG / Vampire Charm short-circuit.
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return Vec::new();
+        };
+        if target.effectively_immune_to_condition(Condition::Charmed) {
+            encounter.log("  fey charm: target's mind is shielded");
+            return Vec::new();
+        }
+        const DC: i32 = 14;
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, DC);
+        if save.passed() {
+            encounter.log("  fey charm: target resists the dryad's enchantment");
+            return Vec::new();
+        }
+        encounter.log("  fey charm: target is enthralled by the dryad");
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Charmed,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(SetCharmedBy {
+                target_id,
+                charmer: Some(caster_id),
+            }),
+        ]
+    }
+}
+
+pub static DRYAD_FEY_CHARM: LazyLock<DryadFeyCharm> = LazyLock::new(|| DryadFeyCharm {});
+
+// ─── Bullywug ────────────────────────────────────────────────────────
+
+/// Bullywug Bite — STR-based 1d4+STR piercing melee. Low-CR amphibian
+/// raider's secondary swing; combines with the spear in the multi for
+/// the "frog warrior" double-tap. No rider effects — the bullywug's
+/// kit is the spear + bite multi at a low CR price point.
+pub static BULLYWUG_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "bullywug bite",
+    aliases: &["bb", "frog-bite"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 4),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Bullywug Spear — STR-based 1d6+STR piercing melee. The amphibian
+/// raider's signature weapon — short reach (1 tile) but the primary
+/// damage lane in the multi. Paired with the bite for the bullywug's
+/// "thrust + chomp" double-hit on a single Action.
+pub static BULLYWUG_SPEAR: SimpleWeapon = SimpleWeapon {
+    display_name: "bullywug spear",
+    aliases: &["bs", "frog-spear"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 6),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Bullywug Multiattack — 1 spear + 1 bite per Action. RAW: the
+/// bullywug makes two attacks (one with its bite, one with its spear).
+/// We model the heterogeneous pair via `CompoundAttack` so each limb
+/// uses its own dice tier.
+pub static BULLYWUG_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "spear + bite",
+    parts: vec![(&BULLYWUG_SPEAR, 1), (&BULLYWUG_BITE, 1)],
+});

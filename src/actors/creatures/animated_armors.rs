@@ -16,9 +16,8 @@ pub static ANIMATED_ARMOR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
     actions.push(&SLAM);
     CreatureTemplate {
         name: "Animated Armor",
-        // 'I' for "iron armor" — 'A' is already taken (antitoxin glyph
-        // when on the ground; conflicts felt OK to break here but we
-        // pick a distinct char anyway).
+        // 'I' for "iron armor" — distinct from 'A' (Aboleth) and 'a'
+        // (Amulet of Health ground glyph).
         glyph: 'I',
         ac: 18,
         hitpoints: "5d8+10".parse().unwrap(),
@@ -29,62 +28,29 @@ pub static ANIMATED_ARMOR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         wisdom: 3,
         constitution: 13,
         charisma: 1,
-        skills: HashSet::new(),
-        items: Vec::new(),
         // Blindsight — animated objects "see" without conventional sight.
         senses: HashSet::from([SpecialSense::Blindsight(60)]),
-        languages: HashSet::new(),
         cr: 1.0,
         size: Size::Medium,
         creature_type: CreatureType::Construct,
         actions,
-        spell_slots_by_level: Vec::new(),
-        rolls_death_saves: false,
         // Constructs are immune to poison and psychic damage in 5e.
         damage_modifiers: HashMap::from([
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Psychic, DamageModifier::Immunity),
         ]),
-        proficient_saves: HashSet::new(),
-        // Standard construct immunity suite: poisoned, charmed, frightened,
-        // paralyzed, blinded (blindsight). Sleep and incapacitate go
-        // through the engine's condition-immunity gate; we cover the
-        // mind-affecting ones here.
+        // Standard construct immunity suite — Asleep is explicitly listed
+        // alongside Charmed for documentation clarity (the engine's
+        // dynamic_immunity_to chokepoint already gates Asleep on Charmed
+        // for several other immunity sources).
         condition_immunities: HashSet::from([
             Condition::Poisoned,
             Condition::Charmed,
             Condition::Frightened,
             Condition::Paralyzed,
             Condition::Blinded,
-            // Sleep is gated on Charmed immunity in our engine; making
-            // it explicit here keeps the immunity check obvious.
             Condition::Asleep,
         ]),
-        features: HashSet::new(),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
-        legendary_resistances: 0,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
-        has_magic_resistance: false,
-        recharge_abilities: Vec::new(),
-        legendary_actions_per_round: 0,
-        has_extra_attack: false,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });
