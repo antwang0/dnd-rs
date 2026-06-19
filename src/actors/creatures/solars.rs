@@ -37,15 +37,12 @@ pub static SOLAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'O', // 'S' is already Skeleton; 'O' for the angelic Ouranos figure.
         ac: 21,
         hitpoints: "22d10+121".parse().unwrap(),
-        speed: 30.,
         strength: 26,
-        intelligence: 25,
         dexterity: 22,
-        wisdom: 25,
         constitution: 26,
+        intelligence: 25,
+        wisdom: 25,
         charisma: 30,
-        skills: HashSet::new(),
-        items: Vec::new(),
         senses: HashSet::from([
             SpecialSense::Truesight(120),
             SpecialSense::Darkvision(120),
@@ -59,7 +56,6 @@ pub static SOLAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Aura, Foresight, and Mass Heal once apiece, plus Resurrection
         // / Heal for emergencies.
         spell_slots_by_level: vec![0, 0, 0, 0, 4, 2, 2, 2, 1],
-        rolls_death_saves: false,
         // Solar resistances per MM: immune to fire / poison / radiant,
         // plus resistant to non-magical physical (we don't model the
         // magical-vs-mundane split, so flat resistance).
@@ -84,35 +80,13 @@ pub static SOLAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Frightened,
             Condition::Poisoned,
         ]),
-        features: HashSet::new(),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
         // 5e Legendary Resistance (3/Day) — RAW per MM. The Solar's
         // signature anti-save defense rounding out the celestial boss
         // envelope (Holy Aura + Foresight + Mass Heal).
         legendary_resistances: 3,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
         has_magic_resistance: true,
-        recharge_abilities: Vec::new(),
         legendary_actions_per_round: 3,
-        has_extra_attack: false,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });
 

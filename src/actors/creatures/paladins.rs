@@ -11,7 +11,7 @@ use crate::actions::spells::{
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Paladin PC template. The classic CHA-flavored holy warrior: half-caster
@@ -121,16 +121,12 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'P',
         ac: 18,
         hitpoints: "3d10+6".parse().unwrap(),
-        speed: 30.,
         strength: 16,
-        intelligence: 10,
         dexterity: 12,
-        wisdom: 11,
         constitution: 14,
+        intelligence: 10,
+        wisdom: 11,
         charisma: 14, // spellcasting ability + Sacred Weapon scaling
-        skills: HashSet::new(),
-        items: Vec::new(),
-        senses: HashSet::new(),
         languages: HashSet::from([Language::Common, Language::Celestial]),
         cr: 1.5,
         size: Size::Medium,
@@ -143,33 +139,14 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // unchanged.
         spell_slots_by_level: vec![4, 3, 3, 2, 1],
         rolls_death_saves: true,
-        damage_modifiers: HashMap::new(),
         // Paladins are proficient in WIS and CHA saves (5e PHB).
         proficient_saves: HashSet::from([AbilityScoreType::Wisdom, AbilityScoreType::Charisma]),
-        condition_immunities: HashSet::new(),
         features: HashSet::from([
             LAY_ON_HANDS_TAG,
             SACRED_WEAPON_TAG,
             CLEANSING_TOUCH_TAG,
         ]),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
-        legendary_resistances: 0,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
-        has_magic_resistance: false,
-        recharge_abilities: Vec::new(),
-        legendary_actions_per_round: 0,
         has_extra_attack: true,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
         // Aura of Protection (level 6+): allies within 10ft add the
         // paladin's CHA mod (min +1) to all saves. The headline late-
         // game paladin feature — turns the squishy wizard adjacent to
@@ -181,10 +158,6 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // site so Cause Fear / Wrathful Smite / dragon-fear all bounce
         // off the aura bubble.
         has_aura_of_courage: true,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });

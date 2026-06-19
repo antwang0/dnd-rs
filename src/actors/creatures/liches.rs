@@ -6,12 +6,12 @@ use crate::actions::spells::{
     MIND_SLIVER, MIRROR_IMAGE, POWER_WORD_KILL, POWER_WORD_STUN, SCORCHING_RAY, SHIELD,
     SYNAPTIC_STATIC, TOLL_THE_DEAD, VAMPIRIC_TOUCH,
 };
-use crate::actors::actor_template::CreatureTemplate;
+use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
 use crate::conditions::Condition;
 use crate::engine::types::{
     AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Lich — CR 21 undead spellcaster. The marquee boss caster: huge spell
@@ -79,15 +79,12 @@ pub static LICH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 17,
         // 18d8+54 = 135 average per MM CR 21.
         hitpoints: "18d8+54".parse().unwrap(),
-        speed: 30.,
         strength: 11,
-        intelligence: 20, // primary spellcasting ability
         dexterity: 16,
-        wisdom: 14,
         constitution: 16,
+        intelligence: 20, // primary spellcasting ability
+        wisdom: 14,
         charisma: 16,
-        skills: HashSet::new(),
-        items: Vec::new(),
         senses: HashSet::from([SpecialSense::Truesight(120), SpecialSense::Darkvision(120)]),
         languages: HashSet::from([Language::Common, Language::Draconic, Language::Infernal]),
         cr: 21.0,
@@ -96,19 +93,13 @@ pub static LICH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         // Boss-tier loadout: 4/3/3/3/3/2/2/2/2.
         spell_slots_by_level: vec![4, 3, 3, 3, 3, 2, 2, 2, 2],
-        rolls_death_saves: false,
         // 5e Lich: necrotic / poison immunity, resistance to cold /
-        // lightning / non-magical physical (we use straight resistance
-        // for the three physical types to keep parity with the rest of
-        // our undead pool).
-        damage_modifiers: HashMap::from([
+        // lightning / non-magical physical.
+        damage_modifiers: non_magical_physical_resistances([
             (DamageType::Necrotic, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Cold, DamageModifier::Resistance),
             (DamageType::Lightning, DamageModifier::Resistance),
-            (DamageType::Bludgeoning, DamageModifier::Resistance),
-            (DamageType::Piercing, DamageModifier::Resistance),
-            (DamageType::Slashing, DamageModifier::Resistance),
         ]),
         // Lich save profile: prof in CON / INT / WIS (Legendary Resistance-
         // adjacent in 5e RAW, but we approximate with proficient saves).
@@ -126,34 +117,12 @@ pub static LICH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Paralyzed,
             Condition::Exhausted,
         ]),
-        features: HashSet::new(),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
         // 5e Legendary Resistance (3/Day) — RAW per MM. The lich's
         // signature defense against the party's save-or-die / save-or-
         // suck spells (Hold Monster, Banishment, Power Word Stun).
         legendary_resistances: 3,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
         has_magic_resistance: true,
-        recharge_abilities: Vec::new(),
         legendary_actions_per_round: 3,
-        has_extra_attack: false,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });

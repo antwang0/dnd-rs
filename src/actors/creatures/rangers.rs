@@ -6,7 +6,7 @@ use crate::actions::spells::{
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Ranger PC template. DEX-primary half-caster martial. Plays as a
@@ -88,16 +88,12 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'R',
         ac: 15,
         hitpoints: "5d10+5".parse().unwrap(),
-        speed: 30.,
         strength: 12,
-        intelligence: 10,
         dexterity: 16,
-        wisdom: 14, // spellcasting ability
         constitution: 12,
+        intelligence: 10,
+        wisdom: 14, // spellcasting ability
         charisma: 10,
-        skills: HashSet::new(),
-        items: Vec::new(),
-        senses: HashSet::new(),
         languages: HashSet::from([Language::Common, Language::Elvish]),
         cr: 1.0,
         size: Size::Medium,
@@ -108,38 +104,12 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // have slots to fire on. 4/3/3/1/1 matches a level-9 ranger.
         spell_slots_by_level: vec![4, 3, 3, 1, 1],
         rolls_death_saves: true,
-        damage_modifiers: HashMap::new(),
         // Rangers are proficient in STR and DEX saves (5e PHB).
         proficient_saves: HashSet::from([
             AbilityScoreType::Strength,
             AbilityScoreType::Dexterity,
         ]),
-        condition_immunities: HashSet::new(),
-        features: HashSet::new(),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
-        legendary_resistances: 0,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
-        has_magic_resistance: false,
-        recharge_abilities: Vec::new(),
-        legendary_actions_per_round: 0,
         has_extra_attack: true,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });

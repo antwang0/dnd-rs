@@ -10,7 +10,7 @@ use crate::actions::spells::{
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Warlock PC template. CHA-primary half-caster with Pact Magic — RAW
@@ -193,16 +193,12 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'L',
         ac: 12,
         hitpoints: "8d8+8".parse().unwrap(),
-        speed: 30.,
         strength: 8,
-        intelligence: 12,
         dexterity: 14,
-        wisdom: 12,
         constitution: 14,
+        intelligence: 12,
+        wisdom: 12,
         charisma: 18, // primary spellcasting ability
-        skills: HashSet::new(),
-        items: Vec::new(),
-        senses: HashSet::new(),
         languages: HashSet::from([Language::Common, Language::Infernal]),
         cr: 4.0,
         size: Size::Medium,
@@ -217,13 +213,11 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // lv7=0, lv8=0, lv9=1 (Power Word Kill / Stun).
         spell_slots_by_level: vec![2, 1, 1, 1, 4, 1, 0, 0, 1],
         rolls_death_saves: true,
-        damage_modifiers: HashMap::new(),
         // Warlocks are proficient in WIS and CHA saves (5e PHB).
         proficient_saves: HashSet::from([
             AbilityScoreType::Wisdom,
             AbilityScoreType::Charisma,
         ]),
-        condition_immunities: HashSet::new(),
         // 5e Warlock Eldritch Invocations:
         //   - Agonizing Blast: +CHA mod to each Eldritch Blast beam.
         //   - Repelling Blast: 10ft (4-tile) push on hit, Large-or-
@@ -241,31 +235,7 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             crate::actions::class_features::REPELLING_BLAST_TAG,
             crate::actions::class_features::ELDRITCH_MIND_TAG,
         ]),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
-        legendary_resistances: 0,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
-        has_magic_resistance: false,
-        recharge_abilities: Vec::new(),
-        legendary_actions_per_round: 0,
-        has_extra_attack: false,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });
 

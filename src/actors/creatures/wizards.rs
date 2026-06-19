@@ -20,7 +20,7 @@ use crate::actions::spells::{
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, SpecialSense};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Squishy INT-caster. Fire Bolt as the at-will ranged option, Magic
@@ -569,15 +569,12 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'M',
         ac: 12,
         hitpoints: "2d6+2".parse().unwrap(),
-        speed: 30.,
         strength: 8,
-        intelligence: 16, // primary spellcasting ability
         dexterity: 14,
-        wisdom: 11,
         constitution: 12,
+        intelligence: 16, // primary spellcasting ability
+        wisdom: 11,
         charisma: 10,
-        skills: HashSet::new(),
-        items: Vec::new(),
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
         languages: HashSet::from([Language::Common]),
         cr: 0.5,
@@ -591,39 +588,12 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // (3-5) still cover Fireball / Haste / Slow / Stinking Cloud /
         // Cone of Cold / Hold Monster / Synaptic Static.
         spell_slots_by_level: vec![4, 3, 3, 2, 2, 1, 1, 1, 1],
-        rolls_death_saves: false,
-        damage_modifiers: HashMap::new(),
         // Wizards are proficient in INT and WIS saves (5e PHB).
         proficient_saves: HashSet::from([
             AbilityScoreType::Intelligence,
             AbilityScoreType::Wisdom,
         ]),
-        condition_immunities: HashSet::new(),
         features: HashSet::from([ARCANE_RECOVERY_TAG]),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
-        legendary_resistances: 0,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
-        has_magic_resistance: false,
-        recharge_abilities: Vec::new(),
-        legendary_actions_per_round: 0,
-        has_extra_attack: false,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });
