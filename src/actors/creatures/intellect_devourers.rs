@@ -1,10 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{INTELLECT_DEVOURER_CLAWS, INTELLECT_DEVOURER_DEVOUR};
-use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{
-    CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
-};
-use std::collections::{HashMap, HashSet};
+use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Intellect Devourer — CR 2 tiny aberration. The mind-flayer's brain-on-
@@ -48,11 +46,7 @@ pub static INTELLECT_DEVOURER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
         size: Size::Tiny,
         creature_type: CreatureType::Aberration,
         actions,
-        damage_modifiers: HashMap::from([
-            (DamageType::Bludgeoning, DamageModifier::Resistance),
-            (DamageType::Piercing, DamageModifier::Resistance),
-            (DamageType::Slashing, DamageModifier::Resistance),
-        ]),
+        damage_modifiers: non_magical_physical_resistances([]),
         // Immune to Blinded — the devourer has no eyes to lose.
         condition_immunities: HashSet::from([crate::conditions::Condition::Blinded]),
         ..CreatureTemplate::defaults()
@@ -64,7 +58,7 @@ mod tests {
     use super::*;
     use crate::actors::actor_template::ActorInstance;
     use crate::engine::dice::FastRandRoller;
-    use crate::engine::types::Coordinate;
+    use crate::engine::types::{Coordinate, DamageModifier, DamageType};
 
     #[test]
     fn devourer_is_blinded_immune() {

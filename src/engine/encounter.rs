@@ -130,6 +130,9 @@ use crate::actors::creatures::shadow_demons::SHADOW_DEMON_TEMPLATE;
 use crate::actors::creatures::succubi::SUCCUBUS_TEMPLATE;
 use crate::actors::creatures::intellect_devourers::INTELLECT_DEVOURER_TEMPLATE;
 use crate::actors::creatures::xorns::XORN_TEMPLATE;
+use crate::actors::creatures::oni::ONI_TEMPLATE;
+use crate::actors::creatures::merrow::MERROW_TEMPLATE;
+use crate::actors::creatures::giant_crabs::GIANT_CRAB_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -2736,6 +2739,23 @@ impl EncounterInstance {
             &SUCCUBUS_TEMPLATE,
             &INTELLECT_DEVOURER_TEMPLATE,
             &XORN_TEMPLATE,
+            // Newest additions filling the giant / aquatic-humanoid /
+            // ambient-beast lanes:
+            //   - Oni (CR 7 large giant): polearm multi with reach-2,
+            //     Magic Resistance, and 10/round regeneration. Slots
+            //     above Hill Giant / Cyclops and below Fire Giant in
+            //     the giant ladder.
+            //   - Merrow (CR 2 large humanoid): aquatic raider with
+            //     a harpoon + bite multi. Sits next to Sahuagin and
+            //     Lizardfolk on the medium-CR humanoid bench but on the
+            //     Large frame for a heavier hit profile.
+            //   - Giant Crab (CR ⅛ medium beast): cheapest ambient
+            //     creature in the pool — single claw pinch, joins the
+            //     low-end fillers (Stirge, Hyena, Boar) at the bottom
+            //     of the CR ladder.
+            &ONI_TEMPLATE,
+            &MERROW_TEMPLATE,
+            &GIANT_CRAB_TEMPLATE,
         ]
     }
 

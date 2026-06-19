@@ -4846,6 +4846,16 @@ mod tests {
                 59,
             );
             let _ = e.instantiate_creature(&XORN_TEMPLATE, Coordinate::new(6, 8), 1, 60);
+            // Newest additions exercising the giant-tier multi (Oni's
+            // double-glaive with reach-2 + Magic Resistance + 10/round
+            // regen), the aquatic-humanoid harpoon-and-bite multi
+            // (Merrow), and the cheapest ambient beast (Giant Crab).
+            use crate::actors::creatures::giant_crabs::GIANT_CRAB_TEMPLATE;
+            use crate::actors::creatures::merrow::MERROW_TEMPLATE;
+            use crate::actors::creatures::oni::ONI_TEMPLATE;
+            let _ = e.instantiate_creature(&ONI_TEMPLATE, Coordinate::new(8, 6), 1, 61);
+            let _ = e.instantiate_creature(&MERROW_TEMPLATE, Coordinate::new(6, 6), 1, 62);
+            let _ = e.instantiate_creature(&GIANT_CRAB_TEMPLATE, Coordinate::new(4, 6), 1, 63);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

@@ -1,11 +1,11 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{BANSHEE_WAIL, CORRUPTING_TOUCH};
-use crate::actors::actor_template::CreatureTemplate;
+use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
 use crate::conditions::Condition;
 use crate::engine::types::{
     AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Banshee — CR 4 undead. Frail body (12 AC, 58 average HP) wrapped
@@ -41,13 +41,10 @@ pub static BANSHEE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 5e: resistance to non-magical bludgeoning/piercing/slashing.
         // We don't track magical weapon flags so we apply the resistance
         // directly (mirrors the wraith / specter pattern).
-        damage_modifiers: HashMap::from([
+        damage_modifiers: non_magical_physical_resistances([
             (DamageType::Necrotic, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Cold, DamageModifier::Resistance),
-            (DamageType::Bludgeoning, DamageModifier::Resistance),
-            (DamageType::Piercing, DamageModifier::Resistance),
-            (DamageType::Slashing, DamageModifier::Resistance),
         ]),
         proficient_saves: HashSet::from([AbilityScoreType::Charisma]),
         condition_immunities: HashSet::from([

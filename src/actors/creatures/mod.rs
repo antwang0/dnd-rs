@@ -156,3 +156,6 @@ pub mod shadow_demons;
 pub mod succubi;
 pub mod intellect_devourers;
 pub mod xorns;
+pub mod oni;
+pub mod merrow;
+pub mod giant_crabs;

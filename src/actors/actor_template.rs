@@ -492,6 +492,56 @@ impl CreatureTemplate {
     }
 }
 
+/// 5e shorthand: "resistance to bludgeoning, piercing, and slashing damage
+/// from non-magical attacks." We don't track magical-vs-mundane weapon
+/// distinctions, so the resistance lands on the three physical damage types
+/// directly. Returns a fully assembled `damage_modifiers` map seeded with
+/// the BPS triplet and extended by `overlays`; mirrors
+/// `fire_elementals::elemental_damage_modifiers` in shape but without the
+/// elemental's poison-immunity baseline.
+///
+/// Replaces the hand-copied B/P/S triplet that appeared in dozens of
+/// incorporeal-undead / fiend / extraplanar templates (Wraith, Specter,
+/// Banshee, Ghost, etc.). Overlays win on collision so a future "promote
+/// BPS to Immunity" variant can land cleanly without touching the helper.
+pub fn non_magical_physical_resistances(
+    overlays: impl IntoIterator<Item = (DamageType, DamageModifier)>,
+) -> HashMap<DamageType, DamageModifier> {
+    let mut m = HashMap::from([
+        (DamageType::Bludgeoning, DamageModifier::Resistance),
+        (DamageType::Piercing, DamageModifier::Resistance),
+        (DamageType::Slashing, DamageModifier::Resistance),
+    ]);
+    m.extend(overlays);
+    m
+}
+
+/// The 5e "incorporeal undead" envelope shared by Ghost / Wraith /
+/// Specter / Shadow: immune to Necrotic + Poison damage and to a long
+/// menu of body-control conditions (Charmed, Exhausted, Frightened,
+/// Grappled, Paralyzed, Petrified, Poisoned, Prone, Restrained,
+/// Unconscious). Each individual template still overlays its own damage-
+/// type resistances (cold for the wraith, radiant vulnerability for the
+/// shadow demon, etc.) and may opt out of an immunity by re-inserting it
+/// into a smaller set, but the common base lives here so a new
+/// incorporeal undead lands as a one-line `.clone()` instead of a 10-line
+/// literal.
+pub static INCORPOREAL_UNDEAD_CONDITION_IMMUNITIES: std::sync::LazyLock<HashSet<Condition>> =
+    std::sync::LazyLock::new(|| {
+        HashSet::from([
+            Condition::Charmed,
+            Condition::Exhausted,
+            Condition::Frightened,
+            Condition::Grappled,
+            Condition::Paralyzed,
+            Condition::Petrified,
+            Condition::Poisoned,
+            Condition::Prone,
+            Condition::Restrained,
+            Condition::Unconscious,
+        ])
+    });
+
 #[derive(Clone, PartialEq)]
 pub struct SpellSlotInfo {
     pub max_spell_slots: u32,
@@ -2823,6 +2873,44 @@ mod tests {
             0,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn non_magical_physical_resistances_seeds_bps_triplet() {
+        // Empty overlay → the three physical types resist, nothing else.
+        let m = non_magical_physical_resistances([]);
+        assert_eq!(m.len(), 3);
+        for dt in [
+            DamageType::Bludgeoning,
+            DamageType::Piercing,
+            DamageType::Slashing,
+        ] {
+            assert_eq!(m.get(&dt).copied(), Some(DamageModifier::Resistance));
+        }
+    }
+
+    #[test]
+    fn non_magical_physical_resistances_overlays_can_promote_bps() {
+        // Overlay collides with the base BPS Resistance — overlay wins,
+        // matching the `elemental_damage_modifiers` semantics: a future
+        // creature built on the chassis can promote one of the three to
+        // Immunity without touching the helper.
+        let m = non_magical_physical_resistances([
+            (DamageType::Bludgeoning, DamageModifier::Immunity),
+            (DamageType::Fire, DamageModifier::Resistance),
+        ]);
+        assert_eq!(
+            m.get(&DamageType::Bludgeoning).copied(),
+            Some(DamageModifier::Immunity)
+        );
+        assert_eq!(
+            m.get(&DamageType::Piercing).copied(),
+            Some(DamageModifier::Resistance)
+        );
+        assert_eq!(
+            m.get(&DamageType::Fire).copied(),
+            Some(DamageModifier::Resistance)
+        );
     }
 
     #[test]

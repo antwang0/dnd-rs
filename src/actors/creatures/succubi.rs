@@ -1,10 +1,10 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{SUCCUBUS_CHARM, SUCCUBUS_CLAWS, SUCCUBUS_DRAINING_KISS};
-use crate::actors::actor_template::CreatureTemplate;
+use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
 use crate::engine::types::{
     CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Succubus / Incubus — CR 4 medium fiend (neutral-evil). The seduction-
@@ -59,16 +59,14 @@ pub static SUCCUBUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Fiend,
         actions,
-        damage_modifiers: HashMap::from([
+        // Non-magical physical resistance approximated as flat B/P/S
+        // resistance via the shared `non_magical_physical_resistances`
+        // helper — same shape as the quasit's envelope.
+        damage_modifiers: non_magical_physical_resistances([
             (DamageType::Cold, DamageModifier::Resistance),
             (DamageType::Fire, DamageModifier::Resistance),
             (DamageType::Lightning, DamageModifier::Resistance),
             (DamageType::Poison, DamageModifier::Resistance),
-            // Non-magical physical resistance approximated as flat B/P/S
-            // resistance — same shape as the quasit's envelope.
-            (DamageType::Bludgeoning, DamageModifier::Resistance),
-            (DamageType::Piercing, DamageModifier::Resistance),
-            (DamageType::Slashing, DamageModifier::Resistance),
         ]),
         ..CreatureTemplate::defaults()
     }

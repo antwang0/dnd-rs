@@ -9511,3 +9511,149 @@ pub static XORN_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttac
     display_name: "claws + bite",
     parts: vec![(&XORN_CLAW, 3), (&XORN_BITE, 1)],
 });
+
+// ─── Oni ─────────────────────────────────────────────────────────────
+
+/// Oni Glaive — STR-based 2d10 slashing melee with reach 2 (10 ft, one
+/// tile beyond the standard MELEE_REACH baseline). The oni's marquee
+/// swing: a two-handed polearm with the same reach-2 envelope the ogre's
+/// greatclub uses, but with double the die size and the typical
+/// large-giant STR bump. Pairs with the claw via `ONI_MULTI` so the
+/// per-Action damage budget reads as "one big polearm sweep + one
+/// follow-up rake".
+pub static ONI_GLAIVE: SimpleWeapon = SimpleWeapon {
+    display_name: "glaive",
+    aliases: &["gv", "polearm"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 10),
+    damage_type: DamageType::Slashing,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Oni Claw — STR-based 1d8 slashing melee. The secondary swing in the
+/// oni's kit; combines with the glaive via `ONI_MULTI` for the canonical
+/// "polearm + claws" Multiattack. Smaller die than the glaive so the
+/// compound budget feels like "heavy + light" rather than two equally
+/// crushing strikes.
+pub static ONI_CLAW: SimpleWeapon = SimpleWeapon {
+    display_name: "oni claw",
+    aliases: &["ocl", "oni-claw"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Oni Multiattack — 2 glaive swings per Action. RAW: an oni makes two
+/// weapon attacks per turn, one with a glaive and (when within reach)
+/// one with claws — we collapse to the double-glaive shape because the
+/// claw's smaller die doesn't carry weight against the boss's HP pool
+/// in practice, and the glaive's reach-2 lets the oni land both swings
+/// even from a step away. Same factor as `BANDIT_CAPTAIN_MULTI` /
+/// `GOBLIN_BOSS_MULTI` — `Multiattack` (single sub-attack repeated).
+pub static ONI_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double glaive",
+    sub_attack: &ONI_GLAIVE,
+    count: 2,
+});
+
+// ─── Merrow ──────────────────────────────────────────────────────────
+
+/// Merrow Bite — STR-based 1d8 piercing melee. The aquatic ogre's natural
+/// chomp; pairs with the harpoon and claws via `MERROW_MULTI` for the
+/// "harpoon + claws/bite" Multiattack RAW prescribes.
+pub static MERROW_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "merrow bite",
+    aliases: &["mbite", "merrow-bite"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Merrow Claws — STR-based 2d4 slashing melee. The aquatic ogre's webbed
+/// talons; alternate offhand pairing for the multi when the harpoon is
+/// already committed.
+pub static MERROW_CLAWS: SimpleWeapon = SimpleWeapon {
+    display_name: "merrow claws",
+    aliases: &["mcl", "merrow-claws"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 4),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Merrow Harpoon — STR-based 2d6 piercing melee with reach 2 (10 ft). The
+/// merrow's signature ranged-melee hybrid: same reach-2 envelope as the
+/// ogre's greatclub, with a slightly heavier die since the polearm is
+/// pulled back to drag prey closer. RAW also has a ranged thrown form
+/// (range 20/60) and a STR-save "pull 20ft" rider on hit; we surface
+/// the melee swing only since the engine's reach-2 covers the load-bearing
+/// "I can hit you from a tile away" envelope.
+pub static MERROW_HARPOON: SimpleWeapon = SimpleWeapon {
+    display_name: "harpoon",
+    aliases: &["hrp", "harpoon"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Piercing,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Merrow Multiattack — 1 harpoon swing + 1 bite per Action via
+/// `CompoundAttack`. RAW: the merrow makes two attacks — one bite and one
+/// claws / harpoon — per turn. We pick the heavier (harpoon) over the
+/// claws for the canonical opener since the reach-2 envelope is the
+/// merrow's identity hook.
+pub static MERROW_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "harpoon + bite",
+    parts: vec![(&MERROW_HARPOON, 1), (&MERROW_BITE, 1)],
+});
+
+// ─── Giant Crab ──────────────────────────────────────────────────────
+
+/// Giant Crab Claw — STR-based 1d6 bludgeoning melee. The crab's signature
+/// pinch; same dice tier as a heavy club but typed as a natural attack so
+/// it slots into the beast template without a weapon import. The 5e MM
+/// stat block also tags Grappled on a hit (escape DC 11) — we surface
+/// only the damage swing for now since the engine's grapple-on-attack
+/// rider plumbing is heavier than the CR ⅛ chassis warrants. New CR ⅛
+/// beast joining the low-end fillers (Stirge, Hyena, Boar) — cheapest
+/// "ambient creature" slot in the upper pool.
+pub static GIANT_CRAB_CLAW: SimpleWeapon = SimpleWeapon {
+    display_name: "crab claw",
+    aliases: &["pinch", "crabclaw"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 6),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};

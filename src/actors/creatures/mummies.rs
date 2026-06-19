@@ -1,9 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{MUMMY_DREADFUL_GLARE, MUMMY_ROTTING_FIST};
-use crate::actors::actor_template::CreatureTemplate;
+use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
 use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, SpecialSense};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Mummy — CR 3 undead. Slow but punishing melee threat with two
@@ -39,12 +39,9 @@ pub static MUMMY_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         // Mummies: necrotic + poison immunity, resistance to physical
         // (non-magical) damage; vulnerable to fire (their wrappings burn).
-        damage_modifiers: HashMap::from([
+        damage_modifiers: non_magical_physical_resistances([
             (DamageType::Necrotic, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
-            (DamageType::Bludgeoning, DamageModifier::Resistance),
-            (DamageType::Piercing, DamageModifier::Resistance),
-            (DamageType::Slashing, DamageModifier::Resistance),
             (DamageType::Fire, DamageModifier::Vulnerability),
         ]),
         // Standard undead condition immunities.

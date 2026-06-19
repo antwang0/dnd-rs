@@ -1,10 +1,10 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{QUASIT_CLAWS, QUASIT_SCARE};
-use crate::actors::actor_template::CreatureTemplate;
+use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
 use crate::engine::types::{
     CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Quasit — CR 1 tiny fiend (chaotic-evil demon). The Imp's
@@ -45,12 +45,10 @@ pub static QUASIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Tiny,
         creature_type: CreatureType::Fiend,
         actions,
-        damage_modifiers: HashMap::from([
-            (DamageType::Poison, DamageModifier::Immunity),
-            (DamageType::Bludgeoning, DamageModifier::Resistance),
-            (DamageType::Piercing, DamageModifier::Resistance),
-            (DamageType::Slashing, DamageModifier::Resistance),
-        ]),
+        damage_modifiers: non_magical_physical_resistances([(
+            DamageType::Poison,
+            DamageModifier::Immunity,
+        )]),
         // Magic Resistance: advantage on saves vs spells and other
         // magical effects. Slots into the standard caster-counter lane.
         has_magic_resistance: true,
