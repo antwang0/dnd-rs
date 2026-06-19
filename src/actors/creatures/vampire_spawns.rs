@@ -1,9 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::VAMPIRIC_BITE;
-use crate::actors::actor_template::CreatureTemplate;
+use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
 use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Vampire Spawn — CR 5 undead. Vampiric bite hits hard with piercing +
@@ -21,59 +21,25 @@ pub static VAMPIRE_SPAWN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         glyph: 'V',
         ac: 15,
         hitpoints: "11d8+33".parse().unwrap(),
-        speed: 30.,
         strength: 16,
-        intelligence: 11,
         dexterity: 16,
-        wisdom: 10,
         constitution: 16,
+        intelligence: 11,
+        wisdom: 10,
         charisma: 12,
-        skills: HashSet::new(),
-        items: Vec::new(),
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
         languages: HashSet::from([Language::Common]),
         cr: 5.0,
         size: Size::Medium,
         creature_type: CreatureType::Undead,
         actions,
-        spell_slots_by_level: Vec::new(),
-        rolls_death_saves: false,
-        // Necrotic-resistant (5e MM vampires resist necrotic and non-
-        // magical physical; we keep necrotic + the physical trio).
-        damage_modifiers: HashMap::from([
+        // Necrotic-resistant + non-magical BPS resistance + poison
+        // immunity (5e MM vampire damage envelope).
+        damage_modifiers: non_magical_physical_resistances([
             (DamageType::Necrotic, DamageModifier::Resistance),
-            (DamageType::Bludgeoning, DamageModifier::Resistance),
-            (DamageType::Piercing, DamageModifier::Resistance),
-            (DamageType::Slashing, DamageModifier::Resistance),
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
-        proficient_saves: HashSet::new(),
         condition_immunities: HashSet::from([Condition::Poisoned, Condition::Charmed]),
-        features: HashSet::new(),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
-        legendary_resistances: 0,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
-        has_magic_resistance: false,
-        recharge_abilities: Vec::new(),
-        legendary_actions_per_round: 0,
-        has_extra_attack: false,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });

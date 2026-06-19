@@ -133,6 +133,9 @@ use crate::actors::creatures::xorns::XORN_TEMPLATE;
 use crate::actors::creatures::oni::ONI_TEMPLATE;
 use crate::actors::creatures::merrow::MERROW_TEMPLATE;
 use crate::actors::creatures::giant_crabs::GIANT_CRAB_TEMPLATE;
+use crate::actors::creatures::cloud_giants::CLOUD_GIANT_TEMPLATE;
+use crate::actors::creatures::hezrous::HEZROU_TEMPLATE;
+use crate::actors::creatures::gibbering_mouthers::GIBBERING_MOUTHER_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -2756,6 +2759,25 @@ impl EncounterInstance {
             &ONI_TEMPLATE,
             &MERROW_TEMPLATE,
             &GIANT_CRAB_TEMPLATE,
+            // Newest additions filling the upper-giant / mid-demon /
+            // CR-2-aberration lanes:
+            //   - Cloud Giant (CR 9 huge giant): morningstar + rock + Multi
+            //     completing the giant ladder between Fire Giant (CR 9)
+            //     and Storm Giant (CR 13). Same 3d8 melee die as the Stone
+            //     / Fire / Cyclops chassis but heavier STR-based dice.
+            //   - Hezrou (CR 8 large demon): bite + 2 claws Compound
+            //     multiattack, Magic Resistance, and the standard
+            //     non-magical-BPS / cold / fire / lightning resistance
+            //     envelope. Slots above Vrock (CR 6) and below Glabrezu
+            //     (CR 9) on the demon hierarchy.
+            //   - Gibbering Mouther (CR 2 medium aberration): heavy 5d6
+            //     bites swing plus a recharge-5/6 Blinding Spittle bonus
+            //     action that DC-10 DEX-saves Blinded on a 1-tile burst
+            //     up to 30 ft. Fills the niche between Stirge (CR ⅛) and
+            //     Nothic (CR 2) on the low-CR aberration bench.
+            &CLOUD_GIANT_TEMPLATE,
+            &HEZROU_TEMPLATE,
+            &GIBBERING_MOUTHER_TEMPLATE,
         ]
     }
 

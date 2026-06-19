@@ -159,3 +159,6 @@ pub mod xorns;
 pub mod oni;
 pub mod merrow;
 pub mod giant_crabs;
+pub mod cloud_giants;
+pub mod hezrous;
+pub mod gibbering_mouthers;

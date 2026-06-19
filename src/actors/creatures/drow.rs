@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{DROW_POISONED_CROSSBOW, SCIMITAR};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Drow — Underdark elf raider. Trained scimitarist + ranged poisoned-bolt
@@ -19,56 +19,25 @@ pub static DROW_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'D',
         ac: 15,
         hitpoints: "3d8".parse().unwrap(),
-        speed: 30.,
         strength: 10,
-        intelligence: 11,
         dexterity: 14,
-        wisdom: 11,
         constitution: 10,
+        intelligence: 11,
+        wisdom: 11,
         charisma: 12,
-        skills: HashSet::new(),
-        items: Vec::new(),
         senses: HashSet::from([SpecialSense::Darkvision(120)]),
         languages: HashSet::from([Language::Elvish, Language::Undercommon]),
         cr: 0.25,
         size: Size::Medium,
         creature_type: CreatureType::Humanoid,
         actions,
-        spell_slots_by_level: Vec::new(),
-        rolls_death_saves: false,
-        damage_modifiers: HashMap::new(),
-        proficient_saves: HashSet::new(),
-        condition_immunities: HashSet::new(),
-        features: HashSet::new(),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
-        legendary_resistances: 0,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
         has_magic_resistance: true,
-        recharge_abilities: Vec::new(),
-        legendary_actions_per_round: 0,
-        has_extra_attack: false,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
         // 5e Drow Fey Ancestry: advantage on saves vs Charmed; magic
         // can't put a drow to sleep. Approximated as Charmed + Asleep
         // install immunity via `dynamic_immunity_to`. Stacks with the
         // drow's existing Magic Resistance (drow are notoriously
         // anti-enchantment in the SRD).
         has_fey_ancestry: true,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });

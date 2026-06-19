@@ -9657,3 +9657,229 @@ pub static GIANT_CRAB_CLAW: SimpleWeapon = SimpleWeapon {
     cost_resource: Resource::Action,
     normal_range: None,
 };
+
+// ─── Cloud Giant ─────────────────────────────────────────────────────
+
+/// Cloud Giant Morningstar — STR-based 3d8 piercing melee with reach 2
+/// (10 ft). The Cloud Giant's signature swing — same reach-2 envelope as
+/// the Stone / Fire Giant clubs but typed as piercing for the spiked
+/// morningstar head. Sits one rung above the Fire Giant on the giant
+/// ladder (CR 9 with the same 3d8 die but heavier STR, so the per-swing
+/// average lands ~3 higher than Fire Giant Greatsword in practice).
+pub static CLOUD_GIANT_MORNINGSTAR: SimpleWeapon = SimpleWeapon {
+    display_name: "cloud morningstar",
+    aliases: &["cms", "cloud-club"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(3, 8),
+    damage_type: DamageType::Piercing,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Cloud Giant Rock — STR-based 4d10 bludgeoning thrown rock with reach 24
+/// (60 ft). Same chassis as every other giant rock; the Cloud Giant uses
+/// the heavier 4d10 die (matching Frost / Fire / Stone Giant rocks) at
+/// the CR-9 tier.
+pub static CLOUD_GIANT_ROCK: SimpleWeapon = SimpleWeapon {
+    display_name: "cloud rock",
+    aliases: &["cgrock", "clrock"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(4, 10),
+    damage_type: DamageType::Bludgeoning,
+    reach: 24,
+    is_melee: false,
+    requires_los: true,
+    cost_resource: Resource::Action,
+    normal_range: Some(16),
+};
+
+/// Cloud Giant Multiattack — 2 morningstar swings per Action. Same chassis
+/// as the Stone Giant / Frost Giant / Cyclops Multiattack: pure physical
+/// thresher boss-tier melee, no rider effects. The cloud giant's RAW spell
+/// list (fog cloud, gust of wind, telekinesis at higher tiers) is omitted —
+/// the engine doesn't yet surface monster spellcasting picks, so the
+/// load-bearing combat clause is the double morningstar swing.
+pub static CLOUD_GIANT_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "cloud giant multiattack",
+    sub_attack: &CLOUD_GIANT_MORNINGSTAR,
+    count: 2,
+});
+
+// ─── Hezrou ──────────────────────────────────────────────────────────
+
+/// Hezrou Bite — STR-based 2d10 piercing melee. The toad-demon's heavy
+/// chomp; pairs with the claws via `HEZROU_MULTI` for the canonical
+/// "bite + 2 claws" Multiattack RAW prescribes. Big die tier matches the
+/// CR-8 hezrou stat block.
+pub static HEZROU_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "hezrou bite",
+    aliases: &["hbite", "hezrou-bite"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 10),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Hezrou Claw — STR-based 2d6 slashing melee. The secondary swing in the
+/// hezrou's kit; combines with the bite via `HEZROU_MULTI` for the canonical
+/// "bite + 2 claws" Multiattack RAW prescribes.
+pub static HEZROU_CLAW: SimpleWeapon = SimpleWeapon {
+    display_name: "hezrou claw",
+    aliases: &["hclaw", "hezrou-claw"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Hezrou Multiattack — 1 bite + 2 claws per Action. RAW canonical attack
+/// budget: bite first (heaviest die), then a pair of claw rakes. Mixed-
+/// limb pattern routes through `CompoundAttack` like Pit Fiend / Roc /
+/// Owlbear Multi. The bite's 2d10 + 2× claws 2d6 lands around 26 average
+/// damage per round — strong CR-8 melee thresher in line with the
+/// Frost Giant's greataxe + Multi profile.
+pub static HEZROU_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "bite + claws",
+    parts: vec![(&HEZROU_BITE, 1), (&HEZROU_CLAW, 2)],
+});
+
+// ─── Gibbering Mouther ───────────────────────────────────────────────
+
+/// Gibbering Mouther Bites — STR-based 5d6 piercing melee. The mouther
+/// has dozens of constantly-shifting mouths gnashing at anything in reach;
+/// RAW collapses to a single attack roll dealing massive dice damage. No
+/// rider — the load-bearing threat is the 5d6 burst on a single hit.
+pub static GIBBERING_MOUTHER_BITES: SimpleWeapon = SimpleWeapon {
+    display_name: "gibbering bites",
+    aliases: &["gmb", "mouther-bites"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(5, 6),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Gibbering Mouther Blinding Spittle — bonus-action ranged action,
+/// recharge 5-6. The mouther coughs up a glob of caustic ichor at a tile
+/// within 30 ft (12 tiles). Every creature in a 1-tile (5 ft RAW) burst
+/// around the splash point makes a DEX save vs the mouther's WIS-based DC
+/// (8 + prof + WIS = 11); on fail they're Blinded until the end of their
+/// next turn. No damage — the load-bearing threat is the blind. We model
+/// the burst via the shared `resolve_burst_save_condition` helper from
+/// `action_template`, mirroring Gorgon's Petrifying Breath and other
+/// save-or-condition AoEs.
+///
+/// RAW is single-target with a one-tile splash; we collapse to the burst
+/// form because the engine already has a clean save-or-condition burst
+/// helper and the splash is the canonical CR-2 control rider for the
+/// mouther's kit.
+pub struct GibberingMoutherBlindingSpittle {}
+
+impl Action for GibberingMoutherBlindingSpittle {
+    fn name(&self) -> &str {
+        "blinding spittle"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["spittle", "blind-spit"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 1 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft RAW = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Standard recharge gate: only available when the d6 came up high
+        // enough this turn. The mouther template registers
+        // ("blinding spittle", 5) so the spittle recharges on a d6 ≥ 5
+        // at turn start — matching RAW's "Recharge 5-6".
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_recharge_available(self.name()))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actions::action_template::resolve_burst_save_condition;
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        // Spend the recharge resource before resolving damage so a
+        // mid-resolution failure can't leave the spittle both spent AND
+        // condition-applied. Mirrors the BreathWeapon ordering.
+        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
+            caster.spend_recharge(self.name());
+        }
+        // DC 10 RAW — MM stat block uses a flat DC 10 DEX save for the
+        // blinding rider. Lower than a typical 8 + prof + ability DC so
+        // a high-DEX target can shrug it off but most mid-tier mooks
+        // catch the blind.
+        const DC: i32 = 10;
+        encounter.log(format!(
+            "  blinding spittle: 1-tile burst (DC {} DEX, Blinded on fail)",
+            DC,
+        ));
+        resolve_burst_save_condition(
+            encounter,
+            caster_id,
+            point,
+            1,
+            AbilityScoreType::Dexterity,
+            DC,
+            Condition::Blinded,
+            ConditionTimer::UntilStartOfNextTurn,
+        )
+    }
+}
+
+pub static GIBBERING_MOUTHER_BLINDING_SPITTLE: LazyLock<GibberingMoutherBlindingSpittle> =
+    LazyLock::new(|| GibberingMoutherBlindingSpittle {});
