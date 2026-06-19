@@ -29,26 +29,18 @@ pub static MIND_FLAYER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 15,
         // 13d8+13 ≈ 71 average per the MM Mind Flayer stat block.
         hitpoints: "13d8+13".parse().unwrap(),
-        speed: 30.,
         strength: 11,
-        intelligence: 19, // primary — drives Mind Blast DC + tentacle grapple
         dexterity: 12,
-        wisdom: 17,
         constitution: 12,
+        intelligence: 19, // primary — drives Mind Blast DC + tentacle grapple
+        wisdom: 17,
         charisma: 17,
-        skills: HashSet::new(),
-        items: Vec::new(),
         senses: HashSet::from([SpecialSense::Darkvision(120)]),
         languages: HashSet::from([Language::DeepSpeech, Language::Undercommon]),
         cr: 7.0,
         size: Size::Medium,
         creature_type: CreatureType::Aberration,
         actions,
-        // Casters with spell-equivalent ability list — we don't model
-        // the MM's spell-like-abilities (Detect Thoughts, Plane Shift)
-        // since they're non-combat utility. Empty slot table.
-        spell_slots_by_level: Vec::new(),
-        rolls_death_saves: false,
         // MM Mind Flayer is not damage-resistant by default — psychic
         // beings aren't tough in the physical sense. We add psychic
         // immunity here because RAW lists it under Magic Resistance +
@@ -63,35 +55,8 @@ pub static MIND_FLAYER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Wisdom,
             AbilityScoreType::Charisma,
         ]),
-        // Aberrations don't get an iconic condition immunity envelope;
-        // we leave them vulnerable to Charm / Sleep / Frightened so a
-        // bard's debuffs are still a viable plan.
-        condition_immunities: HashSet::new(),
-        features: HashSet::new(),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
-        legendary_resistances: 0,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
         has_magic_resistance: true,
-        recharge_abilities: Vec::new(),
-        legendary_actions_per_round: 0,
         has_extra_attack: true,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });

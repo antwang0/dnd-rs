@@ -5,7 +5,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GREATAXE;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, SpecialSense};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Half-Orc Marauder — orcish-blood STR-primary fighter chassis. The
@@ -35,15 +35,12 @@ pub static HALF_ORC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'H',
         ac: 16,
         hitpoints: "3d10+9".parse().unwrap(),
-        speed: 30.,
         strength: 17,
-        intelligence: 9,
         dexterity: 12,
-        wisdom: 11,
         constitution: 16,
+        intelligence: 9,
+        wisdom: 11,
         charisma: 10,
-        skills: HashSet::new(),
-        items: Vec::new(),
         // 5e Half-Orc Darkvision: see in dim light out to 60 ft as if it
         // were bright light.
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
@@ -52,46 +49,20 @@ pub static HALF_ORC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Humanoid,
         actions,
-        spell_slots_by_level: Vec::new(),
         rolls_death_saves: true,
-        damage_modifiers: HashMap::new(),
         proficient_saves: HashSet::from([
             AbilityScoreType::Strength,
             AbilityScoreType::Constitution,
         ]),
-        condition_immunities: HashSet::new(),
         // Racial Relentless Endurance + fighter Second Wind / Action Surge.
         features: HashSet::from([
             RELENTLESS_ENDURANCE_TAG,
             SECOND_WIND_TAG,
             ACTION_SURGE_TAG,
         ]),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
-        legendary_resistances: 0,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
-        has_magic_resistance: false,
-        recharge_abilities: Vec::new(),
-        legendary_actions_per_round: 0,
-        has_extra_attack: false,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
         // 5e Half-Orc racial: Savage Attacks — +1 weapon damage die on a
         // critical melee hit.
         has_savage_attacks: true,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });

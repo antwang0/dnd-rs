@@ -3,7 +3,7 @@ use crate::actions::monster_attacks::GELATINOUS_CUBE_ENGULF;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, Size};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Gelatinous Cube — CR 2 ooze. Slow, transparent acid block. Single
@@ -26,23 +26,15 @@ pub static GELATINOUS_CUBE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         hitpoints: "8d10+40".parse().unwrap(),
         speed: 15.,
         strength: 14,
-        intelligence: 1,
         dexterity: 3,
-        wisdom: 6,
         constitution: 20,
+        intelligence: 1,
+        wisdom: 6,
         charisma: 1,
-        skills: HashSet::new(),
-        items: Vec::new(),
-        senses: HashSet::new(),
-        languages: HashSet::new(),
         cr: 2.0,
         size: Size::Large,
         creature_type: CreatureType::Ooze,
         actions,
-        spell_slots_by_level: Vec::new(),
-        rolls_death_saves: false,
-        damage_modifiers: HashMap::new(),
-        proficient_saves: HashSet::new(),
         // Ooze envelope: ignores Blinded (no eyes to gouge), Charmed,
         // Deafened, Frightened, Prone (no shape to knock down), and
         // Asleep. RAW oozes also ignore Exhaustion / Grappled but we
@@ -56,31 +48,6 @@ pub static GELATINOUS_CUBE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
             Condition::Prone,
             Condition::Asleep,
         ]),
-        features: HashSet::new(),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
-        legendary_resistances: 0,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
-        has_magic_resistance: false,
-        recharge_abilities: Vec::new(),
-        legendary_actions_per_round: 0,
-        has_extra_attack: false,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });

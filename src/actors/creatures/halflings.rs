@@ -6,7 +6,7 @@ use crate::actions::class_features::{
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Halfling Scout — a Small-size DEX-primary skirmisher built on the
@@ -39,44 +39,24 @@ pub static HALFLING_SCOUT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         // Halflings have 25 ft speed per RAW.
         speed: 25.,
         strength: 8,
-        intelligence: 12,
         dexterity: 16, // primary
-        wisdom: 12,
         constitution: 12,
+        intelligence: 12,
+        wisdom: 12,
         charisma: 12,
-        skills: HashSet::new(),
-        items: Vec::new(),
-        senses: HashSet::new(),
         languages: HashSet::from([Language::Common, Language::Halfling, Language::ThievesCant]),
         cr: 1.0,
         // 5e Halfling: Small size category.
         size: Size::Small,
         creature_type: CreatureType::Humanoid,
         actions,
-        spell_slots_by_level: Vec::new(),
         rolls_death_saves: true,
-        damage_modifiers: HashMap::new(),
         proficient_saves: HashSet::from([
             AbilityScoreType::Dexterity,
             AbilityScoreType::Intelligence,
         ]),
-        condition_immunities: HashSet::new(),
-        features: HashSet::new(),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
-        legendary_resistances: 0,
         has_evasion: true,
         has_uncanny_dodge: true,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
-        has_magic_resistance: false,
-        recharge_abilities: Vec::new(),
-        legendary_actions_per_round: 0,
-        has_extra_attack: false,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
         // 5e Halfling racial: Lucky. Reroll nat 1s on attack rolls,
         // ability checks, and saving throws.
         has_lucky: true,
@@ -84,13 +64,6 @@ pub static HALFLING_SCOUT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         // we approximate as immunity to the Frightened install (the
         // `dynamic_immunity_to` lane in actor_template).
         has_brave: true,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });

@@ -26,13 +26,11 @@ pub static FLAMESKULL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Hover 40 ft — modeled as ground speed.
         speed: 40.,
         strength: 1,
-        intelligence: 16,
         dexterity: 17,
-        wisdom: 10,
         constitution: 12,
+        intelligence: 16,
+        wisdom: 10,
         charisma: 11,
-        skills: HashSet::new(),
-        items: Vec::new(),
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
         // Flameskulls understand Common and retain languages from life
         // but can't speak — we list Common for targeting / interaction.
@@ -46,7 +44,6 @@ pub static FLAMESKULL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // and 3 slots at level 1 so it can cast Fireball twice and Magic
         // Missile three times per encounter.
         spell_slots_by_level: vec![3, 0, 2],
-        rolls_death_saves: false,
         damage_modifiers: HashMap::from([
             (DamageType::Fire, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
@@ -54,7 +51,6 @@ pub static FLAMESKULL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Necrotic, DamageModifier::Resistance),
             (DamageType::Piercing, DamageModifier::Resistance),
         ]),
-        proficient_saves: HashSet::new(),
         // Undead + hovering condition immunities.
         condition_immunities: HashSet::from([
             Condition::Charmed,
@@ -63,31 +59,7 @@ pub static FLAMESKULL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Poisoned,
             Condition::Prone,
         ]),
-        features: HashSet::new(),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
-        legendary_resistances: 0,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
         has_magic_resistance: true,
-        recharge_abilities: Vec::new(),
-        legendary_actions_per_round: 0,
-        has_extra_attack: false,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });
