@@ -1,11 +1,11 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{VROCK_BEAK, VROCK_MULTI, VROCK_SCREECH, VROCK_TALONS};
-use crate::actors::actor_template::CreatureTemplate;
+use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
 use crate::conditions::Condition;
 use crate::engine::types::{
     AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Vrock — CR 6 demon. Vulture-headed flying fiend; the entry-tier
@@ -35,31 +35,24 @@ pub static VROCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         hitpoints: "14d10+28".parse().unwrap(),
         speed: 40., // walk + fly 60ft RAW; we use the walking value
         strength: 17,
-        intelligence: 8,
         dexterity: 15,
-        wisdom: 11,
         constitution: 18,
+        intelligence: 8,
+        wisdom: 11,
         charisma: 8,
-        skills: HashSet::new(),
-        items: Vec::new(),
         senses: HashSet::from([SpecialSense::Darkvision(120)]),
         languages: HashSet::from([Language::Abyssal]),
         cr: 6.0,
         size: Size::Large,
         creature_type: CreatureType::Fiend,
         actions,
-        spell_slots_by_level: Vec::new(),
-        rolls_death_saves: false,
         // Standard demon envelope: immune to poison; resistant to cold +
         // fire + lightning + mundane B/P/S.
-        damage_modifiers: HashMap::from([
+        damage_modifiers: non_magical_physical_resistances([
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Cold, DamageModifier::Resistance),
             (DamageType::Fire, DamageModifier::Resistance),
             (DamageType::Lightning, DamageModifier::Resistance),
-            (DamageType::Bludgeoning, DamageModifier::Resistance),
-            (DamageType::Piercing, DamageModifier::Resistance),
-            (DamageType::Slashing, DamageModifier::Resistance),
         ]),
         // Vrock proficient saves: DEX / WIS / CHA per MM.
         proficient_saves: HashSet::from([
@@ -72,32 +65,8 @@ pub static VROCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Charmed,
             Condition::Frightened,
         ]),
-        features: HashSet::new(),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
-        legendary_resistances: 0,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
         has_magic_resistance: true,
-        recharge_abilities: Vec::new(),
-        legendary_actions_per_round: 0,
-        has_extra_attack: false,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });
 

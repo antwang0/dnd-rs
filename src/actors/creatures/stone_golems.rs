@@ -2,10 +2,10 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     STONE_GOLEM_MULTI, STONE_GOLEM_SLAM, STONE_GOLEM_SLOW,
 };
-use crate::actors::actor_template::CreatureTemplate;
+use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
 use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Stone Golem — CR 10 boss-tier construct. The signature "magic doesn't
@@ -50,32 +50,23 @@ pub static STONE_GOLEM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         hitpoints: "17d10+85".parse().unwrap(),
         speed: 30.,
         strength: 22,
-        intelligence: 3,
         dexterity: 9,
-        wisdom: 11,
         constitution: 20,
+        intelligence: 3,
+        wisdom: 11,
         charisma: 1,
-        skills: HashSet::new(),
-        items: Vec::new(),
         senses: HashSet::from([crate::engine::types::SpecialSense::Darkvision(120)]),
-        languages: HashSet::new(),
         cr: 10.0,
         size: Size::Large,
         creature_type: CreatureType::Construct,
         actions,
-        spell_slots_by_level: Vec::new(),
-        rolls_death_saves: false,
-        damage_modifiers: HashMap::from([
-            // Construct immunities — flesh-and-blood damage doesn't
-            // bypass enchanted stone.
+        // Construct immunities — flesh-and-blood damage doesn't bypass
+        // enchanted stone. Poison + psychic immune outright; mundane B/P/S
+        // resistance per MM.
+        damage_modifiers: non_magical_physical_resistances([
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Psychic, DamageModifier::Immunity),
-            // Mundane B/P/S resistance per MM (we approximate as flat).
-            (DamageType::Bludgeoning, DamageModifier::Resistance),
-            (DamageType::Piercing, DamageModifier::Resistance),
-            (DamageType::Slashing, DamageModifier::Resistance),
         ]),
-        proficient_saves: HashSet::new(),
         condition_immunities: HashSet::from([
             // Constructs have no mind to charm / frighten and no
             // metabolism to poison or exhaust.
@@ -86,35 +77,13 @@ pub static STONE_GOLEM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Poisoned,
             Condition::Exhausted,
         ]),
-        features: HashSet::new(),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
         // 5e Legendary Resistance (3/Day) — the golem's anti-caster
         // signature. Three failed saves per long rest are auto-promoted
         // to passes, neutralizing the party's save-or-suck control spells.
         legendary_resistances: 3,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
         has_magic_resistance: true,
-        recharge_abilities: Vec::new(),
-        legendary_actions_per_round: 0,
         has_extra_attack: true,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });
 

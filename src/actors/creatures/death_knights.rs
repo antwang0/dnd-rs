@@ -6,12 +6,12 @@ use crate::actions::spells::{
     DISPEL_MAGIC, FIRE_BOLT, FIREBALL, HOLD_MONSTER, MAGIC_MISSILE, MIRROR_IMAGE, SHIELD,
     WALL_OF_FIRE,
 };
-use crate::actors::actor_template::CreatureTemplate;
+use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
 use crate::conditions::Condition;
 use crate::engine::types::{
     AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Death Knight — CR 17 undead boss. RAW: a fallen paladin twisted into
@@ -53,15 +53,12 @@ pub static DEATH_KNIGHT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         ac: 20,
         // 18d8+90 = 171 average per MM.
         hitpoints: "18d8+90".parse().unwrap(),
-        speed: 30.,
         strength: 20,
-        intelligence: 12,
         dexterity: 11,
-        wisdom: 16,
         constitution: 20,
+        intelligence: 12,
+        wisdom: 16,
         charisma: 18, // drives the spell save DC
-        skills: HashSet::new(),
-        items: Vec::new(),
         senses: HashSet::from([SpecialSense::Darkvision(120)]),
         languages: HashSet::from([Language::Common, Language::Infernal]),
         cr: 17.0,
@@ -72,15 +69,9 @@ pub static DEATH_KNIGHT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         // loadout — the Death Knight leans on its Hellfire Orb + multi
         // pattern rather than a deep slot economy.
         spell_slots_by_level: vec![4, 3, 3, 1],
-        rolls_death_saves: false,
-        damage_modifiers: HashMap::from([
+        damage_modifiers: non_magical_physical_resistances([
             (DamageType::Necrotic, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
-            // Resistance to non-magical B/P/S (we collapse to straight
-            // resistance like other undead in this codebase).
-            (DamageType::Bludgeoning, DamageModifier::Resistance),
-            (DamageType::Piercing, DamageModifier::Resistance),
-            (DamageType::Slashing, DamageModifier::Resistance),
         ]),
         // Boss-tier saves: prof in DEX / WIS / CHA per MM.
         proficient_saves: HashSet::from([
@@ -97,31 +88,9 @@ pub static DEATH_KNIGHT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
             Condition::Frightened,
             Condition::Exhausted,
         ]),
-        features: HashSet::new(),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
-        legendary_resistances: 0,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
         has_magic_resistance: true,
-        recharge_abilities: Vec::new(),
         legendary_actions_per_round: 3,
         has_extra_attack: true,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });

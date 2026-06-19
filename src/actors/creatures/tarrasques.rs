@@ -2,12 +2,12 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     FRIGHTFUL_PRESENCE, TARRASQUE_BITE, TARRASQUE_CLAW, TARRASQUE_MULTI, TARRASQUE_TAIL,
 };
-use crate::actors::actor_template::CreatureTemplate;
+use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
 use crate::conditions::Condition;
 use crate::engine::types::{
     AbilityScoreType, CreatureType, DamageModifier, DamageType, Size, SpecialSense,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Tarrasque — CR 30, the apex 5e creature. Gargantuan (4×4 footprint),
@@ -44,35 +44,24 @@ pub static TARRASQUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         hitpoints: "33d20+330".parse().unwrap(),
         speed: 40.,
         strength: 30,
-        intelligence: 3,
         dexterity: 11,
-        wisdom: 11,
         constitution: 30,
+        intelligence: 3,
+        wisdom: 11,
         charisma: 11,
-        skills: HashSet::new(),
-        items: Vec::new(),
         senses: HashSet::from([
             SpecialSense::Blindsight(120),
             SpecialSense::Tremorsense(120),
         ]),
-        languages: HashSet::new(), // Tarrasques don't speak.
         cr: 30.0,
         size: Size::Gargantuan,
         creature_type: CreatureType::Monstrosity,
         actions,
-        spell_slots_by_level: Vec::new(),
-        rolls_death_saves: false,
-        damage_modifiers: HashMap::from([
-            // Apex-tier elemental immunities.
+        damage_modifiers: non_magical_physical_resistances([
+            // Apex-tier elemental immunities. Carapace shrugs off mundane
+            // weapon damage via the BPS resistance baseline.
             (DamageType::Fire, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
-            // Carapace shrugs off mundane weapon damage; we approximate
-            // "non-magical bludgeoning / piercing / slashing" as a flat
-            // physical resistance since the engine doesn't model magic
-            // weapon properties.
-            (DamageType::Bludgeoning, DamageModifier::Resistance),
-            (DamageType::Piercing, DamageModifier::Resistance),
-            (DamageType::Slashing, DamageModifier::Resistance),
         ]),
         // 5e Tarrasque has Legendary saves on every score (collapse to
         // proficient saves across the board for our model).
@@ -90,37 +79,17 @@ pub static TARRASQUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Paralyzed,
             Condition::Poisoned,
         ]),
-        features: HashSet::new(),
         // Regenerates 40 HP at the end of each of its turns. No
         // suppressor — the tarrasque regenerates unconditionally.
         regen_per_round: 40,
-        regen_suppressors: HashSet::new(),
         // 5e Legendary Resistance (3/Day): three failed saves per long
         // rest are auto-promoted to passes. The Tarrasque needs these
         // to shrug off Power Word Kill / Banishment / Hold Monster from
         // the party's casters mid-fight.
         legendary_resistances: 3,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
         has_magic_resistance: true,
-        recharge_abilities: Vec::new(),
         legendary_actions_per_round: 3,
         has_extra_attack: true,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });
