@@ -125,6 +125,11 @@ use crate::actors::creatures::yuan_ti::YUAN_TI_MALISON_TEMPLATE;
 use crate::actors::creatures::cambions::CAMBION_TEMPLATE;
 use crate::actors::creatures::dryads::DRYAD_TEMPLATE;
 use crate::actors::creatures::bullywugs::BULLYWUG_TEMPLATE;
+use crate::actors::creatures::quasits::QUASIT_TEMPLATE;
+use crate::actors::creatures::shadow_demons::SHADOW_DEMON_TEMPLATE;
+use crate::actors::creatures::succubi::SUCCUBUS_TEMPLATE;
+use crate::actors::creatures::intellect_devourers::INTELLECT_DEVOURER_TEMPLATE;
+use crate::actors::creatures::xorns::XORN_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -2708,6 +2713,29 @@ impl EncounterInstance {
             &CAMBION_TEMPLATE,
             &DRYAD_TEMPLATE,
             &BULLYWUG_TEMPLATE,
+            // Newest additions filling out the fiend / aberration /
+            // elemental lanes:
+            //   - Quasit (CR 1 tiny fiend): chaotic-evil mirror of the
+            //     Imp — poisoned claws + a one-target Scare.
+            //   - Shadow Demon (CR 4 medium fiend): psychic claws with
+            //     wide elemental resistance and a radiant-vulnerability
+            //     hook (the engine's first vulnerability holder).
+            //   - Succubus (CR 4 medium fiend): seduction kit — ranged
+            //     charm + draining-kiss combo gated on the Charmed
+            //     condition + claws fallback.
+            //   - Intellect Devourer (CR 2 tiny aberration): rare
+            //     INT-save lane (`Devour Intellect`) with a damage-
+            //     threshold stun rider; fills the niche between Mind
+            //     Flayer and Nothic.
+            //   - Xorn (CR 5 medium elemental): 3-claw + bite heavy
+            //     multiattack with tremorsense and the standard
+            //     elemental B/P/S resistance + Poisoned/Paralyzed/
+            //     Petrified/Unconscious condition-immunity envelope.
+            &QUASIT_TEMPLATE,
+            &SHADOW_DEMON_TEMPLATE,
+            &SUCCUBUS_TEMPLATE,
+            &INTELLECT_DEVOURER_TEMPLATE,
+            &XORN_TEMPLATE,
         ]
     }
 

@@ -41,6 +41,46 @@ pub fn simple_weapon_attack(
     )
 }
 
+/// On a weapon-attack hit, roll `target_id`'s saving throw against `dc`
+/// using `save_ability`. On fail, push a `DealDamage` rider of
+/// `rider_dice` typed as `rider_type`, logging the roll with
+/// `rider_name` as the prefix (e.g. `"  imp venom: 2d10(7) = 7 poison"`).
+/// Returns the save outcome so the caller can chain additional effects
+/// (condition installs, max-HP drops, etc.) on the same failed save.
+///
+/// Centralizes the "weapon swing + on-hit save-or-extra-damage rider"
+/// pattern shared by Imp Sting / Spider Bite / Quasit Claws / Giant
+/// Scorpion Sting / Drow Hand Crossbow / Wyvern Stinger / etc. — one
+/// chokepoint for the save-roll + damage-log + DealDamage push, so a
+/// future tweak (e.g. routing the rider through a `condition_damage_
+/// taken` hook for Spirit Shroud-style retaliation) lands once instead
+/// of being scattered across the ~19 weapon+rider call sites.
+pub fn save_or_damage_rider(
+    encounter: &mut EncounterInstance,
+    target_id: usize,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    rider_dice: Dice,
+    rider_type: DamageType,
+    rider_name: &str,
+    effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+) -> crate::engine::saves::SaveOutcome {
+    let save = encounter.roll_save(target_id, save_ability, dc);
+    if !save.passed() {
+        let amt = encounter.roll(&rider_dice);
+        encounter.log(format!(
+            "  {}: {}({}) = {} {}",
+            rider_name, rider_dice, amt, amt, rider_type
+        ));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount: amt,
+            damage_type: rider_type,
+        }));
+    }
+    save
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn simple_weapon_attack_ranged(
     encounter: &mut EncounterInstance,
@@ -600,18 +640,17 @@ impl Action for SpiderBite {
         }
         // Poison rider — separate save. On fail: extra poison damage AND
         // Poisoned for 2 rounds.
-        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 11);
+        let save = save_or_damage_rider(
+            encounter,
+            target_id,
+            AbilityScoreType::Constitution,
+            11,
+            Dice::new(2, 4),
+            DamageType::Poison,
+            "spider venom",
+            &mut effects,
+        );
         if !save.passed() {
-            let poison = encounter.roll(&Dice::new(2, 4));
-            encounter.log(format!(
-                "  spider venom: 2d4({}) = {} poison",
-                poison, poison
-            ));
-            effects.push(Box::new(DealDamage {
-                actor_id: target_id,
-                amount: poison,
-                damage_type: DamageType::Poison,
-            }));
             effects.push(Box::new(ApplyCondition {
                 actor_id: target_id,
                 condition: Condition::Poisoned,
@@ -1158,19 +1197,16 @@ impl Action for ImpSting {
         if effects.is_empty() {
             return effects;
         }
-        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 11);
-        if !save.passed() {
-            let poison = encounter.roll(&Dice::new(2, 10));
-            encounter.log(format!(
-                "  imp venom: 2d10({}) = {} poison",
-                poison, poison
-            ));
-            effects.push(Box::new(DealDamage {
-                actor_id: target_id,
-                amount: poison,
-                damage_type: DamageType::Poison,
-            }));
-        }
+        save_or_damage_rider(
+            encounter,
+            target_id,
+            AbilityScoreType::Constitution,
+            11,
+            Dice::new(2, 10),
+            DamageType::Poison,
+            "imp venom",
+            &mut effects,
+        );
         effects
     }
 }
@@ -3845,18 +3881,17 @@ impl Action for DrowPoisonedCrossbow {
         if effects.is_empty() {
             return effects;
         }
-        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 13);
+        let save = save_or_damage_rider(
+            encounter,
+            target_id,
+            AbilityScoreType::Constitution,
+            13,
+            Dice::new(2, 4),
+            DamageType::Poison,
+            "drow poison",
+            &mut effects,
+        );
         if !save.passed() {
-            let poison = encounter.roll(&Dice::new(2, 4));
-            encounter.log(format!(
-                "  drow poison: 2d4({}) = {} poison",
-                poison, poison
-            ));
-            effects.push(Box::new(DealDamage {
-                actor_id: target_id,
-                amount: poison,
-                damage_type: DamageType::Poison,
-            }));
             effects.push(Box::new(ApplyCondition {
                 actor_id: target_id,
                 condition: Condition::Poisoned,
@@ -8987,4 +9022,492 @@ pub static BULLYWUG_SPEAR: SimpleWeapon = SimpleWeapon {
 pub static BULLYWUG_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
     display_name: "spear + bite",
     parts: vec![(&BULLYWUG_SPEAR, 1), (&BULLYWUG_BITE, 1)],
+});
+
+// ─── Quasit ──────────────────────────────────────────────────────────
+
+/// Quasit Claws — DEX-based 1d4+DEX piercing melee with a CON save (DC 10)
+/// for 2d4 poison rider on fail. Same "weapon + save-rider" shape as
+/// `ImpSting` — Quasits are a chaotic-evil mirror of the Imp's lawful-evil
+/// devil chassis, sharing the tiny-fiend stat envelope and the poisoned
+/// natural attack pattern.
+pub struct QuasitClaws {}
+
+impl Action for QuasitClaws {
+    fn name(&self) -> &str {
+        "claws"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cl", "quasit-claws"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Poison]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            self.name(),
+            AbilityScoreType::Dexterity,
+            Some(AbilityScoreType::Dexterity),
+            Dice::new(1, 4),
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        save_or_damage_rider(
+            encounter,
+            target_id,
+            AbilityScoreType::Constitution,
+            10,
+            Dice::new(2, 4),
+            DamageType::Poison,
+            "quasit venom",
+            &mut effects,
+        );
+        effects
+    }
+}
+
+pub static QUASIT_CLAWS: LazyLock<QuasitClaws> = LazyLock::new(|| QuasitClaws {});
+
+/// Quasit Scare — single-target action at 4-tile (20 ft) range. The target
+/// makes a WIS save vs DC 10; on fail they're Frightened for 1 round (RAW:
+/// until end of next turn). One-Action cost; no damage. Targets the same
+/// "fear-cohort" condition as Cause Fear / Frightful Presence but at a
+/// shorter range and lower DC, fitting the CR-1 tiny-fiend price point.
+pub struct QuasitScare {}
+
+impl Action for QuasitScare {
+    fn name(&self) -> &str {
+        "scare"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sc", "quasit-scare"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 20 ft RAW = 8 tiles.
+        Some(8)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return Vec::new();
+        };
+        if target.effectively_immune_to_condition(Condition::Frightened) {
+            encounter.log("  scare: target shrugs off the fear");
+            return Vec::new();
+        }
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, 10);
+        if save.passed() {
+            encounter.log("  scare: target's nerve holds");
+            return Vec::new();
+        }
+        encounter.log("  scare: target recoils in fear");
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Frightened,
+            timer: ConditionTimer::UntilStartOfNextTurn,
+        })]
+    }
+}
+
+pub static QUASIT_SCARE: LazyLock<QuasitScare> = LazyLock::new(|| QuasitScare {});
+
+// ─── Shadow Demon ────────────────────────────────────────────────────
+
+/// Shadow Demon Claws — DEX-based 2d6+DEX psychic melee. RAW: the demon's
+/// chilling, incorporeal claws deal psychic damage. We model the claws as
+/// a vanilla psychic-typed `SimpleWeapon` — the "advantage in dim light /
+/// darkness" RAW clause is omitted (the engine has no global lighting
+/// model), but the load-bearing psychic typing carries the demon's
+/// signature damage profile through `effective_damage`'s resistance lane.
+pub static SHADOW_DEMON_CLAWS: SimpleWeapon = SimpleWeapon {
+    display_name: "shadow claws",
+    aliases: &["sdc", "shadow-claws"],
+    attack_ability: AbilityScoreType::Dexterity,
+    damage_ability: Some(AbilityScoreType::Dexterity),
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Psychic,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+// ─── Succubus ────────────────────────────────────────────────────────
+
+/// Succubus Claws — DEX-based 1d6+DEX slashing melee. RAW: the claws are
+/// a magic weapon (overcome resistance to non-magical physical). We
+/// surface the headline slashing damage; the magical-attack clause is
+/// approximated by the demon's general fiend resistances elsewhere.
+pub static SUCCUBUS_CLAWS: SimpleWeapon = SimpleWeapon {
+    display_name: "succubus claws",
+    aliases: &["scl", "succ-claws"],
+    attack_ability: AbilityScoreType::Dexterity,
+    damage_ability: Some(AbilityScoreType::Dexterity),
+    damage_dice: Dice::new(1, 6),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Succubus Draining Kiss — single-target Action at melee reach: 5d10
+/// psychic damage on hit AND the target's hit-point maximum is reduced by
+/// the same amount until they finish a long rest (we route the max-HP
+/// drop through `AdjustMaxHp` so the cap drops alongside the damage; the
+/// reduction sticks for the duration of combat). RAW: only affects a
+/// Charmed target; we gate via the `charmed_by` link to the succubus, so
+/// the kiss fizzles silently when the target isn't already charmed by
+/// the caster. No save — the kiss auto-lands once the target is locked
+/// in (the difficulty is getting them charmed in the first place).
+pub struct SuccubusDrainingKiss {}
+
+impl Action for SuccubusDrainingKiss {
+    fn name(&self) -> &str {
+        "draining kiss"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dk", "kiss"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Psychic]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // RAW gate: target must currently be Charmed by the succubus.
+        // Failing this silently no-ops via the schema-level reach check;
+        // the AI's picker filter falls back to the claws when the kiss
+        // can't fire.
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return false;
+        };
+        target.has_condition(Condition::Charmed) && target.charmed_by() == Some(caster_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::AdjustMaxHp;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let raw = encounter.roll(&Dice::new(5, 10));
+        encounter.log(format!(
+            "  draining kiss: 5d10({}) = {} psychic (and max HP drop)",
+            raw, raw
+        ));
+        vec![
+            Box::new(DealDamage {
+                actor_id: target_id,
+                amount: raw,
+                damage_type: DamageType::Psychic,
+            }),
+            // The max-HP drop matches the damage roll — mirrors the
+            // 5e RAW (Wraith Life Drain, Wight Life Drain, Succubus Kiss
+            // all share this pattern).
+            Box::new(AdjustMaxHp {
+                actor_id: target_id,
+                delta: -(raw as i32),
+            }),
+        ]
+    }
+}
+
+pub static SUCCUBUS_DRAINING_KISS: LazyLock<SuccubusDrainingKiss> =
+    LazyLock::new(|| SuccubusDrainingKiss {});
+
+/// Succubus Charm — single-target Action at 12-tile (30 ft) range, WIS
+/// save vs the succubus's CHA-based DC (caster.spell_save_dc(CHA)). On
+/// fail the target picks up `Charmed` (10 rounds) anchored on the
+/// succubus via `SetCharmedBy`. Mirrors the Dryad / Vampire charm shape
+/// — the load-bearing setup half of the succubus kit, gating the
+/// `SUCCUBUS_DRAINING_KISS` follow-up via the `charmed_by` link.
+pub struct SuccubusCharm {}
+
+impl Action for SuccubusCharm {
+    fn name(&self) -> &str {
+        "succubus charm"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sch", "succ-charm"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft RAW = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::{ApplyCondition, SetCharmedBy};
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return Vec::new();
+        };
+        if target.effectively_immune_to_condition(Condition::Charmed) {
+            encounter.log("  succubus charm: target's will is shielded");
+            return Vec::new();
+        }
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, dc);
+        if save.passed() {
+            encounter.log("  succubus charm: target resists the seduction");
+            return Vec::new();
+        }
+        encounter.log("  succubus charm: target falls under the succubus's sway");
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Charmed,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(SetCharmedBy {
+                target_id,
+                charmer: Some(caster_id),
+            }),
+        ]
+    }
+}
+
+pub static SUCCUBUS_CHARM: LazyLock<SuccubusCharm> = LazyLock::new(|| SuccubusCharm {});
+
+// ─── Intellect Devourer ──────────────────────────────────────────────
+
+/// Intellect Devourer Claws — DEX-based 2d4+DEX slashing melee. The
+/// brain-on-legs aberration's secondary attack; the load-bearing kit is
+/// `INTELLECT_DEVOURER_DEVOUR` (the INT save burst). Claws back up the
+/// devour as the round-to-round damage lane while the recharge cools.
+pub static INTELLECT_DEVOURER_CLAWS: SimpleWeapon = SimpleWeapon {
+    display_name: "intellect claws",
+    aliases: &["icl", "id-claws"],
+    attack_ability: AbilityScoreType::Dexterity,
+    damage_ability: Some(AbilityScoreType::Dexterity),
+    damage_dice: Dice::new(2, 4),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Devour Intellect — single-target Action at 4-tile (10 ft) range
+/// requiring LOS. The target makes an INT save vs DC 12; on fail, they
+/// take 4d10 psychic damage and (if the damage knocks them below half
+/// HP) pick up `Stunned` until the end of their next turn — the
+/// aberration mentally tears at their mind. Distinct from the standard
+/// Mind Sliver lane because the save is INT (rare across the engine)
+/// and the stun rider gates on a damage threshold rather than a separate
+/// save. Mirrors the Mind-Flayer `MIND_BLAST` shape but with a single-
+/// target footprint and an INT save instead of INT-save-burst.
+pub struct IntellectDevour {}
+
+impl Action for IntellectDevour {
+    fn name(&self) -> &str {
+        "devour intellect"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["di", "devour"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 10 ft RAW = 4 tiles.
+        Some(4)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Psychic]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let save = encounter.roll_save(target_id, AbilityScoreType::Intelligence, 12);
+        if save.passed() {
+            encounter.log("  devour intellect: target's mind holds firm");
+            return Vec::new();
+        }
+        let raw = encounter.roll(&Dice::new(4, 10));
+        encounter.log(format!(
+            "  devour intellect: 4d10({}) = {} psychic",
+            raw, raw
+        ));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount: raw,
+            damage_type: DamageType::Psychic,
+        })];
+        // Stun rider: gates on the damage being severe enough to knock
+        // the target below half HP. Mirrors the "massive damage" gate
+        // shape elsewhere — the engine reads pre-damage HP and the rolled
+        // amount, so a partially-resisted hit still gets the right
+        // threshold check.
+        if let Some(target) = encounter.actors.get(&target_id) {
+            let max_hp = target.max_hitpoints();
+            let cur_hp = target.hitpoints();
+            // Threshold: if the rolled damage equals or exceeds half the
+            // target's CURRENT HP, the stun lands. Rolls a sliding scale
+            // so a tank still gets stunned by a big hit, and a low-HP
+            // squishy gets stunned by even a glancing one — same
+            // tactical shape as 5e's "below half HP" gate but adjusted
+            // for the engine's psychic damage budget.
+            if cur_hp > 0 && raw * 2 >= cur_hp.min(max_hp) {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: target_id,
+                    condition: Condition::Stunned,
+                    timer: ConditionTimer::UntilStartOfNextTurn,
+                }));
+            }
+        }
+        effects
+    }
+}
+
+pub static INTELLECT_DEVOURER_DEVOUR: LazyLock<IntellectDevour> =
+    LazyLock::new(|| IntellectDevour {});
+
+// ─── Xorn ────────────────────────────────────────────────────────────
+
+/// Xorn Claw — STR-based 1d6+STR slashing melee. The three-pawed earth
+/// elemental's secondary swing; combines with the bite via `XORN_MULTI`
+/// for the canonical "3 claws + 1 bite" Multiattack. Same dice tier as a
+/// shortsword swing but typed as natural claws.
+pub static XORN_CLAW: SimpleWeapon = SimpleWeapon {
+    display_name: "xorn claw",
+    aliases: &["xcl", "xorn-claw"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 6),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Xorn Bite — STR-based 3d6+STR piercing melee. The signature heavy hit
+/// in the xorn's kit; pairs with the three claws in `XORN_MULTI` so the
+/// per-Action damage budget reads as "1 big chomp + 3 small swipes" — a
+/// distinctive earth-elemental damage profile vs the chain-of-claws
+/// envelope a bulette or owlbear uses.
+pub static XORN_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "xorn bite",
+    aliases: &["xb", "xorn-bite"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(3, 6),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Xorn Multiattack — 3 claw swings + 1 bite per Action. RAW: a xorn
+/// makes three claw attacks AND one bite attack on its turn. We model
+/// the heterogeneous chain via `CompoundAttack` so the bite's heavier
+/// dice tier doesn't get flattened to the claw's d6.
+pub static XORN_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "claws + bite",
+    parts: vec![(&XORN_CLAW, 3), (&XORN_BITE, 1)],
 });

@@ -151,3 +151,8 @@ pub mod yuan_ti;
 pub mod cambions;
 pub mod dryads;
 pub mod bullywugs;
+pub mod quasits;
+pub mod shadow_demons;
+pub mod succubi;
+pub mod intellect_devourers;
+pub mod xorns;

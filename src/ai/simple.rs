@@ -4820,6 +4820,32 @@ mod tests {
             let _ = e.instantiate_creature(&HYENA_TEMPLATE, Coordinate::new(10, 12), 1, 53);
             let _ = e.instantiate_creature(&GIANT_HYENA_TEMPLATE, Coordinate::new(8, 12), 1, 54);
             let _ = e.instantiate_creature(&GREEN_HAG_TEMPLATE, Coordinate::new(6, 12), 1, 55);
+            // Newest additions covering the chaotic-evil fiend / aberration /
+            // earth-elemental gaps in the bestiary:
+            //   - Quasit (CR 1 tiny fiend) — poisoned claws + scare; exercises
+            //     the Frightened install on a fresh non-paladin caster.
+            //   - Shadow Demon (CR 4 medium fiend) — psychic claws + radiant
+            //     vulnerability — first vulnerability hit in the new pool.
+            //   - Succubus (CR 4 medium fiend) — charm + draining-kiss combo
+            //     gated on the `charmed_by` link.
+            //   - Intellect Devourer (CR 2 tiny aberration) — INT-save lane
+            //     with the damage-threshold stun rider.
+            //   - Xorn (CR 5 medium elemental) — 3-claw + bite heavy multi.
+            use crate::actors::creatures::intellect_devourers::INTELLECT_DEVOURER_TEMPLATE;
+            use crate::actors::creatures::quasits::QUASIT_TEMPLATE;
+            use crate::actors::creatures::shadow_demons::SHADOW_DEMON_TEMPLATE;
+            use crate::actors::creatures::succubi::SUCCUBUS_TEMPLATE;
+            use crate::actors::creatures::xorns::XORN_TEMPLATE;
+            let _ = e.instantiate_creature(&QUASIT_TEMPLATE, Coordinate::new(4, 10), 1, 56);
+            let _ = e.instantiate_creature(&SHADOW_DEMON_TEMPLATE, Coordinate::new(2, 10), 1, 57);
+            let _ = e.instantiate_creature(&SUCCUBUS_TEMPLATE, Coordinate::new(4, 8), 1, 58);
+            let _ = e.instantiate_creature(
+                &INTELLECT_DEVOURER_TEMPLATE,
+                Coordinate::new(2, 8),
+                1,
+                59,
+            );
+            let _ = e.instantiate_creature(&XORN_TEMPLATE, Coordinate::new(6, 8), 1, 60);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;
