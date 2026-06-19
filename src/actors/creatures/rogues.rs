@@ -6,7 +6,7 @@ use crate::actions::class_features::{
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Rogue PC template. Light armor (AC 14: leather + DEX), modest HP,
@@ -39,55 +39,25 @@ pub static ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'R',
         ac: 14,
         hitpoints: "3d8+3".parse().unwrap(),
-        speed: 30.,
         strength: 10,
-        intelligence: 12,
         dexterity: 16, // primary
-        wisdom: 12,
         constitution: 12,
+        intelligence: 12,
+        wisdom: 12,
         charisma: 10,
-        skills: HashSet::new(),
-        items: Vec::new(),
-        senses: HashSet::new(),
         languages: HashSet::from([Language::Common, Language::ThievesCant]),
         cr: 1.0,
         size: Size::Medium,
         creature_type: CreatureType::Humanoid,
         actions,
-        spell_slots_by_level: Vec::new(),
         rolls_death_saves: true,
-        damage_modifiers: HashMap::new(),
         // Rogues are proficient in DEX and INT saves (5e PHB).
         proficient_saves: HashSet::from([
             AbilityScoreType::Dexterity,
             AbilityScoreType::Intelligence,
         ]),
-        condition_immunities: HashSet::new(),
-        features: HashSet::new(),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
-        legendary_resistances: 0,
         has_evasion: true,
         has_uncanny_dodge: true,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
-        has_magic_resistance: false,
-        recharge_abilities: Vec::new(),
-        legendary_actions_per_round: 0,
-        has_extra_attack: false,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });

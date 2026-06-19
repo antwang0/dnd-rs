@@ -32,25 +32,18 @@ pub static PIT_FIEND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 19,
         // 26d10+156 ≈ 300 average per the MM Pit Fiend stat block.
         hitpoints: "26d10+156".parse().unwrap(),
-        speed: 30.,
         strength: 26,
-        intelligence: 22,
         dexterity: 14,
-        wisdom: 18,
         constitution: 24,
+        intelligence: 22,
+        wisdom: 18,
         charisma: 24, // spell save DC anchor / fear aura DC
-        skills: HashSet::new(),
-        items: Vec::new(),
-        senses: HashSet::from([
-            SpecialSense::Truesight(120),
-        ]),
+        senses: HashSet::from([SpecialSense::Truesight(120)]),
         languages: HashSet::from([Language::Infernal, Language::Common]),
         cr: 20.0,
         size: Size::Large,
         creature_type: CreatureType::Fiend,
         actions,
-        spell_slots_by_level: Vec::new(),
-        rolls_death_saves: false,
         // MM Pit Fiend: immune to fire + poison; resistant to cold +
         // non-magical bludgeoning / piercing / slashing. We omit the
         // magical-vs-mundane resistance distinction (we don't track it).
@@ -73,33 +66,12 @@ pub static PIT_FIEND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Charmed,
             Condition::Frightened,
         ]),
-        features: HashSet::new(),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
         // 5e Legendary Resistance (3/Day) — RAW per MM. Routine for
         // a CR-20 archdevil boss.
         legendary_resistances: 3,
-        has_evasion: false,
-        has_uncanny_dodge: false,
-        has_deflect_missiles: false,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
         has_magic_resistance: true,
-        recharge_abilities: Vec::new(),
         legendary_actions_per_round: 3,
         has_extra_attack: true,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });

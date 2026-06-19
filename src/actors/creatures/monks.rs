@@ -6,7 +6,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::MONK_UNARMED_STRIKE;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Monk PC template. Unarmored (Wisdom + Dex AC scaling — we collapse
@@ -42,53 +42,26 @@ pub static MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         hitpoints: "5d8+5".parse().unwrap(),
         speed: 40., // Unarmored Movement bonus (+10ft at level 2+).
         strength: 12,
-        intelligence: 10,
         dexterity: 16, // primary attack stat
-        wisdom: 14,    // Stunning Strike DC anchor
         constitution: 12,
+        intelligence: 10,
+        wisdom: 14, // Stunning Strike DC anchor
         charisma: 10,
-        skills: HashSet::new(),
-        items: Vec::new(),
-        senses: HashSet::new(),
         languages: HashSet::from([Language::Common]),
         cr: 1.5,
         size: Size::Medium,
         creature_type: CreatureType::Humanoid,
         actions,
-        spell_slots_by_level: Vec::new(),
         rolls_death_saves: true,
-        damage_modifiers: HashMap::new(),
         // Monks are proficient in STR and DEX saves (5e PHB).
         proficient_saves: HashSet::from([
             AbilityScoreType::Strength,
             AbilityScoreType::Dexterity,
         ]),
-        condition_immunities: HashSet::new(),
         features: HashSet::from([STUNNING_STRIKE_TAG]),
-        regen_per_round: 0,
-        regen_suppressors: HashSet::new(),
-        legendary_resistances: 0,
         has_evasion: true,
-        has_uncanny_dodge: false,
         has_deflect_missiles: true,
-        has_displacement: false,
-        has_danger_sense: false,
-        has_pack_tactics: false,
-        has_magic_resistance: false,
-        recharge_abilities: Vec::new(),
-        legendary_actions_per_round: 0,
         has_extra_attack: true,
-        brutal_critical_dice: 0,
-        crit_threshold: 20,
-        has_lucky: false,
-        has_brave: false,
-        has_fey_ancestry: false,
-        has_aura_of_protection: false,
-        has_aura_of_courage: false,
-        has_savage_attacks: false,
-        has_dwarven_resilience: false,
-        has_gnome_cunning: false,
-        draconic_ancestry: None,
-        sorcery_points: 0,
+        ..CreatureTemplate::defaults()
     }
 });
