@@ -136,6 +136,9 @@ use crate::actors::creatures::giant_crabs::GIANT_CRAB_TEMPLATE;
 use crate::actors::creatures::cloud_giants::CLOUD_GIANT_TEMPLATE;
 use crate::actors::creatures::hezrous::HEZROU_TEMPLATE;
 use crate::actors::creatures::gibbering_mouthers::GIBBERING_MOUTHER_TEMPLATE;
+use crate::actors::creatures::iron_golems::IRON_GOLEM_TEMPLATE;
+use crate::actors::creatures::mummy_lords::MUMMY_LORD_TEMPLATE;
+use crate::actors::creatures::rakshasas::RAKSHASA_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -2825,6 +2828,23 @@ impl EncounterInstance {
             &CLOUD_GIANT_TEMPLATE,
             &HEZROU_TEMPLATE,
             &GIBBERING_MOUTHER_TEMPLATE,
+            // Newest additions filling the boss-tier slot of the random
+            // encounter pool — three high-CR signature monsters that
+            // gate a "magic doesn't work on me" anti-caster envelope:
+            //   - Mummy Lord (CR 15 undead): boss sibling of Mummy with
+            //     a 6d6-necrotic Rotting Fist, 60-ft DC-17 Dreadful Glare,
+            //     and the Magic Resistance + 3 Legendary Resistance combo.
+            //   - Iron Golem (CR 16 construct): pinnacle of the golem
+            //     ladder — 3d10 reach-2 Iron Sword, 3d8 Iron Slam,
+            //     10d8-poison breath (recharge 6), with the full
+            //     construct condition immunity envelope plus fire / poison
+            //     / psychic damage immunity.
+            //   - Rakshasa (CR 13 fiend): tiger-headed shape-shifter with
+            //     a 2×(2d6+2d10-necrotic) claw multi and Magic Resistance
+            //     standing in for RAW's Limited Magic Immunity.
+            &MUMMY_LORD_TEMPLATE,
+            &IRON_GOLEM_TEMPLATE,
+            &RAKSHASA_TEMPLATE,
         ]
     }
 

@@ -41,6 +41,39 @@ pub fn simple_weapon_attack(
     )
 }
 
+/// On a confirmed weapon-attack hit, roll `rider_dice` of `rider_type`
+/// extra damage, log it in the standard rider format, and push the
+/// resulting `DealDamage` onto `effects`. Returns the rolled rider amount
+/// for callers that need to chain further effects scaled by it.
+///
+/// Centralizes the "weapon hit + flat typed-damage rider" pattern that
+/// recurs across Mummy Lord / Rakshasa / Yeti / Dragon Bite / Death
+/// Knight Longsword / Vampiric Bite / etc. Caller is responsible for
+/// the upstream `resolve_attack_outcome` and the `damage == 0` early-
+/// return — this helper assumes the swing landed. Distinct from
+/// `save_or_damage_rider` (which gates the rider on a saving throw):
+/// this rider is unconditional on a hit.
+pub fn add_flat_damage_rider(
+    encounter: &mut EncounterInstance,
+    target_id: usize,
+    rider_dice: Dice,
+    rider_type: DamageType,
+    rider_name: &str,
+    effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+) -> u32 {
+    let amt = encounter.roll(&rider_dice);
+    encounter.log(format!(
+        "  {}: {}({}) = {} {} rider",
+        rider_name, rider_dice, amt, amt, rider_type
+    ));
+    effects.push(Box::new(DealDamage {
+        actor_id: target_id,
+        amount: amt,
+        damage_type: rider_type,
+    }));
+    amt
+}
+
 /// On a weapon-attack hit, roll `target_id`'s saving throw against `dc`
 /// using `save_ability`. On fail, push a `DealDamage` rider of
 /// `rider_dice` typed as `rider_type`, logging the roll with
@@ -9883,3 +9916,331 @@ impl Action for GibberingMoutherBlindingSpittle {
 
 pub static GIBBERING_MOUTHER_BLINDING_SPITTLE: LazyLock<GibberingMoutherBlindingSpittle> =
     LazyLock::new(|| GibberingMoutherBlindingSpittle {});
+
+// ─── Mummy Lord ──────────────────────────────────────────────────────
+
+/// Mummy Lord Rotting Fist — STR-based melee, 3d6+STR bludgeoning core
+/// plus a 6d6 necrotic rider on hit. The lordly variant of `MummyRottingFist`
+/// — twice the bludgeoning dice and twice the necrotic rider, matching
+/// the CR-15 stat block's heavier punch. Necrotic packet is typed
+/// separately so per-type resistance is checked independently and the
+/// rider rides through bludgeoning-resistant targets cleanly. Routes the
+/// rider through the shared `add_flat_damage_rider` helper so the
+/// roll / log / DealDamage trio lives in one chokepoint with the rest of
+/// the on-hit typed-damage riders.
+pub struct MummyLordRottingFist {}
+
+impl Action for MummyLordRottingFist {
+    fn name(&self) -> &str {
+        "lord rotting fist"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["lrf", "lord-rot"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning, DamageType::Necrotic]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_mod = caster.ability_modifier(AbilityScoreType::Strength)
+            + caster.proficiency_bonus();
+        let damage_mod = caster.ability_modifier(AbilityScoreType::Strength);
+        let (mut effects, damage) = crate::engine::attack::resolve_attack_outcome(
+            encounter,
+            AttackParams {
+                caster_id,
+                target_id,
+                action_name: "lord rotting fist",
+                attack_bonus: attack_mod,
+                damage_dice: Dice::new(3, 6),
+                damage_bonus: damage_mod,
+                damage_type: DamageType::Bludgeoning,
+                is_melee: true,
+                long_range: None,
+                is_spell: false,
+            },
+        );
+        if damage == 0 {
+            return effects;
+        }
+        add_flat_damage_rider(
+            encounter,
+            target_id,
+            Dice::new(6, 6),
+            DamageType::Necrotic,
+            "lord rotting fist",
+            &mut effects,
+        );
+        effects
+    }
+}
+
+pub static MUMMY_LORD_ROTTING_FIST: LazyLock<MummyLordRottingFist> =
+    LazyLock::new(|| MummyLordRottingFist {});
+
+/// Mummy Lord Dreadful Glare — Action; targets every enemy within radius 12
+/// (60 ft) with line-of-sight to the lord. WIS save vs DC 17 (RAW for CR-15
+/// mummy lord) or be Frightened for 10 rounds. Necrotic-immune targets
+/// (proxy for undead / fiend) are filtered out per the canonical glare-
+/// affects-living convention; the LOS gate keeps a gaze from bending around
+/// corners. Lordly variant of `MummyDreadfulGlare`: same shape, longer range
+/// and a tougher DC matching the CR-15 stat block.
+pub struct MummyLordDreadfulGlare {}
+
+impl Action for MummyLordDreadfulGlare {
+    fn name(&self) -> &str {
+        "lord dreadful glare"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ldg", "lord-glare"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        const RADIUS: isize = 12;
+        const DC: i32 = 17;
+
+        let caster_loc = match encounter.actors.get(&caster_id) {
+            Some(a) => a.location(),
+            None => return Vec::new(),
+        };
+        encounter.log(
+            "  lord dreadful glare: the mummy lord's hollow gaze freezes the living",
+        );
+
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for tid in encounter.enemy_burst_targets(caster_id, caster_loc, RADIUS) {
+            let Some(t) = encounter.actors.get(&tid) else {
+                continue;
+            };
+            if t.is_immune_to(DamageType::Necrotic) {
+                continue;
+            }
+            if !encounter.actor_has_line_of_sight(caster_id, tid) {
+                continue;
+            }
+            let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, DC);
+            if save.passed() {
+                continue;
+            }
+            effects.push(Box::new(ApplyCondition {
+                actor_id: tid,
+                condition: Condition::Frightened,
+                timer: ConditionTimer::Rounds(10),
+            }));
+        }
+        effects
+    }
+}
+
+pub static MUMMY_LORD_DREADFUL_GLARE: LazyLock<MummyLordDreadfulGlare> =
+    LazyLock::new(|| MummyLordDreadfulGlare {});
+
+/// Mummy Lord Multiattack — 1 Rotting Fist + 1 Dreadful Glare per Action.
+/// Mixed-schema multi (a melee `SingleActor` attack + a no-args glare burst)
+/// — uses `CompoundAttack` whose first sub-attack drives the reach + LOS
+/// gate. The rotting fist's melee reach validates first; the dreadful glare
+/// fans out from the lord's own location regardless of where the fist
+/// landed. RAW per MM: the lord uses Channel Divinity / spellcasting on
+/// alternate rounds, neither of which is modeled — the load-bearing
+/// per-round threat is the fist + glare combo.
+pub static MUMMY_LORD_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "lord fist + glare",
+    parts: vec![
+        (&*MUMMY_LORD_ROTTING_FIST, 1),
+        (&*MUMMY_LORD_DREADFUL_GLARE, 1),
+    ],
+});
+
+// ─── Iron Golem ──────────────────────────────────────────────────────
+
+/// Iron Golem Slam — STR-based 3d8+STR bludgeoning melee. The golem's
+/// secondary melee swing (paired with the sword in `IRON_GOLEM_MULTI`).
+/// Same shape as `STONE_GOLEM_SLAM` at the heavier CR-16 die tier. Routes
+/// through the SimpleWeapon chassis so the multiattack wrapper composes
+/// cleanly with no per-creature glue.
+pub static IRON_GOLEM_SLAM: SimpleWeapon = SimpleWeapon {
+    display_name: "iron slam",
+    aliases: &["islam", "iron-slam"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(3, 8),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Iron Golem Sword — STR-based 3d10+STR slashing melee, reach 2 (10 ft RAW).
+/// The golem's signature: a massive blade swung in a wide arc. Reach-2 lets
+/// the golem threaten an extra ring of tiles around its 2×2 Large footprint,
+/// matching the RAW "10 ft. reach" stat-block clause. Pairs with the slam
+/// for the mixed-limb multiattack.
+pub static IRON_GOLEM_SWORD: SimpleWeapon = SimpleWeapon {
+    display_name: "iron sword",
+    aliases: &["isword", "iron-blade"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(3, 10),
+    damage_type: DamageType::Slashing,
+    // RAW: 10 ft reach on the iron-golem blade — one extra tile-gap beyond
+    // the standard MELEE_REACH so a flanking PC can't kite the golem at
+    // 2-tile range with impunity.
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Iron Golem Multiattack — 1 sword + 1 slam per Action. Heterogeneous
+/// limb pattern routes through `CompoundAttack` (sword first since it's
+/// the heavier die and the reach-2 attack — the engine validates reach off
+/// the first part, so the multi inherits the longer reach; the slam falls
+/// through cleanly when the target is already inside MELEE_REACH).
+pub static IRON_GOLEM_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "iron sword + slam",
+    parts: vec![(&IRON_GOLEM_SWORD, 1), (&IRON_GOLEM_SLAM, 1)],
+});
+
+/// Iron Golem Poison Breath — burst-3 / range-4 of noxious green vapor.
+/// 10d8 poison, DC 19 CON, half on save. Recharge 6 (RAW: "Recharge 6"
+/// means the breath only refreshes on a d6 of exactly 6 at start of turn).
+/// Shares the standard `"breath_weapon"` recharge pool with the dragons —
+/// ensures a multi-monster ambush can't double-tap two breath weapons in
+/// the same round. Smaller burst than the dragon's range-6 cone (RAW: 15
+/// ft cone vs 60 ft cone) at the higher per-die count.
+pub static IRON_GOLEM_BREATH: BreathWeapon = BreathWeapon {
+    display_name: "iron poison breath",
+    aliases: &["ipb", "iron-breath"],
+    damage_dice: Dice::new(10, 8),
+    damage_type: DamageType::Poison,
+    save_ability: AbilityScoreType::Constitution,
+    dc: 19,
+    radius: 3,
+    range: 4,
+    recharge_key: "breath_weapon",
+};
+
+// ─── Rakshasa ────────────────────────────────────────────────────────
+
+/// Rakshasa Claw — DEX-based melee, 2d6+DEX slashing core plus a 2d10
+/// necrotic rider on hit (the cursed touch that drains life force). The
+/// rakshasa is a high-DEX fiend (17), so DEX drives both attack and
+/// damage despite the slashing damage type — matching the RAW finesse-
+/// like "+7 to hit, 2d6+3 slashing" stat block where the +3 mod equals
+/// either STR or DEX (we pick DEX as the higher of the two). Routes the
+/// necrotic packet through `add_flat_damage_rider` so the roll / log /
+/// DealDamage trio reuses the shared helper.
+pub struct RakshasaClaw {}
+
+impl Action for RakshasaClaw {
+    fn name(&self) -> &str {
+        "rakshasa claw"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["rclaw", "rakshasa-claw"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Slashing, DamageType::Necrotic]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_mod = caster.ability_modifier(AbilityScoreType::Dexterity)
+            + caster.proficiency_bonus();
+        let damage_mod = caster.ability_modifier(AbilityScoreType::Dexterity);
+        let (mut effects, damage) = crate::engine::attack::resolve_attack_outcome(
+            encounter,
+            AttackParams {
+                caster_id,
+                target_id,
+                action_name: "rakshasa claw",
+                attack_bonus: attack_mod,
+                damage_dice: Dice::new(2, 6),
+                damage_bonus: damage_mod,
+                damage_type: DamageType::Slashing,
+                is_melee: true,
+                long_range: None,
+                is_spell: false,
+            },
+        );
+        if damage == 0 {
+            return effects;
+        }
+        add_flat_damage_rider(
+            encounter,
+            target_id,
+            Dice::new(2, 10),
+            DamageType::Necrotic,
+            "rakshasa claw",
+            &mut effects,
+        );
+        effects
+    }
+}
+
+pub static RAKSHASA_CLAW: LazyLock<RakshasaClaw> = LazyLock::new(|| RakshasaClaw {});
+
+/// Rakshasa Multiattack — 2 claws per Action. Vanilla single-sub-attack
+/// shape (same as Doppelganger Multi / Zombie Multislam); each claw rolls
+/// its core slashing hit plus the necrotic rider independently, so a single
+/// multi-action against a stationary target can land up to two slashing +
+/// two necrotic packets.
+pub static RAKSHASA_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "rakshasa multiattack",
+    sub_attack: &*RAKSHASA_CLAW,
+    count: 2,
+});

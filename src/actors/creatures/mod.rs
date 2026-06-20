@@ -162,3 +162,6 @@ pub mod giant_crabs;
 pub mod cloud_giants;
 pub mod hezrous;
 pub mod gibbering_mouthers;
+pub mod iron_golems;
+pub mod mummy_lords;
+pub mod rakshasas;
