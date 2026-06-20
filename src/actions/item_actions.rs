@@ -4651,6 +4651,8 @@ const SCROLL_OF_LONGSTRIDER_NAME: &str = "Scroll of Longstrider";
 const SCROLL_OF_BARKSKIN_NAME: &str = "Scroll of Barkskin";
 const SCROLL_OF_MAGNIFY_GRAVITY_NAME: &str = "Scroll of Magnify Gravity";
 const SCROLL_OF_ELEMENTAL_WEAPON_NAME: &str = "Scroll of Elemental Weapon";
+const SCROLL_OF_TRUE_SEEING_NAME: &str = "Scroll of True Seeing";
+const SCROLL_OF_PROTECTION_FROM_POISON_NAME: &str = "Scroll of Protection from Poison";
 
 /// Scroll of Pyrotechnics — Action; 1d8 fire DEX-save burst (DC 13,
 /// 2-radius / 10 ft RAW) at a point within 24 tiles (60 ft RAW). 5e RAW:
@@ -5155,6 +5157,50 @@ pub static READ_ELEMENTAL_WEAPON_SCROLL: SingleTargetBuffItem = SingleTargetBuff
     condition: Condition::ElementallyWeaponed,
     timer: ConditionTimer::Rounds(100),
     // Touch RAW; 1 tile.
+    reach: crate::actions::action_template::MELEE_REACH,
+    bonus_action: false,
+    reject_when_active: true,
+};
+
+/// Scroll of True Seeing — Action; install `TrueSighted` for ~100 rounds
+/// (≈ 1 hour engine time) on a single ally within 1 tile (touch RAW).
+/// 5e RAW: True Seeing is a level-6 divination (no concentration); the
+/// scroll surfaces the buff envelope without a slot cost. The condition
+/// is read by `compute_attack_mode` via the `countered_by_truesight`
+/// cohort: holder ignores the target's `Invisible` / `Blurred` /
+/// `Displaced` attack-mode disadvantage, and an attacker can't ride
+/// their own invisibility advantage against the holder. Slots into the
+/// touch-ally-buff scroll lane next to Scroll of Death Ward / Scroll of
+/// Barkskin — the anti-illusion defensive option.
+pub static READ_TRUE_SEEING_SCROLL: SingleTargetBuffItem = SingleTargetBuffItem {
+    action_name: "read true seeing scroll",
+    action_aliases: &["true seeing scroll", "ts scroll", "scroll truesight"],
+    item_name: SCROLL_OF_TRUE_SEEING_NAME,
+    log_text: "{actor} reads a scroll of true seeing; their target's vision pierces every veil.",
+    condition: Condition::TrueSighted,
+    timer: ConditionTimer::Rounds(100),
+    reach: crate::actions::action_template::MELEE_REACH,
+    bonus_action: false,
+    reject_when_active: true,
+};
+
+/// Scroll of Protection from Poison — Action; install `Purified` for
+/// ~100 rounds (≈ 1 hour engine time) on a single ally within 1 tile
+/// (touch RAW). 5e RAW: Protection from Poison is a level-2 abjuration
+/// (no concentration), and the spell-side `PROTECTION_FROM_POISON` impl
+/// also cleanses any active `Poisoned` install. The scroll variant
+/// drops the cleanse rider to fit the `SingleTargetBuffItem` chassis —
+/// the lingering `Purified` buff still carries poison-damage resistance
+/// and poison/charm/frightened dynamic-immunity coverage. Sibling to
+/// Scroll of Death Ward / Scroll of Barkskin on the touch-ally
+/// defensive-buff lane; distinguished by the poison-focused envelope.
+pub static READ_PROTECTION_FROM_POISON_SCROLL: SingleTargetBuffItem = SingleTargetBuffItem {
+    action_name: "read protection from poison scroll",
+    action_aliases: &["protection from poison scroll", "pfp scroll", "scroll antitoxin"],
+    item_name: SCROLL_OF_PROTECTION_FROM_POISON_NAME,
+    log_text: "{actor} reads a scroll of protection from poison; their target's veins glimmer with cleansing light.",
+    condition: Condition::Purified,
+    timer: ConditionTimer::Rounds(100),
     reach: crate::actions::action_template::MELEE_REACH,
     bonus_action: false,
     reject_when_active: true,

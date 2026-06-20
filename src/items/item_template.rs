@@ -2570,6 +2570,36 @@ pub static SCROLL_OF_ELEMENTAL_WEAPON: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// Scroll of True Seeing — Action consumable: install `TrueSighted` for
+/// 100 rounds on a touched ally. 5e RAW: lv6 divination, no concentration;
+/// the scroll bypasses the slot cost and surfaces the anti-illusion buff
+/// as a one-shot fire-and-forget consumable. Anti-invisibility option in
+/// the loot pool that the lower-tier scrolls don't cover — slots in
+/// alongside `SCROLL_OF_DEATH_WARD` / `SCROLL_OF_BARKSKIN` on the touch-
+/// ally defensive-buff scroll lane.
+pub static SCROLL_OF_TRUE_SEEING: Item = Item {
+    name: "Scroll of True Seeing",
+    glyph: '0',
+    on_use: Some(&crate::actions::item_actions::READ_TRUE_SEEING_SCROLL),
+    ..Item::DEFAULTS
+};
+
+/// Scroll of Protection from Poison — Action consumable: install the
+/// `Purified` condition on a touched ally for 100 rounds (≈ 1 hour
+/// engine time). 5e RAW: lv2 abjuration, no concentration; the scroll
+/// drops the spell-side `Poisoned` cleanse rider to fit the shared
+/// `SingleTargetBuffItem` chassis, but the lingering `Purified` install
+/// still carries poison-damage resistance plus poison/charm/frightened
+/// dynamic-immunity coverage. Common cleric / druid trinket — pairs
+/// naturally with the Antitoxin consumable for a poison-focused
+/// defensive kit.
+pub static SCROLL_OF_PROTECTION_FROM_POISON: Item = Item {
+    name: "Scroll of Protection from Poison",
+    glyph: '0',
+    on_use: Some(&crate::actions::item_actions::READ_PROTECTION_FROM_POISON_SCROLL),
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -3190,4 +3220,14 @@ pub static LOOT_POOL: &[&Item] = &[
     //     output.
     &SCROLL_OF_MAGNIFY_GRAVITY,
     &SCROLL_OF_ELEMENTAL_WEAPON,
+    // Latest scroll additions:
+    //   - **Scroll of True Seeing** (lv6 divination): touch-ally
+    //     `TrueSighted` install for 100 rounds. Single-entry low-weight
+    //     since lv6 buffs are rare; sits at the top of the defensive-
+    //     scroll tier next to `SCROLL_OF_DEATH_WARD`.
+    //   - **Scroll of Protection from Poison** (lv2 abjuration): touch-
+    //     ally `Purified` install for 100 rounds. Same single-entry
+    //     weight as the other lv2 buff scrolls (Barkskin / Longstrider).
+    &SCROLL_OF_TRUE_SEEING,
+    &SCROLL_OF_PROTECTION_FROM_POISON,
 ];

@@ -3458,7 +3458,7 @@ impl Action for TollTheDead {
         let wounded = encounter
             .actors
             .get(&target_id)
-            .is_some_and(|a| a.hitpoints() < a.max_hitpoints());
+            .is_some_and(|a| a.is_wounded());
         let die = if wounded { Dice::new(n, 12) } else { Dice::new(n, 8) };
         let raw = encounter.roll(&die);
         encounter.log(format!(
@@ -25417,3 +25417,349 @@ impl Action for ElementalWeapon {
 }
 
 pub static ELEMENTAL_WEAPON: LazyLock<ElementalWeapon> = LazyLock::new(|| ElementalWeapon {});
+
+/// Protection from Poison — level-2 abjuration (cleric / druid / paladin /
+/// ranger spell list). Touch range, 1 hour, no concentration. Cleanses
+/// any active Poisoned condition off the target, gives them resistance
+/// to poison damage, and (RAW) advantage on saves vs being poisoned.
+///
+/// Modeled by installing the existing `Purified` condition for ~100
+/// rounds (1 hour engine time): it covers the poison-damage resistance
+/// half (via `TYPED_RESISTANCE_CONDITIONS`) and the saves-vs-poison half
+/// (collapsed to full immunity via the `dynamic_immunity_to(Poisoned)`
+/// chokepoint). RAW Protection from Poison doesn't also block Charmed /
+/// Frightened, but `Purified`'s broader dynamic-immunity scope catches
+/// those too — a minor flavor overshoot accepted in exchange for not
+/// adding a near-duplicate buff condition. The cure-on-cast strips any
+/// existing `Poisoned` install first so casting on a poisoned ally has
+/// immediate value.
+///
+/// Sibling to `LESSER_RESTORATION` (lv2, removes one of four conditions)
+/// and `AURA_OF_PURITY` (lv4, paladin self-aura that installs `Purified`
+/// on every nearby ally) on the cleanse/buff lane — Protection from
+/// Poison is the single-target poison-focused niche at the lv2 tier.
+pub struct ProtectionFromPoison {}
+
+impl Action for ProtectionFromPoison {
+    fn name(&self) -> &str {
+        "protection from poison"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pfp", "prot poison", "antitoxin spell"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        // The cleanse lane (strips Poisoned) parallels Lesser Restoration's
+        // is_heal flag so the AI's support pipeline considers this spell
+        // when an ally is actively poisoned, not just when full HP.
+        true
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Ally-only single-target buff. Reuses the shared `first_ally_target_id`
+        // helper for the ally / live-target gate; also short-circuits if the
+        // target is already Purified (no point burning a slot on a no-op
+        // refresh — `add_condition` keeps the longer timer either way).
+        let Some(target_id) = first_ally_target_id(encounter, caster_id, target_ids) else {
+            return false;
+        };
+        encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|t| t.is_combat_active() && !t.has_condition(Condition::Purified))
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::RemoveCondition;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![
+            // Cleanse any active poison first — the RAW: "neutralize any
+            // poison afflicting it" half.
+            Box::new(RemoveCondition {
+                actor_id: target_id,
+                condition: Condition::Poisoned,
+            }) as Box<dyn ApplicableSideEffect>,
+            // 1 hour RAW (~100 rounds engine time). No concentration —
+            // Protection from Poison sits durably across multi-encounter
+            // long rests.
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Purified,
+                timer: ConditionTimer::Rounds(100),
+            }),
+        ]
+    }
+}
+
+pub static PROTECTION_FROM_POISON: LazyLock<ProtectionFromPoison> =
+    LazyLock::new(|| ProtectionFromPoison {});
+
+/// True Seeing — level-6 divination (bard / cleric / sorcerer / warlock /
+/// wizard). Touch range, 1 hour, no concentration. The target gains
+/// truesight 120 ft: they see through invisibility, magical concealment,
+/// and illusory blur / displacement.
+///
+/// Modeled as the `TrueSighted` condition installed for ~100 rounds (1
+/// hour engine time). The condition is read by `compute_attack_mode` via
+/// the `countered_by_truesight` cohort: when the holder is the *attacker*,
+/// they ignore the disadvantage that the target's `Invisible` / `Blurred`
+/// / `Displaced` would impose; when the holder is the *target*, attackers
+/// can't ride the matching advantage from their own `Invisible`. Joins
+/// `is_dispellable_buff` so Dispel Magic can rip it. Distinct from the
+/// template-level senses (Truesight as a creature stat block trait) —
+/// True Seeing is a spell-side buff that's portable to any ally.
+///
+/// At lv6 the spell sits next to `GLOBE_OF_INVULNERABILITY` / `MASS_SUGGESTION`
+/// on the lv6 utility-buff tier — single-target hour-long enabler for
+/// the rest of the party against an illusionist / invisible-stalker
+/// opponent.
+pub struct TrueSeeing {}
+
+impl Action for TrueSeeing {
+    fn name(&self) -> &str {
+        "true seeing"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ts", "true-sight", "truesight"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Ally-only buff + don't double-cast on an already-buffed target
+        // (the lv6 slot is precious). Routes through the shared
+        // ally-target + actor_lacks_condition helpers used by Aid /
+        // Longstrider / Enhance Ability.
+        let Some(target_id) = first_ally_target_id(encounter, caster_id, target_ids) else {
+            return false;
+        };
+        actor_lacks_condition(encounter, target_id, Condition::TrueSighted)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::TrueSighted,
+            // 1 hour RAW; capped here at 100 rounds (~10 minutes engine
+            // time) to match the other long-duration utility buffs
+            // (Mage Armor, Mind Blank, Longstrider, Foresight).
+            timer: ConditionTimer::Rounds(100),
+        })]
+    }
+}
+
+pub static TRUE_SEEING: LazyLock<TrueSeeing> = LazyLock::new(|| TrueSeeing {});
+
+/// Immolation — level-5 transmutation (sorcerer / wizard spell list),
+/// concentration. 90-ft single-target. The target makes a DEX save vs
+/// the caster's spell save DC; on a fail they take 8d6 fire damage AND
+/// catch fire — taking 4d6 fire damage at the end of each of their turns
+/// (via the central `ROUND_END_DOTS` registry entry on `Immolated`) until
+/// the spell ends. On a pass they take half damage and shrug off the
+/// ongoing burn.
+///
+/// The end-of-turn DEX save to put the flames out lives in the matching
+/// `ROUND_END_SAVES` entry — a passed save strips `Immolated` and drops
+/// the caster's concentration. Concentration-bound on the caster;
+/// dropping concentration also extinguishes the flames cleanly. The
+/// `Rounds(10)` timer caps the burn at ~1 minute engine time so the
+/// spell expires naturally even if the target never saves out and the
+/// caster never drops concentration.
+///
+/// Sibling to `BURNING_HANDS` (lv1 burst) / `FIREBALL` (lv3 AoE) /
+/// `WALL_OF_FIRE` (lv4 zone) on the fire-damage lane — Immolation
+/// trades the burst-shape for sustained single-target pressure: 8d6
+/// up-front + 4d6/round is a real threat curve that scales past a
+/// single-cast `FIREBALL`-equivalent.
+pub struct Immolation {}
+
+impl Action for Immolation {
+    fn name(&self) -> &str {
+        "immolation"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["immo", "immolate"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 90 ft = 36 tiles in the 2.5ft grid.
+        Some(36)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Concentration spell — don't burn the lv5 slot if the caster is
+        // already concentrating on something more valuable (the new cast
+        // would drop the prior concentration RAW, but the AI's heuristics
+        // expect the gate to short-circuit).
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.is_concentrating())
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.best_spell_save_dc([
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]);
+        let save =
+            encounter.roll_save_against_caster(target_id, AbilityScoreType::Dexterity, dc, caster_id);
+        // Shared roll for full + half: the dice are rolled once and the
+        // save outcome decides whether the target keeps the full lash or
+        // walks off with half. Matches the canonical
+        // `SaveDamagePolicy::HalfOnSave` shape used by single-target save
+        // spells (Sacred Burst single, Inflict Wounds variant, etc.).
+        let raw = encounter.roll(&Dice::new(8, 6));
+        let dmg = SaveDamagePolicy::HalfOnSave.apply(raw, save.passed());
+        encounter.log(format!(
+            "  immolation: 8d6({}) fire ({})",
+            raw,
+            if save.passed() {
+                "half on save"
+            } else {
+                "full on fail"
+            },
+        ));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        if dmg > 0 {
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: dmg,
+                damage_type: DamageType::Fire,
+            }));
+        }
+        if !save.passed() {
+            // Ongoing burn rider: ~1 minute cap. Anchored to the caster's
+            // concentration so dropping concentration extinguishes the
+            // flames cleanly via the standard cleanup path.
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Immolated,
+                timer: ConditionTimer::Rounds(10),
+            }));
+            effects.push(Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Immolation",
+                    vec![(target_id, Condition::Immolated)],
+                ),
+            }));
+        }
+        effects
+    }
+}
+
+pub static IMMOLATION: LazyLock<Immolation> = LazyLock::new(|| Immolation {});

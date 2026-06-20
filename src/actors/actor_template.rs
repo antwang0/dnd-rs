@@ -2088,6 +2088,16 @@ impl ActorInstance {
         (self.base_hitpoints as i32 + bonus).max(1) as u32
     }
 
+    /// True if the actor has taken any damage relative to their full HP
+    /// pool. Centralizes the recurring `hitpoints() < max_hitpoints()`
+    /// check so wounded-creature riders (Sahuagin Blood Frenzy advantage,
+    /// future "bloodied" predicates) read from one chokepoint and a
+    /// future redefinition of "wounded" (e.g. half-HP threshold) lands
+    /// in one place instead of being scattered across call sites.
+    pub fn is_wounded(&self) -> bool {
+        self.hitpoints() < self.max_hitpoints()
+    }
+
     /// Permanently bump the actor's max HP by `delta`. Current HP rises
     /// by the same amount so the boost is immediately useful (matches
     /// 5e's Aid spell semantics: "their hit point maximum and current

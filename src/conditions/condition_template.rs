@@ -1196,6 +1196,35 @@ pub enum Condition {
     /// rollback in `drop_concentration`. Joins `is_dispellable_buff` so
     /// Dispel Magic / Counterspell can rip it.
     ElementallyWeaponed,
+    /// True-Sighted (5e True Seeing, level-6 divination). The holder
+    /// perceives things as they actually are: invisible creatures, magical
+    /// blur, and displacement illusions all stop hiding the truth from
+    /// them. The mechanical envelope: when the holder is the *attacker*,
+    /// they ignore the disadvantage their target's `Invisible` / `Blurred`
+    /// / `Displaced` would otherwise impose (gated via the
+    /// `countered_by_truesight` cohort in `compute_attack_mode`). When the
+    /// holder is the *target*, an attacker can't ride the matching
+    /// advantage from their own `Invisible` (same gate, on the
+    /// attacker-side advantage lane). Concentration-free RAW (1 hour);
+    /// installed as a flat `Rounds` timer plus the standard
+    /// `is_dispellable_buff` hook so Dispel Magic can strip it. Distinct
+    /// from `Blindsight` template senses — those are creature-intrinsic
+    /// (no condition) and apply unconditionally; True Sight is a
+    /// short-duration *buff* a caster can toggle for a specific fight.
+    TrueSighted,
+    /// Immolated (5e Immolation, level-5 transmutation, concentration).
+    /// The target is engulfed in magical flames: they take 4d6 fire damage
+    /// at the end of each of their turns (via the standard
+    /// `ROUND_END_DOTS` registry — entry sits next to Burning / Witch Bolt
+    /// in the round-end drip). They can shake off the spell with a DEX
+    /// save at end-of-turn (via the standard `ROUND_END_SAVES` registry —
+    /// entry sits next to Hold Person / Hideous Laughter). Concentration-
+    /// bound on the caster; dropping concentration extinguishes the flames
+    /// cleanly. Distinct from `Burning` (Searing Smite / Fire Bolt
+    /// ignition): Immolated is a much fatter drip (4d6 vs 1d4) and
+    /// concentration-anchored rather than timer-only, matching the lv5
+    /// spell-slot cost.
+    Immolated,
 }
 
 impl Condition {
@@ -1352,6 +1381,8 @@ impl Condition {
             Condition::Darkened => "shrouded in darkness",
             Condition::MoilShrouded => "shrouded in moil",
             Condition::ElementallyWeaponed => "wielding an elemental weapon",
+            Condition::TrueSighted => "true-sighted",
+            Condition::Immolated => "immolated",
         }
     }
 
@@ -1448,6 +1479,26 @@ impl Condition {
                 | Condition::Footloose
                 | Condition::MoilShrouded
                 | Condition::ElementallyWeaponed
+                | Condition::TrueSighted
+        )
+    }
+
+    /// True if the holder's "true sight" buff (5e True Seeing) lets them
+    /// see through this condition's concealment / illusion envelope. Read
+    /// by `compute_attack_mode` to suppress:
+    ///   * the disadvantage a target's `Invisible` / `Blurred` /
+    ///     `Displaced` would otherwise impose on an attacker who is
+    ///     true-sighted (attacker side),
+    ///   * the advantage an attacker's own `Invisible` would otherwise
+    ///     grant when their target is true-sighted (target side).
+    /// Centralizes the cohort so adding a new "illusory / invisibility-
+    /// style" concealment (e.g. a future Hide-in-Mists / Etherealness)
+    /// drops to a one-line edit instead of two scattered `matches!`
+    /// branches at the attack-mode site.
+    pub fn countered_by_truesight(&self) -> bool {
+        matches!(
+            self,
+            Condition::Invisible | Condition::Blurred | Condition::Displaced
         )
     }
 

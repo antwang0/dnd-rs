@@ -180,6 +180,18 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::SILENCE);
     actions.push(&*crate::actions::spells::FREEDOM_OF_MOVEMENT);
     actions.push(&*crate::actions::spells::RAISE_DEAD);
+    // Latest cleric support additions:
+    //   - lv2 **Protection from Poison** (abjuration): touch cleanse of
+    //     `Poisoned` + `Purified` install for 1 hour. Sibling to Lesser
+    //     Restoration (lv2 single-condition cleanse) on the lv2 support
+    //     lane — focused on the poison lane with a lingering buff.
+    //   - lv6 **True Seeing** (divination): touch ally buff that
+    //     suppresses the invisibility / illusion attack-mode penalties
+    //     on the holder. Fills the cleric's lv6 utility slot next to
+    //     Heal / Word of Recall / Sunbeam — defensive enabler against
+    //     illusionist / invisible-stalker opponents.
+    actions.push(&*crate::actions::spells::PROTECTION_FROM_POISON);
+    actions.push(&*crate::actions::spells::TRUE_SEEING);
     // Preserve Life — Cleric Channel Divinity (Life Domain in RAW; we
     // expose it generically here). Once per short rest pool of 5 × level
     // HP, healing the most-wounded allies first up to half max HP each.

@@ -197,6 +197,15 @@ const ROUND_END_SAVES: &[RoundEndSave] = &[
         save_ability: crate::engine::types::AbilityScoreType::Constitution,
         log_verb: "strains against the stone curse:",
     },
+    // 5e Immolation — DEX save at end of each turn to extinguish the
+    // flames. Concentration-anchored on the caster (so non-spell fire
+    // sources like environmental hazards don't accidentally piggyback on
+    // this save), matching the Hold Person / Flesh to Stone pattern.
+    RoundEndSave {
+        condition: Condition::Immolated,
+        save_ability: crate::engine::types::AbilityScoreType::Dexterity,
+        log_verb: "tries to put out the flames:",
+    },
 ];
 
 /// Single entry in the round-end damage-over-time table. The engine
@@ -303,6 +312,17 @@ const ROUND_END_DOTS: &[RoundEndDot] = &[
         dice: Dice::new(1, 6),
         damage_type: DamageType::Psychic,
         log_verb: "is wounded by the phantasm:",
+    },
+    // 5e Immolation — concentration-bound, lv5. 4d6 fire per round as
+    // the target burns. RAW: the target can end the spell early with a
+    // DEX save at the end of each of its turns (wired through the
+    // matching `ROUND_END_SAVES` entry). Dropping concentration also
+    // extinguishes the flame.
+    RoundEndDot {
+        condition: Condition::Immolated,
+        dice: Dice::new(4, 6),
+        damage_type: DamageType::Fire,
+        log_verb: "burns from immolation:",
     },
 ];
 
@@ -846,6 +866,19 @@ impl EncounterInstance {
             mode = mode.combine(RollMode::Disadvantage);
         }
 
+        // 5e True Seeing: snapshot up-front so we can suppress the
+        // matching invisibility / illusion advantages and disadvantages
+        // on the per-side condition sweeps below. Keeps the condition-
+        // cohort loops branch-free of the "who is true-sighted?" lookup.
+        let attacker_truesight = self
+            .actors
+            .get(&attacker_id)
+            .is_some_and(|a| a.has_condition(Condition::TrueSighted));
+        let target_truesight = self
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| a.has_condition(Condition::TrueSighted));
+
         // Attacker-side modifiers. The disadvantage / advantage cohorts
         // live on `Condition` itself (`imposes_attacker_disadvantage` /
         // `grants_self_attack_advantage`) so adding a new condition is a
@@ -856,7 +889,14 @@ impl EncounterInstance {
                     mode = mode.combine(RollMode::Disadvantage);
                 }
                 if c.grants_self_attack_advantage() {
-                    mode = mode.combine(RollMode::Advantage);
+                    // 5e True Seeing on the target neuters the attacker's
+                    // invisibility-style concealment advantages (Invisible,
+                    // Blurred, Displaced). Hidden / Helped / Bless / etc.
+                    // are unaffected — they're not concealment.
+                    let suppressed = target_truesight && c.countered_by_truesight();
+                    if !suppressed {
+                        mode = mode.combine(RollMode::Advantage);
+                    }
                 }
                 // Ranged-only attacker disadvantage cohort: Storm Sphere's
                 // gusts throw off bow shots / spell arrows but leave the
@@ -884,18 +924,17 @@ impl EncounterInstance {
                 }
             }
             // 5e Sahuagin Blood Frenzy: melee attacks against a wounded
-            // target (current HP < max HP) get advantage. Passive trait
-            // tagged via the features pool; the gate fires only on melee
-            // swings (RAW). We read the target's HP via `hitpoints` vs
-            // `max_hitpoints` rather than a dedicated "is_wounded" helper
-            // so the check stays close to the source of truth.
+            // target get advantage. Passive trait tagged via the features
+            // pool; the gate fires only on melee swings (RAW). The
+            // wounded predicate routes through `is_wounded` so any future
+            // refinement (half-HP threshold, etc.) lands in one place.
             use crate::actions::class_features::BLOOD_FRENZY_TAG;
             if is_melee
                 && attacker.has_passive_feature(BLOOD_FRENZY_TAG)
                 && self
                     .actors
                     .get(&target_id)
-                    .is_some_and(|t| t.hitpoints() < t.max_hitpoints())
+                    .is_some_and(|t| t.is_wounded())
             {
                 mode = mode.combine(RollMode::Advantage);
             }
@@ -949,7 +988,15 @@ impl EncounterInstance {
                     mode = mode.combine(RollMode::Advantage);
                 }
                 if c.imposes_disadvantage_to_attackers() {
-                    mode = mode.combine(RollMode::Disadvantage);
+                    // 5e True Seeing on the attacker neuters the target's
+                    // invisibility-style concealment disadvantages
+                    // (Invisible, Blurred, Displaced). Dodging / Holy
+                    // Aura / Foreseen / etc. are unaffected — those are
+                    // active defenses, not illusory concealment.
+                    let suppressed = attacker_truesight && c.countered_by_truesight();
+                    if !suppressed {
+                        mode = mode.combine(RollMode::Disadvantage);
+                    }
                 }
                 // Ranged-only disadvantage cohort: Wind Wall deflects
                 // arrows but does nothing against a sword swing. Gated on
@@ -4138,7 +4185,7 @@ impl EncounterInstance {
                     let name = actor.name().to_string();
                     if suppressed {
                         self.log(format!("  {}'s regeneration is suppressed.", name));
-                    } else if actor.hitpoints() < actor.max_hitpoints() {
+                    } else if actor.is_wounded() {
                         let outcome = actor.heal(amt);
                         if matches!(
                             outcome,
@@ -4785,6 +4832,7 @@ impl EncounterInstance {
 mod tests {
     use super::*;
     use crate::actions::action_template::Action;
+    use crate::conditions::ConditionTimer;
     use crate::engine::side_effects::ApplicableSideEffect;
     use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
     use crate::actors::creatures::slimes::SLIME_TEMPLATE;
@@ -42052,6 +42100,234 @@ mod tests {
         assert!(
             !e.actors[&wizard].has_condition(Condition::Slowed),
             "Magnify Gravity must not Slow its own caster"
+        );
+    }
+
+    /// Protection from Poison cleanses an already-poisoned ally and
+    /// installs `Purified` so subsequent poison damage is halved. Pins
+    /// the dual cleanse-then-buff contract that distinguishes the spell
+    /// from Lesser Restoration (cleanse-only).
+    #[test]
+    fn protection_from_poison_cleanses_and_installs_purified() {
+        use crate::actions::spells::PROTECTION_FROM_POISON;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+            .unwrap();
+        // Pre-poison the ally so the cleanse half has something to do.
+        e.actors
+            .get_mut(&ally)
+            .unwrap()
+            .add_condition(Condition::Poisoned, ConditionTimer::Rounds(5));
+        assert!(e.actors[&ally].has_condition(Condition::Poisoned));
+        let tv = vec![ally];
+        let effects = PROTECTION_FROM_POISON.side_effects(&mut e, cleric, Some(&tv), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&ally].has_condition(Condition::Poisoned),
+            "Protection from Poison must clear the active Poisoned install"
+        );
+        assert!(
+            e.actors[&ally].has_condition(Condition::Purified),
+            "Protection from Poison must install the Purified buff"
+        );
+    }
+
+    /// True Seeing on the attacker suppresses the disadvantage that a
+    /// Blurred target would normally impose. Pins the cohort-based
+    /// `countered_by_truesight` gate inside `compute_attack_mode`.
+    #[test]
+    fn true_sight_suppresses_blurred_disadvantage_on_attacker() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Blurred, ConditionTimer::Rounds(10));
+        // Without TrueSighted on attacker, Blurred imposes disadvantage.
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage
+        );
+        // With TrueSighted on the attacker, the Blurred disadvantage drops.
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::TrueSighted, ConditionTimer::Rounds(10));
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Normal
+        );
+    }
+
+    /// Symmetric: when the target has TrueSighted, an attacker's own
+    /// Invisible doesn't grant advantage anymore. Same `countered_by_truesight`
+    /// cohort, attacker-side branch.
+    #[test]
+    fn true_sight_on_target_negates_attacker_invisible_advantage() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Rounds(10));
+        // Invisible attacker normally swings at advantage.
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage
+        );
+        // True Sighted target sees through it — the advantage drops.
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::TrueSighted, ConditionTimer::Rounds(10));
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Normal
+        );
+    }
+
+    /// True Seeing does NOT suppress a Dodging target's disadvantage —
+    /// Dodging is an active defense, not illusory concealment. The
+    /// `countered_by_truesight` cohort intentionally omits Dodging /
+    /// Holy Aura / etc.
+    #[test]
+    fn true_sight_does_not_counter_dodging() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::TrueSighted, ConditionTimer::Rounds(10));
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Dodging, ConditionTimer::Rounds(1));
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Disadvantage,
+            "True Sight must not suppress Dodging's active defense"
+        );
+    }
+
+    /// Immolation installs the `Immolated` condition on a failed save
+    /// and anchors the caster's concentration to the rider — sanity-
+    /// checks the spell wires through to the existing concentration +
+    /// round-end DoT plumbing.
+    #[test]
+    fn immolation_installs_concentration_anchored_burn() {
+        use crate::actions::spells::IMMOLATION;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        // Sweep a handful of seeds to find one where the target failed
+        // the save (full 8d6 + Immolated rider). The shape is
+        // deterministic per-seed; we just want at least one run-through
+        // that exercises the failed-save branch.
+        let mut burned = false;
+        for seed in 0..60 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wizard = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+                .unwrap();
+            // Pad the goblin so it doesn't die in one shot — we want to
+            // observe the post-cast condition state.
+            let pad = 200u32;
+            e.actors.get_mut(&target).unwrap().heal(pad);
+            let tv = vec![target];
+            let effects = IMMOLATION.side_effects(&mut e, wizard, Some(&tv), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e.actors.contains_key(&target)
+                && e.actors[&target].has_condition(Condition::Immolated)
+                && e.actors[&wizard].is_concentrating()
+            {
+                burned = true;
+                break;
+            }
+        }
+        assert!(
+            burned,
+            "Immolation must install Immolated + caster concentration on a failed save (some seed)"
+        );
+    }
+
+    /// `is_wounded` returns true once the actor has taken any damage and
+    /// false at full HP. Pins the new helper that the Blood Frenzy
+    /// advantage gate now reads.
+    #[test]
+    fn is_wounded_tracks_hp_below_max() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(!e.actors[&f].is_wounded(), "full-HP actor isn't wounded");
+        e.actors.get_mut(&f).unwrap().take_damage(1);
+        assert!(
+            e.actors[&f].is_wounded(),
+            "any damage flips is_wounded true"
+        );
+    }
+
+    /// The `Immolated` condition appears in the round-end DoT registry —
+    /// an actor carrying it should take fire damage when
+    /// `apply_condition_round_end_dots` is called for them. Pins the
+    /// `ROUND_END_DOTS` entry so a refactor that drops the row would
+    /// fail loudly.
+    #[test]
+    fn immolated_condition_triggers_round_end_fire_drip() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let f = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&f)
+            .unwrap()
+            .add_condition(Condition::Immolated, ConditionTimer::Rounds(10));
+        let pre_hp = e.actors[&f].hitpoints();
+        e.apply_condition_round_end_dots(f);
+        let post_hp = e.actors[&f].hitpoints();
+        assert!(
+            post_hp < pre_hp,
+            "Immolated must take fire damage at round end (pre {} post {})",
+            pre_hp,
+            post_hp
         );
     }
 }

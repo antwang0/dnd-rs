@@ -266,6 +266,11 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // the wild-shape / Entangle control kit.
     actions.push(&*crate::actions::spells::FREEDOM_OF_MOVEMENT);
     actions.push(&*crate::actions::spells::DARKNESS);
+    // lv2 **Protection from Poison** (abjuration): touch cleanse of
+    // `Poisoned` plus the long-duration `Purified` install. Druid SRD
+    // staple — slots into the same lv2 cleanse lane as Lesser Restoration
+    // with a longer-lasting poison-specific buff rider.
+    actions.push(&*crate::actions::spells::PROTECTION_FROM_POISON);
     // lv5 **Conjure Elemental** (conjuration): summon a single Large fire
     // elemental ally adjacent to the caster, concentration-bound. Sibling
     // to Conjure Animals (lv3, 2× wolves) on the druid's summon lane —

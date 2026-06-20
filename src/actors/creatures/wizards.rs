@@ -563,6 +563,22 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     flat +1 damage rider can't touch.
     actions.push(&*crate::actions::spells::MAGNIFY_GRAVITY);
     actions.push(&*crate::actions::spells::ELEMENTAL_WEAPON);
+    // Latest evocation / divination additions:
+    //   - lv5 **Immolation** (transmutation, XGtE): single-target DEX
+    //     save 8d6 fire (half-on-save); failed-save targets pick up
+    //     `Immolated` for ongoing 4d6 fire / round (round-end DEX save
+    //     to extinguish). Concentration-bound. Slots between Cone of
+    //     Cold (lv5 burst) and Wall of Fire (lv4 zone) on the fire-
+    //     damage lane as sustained single-target pressure.
+    //   - lv6 **True Seeing** (divination, PHB): touch-range ally buff
+    //     that suppresses the disadvantage from a target's `Invisible`
+    //     / `Blurred` / `Displaced` (and the matching attacker advantage
+    //     from `Invisible`). Rounds out the wizard's anti-illusion kit
+    //     next to the lv4 Greater Invisibility (offensive) and lv4
+    //     Polymorph (offensive shape-change) — True Seeing is the
+    //     defensive-counter half against an illusionist opponent.
+    actions.push(&*crate::actions::spells::IMMOLATION);
+    actions.push(&*crate::actions::spells::TRUE_SEEING);
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.
