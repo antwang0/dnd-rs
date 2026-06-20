@@ -6093,16 +6093,14 @@ impl Action for BalorLongsword {
             return effects;
         }
         // Lightning runes rider — fires on hit only (effects non-empty).
-        let bolt = encounter.roll(&Dice::new(3, 8));
-        encounter.log(format!(
-            "  balor runes: 3d8({}) = {} lightning",
-            bolt, bolt
-        ));
-        effects.push(Box::new(DealDamage {
-            actor_id: target_id,
-            amount: bolt,
-            damage_type: DamageType::Lightning,
-        }));
+        add_flat_damage_rider(
+            encounter,
+            target_id,
+            Dice::new(3, 8),
+            DamageType::Lightning,
+            "balor runes",
+            &mut effects,
+        );
         effects
     }
 }
@@ -6157,16 +6155,14 @@ impl Action for BalorWhip {
         if effects.is_empty() {
             return effects;
         }
-        let bolt = encounter.roll(&Dice::new(3, 6));
-        encounter.log(format!(
-            "  balor whip lightning: 3d6({}) = {} lightning",
-            bolt, bolt
-        ));
-        effects.push(Box::new(DealDamage {
-            actor_id: target_id,
-            amount: bolt,
-            damage_type: DamageType::Lightning,
-        }));
+        add_flat_damage_rider(
+            encounter,
+            target_id,
+            Dice::new(3, 6),
+            DamageType::Lightning,
+            "balor whip lightning",
+            &mut effects,
+        );
         effects
     }
 }
@@ -6877,13 +6873,14 @@ impl Action for AnkhegBite {
             true,
         );
         if !effects.is_empty() {
-            let acid = encounter.roll(&Dice::new(1, 6));
-            encounter.log(format!("  acid splash: 1d6({}) acid", acid));
-            effects.push(Box::new(DealDamage {
-                actor_id: target_id,
-                amount: acid,
-                damage_type: DamageType::Acid,
-            }));
+            add_flat_damage_rider(
+                encounter,
+                target_id,
+                Dice::new(1, 6),
+                DamageType::Acid,
+                "acid splash",
+                &mut effects,
+            );
         }
         effects
     }
@@ -7591,16 +7588,14 @@ impl Action for GiantToadBite {
         let Some(target_id) = target_id else {
             return effects;
         };
-        let poison_raw = encounter.roll(&Dice::new(1, 10));
-        encounter.log(format!(
-            "  bite poison: 1d10({}) = {} poison",
-            poison_raw, poison_raw
-        ));
-        effects.push(Box::new(DealDamage {
-            actor_id: target_id,
-            amount: poison_raw,
-            damage_type: DamageType::Poison,
-        }));
+        add_flat_damage_rider(
+            encounter,
+            target_id,
+            Dice::new(1, 10),
+            DamageType::Poison,
+            "bite poison",
+            &mut effects,
+        );
         effects
     }
 }
@@ -8088,13 +8083,14 @@ impl Action for WinterWolfBite {
         if effects.is_empty() {
             return effects;
         }
-        let cold = encounter.roll(&Dice::new(1, 8));
-        encounter.log(format!("  frost rider: 1d8({}) cold", cold));
-        effects.push(Box::new(DealDamage {
-            actor_id: target_id,
-            amount: cold,
-            damage_type: DamageType::Cold,
-        }));
+        add_flat_damage_rider(
+            encounter,
+            target_id,
+            Dice::new(1, 8),
+            DamageType::Cold,
+            "frost rider",
+            &mut effects,
+        );
         effects
     }
 }
@@ -8739,13 +8735,14 @@ impl Action for YuanTiMalisonBite {
         // Poison rider: 1d4 typed poison + CON save vs Poisoned. The
         // poison damage typing means a poison-resistant target still
         // halves the rider while taking the full piercing.
-        let poison = encounter.roll(&Dice::new(1, 4));
-        encounter.log(format!("  yuan-ti bite: 1d4({}) poison rider", poison));
-        effects.push(Box::new(DealDamage {
-            actor_id: target_id,
-            amount: poison,
-            damage_type: DamageType::Poison,
-        }));
+        add_flat_damage_rider(
+            encounter,
+            target_id,
+            Dice::new(1, 4),
+            DamageType::Poison,
+            "yuan-ti bite",
+            &mut effects,
+        );
         let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 12);
         if !save.passed() {
             encounter.log("  yuan-ti bite: venom courses through the target");
@@ -8822,16 +8819,14 @@ impl Action for CambionSpear {
         if effects.is_empty() {
             return effects;
         }
-        let fire = encounter.roll(&Dice::new(2, 6));
-        encounter.log(format!(
-            "  infernal spear: 2d6({}) = {} fire rider",
-            fire, fire
-        ));
-        effects.push(Box::new(DealDamage {
-            actor_id: target_id,
-            amount: fire,
-            damage_type: DamageType::Fire,
-        }));
+        add_flat_damage_rider(
+            encounter,
+            target_id,
+            Dice::new(2, 6),
+            DamageType::Fire,
+            "infernal spear",
+            &mut effects,
+        );
         effects
     }
 }
