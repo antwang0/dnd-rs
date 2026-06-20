@@ -4856,6 +4856,24 @@ mod tests {
             let _ = e.instantiate_creature(&ONI_TEMPLATE, Coordinate::new(8, 6), 1, 61);
             let _ = e.instantiate_creature(&MERROW_TEMPLATE, Coordinate::new(6, 6), 1, 62);
             let _ = e.instantiate_creature(&GIANT_CRAB_TEMPLATE, Coordinate::new(4, 6), 1, 63);
+            // Newest additions: Hook Horror (CR 3 monstrosity — vanilla
+            // 2-hook multi at reach 2, exercises the brute melee bench),
+            // Dragon Turtle (CR 17 gargantuan dragon — bite + 2-claw
+            // mixed-reach multi + CON-DC steam-breath, exercises the
+            // BreathWeapon chassis on a non-elemental DC), and Kraken
+            // (CR 23 gargantuan titan — triple tentacle multi at the
+            // engine's longest melee reach + NoArgs Lightning Storm
+            // recharge burst, exercises the boss-tier picker on the new
+            // self-centered recharge AoE path).
+            use crate::actors::creatures::dragon_turtles::DRAGON_TURTLE_TEMPLATE;
+            use crate::actors::creatures::hook_horrors::HOOK_HORROR_TEMPLATE;
+            use crate::actors::creatures::krakens::KRAKEN_TEMPLATE;
+            let _ = e.instantiate_creature(&HOOK_HORROR_TEMPLATE, Coordinate::new(2, 6), 1, 64);
+            // Place the gargantuan dragon turtle / kraken far enough from
+            // each other and from the other gargantuan / huge actors
+            // (Tarrasque, Hydra) that their 4×4 footprints don't collide.
+            let _ = e.instantiate_creature(&DRAGON_TURTLE_TEMPLATE, Coordinate::new(15, 5), 1, 65);
+            let _ = e.instantiate_creature(&KRAKEN_TEMPLATE, Coordinate::new(20, 5), 1, 66);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

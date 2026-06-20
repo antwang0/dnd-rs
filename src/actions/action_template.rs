@@ -121,6 +121,60 @@ pub fn resolve_burst_save_condition(
     effects
 }
 
+/// LOS-gated burst-save-condition variant for gaze / glare / aura abilities
+/// where bending a stare around a wall would be silly. Extends
+/// `resolve_burst_save_condition` with two extra filters:
+/// 1. Drops any target without line-of-sight to the caster (a gaze can't
+///    bend around a corner — see Mummy / Mummy Lord Dreadful Glare).
+/// 2. Optionally drops targets immune to a damage type — the canonical
+///    proxy for "the undead are unaffected by this fear glare" (necrotic
+///    immunity ≈ undead in this engine; see the Mummy / Mummy Lord glare
+///    RAW gate).
+///
+/// Centralizes the recurring "enemy_burst_targets → LOS gate → immunity
+/// gate → roll save → install on fail" loop that the Mummy / Mummy Lord
+/// glares (and any future bodak-style stare ability) reimplement. The
+/// `radius` is measured from the caster's footprint via
+/// `enemy_burst_targets` — same chokepoint as the spell-burst lane, so
+/// the LOS gate folds in cleanly without needing a separate point arg.
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_los_glare_condition(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    radius: isize,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    condition: crate::conditions::Condition,
+    timer: crate::conditions::ConditionTimer,
+    skip_immune_to_damage: Option<DamageType>,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    use crate::engine::side_effects::ApplyCondition;
+    let Some(caster_loc) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
+        return Vec::new();
+    };
+    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+    for tid in encounter.enemy_burst_targets(caster_id, caster_loc, radius) {
+        if let Some(dt) = skip_immune_to_damage
+            && encounter.actors.get(&tid).is_some_and(|a| a.is_immune_to(dt))
+        {
+            continue;
+        }
+        if !encounter.actor_has_line_of_sight(caster_id, tid) {
+            continue;
+        }
+        let save = encounter.roll_save(tid, save_ability, dc);
+        if save.passed() {
+            continue;
+        }
+        effects.push(Box::new(ApplyCondition {
+            actor_id: tid,
+            condition,
+            timer,
+        }));
+    }
+    effects
+}
+
 /// Sweep targets in a `radius` burst centered on `point` and return their
 /// ids in ascending current-HP order — a target whose current HP exceeds
 /// the running pool stops the sweep (5e Sleep / Color Spray semantics).

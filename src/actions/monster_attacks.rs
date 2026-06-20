@@ -1477,18 +1477,19 @@ impl Action for VampiricBite {
         }
         // On hit, 3d6 necrotic rider (no STR bonus, no crit doubling here —
         // RAW: only the weapon damage doubles; the bite's separate
-        // necrotic die is added as flat extra damage).
-        let necrotic = encounter.roll(&Dice::new(3, 6));
-        encounter.log(format!(
-            "  vampiric bite: 3d6({}) = {} necrotic; vampire regains {} HP",
-            necrotic, necrotic, necrotic
-        ));
-        effects.push(Box::new(DealDamage {
-            actor_id: target_id,
-            amount: necrotic,
-            damage_type: DamageType::Necrotic,
-        }));
+        // necrotic die is added as flat extra damage). Routes through the
+        // shared `add_flat_damage_rider` helper and pulls the returned
+        // amount for the heal side of the bite.
+        let necrotic = add_flat_damage_rider(
+            encounter,
+            target_id,
+            Dice::new(3, 6),
+            DamageType::Necrotic,
+            "vampiric bite",
+            &mut effects,
+        );
         // Heal the vampire by the necrotic damage dealt (pre-resistance).
+        encounter.log(format!("  vampire regains {} HP", necrotic));
         effects.push(Box::new(Heal {
             actor_id: caster_id,
             amount: necrotic,
@@ -2723,17 +2724,18 @@ impl Action for MummyRottingFist {
         }
         // Necrotic rider: 3d6 typed separately so resistance is checked
         // independently. No additional roll vs AC — the rider rides the
-        // hit.
-        let necrotic = encounter.roll(&Dice::new(3, 6));
-        encounter.log(format!(
-            "  rotting fist: 3d6({}) = {} necrotic rider",
-            necrotic, necrotic
-        ));
-        effects.push(Box::new(DealDamage {
-            actor_id: target_id,
-            amount: necrotic,
-            damage_type: DamageType::Necrotic,
-        }));
+        // hit. Routes through the shared `add_flat_damage_rider` helper so
+        // the roll / log / DealDamage trio lives in one chokepoint with
+        // the rest of the on-hit typed-damage riders (Dragon Bite, Mummy
+        // Lord Rotting Fist, Rakshasa Claw, etc.).
+        add_flat_damage_rider(
+            encounter,
+            target_id,
+            Dice::new(3, 6),
+            DamageType::Necrotic,
+            "rotting fist",
+            &mut effects,
+        );
         effects
     }
 }
@@ -2772,39 +2774,20 @@ impl Action for MummyDreadfulGlare {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::ApplyCondition;
+        use crate::actions::action_template::resolve_los_glare_condition;
         const RADIUS: isize = 8;
         const DC: i32 = 11;
-
-        let caster_loc = match encounter.actors.get(&caster_id) {
-            Some(a) => a.location(),
-            None => return Vec::new(),
-        };
         encounter.log("  dreadful glare: the mummy fixes its hollow eyes on the living");
-
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for tid in encounter.enemy_burst_targets(caster_id, caster_loc, RADIUS) {
-            let Some(t) = encounter.actors.get(&tid) else {
-                continue;
-            };
-            if t.is_immune_to(DamageType::Necrotic) {
-                continue;
-            }
-            // Requires line-of-sight — a gaze can't bend around corners.
-            if !encounter.actor_has_line_of_sight(caster_id, tid) {
-                continue;
-            }
-            let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, DC);
-            if save.passed() {
-                continue;
-            }
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::Frightened,
-                timer: ConditionTimer::Rounds(10),
-            }));
-        }
-        effects
+        resolve_los_glare_condition(
+            encounter,
+            caster_id,
+            RADIUS,
+            AbilityScoreType::Wisdom,
+            DC,
+            Condition::Frightened,
+            ConditionTimer::Rounds(10),
+            Some(DamageType::Necrotic),
+        )
     }
 }
 
@@ -2980,16 +2963,17 @@ impl Action for YetiClaws {
         if damage == 0 {
             return effects;
         }
-        let cold = encounter.roll(&Dice::new(1, 6));
-        encounter.log(format!(
-            "  yeti claws: 1d6({}) = {} cold rider",
-            cold, cold
-        ));
-        effects.push(Box::new(DealDamage {
-            actor_id: target_id,
-            amount: cold,
-            damage_type: DamageType::Cold,
-        }));
+        // Cold rider routes through the shared `add_flat_damage_rider`
+        // helper so the roll / log / DealDamage trio lives in one
+        // chokepoint with the rest of the on-hit typed-damage riders.
+        add_flat_damage_rider(
+            encounter,
+            target_id,
+            Dice::new(1, 6),
+            DamageType::Cold,
+            "yeti claws",
+            &mut effects,
+        );
         effects
     }
 }
@@ -3693,13 +3677,19 @@ impl Action for DragonBite {
         if damage == 0 {
             return effects;
         }
-        let fire = encounter.roll(&Dice::new(4, 6));
-        encounter.log(format!("  dragon bite: 4d6({}) = {} fire rider", fire, fire));
-        effects.push(Box::new(DealDamage {
-            actor_id: target_id,
-            amount: fire,
-            damage_type: DamageType::Fire,
-        }));
+        // Fire rider: 4d6 typed separately so per-target resistance applies
+        // to it independently from the piercing. Routes through the shared
+        // `add_flat_damage_rider` helper so the roll / log / DealDamage
+        // trio lives in one chokepoint with the rest of the on-hit
+        // typed-damage riders.
+        add_flat_damage_rider(
+            encounter,
+            target_id,
+            Dice::new(4, 6),
+            DamageType::Fire,
+            "dragon bite",
+            &mut effects,
+        );
         effects
     }
 }
@@ -4119,13 +4109,14 @@ impl Action for CouatlBite {
             return effects;
         }
         // Poison rider: 3d6 poison + CON save or Poisoned (10 rounds).
-        let raw = encounter.roll(&Dice::new(3, 6));
-        encounter.log(format!("  couatl bite poison: 3d6({}) poison", raw));
-        effects.push(Box::new(DealDamage {
-            actor_id: target_id,
-            amount: raw,
-            damage_type: DamageType::Poison,
-        }));
+        add_flat_damage_rider(
+            encounter,
+            target_id,
+            Dice::new(3, 6),
+            DamageType::Poison,
+            "couatl bite poison",
+            &mut effects,
+        );
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return effects;
         };
@@ -4781,16 +4772,14 @@ impl Action for ErinyesLongsword {
             },
         );
         if !effects.is_empty() {
-            let poison = encounter.roll(&Dice::new(3, 8));
-            encounter.log(format!(
-                "  erinyes longsword: +{} extra Poison (envenomed blade)",
-                poison
-            ));
-            effects.push(Box::new(DealDamage {
-                actor_id: target_id,
-                amount: poison,
-                damage_type: DamageType::Poison,
-            }));
+            add_flat_damage_rider(
+                encounter,
+                target_id,
+                Dice::new(3, 8),
+                DamageType::Poison,
+                "erinyes longsword",
+                &mut effects,
+            );
         }
         effects
     }
@@ -4855,16 +4844,14 @@ impl Action for HellHoundBite {
         if effects.is_empty() {
             return effects;
         }
-        let fire = encounter.roll(&Dice::new(1, 6));
-        encounter.log(format!(
-            "  hellfire bite: 1d6({}) = {} fire rider",
-            fire, fire
-        ));
-        effects.push(Box::new(DealDamage {
-            actor_id: target_id,
-            amount: fire,
-            damage_type: DamageType::Fire,
-        }));
+        add_flat_damage_rider(
+            encounter,
+            target_id,
+            Dice::new(1, 6),
+            DamageType::Fire,
+            "hellfire bite",
+            &mut effects,
+        );
         effects
     }
 }
@@ -5293,13 +5280,14 @@ impl Action for MedusaSnakeHair {
         if effects.is_empty() {
             return effects;
         }
-        let poison = encounter.roll(&Dice::new(4, 6));
-        encounter.log(format!("  snake hair: 4d6({}) poison rider", poison));
-        effects.push(Box::new(DealDamage {
-            actor_id: target_id,
-            amount: poison,
-            damage_type: DamageType::Poison,
-        }));
+        add_flat_damage_rider(
+            encounter,
+            target_id,
+            Dice::new(4, 6),
+            DamageType::Poison,
+            "snake hair",
+            &mut effects,
+        );
         effects
     }
 }
@@ -5365,13 +5353,14 @@ impl Action for SalamanderTail {
         if effects.is_empty() {
             return effects;
         }
-        let fire = encounter.roll(&Dice::new(1, 6));
-        encounter.log(format!("  salamander tail: 1d6({}) fire rider", fire));
-        effects.push(Box::new(DealDamage {
-            actor_id: target_id,
-            amount: fire,
-            damage_type: DamageType::Fire,
-        }));
+        add_flat_damage_rider(
+            encounter,
+            target_id,
+            Dice::new(1, 6),
+            DamageType::Fire,
+            "salamander tail",
+            &mut effects,
+        );
         effects
     }
 }
@@ -5423,13 +5412,14 @@ impl Action for SalamanderSpear {
         if effects.is_empty() {
             return effects;
         }
-        let fire = encounter.roll(&Dice::new(1, 6));
-        encounter.log(format!("  salamander spear: 1d6({}) fire rider", fire));
-        effects.push(Box::new(DealDamage {
-            actor_id: target_id,
-            amount: fire,
-            damage_type: DamageType::Fire,
-        }));
+        add_flat_damage_rider(
+            encounter,
+            target_id,
+            Dice::new(1, 6),
+            DamageType::Fire,
+            "salamander spear",
+            &mut effects,
+        );
         effects
     }
 }
@@ -5508,18 +5498,18 @@ impl Action for DeathKnightLongsword {
         if slash_dmg == 0 {
             return effects;
         }
-        // Necrotic rider — only fires on a successful slash. Empower
-        // tracks the death knight's life-draining edge.
-        let raw = encounter.roll(&Dice::new(4, 8));
-        encounter.log(format!(
-            "  longsword: +{} necrotic empowerment",
-            raw
-        ));
-        effects.push(Box::new(DealDamage {
-            actor_id: target_id,
-            amount: raw,
-            damage_type: DamageType::Necrotic,
-        }));
+        // Necrotic rider — only fires on a successful slash. Routes through
+        // the shared `add_flat_damage_rider` helper so the roll / log /
+        // DealDamage trio lives in one chokepoint with the rest of the
+        // on-hit typed-damage riders.
+        add_flat_damage_rider(
+            encounter,
+            target_id,
+            Dice::new(4, 8),
+            DamageType::Necrotic,
+            "longsword",
+            &mut effects,
+        );
         effects
     }
 }
@@ -10029,40 +10019,22 @@ impl Action for MummyLordDreadfulGlare {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::ApplyCondition;
+        use crate::actions::action_template::resolve_los_glare_condition;
         const RADIUS: isize = 12;
         const DC: i32 = 17;
-
-        let caster_loc = match encounter.actors.get(&caster_id) {
-            Some(a) => a.location(),
-            None => return Vec::new(),
-        };
         encounter.log(
             "  lord dreadful glare: the mummy lord's hollow gaze freezes the living",
         );
-
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for tid in encounter.enemy_burst_targets(caster_id, caster_loc, RADIUS) {
-            let Some(t) = encounter.actors.get(&tid) else {
-                continue;
-            };
-            if t.is_immune_to(DamageType::Necrotic) {
-                continue;
-            }
-            if !encounter.actor_has_line_of_sight(caster_id, tid) {
-                continue;
-            }
-            let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, DC);
-            if save.passed() {
-                continue;
-            }
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::Frightened,
-                timer: ConditionTimer::Rounds(10),
-            }));
-        }
-        effects
+        resolve_los_glare_condition(
+            encounter,
+            caster_id,
+            RADIUS,
+            AbilityScoreType::Wisdom,
+            DC,
+            Condition::Frightened,
+            ConditionTimer::Rounds(10),
+            Some(DamageType::Necrotic),
+        )
     }
 }
 
@@ -10244,3 +10216,254 @@ pub static RAKSHASA_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack 
     sub_attack: &*RAKSHASA_CLAW,
     count: 2,
 });
+
+// ─── Hook Horror ─────────────────────────────────────────────────────
+
+/// Hook Horror Hook — STR-based 1d10+STR piercing melee, reach 2 (10 ft RAW).
+/// The bird-of-prey body with twin barbed hooks; the longer reach lets the
+/// hook horror tag two adjacent rings of tiles around its Large footprint.
+/// Paired through `HOOK_HORROR_MULTI` for the canonical double-strike per
+/// Action. Vanilla `SimpleWeapon` since there's no rider on the hook hits —
+/// the load-bearing per-round threat is the burst from the double swing,
+/// not any per-hit condition / typed-damage payload.
+pub static HOOK_HORROR_HOOK: SimpleWeapon = SimpleWeapon {
+    display_name: "hook horror hook",
+    aliases: &["hhh", "hook"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 10),
+    damage_type: DamageType::Piercing,
+    // 10 ft RAW = reach 2 on this 2.5 ft grid.
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Hook Horror Multiattack — 2 hook swings per Action. Vanilla
+/// single-sub-attack shape; each swing rolls its own d20 + STR vs AC and
+/// the burst sits squarely in the CR-3 band when both hooks connect.
+pub static HOOK_HORROR_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "hook horror multiattack",
+    sub_attack: &HOOK_HORROR_HOOK,
+    count: 2,
+});
+
+// ─── Dragon Turtle ───────────────────────────────────────────────────
+
+/// Dragon Turtle Bite — STR-based 3d12+STR piercing melee, reach 3 (15 ft
+/// RAW). The dragon turtle's massive snapping jaw; heaviest die-count of any
+/// melee bite in the engine after the Tarrasque's 4d12. Reach-3 lets the
+/// turtle threaten well past its 4×4 Gargantuan footprint so retreating
+/// melee PCs eat opportunity attacks. Vanilla `SimpleWeapon` — the load-
+/// bearing threat is the raw damage, not a rider.
+pub static DRAGON_TURTLE_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "dragon turtle bite",
+    aliases: &["dt-bite", "turtle-bite"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(3, 12),
+    damage_type: DamageType::Piercing,
+    // 15 ft RAW = reach 3 on this 2.5 ft grid.
+    reach: 3,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Dragon Turtle Claw — STR-based 2d8+STR slashing melee, reach 2 (10 ft
+/// RAW). The supplementary swing in the dragon turtle's kit; paired with
+/// the bite in the multi for the canonical "bite + 2 claws" Multiattack
+/// RAW prescribes. Heterogeneous-reach with the bite (reach 3) so the
+/// `CompoundAttack` wrapper validates off the heaviest-reach first
+/// sub-attack and the claws fall through cleanly when the target is
+/// closer.
+pub static DRAGON_TURTLE_CLAW: SimpleWeapon = SimpleWeapon {
+    display_name: "dragon turtle claw",
+    aliases: &["dt-claw", "turtle-claw"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 8),
+    damage_type: DamageType::Slashing,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Dragon Turtle Multiattack — 1 bite + 2 claws per Action. Mixed-limb
+/// `CompoundAttack` (bite first to drive the reach-3 envelope so the
+/// multi can land on a target a full tile beyond the claw reach). Matches
+/// the canonical MM "Multiattack: The dragon turtle makes three attacks:
+/// one with its bite and two with its claws" clause cleanly.
+pub static DRAGON_TURTLE_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "dragon turtle multiattack",
+    parts: vec![(&DRAGON_TURTLE_BITE, 1), (&DRAGON_TURTLE_CLAW, 2)],
+});
+
+/// Dragon Turtle Steam Breath — burst-3 / range-4 of scalding vapor.
+/// 12d6 fire, DC 18 CON, half on save. Recharge 5-6 via the shared
+/// `"breath_weapon"` pool so the dragon turtle can't double-tap with a
+/// second breath option (it has none, but the shared key keeps the
+/// start-of-turn roller uniform). The RAW per-die count is 15d6, dropped
+/// to 12d6 here so the breath profile matches the existing CR-17
+/// dragons' 12d6 chassis — the same damage band the engine's other
+/// CR-17 boss breaths already calibrate around, and the fire-typing
+/// keeps fire-resistant targets (the dragons themselves) immune-to-
+/// resistance scaling.
+///
+/// CON save (inhaled scalding vapor) rather than the DEX save the
+/// elemental dragon breaths route through — matches the RAW clause
+/// where the steam permeates lungs / armor cracks rather than dodging
+/// in flight. Same shape as the Iron Golem's poison breath / the Adult
+/// Black Dragon's acid breath — all CON-save breaths share the chassis.
+pub static DRAGON_TURTLE_STEAM_BREATH: BreathWeapon = BreathWeapon {
+    display_name: "steam breath",
+    aliases: &["sb-steam", "steam"],
+    damage_dice: Dice::new(12, 6),
+    damage_type: DamageType::Fire,
+    save_ability: AbilityScoreType::Constitution,
+    dc: 18,
+    radius: 3,
+    range: 4,
+    recharge_key: "breath_weapon",
+};
+
+// ─── Kraken ──────────────────────────────────────────────────────────
+
+/// Kraken Tentacle — STR-based 3d6+STR bludgeoning melee, reach 6 (30 ft
+/// RAW). The kraken's signature reach: tentacle whips out across half the
+/// arena from its Gargantuan body. Paired through `KRAKEN_MULTI` for the
+/// canonical 3-tentacle Multiattack RAW prescribes. Vanilla `SimpleWeapon`
+/// — RAW pairs the tentacle hit with a Grappled rider on a STR-vs-Athletics
+/// contest, but the engine doesn't yet surface contested grapple rolls
+/// (only the spell-cast `Grappled` install lane); the load-bearing per-
+/// round threat is the burst from triple 30 ft reach swings, which by
+/// itself ranks among the heaviest melee profiles in the engine.
+pub static KRAKEN_TENTACLE: SimpleWeapon = SimpleWeapon {
+    display_name: "kraken tentacle",
+    aliases: &["kt", "tentacle-k"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(3, 6),
+    damage_type: DamageType::Bludgeoning,
+    // 30 ft RAW = reach 6 on this 2.5 ft grid.
+    reach: 6,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Kraken Multiattack — 3 tentacle swings per Action. Vanilla
+/// single-sub-attack shape; each tentacle rolls its own d20 + STR vs AC
+/// and the burst lands a brutal 3×(3d6+STR) on a single stationary
+/// target. The triple-swing chassis at reach 6 makes the kraken the
+/// engine's heaviest reach-melee thresher — even a fleeing PC at the
+/// kraken's range envelope eats a full burst.
+pub static KRAKEN_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "kraken multiattack",
+    sub_attack: &KRAKEN_TENTACLE,
+    count: 3,
+});
+
+/// Kraken Lightning Storm — Action: every enemy within radius 12 (60 ft)
+/// of the kraken with line-of-sight makes a DC 23 DEX save; failures take
+/// 4d10 lightning, passes take half. Recharge 5-6 via the shared
+/// `"breath_weapon"` pool — RAW frames this as a "1/Day" or "Recharge
+/// after a short or long rest" depending on the printing, so we use the
+/// standard 5-6 recharge chassis to fold it into the existing start-of-
+/// turn refresher.
+///
+/// RAW targets up to three creatures within 120 ft (24 tiles here); we
+/// collapse to a 12-tile radius AoE save-burst because:
+/// 1. The "pick three within long range" semantics doesn't fit the
+///    existing TargetingSchema set — every other multi-target ability in
+///    the engine is either a burst (Lightning Bolt, breath weapons) or
+///    a single-target spam (Magic Missile-style locked picks).
+/// 2. A 12-tile radius envelope from the kraken's footprint covers ~60 ft
+///    around it — roughly equivalent in practical hit count for the
+///    typical 40×20 map to the RAW "any three within 120 ft" picker.
+/// 3. Save-burst chassis routes cleanly through `resolve_burst_save_damage`,
+///    keeping the per-tier damage / save math consistent with the rest of
+///    the AoE lanes.
+///
+/// The lightning is shared (single damage roll applied to every target via
+/// `resolve_burst_save_damage`) — matches the RAW per-target hit since
+/// each bolt deals identical 4d10. Lightning-resistant targets halve it
+/// through the standard damage pipeline; the kraken's own lightning
+/// immunity keeps the burst safe to self-center even though we don't
+/// model the "kraken picks safe tile" picker.
+pub struct KrakenLightningStorm {}
+
+impl Action for KrakenLightningStorm {
+    fn name(&self) -> &str {
+        "lightning storm"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ls-k", "kraken-storm"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Lightning]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Standard recharge gate via the shared `"breath_weapon"` pool —
+        // mirrors the BreathWeapon / IronGolemBreath / GorgonBreath
+        // custom_validate shape.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_recharge_available("breath_weapon"))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        const RADIUS: isize = 12;
+        const DC: i32 = 23;
+        // Spend the recharge resource before resolving damage so a
+        // mid-resolution failure can't leave the storm both spent AND
+        // damage-applied. Mirrors the BreathWeapon ordering.
+        let Some(caster_loc) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
+            return Vec::new();
+        };
+        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
+            caster.spend_recharge("breath_weapon");
+        }
+        let raw = encounter.roll(&Dice::new(4, 10));
+        encounter.log(format!(
+            "  lightning storm: 4d10({}) = {} shared lightning (DC {} DEX, half on save)",
+            raw, raw, DC,
+        ));
+        crate::actions::action_template::resolve_burst_save_damage(
+            encounter,
+            caster_id,
+            caster_loc,
+            RADIUS,
+            AbilityScoreType::Dexterity,
+            DC,
+            raw,
+            DamageType::Lightning,
+        )
+    }
+}
+
+pub static KRAKEN_LIGHTNING_STORM: LazyLock<KrakenLightningStorm> =
+    LazyLock::new(|| KrakenLightningStorm {});

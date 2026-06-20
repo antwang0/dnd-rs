@@ -165,3 +165,6 @@ pub mod gibbering_mouthers;
 pub mod iron_golems;
 pub mod mummy_lords;
 pub mod rakshasas;
+pub mod hook_horrors;
+pub mod dragon_turtles;
+pub mod krakens;

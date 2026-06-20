@@ -139,6 +139,9 @@ use crate::actors::creatures::gibbering_mouthers::GIBBERING_MOUTHER_TEMPLATE;
 use crate::actors::creatures::iron_golems::IRON_GOLEM_TEMPLATE;
 use crate::actors::creatures::mummy_lords::MUMMY_LORD_TEMPLATE;
 use crate::actors::creatures::rakshasas::RAKSHASA_TEMPLATE;
+use crate::actors::creatures::hook_horrors::HOOK_HORROR_TEMPLATE;
+use crate::actors::creatures::dragon_turtles::DRAGON_TURTLE_TEMPLATE;
+use crate::actors::creatures::krakens::KRAKEN_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -2845,6 +2848,25 @@ impl EncounterInstance {
             &MUMMY_LORD_TEMPLATE,
             &IRON_GOLEM_TEMPLATE,
             &RAKSHASA_TEMPLATE,
+            // Newest additions filling the low-CR brute, the aquatic
+            // boss-dragon, and the apex aquatic-titan slots:
+            //   - Hook Horror (CR 3 large monstrosity): underdark
+            //     vulture-pincer predator, vanilla 2-hook multi at reach 2.
+            //     Fills the brute-melee bench between Owlbear (CR 3) and
+            //     Hill Giant (CR 5) at the low-mid tier.
+            //   - Dragon Turtle (CR 17 gargantuan dragon): the aquatic
+            //     answer to Adult Red Dragon — bite + 2-claw multi plus a
+            //     12d6 fire-typed steam breath (CON save) on the standard
+            //     recharge-5/6 chassis.
+            //   - Kraken (CR 23 gargantuan titan-monstrosity): triple
+            //     tentacle multi at reach 6 (the engine's longest melee
+            //     reach) plus a Lightning Storm save-burst recharge.
+            //     Lightning immune, fear / paralysis immune, Magic
+            //     Resistance + 3 Legendary Resistances + 3 Legendary
+            //     Actions — the canonical aquatic apex boss.
+            &HOOK_HORROR_TEMPLATE,
+            &DRAGON_TURTLE_TEMPLATE,
+            &KRAKEN_TEMPLATE,
         ]
     }
 
@@ -24726,12 +24748,13 @@ mod tests {
             // On a landed hit the goblin's HP should drop by more than
             // the slashing max (2d8+4 = 20 worst case) — the poison
             // rider adds 3d8 on top. We instead just verify any HP drop
-            // implies the side effect ran; the log will carry the
-            // "+N extra Poison" line.
+            // implies the side effect ran; the rider log emitted by
+            // `add_flat_damage_rider` follows the shared
+            // "{name}: {dice}(X) = X poison rider" shape.
             if e.actors
                 .get(&g)
                 .is_some_and(|a| a.hitpoints() < before)
-                && e.messages().iter().any(|m| m.contains("extra Poison"))
+                && e.messages().iter().any(|m| m.contains("poison rider"))
             {
                 saw_poison = true;
                 break;
