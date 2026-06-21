@@ -148,6 +148,9 @@ use crate::actors::creatures::androsphinxes::ANDROSPHINX_TEMPLATE;
 use crate::actors::creatures::unicorns::UNICORN_TEMPLATE;
 use crate::actors::creatures::driders::DRIDER_TEMPLATE;
 use crate::actors::creatures::sea_hags::SEA_HAG_TEMPLATE;
+use crate::actors::creatures::night_hags::NIGHT_HAG_TEMPLATE;
+use crate::actors::creatures::spirit_nagas::SPIRIT_NAGA_TEMPLATE;
+use crate::actors::creatures::otyughs::OTYUGH_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -2942,6 +2945,25 @@ impl EncounterInstance {
             &UNICORN_TEMPLATE,
             &DRIDER_TEMPLATE,
             &SEA_HAG_TEMPLATE,
+            // Newest additions filling the CR-5 fiend / CR-8 caster /
+            // CR-5 aberration lanes:
+            //   - Night Hag (CR 5 medium fiend): apex of the hag trio
+            //     (Sea Hag CR 2, Green Hag CR 3, Night Hag CR 5) —
+            //     2-claw multi plus Magic Resistance, non-magical-BPS /
+            //     cold / fire resistance, and Charmed condition immunity.
+            //   - Spirit Naga (CR 8 large monstrosity): snake-bodied
+            //     caster with a reach-2 bite (1d6+STR + 7d8 poison save
+            //     half) plus a Sleep / Charm Person / Hold Person /
+            //     Lightning Bolt + Sacred Flame spell slate. Slots
+            //     between Drider (CR 6) and Cloud Giant (CR 9).
+            //   - Otyugh (CR 5 large aberration): garbage-eating tentacle
+            //     horror — 1 bite + 2 tentacles compound multi, with
+            //     reach-2 tentacles that grapple via the Restrained
+            //     condition envelope. The brawler-grappler answer to the
+            //     Night Hag's caster-flavored CR 5 slot.
+            &NIGHT_HAG_TEMPLATE,
+            &SPIRIT_NAGA_TEMPLATE,
+            &OTYUGH_TEMPLATE,
         ]
     }
 

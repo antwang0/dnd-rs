@@ -114,6 +114,62 @@ pub fn save_or_damage_rider(
     save
 }
 
+/// Resolve a single weapon swing whose attack and damage modifiers both
+/// derive from the same ability (the standard "STR-to-hit STR-to-damage"
+/// shape), at an arbitrary reach. Returns `(effects, damage_dealt)` so the
+/// caller can chain riders that gate on the actual damage (a save-or-
+/// extra-damage clause, a max-HP drain equal to the necrotic dealt, a
+/// self-heal equal to half the damage, etc.). Returns `(empty, 0)` on a
+/// missing caster / target — same fail-quiet contract as
+/// `simple_weapon_attack`.
+///
+/// Centralizes the recurring 4-line `caster.ability_modifier(X) +
+/// proficiency_bonus() / caster.ability_modifier(X) / resolve_attack_outcome
+/// with AttackParams { ... }` block used by Rakshasa Claw, Mummy Lord
+/// Rotting Fist, Vampire Bite, Yeti Claw, and the new Spirit Naga Bite /
+/// Otyugh Tentacle. Companion to `simple_weapon_attack` (single-return,
+/// vanilla MELEE_REACH); use this variant when you need the damage value
+/// for a rider OR a non-standard reach (10ft reach-2 tentacles, etc.).
+///
+/// `reach` is in tile-gap units — `MELEE_REACH` for a standard 5ft swing,
+/// 2 for a 10ft reach weapon, etc. Pass `is_spell = false` (the default
+/// for weapon swings); spell-attack variants should still build their
+/// own `AttackParams` since they typically need a different attack
+/// ability (spellcasting mod) and the metamagic-prime flag.
+#[allow(clippy::too_many_arguments)]
+pub fn weapon_swing_with_damage(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    target_id: usize,
+    action_name: &'static str,
+    ability: AbilityScoreType,
+    damage_dice: Dice,
+    damage_type: DamageType,
+    is_melee: bool,
+    long_range: Option<isize>,
+) -> (Vec<Box<dyn ApplicableSideEffect>>, u32) {
+    let Some(caster) = encounter.actors.get(&caster_id) else {
+        return (Vec::new(), 0);
+    };
+    let attack_mod = caster.ability_modifier(ability) + caster.proficiency_bonus();
+    let damage_mod = caster.ability_modifier(ability);
+    crate::engine::attack::resolve_attack_outcome(
+        encounter,
+        AttackParams {
+            caster_id,
+            target_id,
+            action_name,
+            attack_bonus: attack_mod,
+            damage_dice,
+            damage_bonus: damage_mod,
+            damage_type,
+            is_melee,
+            long_range,
+            is_spell: false,
+        },
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn simple_weapon_attack_ranged(
     encounter: &mut EncounterInstance,
@@ -180,6 +236,41 @@ pub struct SimpleWeapon {
     /// means no long-range penalty (melee weapons). Longbow: 12 tiles
     /// (30ft normal), reach 20 tiles (50ft max). Shortbow: 8 tiles, reach 12.
     pub normal_range: Option<isize>,
+}
+
+impl SimpleWeapon {
+    /// Const constructor for the standard "melee swing using one ability
+    /// for both attack and damage" shape: STR-based 1d6 piercing bite,
+    /// DEX-based 1d4 piercing dagger, etc. Pins the boilerplate fields
+    /// (`is_melee = true`, `reach = MELEE_REACH`, `requires_los = false`,
+    /// `cost_resource = Action`, `normal_range = None`,
+    /// `damage_ability = Some(attack_ability)`) so a new attack literal
+    /// collapses from a 12-field struct expression to a 5-argument call.
+    /// Callers who need a non-standard reach or an Action/BonusAction
+    /// override should construct the struct directly — those are rare
+    /// enough that a second const constructor would just shift the
+    /// complexity sideways.
+    pub const fn melee(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        attack_ability: AbilityScoreType,
+        damage_dice: Dice,
+        damage_type: DamageType,
+    ) -> Self {
+        Self {
+            display_name,
+            aliases,
+            attack_ability,
+            damage_ability: Some(attack_ability),
+            damage_dice,
+            damage_type,
+            reach: MELEE_REACH,
+            is_melee: true,
+            requires_los: false,
+            cost_resource: Resource::Action,
+            normal_range: None,
+        }
+    }
 }
 
 impl Action for SimpleWeapon {
@@ -277,36 +368,24 @@ pub static LONGBOW: SimpleWeapon = SimpleWeapon {
 
 /// Generic STR-based 2d6 bludgeoning slam used by zombies. Stays as the
 /// canonical "monster fist" attack so multislams (and tests) reference it.
-pub static SLAM: SimpleWeapon = SimpleWeapon {
-    display_name: "slam",
-    aliases: &["slm"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(2, 6),
-    damage_type: DamageType::Bludgeoning,
-    reach: MELEE_REACH,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static SLAM: SimpleWeapon = SimpleWeapon::melee(
+    "slam",
+    &["slm"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Bludgeoning,
+);
 
 /// Scimitar — generic STR-based 1d6 slashing melee attack. Used by
 /// goblins and other light melee creatures that don't have a flashy
 /// rider effect.
-pub static SCIMITAR: SimpleWeapon = SimpleWeapon {
-    display_name: "scimitar",
-    aliases: &["sc"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(1, 6),
-    damage_type: DamageType::Slashing,
-    reach: MELEE_REACH,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static SCIMITAR: SimpleWeapon = SimpleWeapon::melee(
+    "scimitar",
+    &["sc"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Slashing,
+);
 
 /// Shortbow — DEX-based 1d4 piercing ranged attack on a *bonus action*.
 /// Pairs with a primary action attack; reach 12 tiles (≈30ft).
@@ -326,19 +405,13 @@ pub static SHORTBOW: SimpleWeapon = SimpleWeapon {
 
 /// Dagger — finesse 1d4 piercing melee weapon. STR-or-DEX choice;
 /// we use DEX which is the typical kobold / rogue stat. Cost 1 Action.
-pub static DAGGER: SimpleWeapon = SimpleWeapon {
-    display_name: "dagger",
-    aliases: &["dag"],
-    attack_ability: AbilityScoreType::Dexterity,
-    damage_ability: Some(AbilityScoreType::Dexterity),
-    damage_dice: Dice::new(1, 4),
-    damage_type: DamageType::Piercing,
-    reach: MELEE_REACH,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static DAGGER: SimpleWeapon = SimpleWeapon::melee(
+    "dagger",
+    &["dag"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 4),
+    DamageType::Piercing,
+);
 
 /// Greatclub — Ogre's signature weapon. STR-based 1d10 bludgeoning with
 /// **reach 2** (10ft) — first polearm-style attack in the codebase.
@@ -362,19 +435,13 @@ pub static GREATCLUB: SimpleWeapon = SimpleWeapon {
 /// grip toggle the picker doesn't surface). Slots between scimitar (1d6)
 /// and greataxe (1d12) for STR-build martials who want a bludgeoning
 /// option (some creatures resist slashing / piercing).
-pub static WARHAMMER: SimpleWeapon = SimpleWeapon {
-    display_name: "warhammer",
-    aliases: &["wh", "hammer"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(1, 8),
-    damage_type: DamageType::Bludgeoning,
-    reach: MELEE_REACH,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static WARHAMMER: SimpleWeapon = SimpleWeapon::melee(
+    "warhammer",
+    &["wh", "hammer"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 8),
+    DamageType::Bludgeoning,
+);
 
 /// Generic STR-based bite attack — 1d6+STR piercing, no rider. Use this
 /// for creatures whose bite is pure damage (Troll, most beasts). Creatures
@@ -382,19 +449,13 @@ pub static WARHAMMER: SimpleWeapon = SimpleWeapon {
 /// variant instead. Vanilla `SimpleWeapon` since the bite is pure damage —
 /// the original bespoke `Bite` impl re-stated the same `simple_weapon_attack`
 /// call SimpleWeapon already wraps.
-pub static BITE: SimpleWeapon = SimpleWeapon {
-    display_name: "bite",
-    aliases: &["bt"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(1, 6),
-    damage_type: DamageType::Piercing,
-    reach: MELEE_REACH,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static BITE: SimpleWeapon = SimpleWeapon::melee(
+    "bite",
+    &["bt"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+);
 
 /// Melee attack that, on a hit, forces a STR save (DC = 8 + prof + STR mod) or knocks the
 /// target prone. Demonstrates the save-then-condition pattern: damage
@@ -675,19 +736,13 @@ pub static SPIDER_BITE: LazyLock<SpiderBite> = LazyLock::new(|| SpiderBite {});
 /// Vanilla `SimpleWeapon`: the Extra Attack rider is already handled
 /// inside `SimpleWeapon::side_effects`, so the bespoke `Greataxe` impl
 /// was duplicating the standard chassis.
-pub static GREATAXE: SimpleWeapon = SimpleWeapon {
-    display_name: "greataxe",
-    aliases: &["ga"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(1, 12),
-    damage_type: DamageType::Slashing,
-    reach: MELEE_REACH,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static GREATAXE: SimpleWeapon = SimpleWeapon::melee(
+    "greataxe",
+    &["ga"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 12),
+    DamageType::Slashing,
+);
 
 /// Heavy Crossbow — DEX-based 1d10 piercing ranged. Differs from the
 /// Longbow in damage die (1d10 vs 1d8) and conceptually loading time
@@ -2315,26 +2370,20 @@ impl Action for WightLifeDrain {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let attack_mod = caster.ability_modifier(AbilityScoreType::Strength)
-            + caster.proficiency_bonus();
-        let damage_mod = caster.ability_modifier(AbilityScoreType::Strength);
-        let (mut effects, damage) = crate::engine::attack::resolve_attack_outcome(
+        // STR-based melee swing — `weapon_swing_with_damage` collapses the
+        // caster-mod / AttackParams boilerplate and returns `damage` so
+        // the max-HP-drain rider mirrors the pre-mitigation necrotic
+        // packet (resistance to necrotic doesn't double-protect the drain).
+        let (mut effects, damage) = weapon_swing_with_damage(
             encounter,
-            AttackParams {
-                caster_id,
-                target_id,
-                action_name: "life drain",
-                attack_bonus: attack_mod,
-                damage_dice: Dice::new(1, 6),
-                damage_bonus: damage_mod,
-                damage_type: DamageType::Necrotic,
-                is_melee: true,
-                long_range: None,
-                is_spell: false,
-            },
+            caster_id,
+            target_id,
+            "life drain",
+            AbilityScoreType::Strength,
+            Dice::new(1, 6),
+            DamageType::Necrotic,
+            true,
+            None,
         );
         if damage == 0 {
             return effects;
@@ -2604,26 +2653,19 @@ impl Action for MummyRottingFist {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let attack_mod = caster.ability_modifier(AbilityScoreType::Strength)
-            + caster.proficiency_bonus();
-        let damage_mod = caster.ability_modifier(AbilityScoreType::Strength);
-        let (mut effects, damage) = crate::engine::attack::resolve_attack_outcome(
+        // STR-based melee swing — `weapon_swing_with_damage` collapses the
+        // caster-mod / AttackParams boilerplate and returns `damage` so
+        // the necrotic rider can gate cleanly on a confirmed hit.
+        let (mut effects, damage) = weapon_swing_with_damage(
             encounter,
-            AttackParams {
-                caster_id,
-                target_id,
-                action_name: "rotting fist",
-                attack_bonus: attack_mod,
-                damage_dice: Dice::new(2, 6),
-                damage_bonus: damage_mod,
-                damage_type: DamageType::Bludgeoning,
-                is_melee: true,
-                long_range: None,
-                is_spell: false,
-            },
+            caster_id,
+            target_id,
+            "rotting fist",
+            AbilityScoreType::Strength,
+            Dice::new(2, 6),
+            DamageType::Bludgeoning,
+            true,
+            None,
         );
         if damage == 0 {
             return effects;
@@ -2845,26 +2887,19 @@ impl Action for YetiClaws {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let attack_mod = caster.ability_modifier(AbilityScoreType::Strength)
-            + caster.proficiency_bonus();
-        let damage_mod = caster.ability_modifier(AbilityScoreType::Strength);
-        let (mut effects, damage) = crate::engine::attack::resolve_attack_outcome(
+        // STR-based melee swing — `weapon_swing_with_damage` collapses the
+        // caster-mod / AttackParams boilerplate and returns `damage` so
+        // the cold rider can gate cleanly on a confirmed hit.
+        let (mut effects, damage) = weapon_swing_with_damage(
             encounter,
-            AttackParams {
-                caster_id,
-                target_id,
-                action_name: "yeti claws",
-                attack_bonus: attack_mod,
-                damage_dice: Dice::new(1, 6),
-                damage_bonus: damage_mod,
-                damage_type: DamageType::Slashing,
-                is_melee: true,
-                long_range: None,
-                is_spell: false,
-            },
+            caster_id,
+            target_id,
+            "yeti claws",
+            AbilityScoreType::Strength,
+            Dice::new(1, 6),
+            DamageType::Slashing,
+            true,
+            None,
         );
         if damage == 0 {
             return effects;
@@ -3556,29 +3591,21 @@ impl Action for DragonBite {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        // Piercing bite first; on hit, layer 4d6 fire as a separate
-        // DealDamage so immunity / resistance applies to each pass.
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let attack_mod =
-            caster.ability_modifier(AbilityScoreType::Strength)
-                + caster.proficiency_bonus();
-        let str_mod = caster.ability_modifier(AbilityScoreType::Strength);
-        let (mut effects, damage) = crate::engine::attack::resolve_attack_outcome(
+        // STR-based melee swing — `weapon_swing_with_damage` collapses the
+        // caster-mod / AttackParams boilerplate and returns `damage` so
+        // the fire rider can gate cleanly on a confirmed hit. The fire
+        // layer rides as a separate DealDamage so per-target resistance /
+        // immunity applies to each damage type independently.
+        let (mut effects, damage) = weapon_swing_with_damage(
             encounter,
-            AttackParams {
-                caster_id,
-                target_id,
-                action_name: "dragon bite",
-                attack_bonus: attack_mod,
-                damage_dice: Dice::new(2, 10),
-                damage_bonus: str_mod,
-                damage_type: DamageType::Piercing,
-                is_melee: true,
-                long_range: None,
-                is_spell: false,
-            },
+            caster_id,
+            target_id,
+            "dragon bite",
+            AbilityScoreType::Strength,
+            Dice::new(2, 10),
+            DamageType::Piercing,
+            true,
+            None,
         );
         if damage == 0 {
             return effects;
@@ -9848,26 +9875,19 @@ impl Action for MummyLordRottingFist {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let attack_mod = caster.ability_modifier(AbilityScoreType::Strength)
-            + caster.proficiency_bonus();
-        let damage_mod = caster.ability_modifier(AbilityScoreType::Strength);
-        let (mut effects, damage) = crate::engine::attack::resolve_attack_outcome(
+        // STR-based melee swing — `weapon_swing_with_damage` collapses the
+        // caster-mod / AttackParams boilerplate and returns `damage` so
+        // the necrotic rider can gate cleanly on a confirmed hit.
+        let (mut effects, damage) = weapon_swing_with_damage(
             encounter,
-            AttackParams {
-                caster_id,
-                target_id,
-                action_name: "lord rotting fist",
-                attack_bonus: attack_mod,
-                damage_dice: Dice::new(3, 6),
-                damage_bonus: damage_mod,
-                damage_type: DamageType::Bludgeoning,
-                is_melee: true,
-                long_range: None,
-                is_spell: false,
-            },
+            caster_id,
+            target_id,
+            "lord rotting fist",
+            AbilityScoreType::Strength,
+            Dice::new(3, 6),
+            DamageType::Bludgeoning,
+            true,
+            None,
         );
         if damage == 0 {
             return effects;
@@ -10069,26 +10089,19 @@ impl Action for RakshasaClaw {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let attack_mod = caster.ability_modifier(AbilityScoreType::Dexterity)
-            + caster.proficiency_bonus();
-        let damage_mod = caster.ability_modifier(AbilityScoreType::Dexterity);
-        let (mut effects, damage) = crate::engine::attack::resolve_attack_outcome(
+        // DEX-based melee swing — `weapon_swing_with_damage` returns the
+        // post-crit damage value so the necrotic rider can gate on a
+        // confirmed hit without re-rolling.
+        let (mut effects, damage) = weapon_swing_with_damage(
             encounter,
-            AttackParams {
-                caster_id,
-                target_id,
-                action_name: "rakshasa claw",
-                attack_bonus: attack_mod,
-                damage_dice: Dice::new(2, 6),
-                damage_bonus: damage_mod,
-                damage_type: DamageType::Slashing,
-                is_melee: true,
-                long_range: None,
-                is_spell: false,
-            },
+            caster_id,
+            target_id,
+            "rakshasa claw",
+            AbilityScoreType::Dexterity,
+            Dice::new(2, 6),
+            DamageType::Slashing,
+            true,
+            None,
         );
         if damage == 0 {
             return effects;
@@ -10977,3 +10990,287 @@ impl Action for SeaHagDeathGlare {
 
 pub static SEA_HAG_DEATH_GLARE: LazyLock<SeaHagDeathGlare> =
     LazyLock::new(|| SeaHagDeathGlare {});
+
+// ─── Night Hag ───────────────────────────────────────────────────────
+
+/// Night Hag Claws — STR-based 2d8+STR slashing melee. The hag's
+/// signature rending swing in her hag form. Vanilla `SimpleWeapon` —
+/// the load-bearing identity is the Magic Resistance + B/P/S resistance
+/// envelope plus the multi (2 claws / Action), not any per-hit rider.
+pub static NIGHT_HAG_CLAWS: SimpleWeapon = SimpleWeapon::melee(
+    "night hag claws",
+    &["nhc", "hag-claws"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Slashing,
+);
+
+/// Night Hag Multiattack — 2 claw swings per Action. RAW: "The hag makes
+/// two attacks with its claws." Same single-sub shape as Doppelganger /
+/// Werewolf / Rakshasa multis.
+pub static NIGHT_HAG_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "night hag multiattack",
+    sub_attack: &NIGHT_HAG_CLAWS,
+    count: 2,
+});
+
+// ─── Spirit Naga ─────────────────────────────────────────────────────
+
+/// Spirit Naga Bite — STR-based 1d6+STR piercing melee at reach 2 (10 ft
+/// RAW for the naga's coiled-strike posture) with a heavy CON-save poison
+/// rider (DC 13, 7d8 fire-and-forget: full on fail, half on save). The
+/// poison rider is the load-bearing per-round threat — the d6 base hit is
+/// almost cosmetic next to the 7d8 average (~31) poison packet.
+///
+/// We use `SaveDamagePolicy::HalfOnSave` to land "full on fail, half on
+/// save" cleanly — same shape as Drider Bite (different scale: 4d8 there
+/// vs 7d8 here). The save rolls AFTER the bite-attack roll lands so
+/// `damage == 0` (miss) short-circuits the poison entirely — RAW gates
+/// the poison on a hit, so a missed bite shouldn't still poison through.
+pub struct SpiritNagaBite {}
+
+impl Action for SpiritNagaBite {
+    fn name(&self) -> &str {
+        "naga bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["nbite", "naga-bite"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 10 ft RAW = reach 2 on the 2.5 ft grid (the naga's long coiled body
+        // lets it strike one tile further than a standard medium attacker).
+        Some(2)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Poison]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::saves::SaveDamagePolicy;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // Reach-2 (10 ft) STR/STR swing — `weapon_swing_with_damage`
+        // collapses the caster-mod / attack-mod / AttackParams boilerplate
+        // and returns `damage` so the poison rider can gate cleanly on
+        // a hit.
+        let (mut effects, damage) = weapon_swing_with_damage(
+            encounter,
+            caster_id,
+            target_id,
+            "naga bite",
+            AbilityScoreType::Strength,
+            Dice::new(1, 6),
+            DamageType::Piercing,
+            true,
+            None,
+        );
+        // Poison rider only on a hit — bail out if the bite missed.
+        if damage == 0 {
+            return effects;
+        }
+        // 7d8 on fail, half on save — `SaveDamagePolicy::HalfOnSave` lands
+        // both the full / half paths cleanly. Roll the dice once and share
+        // between the two outcomes (matches RAW shared-roll semantics).
+        let dice = Dice::new(7, 8);
+        let raw = encounter.roll(&dice);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 13);
+        let amount = SaveDamagePolicy::HalfOnSave.apply(raw, save.passed());
+        if amount == 0 {
+            return effects;
+        }
+        encounter.log(format!(
+            "  naga venom: {}({}) = {} poison ({})",
+            dice,
+            raw,
+            amount,
+            if save.passed() { "half on save" } else { "full on fail" }
+        ));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount,
+            damage_type: DamageType::Poison,
+        }));
+        effects
+    }
+}
+
+pub static SPIRIT_NAGA_BITE: LazyLock<SpiritNagaBite> =
+    LazyLock::new(|| SpiritNagaBite {});
+
+// ─── Otyugh ──────────────────────────────────────────────────────────
+
+/// Otyugh Bite — STR-based 2d8+STR piercing melee with a CON save
+/// (DC 15) or Poisoned on hit. The bite is the chunkier of the otyugh's
+/// two attack lanes (heavier dice + the disease rider). The Poisoned
+/// condition replaces RAW's "disease that lasts until cured" — the engine
+/// doesn't model long-term diseases, so we use a multi-round Poisoned
+/// timer (Rounds(5)) as the closest mechanical equivalent. The save is
+/// rolled once per bite; multiple bites in the same multi each roll
+/// independently (matching the per-attack save shape of every other
+/// "weapon hit + save" rider in the codebase).
+pub struct OtyughBite {}
+
+impl Action for OtyughBite {
+    fn name(&self) -> &str {
+        "otyugh bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["obite", "otyugh-bite"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            self.name(),
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(2, 8),
+            DamageType::Piercing,
+            true,
+        );
+        // Disease rider only on a confirmed hit — bail if the bite missed.
+        if effects.is_empty() {
+            return effects;
+        }
+        // CON 15 RAW "or contract disease". We model the disease via the
+        // Poisoned condition for `Rounds(5)` — enough to be a real
+        // mid-fight debuff without the "until cured" indefinite tag that
+        // the engine doesn't track.
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 15);
+        if !save.passed() {
+            encounter.log("  otyugh disease: target sickens with filth fever");
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Poisoned,
+                timer: ConditionTimer::Rounds(5),
+            }));
+        }
+        effects
+    }
+}
+
+pub static OTYUGH_BITE: LazyLock<OtyughBite> = LazyLock::new(|| OtyughBite {});
+
+/// Otyugh Tentacle — STR-based 1d8+STR bludgeoning + 1d8 piercing rider
+/// melee at reach 2 (10 ft RAW for the otyugh's prehensile tentacles).
+/// The mixed-damage profile (bludgeon from the slap + pierce from the
+/// barbed hooks) means a target with resistance to one type still eats
+/// the other half. On a hit the target is also Restrained for 1 round
+/// — approximation of RAW's "grappled + restrained" clause. The engine
+/// doesn't track per-grappler grapple links, so we use a one-round
+/// timer: long enough to lock the target down for one turn but short
+/// enough that the otyugh's next round of tentacles can re-apply it.
+pub struct OtyughTentacle {}
+
+impl Action for OtyughTentacle {
+    fn name(&self) -> &str {
+        "otyugh tentacle"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["otentacle", "otyugh-tentacle"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 10 ft RAW = reach 2 — the prehensile tentacles extend past the
+        // otyugh's Large footprint.
+        Some(2)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning, DamageType::Piercing]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // Reach-2 (10 ft) STR/STR swing — `weapon_swing_with_damage`
+        // collapses the caster-mod / attack-mod / AttackParams boilerplate
+        // and returns `damage` so the piercing-barb + grapple riders gate
+        // cleanly on a hit.
+        let (mut effects, damage) = weapon_swing_with_damage(
+            encounter,
+            caster_id,
+            target_id,
+            "otyugh tentacle",
+            AbilityScoreType::Strength,
+            Dice::new(1, 8),
+            DamageType::Bludgeoning,
+            true,
+            None,
+        );
+        // Tentacle-barb piercing rider + Restrained grapple only on a hit.
+        if damage == 0 {
+            return effects;
+        }
+        add_flat_damage_rider(
+            encounter,
+            target_id,
+            Dice::new(1, 8),
+            DamageType::Piercing,
+            "otyugh barbs",
+            &mut effects,
+        );
+        encounter.log("  otyugh tentacle grapples the target");
+        effects.push(Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Restrained,
+            timer: ConditionTimer::Rounds(1),
+        }));
+        effects
+    }
+}
+
+pub static OTYUGH_TENTACLE: LazyLock<OtyughTentacle> =
+    LazyLock::new(|| OtyughTentacle {});
+
+/// Otyugh Multiattack — 1 bite + 2 tentacles per Action. CompoundAttack
+/// because the limbs are heterogeneous (different damage types, different
+/// reach — but both melee, so the wrapper inherits the longer tentacle
+/// reach from the first part). We declare the tentacle first so the
+/// wrapper's reach check uses reach 2 (10 ft) — the bite at reach 1
+/// will still land cleanly because the target is necessarily within the
+/// tentacle's reach envelope.
+pub static OTYUGH_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "otyugh multiattack",
+    parts: vec![(&*OTYUGH_TENTACLE, 2), (&*OTYUGH_BITE, 1)],
+});

@@ -174,3 +174,6 @@ pub mod androsphinxes;
 pub mod unicorns;
 pub mod driders;
 pub mod sea_hags;
+pub mod night_hags;
+pub mod spirit_nagas;
+pub mod otyughs;
