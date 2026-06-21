@@ -19,7 +19,7 @@ pub static TROLL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     // Claws (slam) + Bite — two attacks per action, matching 5e multiattack.
     actions.push(&SLAM);
-    actions.push(&*BITE);
+    actions.push(&BITE);
     CreatureTemplate {
         name: "Troll",
         glyph: 'T',

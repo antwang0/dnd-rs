@@ -26,7 +26,7 @@ use std::sync::LazyLock;
 /// crit and the round-one swing can one-shot mid-CR enemies.
 pub static HALF_ORC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*GREATAXE);
+    actions.push(&GREATAXE);
     actions.push(&*SECOND_WIND);
     actions.push(&*ACTION_SURGE);
     CreatureTemplate {

@@ -10,7 +10,7 @@ use std::sync::LazyLock;
 /// melee enemy that punishes exposed casters.
 pub static ORC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*GREATAXE);
+    actions.push(&GREATAXE);
     CreatureTemplate {
         name: "Orc",
         // Lowercase 'o' to disambiguate from 'O' (Ogre).

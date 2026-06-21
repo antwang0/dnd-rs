@@ -12,7 +12,7 @@ use std::sync::LazyLock;
 /// average HP makes them notably tankier than the bandit-tier mooks.
 pub static MINOTAUR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*GREATAXE);
+    actions.push(&GREATAXE);
     actions.push(&*MINOTAUR_GORE);
     CreatureTemplate {
         name: "Minotaur",

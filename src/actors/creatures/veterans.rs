@@ -12,7 +12,7 @@ use std::sync::LazyLock;
 pub static VETERAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*VETERAN_MULTI);
-    actions.push(&*HEAVY_CROSSBOW);
+    actions.push(&HEAVY_CROSSBOW);
     CreatureTemplate {
         name: "Veteran",
         // 'v' — distinct from existing 'V' (Vampire Spawn).

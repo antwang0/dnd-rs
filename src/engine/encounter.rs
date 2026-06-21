@@ -145,6 +145,9 @@ use crate::actors::creatures::krakens::KRAKEN_TEMPLATE;
 use crate::actors::creatures::helmed_horrors::HELMED_HORROR_TEMPLATE;
 use crate::actors::creatures::pixies::PIXIE_TEMPLATE;
 use crate::actors::creatures::androsphinxes::ANDROSPHINX_TEMPLATE;
+use crate::actors::creatures::unicorns::UNICORN_TEMPLATE;
+use crate::actors::creatures::driders::DRIDER_TEMPLATE;
+use crate::actors::creatures::sea_hags::SEA_HAG_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -2921,6 +2924,24 @@ impl EncounterInstance {
             &HELMED_HORROR_TEMPLATE,
             &PIXIE_TEMPLATE,
             &ANDROSPHINX_TEMPLATE,
+            // Newest additions filling the mid-CR celestial / mid-CR
+            // monstrosity / low-CR fey lanes:
+            //   - Unicorn (CR 5 large celestial): magic-resistant healer
+            //     with heterogeneous hooves+horn multi and a recharge-
+            //     gated 3d8+CHA single-target ally heal. The only mid-
+            //     CR celestial in the pool until Solar opens at CR 21.
+            //   - Drider (CR 6 large monstrosity): drow-spider hybrid
+            //     with a 3-swing multi (2 longsword + 1 bite) plus a
+            //     standalone longbow lane. Bite carries a CON 13 / 4d8
+            //     poison rider (half on save). Fey Ancestry covers the
+            //     drow heritage's Charm / Asleep immunity.
+            //   - Sea Hag (CR 2 medium fey): low-CR glass-cannon
+            //     controller — claws + DC 11 Death Glare (12-tile WIS
+            //     save, 6d6 psychic on fail). Slots between Dryad (CR 1)
+            //     and Green Hag (CR 3) on the fey ladder.
+            &UNICORN_TEMPLATE,
+            &DRIDER_TEMPLATE,
+            &SEA_HAG_TEMPLATE,
         ]
     }
 

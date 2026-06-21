@@ -13,7 +13,7 @@ use std::sync::LazyLock;
 pub static BANDIT_CAPTAIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&SCIMITAR);
-    actions.push(&*HEAVY_CROSSBOW);
+    actions.push(&HEAVY_CROSSBOW);
     actions.push(&*BANDIT_CAPTAIN_MULTI);
     CreatureTemplate {
         name: "Bandit Captain",

@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 
 pub static RUST_MONSTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*BITE);
+    actions.push(&BITE);
     CreatureTemplate {
         name: "Rust Monster",
         glyph: 'r',

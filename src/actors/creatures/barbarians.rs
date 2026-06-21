@@ -25,7 +25,7 @@ use std::sync::LazyLock;
 /// surface the Brutal Critical rider at the lowest level that grants it.
 pub static BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*GREATAXE);
+    actions.push(&GREATAXE);
     actions.push(&*RAGE);
     actions.push(&*RECKLESS_ATTACK);
     CreatureTemplate {

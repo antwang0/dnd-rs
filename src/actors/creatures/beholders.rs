@@ -16,7 +16,7 @@ use std::sync::LazyLock;
 /// (it floats) — modeled via a Prone condition immunity.
 pub static BEHOLDER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*BITE);
+    actions.push(&BITE);
     actions.push(&*BEHOLDER_EYE_RAY);
     CreatureTemplate {
         name: "Beholder",

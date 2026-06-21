@@ -11,7 +11,7 @@ use std::sync::LazyLock;
 /// abilities are not yet modelled — just the bite and the rock-hard shell.
 pub static ROPER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*BITE);
+    actions.push(&BITE);
     CreatureTemplate {
         name: "Roper",
         glyph: 'r',

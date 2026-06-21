@@ -19,7 +19,7 @@ pub static KNIGHT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&LONGSWORD);
     actions.push(&LANCE);
-    actions.push(&*HEAVY_CROSSBOW);
+    actions.push(&HEAVY_CROSSBOW);
     actions.push(&*KNIGHT_MULTI);
     CreatureTemplate {
         name: "Knight",

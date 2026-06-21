@@ -13,7 +13,7 @@ use std::sync::LazyLock;
 /// hide (12), HP a touch above goblin.
 pub static GNOLL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*BITE);
+    actions.push(&BITE);
     actions.push(&LONGBOW);
     CreatureTemplate {
         name: "Gnoll",

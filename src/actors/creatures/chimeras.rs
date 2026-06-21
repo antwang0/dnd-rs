@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 
 static CHIMERA_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
     display_name: "chimera multiattack",
-    parts: vec![(&*BITE, 1), (&SLAM, 2)],
+    parts: vec![(&BITE, 1), (&SLAM, 2)],
 });
 
 /// Chimera — three-headed monstrosity: lion, dragon, goat (CR 6,

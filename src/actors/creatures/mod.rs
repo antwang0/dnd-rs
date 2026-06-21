@@ -171,3 +171,6 @@ pub mod krakens;
 pub mod helmed_horrors;
 pub mod pixies;
 pub mod androsphinxes;
+pub mod unicorns;
+pub mod driders;
+pub mod sea_hags;

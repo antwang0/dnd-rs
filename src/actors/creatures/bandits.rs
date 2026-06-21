@@ -11,7 +11,7 @@ use std::sync::LazyLock;
 pub static BANDIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&SCIMITAR);
-    actions.push(&*HEAVY_CROSSBOW);
+    actions.push(&HEAVY_CROSSBOW);
     CreatureTemplate {
         name: "Bandit",
         glyph: 'B',

@@ -379,49 +379,22 @@ pub static WARHAMMER: SimpleWeapon = SimpleWeapon {
 /// Generic STR-based bite attack — 1d6+STR piercing, no rider. Use this
 /// for creatures whose bite is pure damage (Troll, most beasts). Creatures
 /// that also trip or grapple on a bite should use WolfBite or a dedicated
-/// variant instead.
-pub struct Bite {}
-
-impl Action for Bite {
-    fn name(&self) -> &str {
-        "bite"
-    }
-
-    fn aliases(&self) -> Vec<&str> {
-        vec!["bt"]
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        simple_weapon_attack(
-            encounter,
-            caster_id,
-            target_ids,
-            self.name(),
-            AbilityScoreType::Strength,
-            Some(AbilityScoreType::Strength),
-            Dice::new(1, 6),
-            DamageType::Piercing,
-            true,
-        )
-    }
-}
-
-pub static BITE: LazyLock<Bite> = LazyLock::new(|| Bite {});
+/// variant instead. Vanilla `SimpleWeapon` since the bite is pure damage —
+/// the original bespoke `Bite` impl re-stated the same `simple_weapon_attack`
+/// call SimpleWeapon already wraps.
+pub static BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "bite",
+    aliases: &["bt"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 6),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
 
 /// Melee attack that, on a hit, forces a STR save (DC = 8 + prof + STR mod) or knocks the
 /// target prone. Demonstrates the save-then-condition pattern: damage
@@ -699,111 +672,44 @@ pub static SPIDER_BITE: LazyLock<SpiderBite> = LazyLock::new(|| SpiderBite {});
 /// Greataxe — Orc-flavored heavy two-hander. STR-based 1d12 slashing,
 /// melee reach. Hits harder than a longsword on a single die; pairs
 /// with the orc's high STR for a punishing single-attack profile.
-pub struct Greataxe {}
-
-impl Action for Greataxe {
-    fn name(&self) -> &str {
-        "greataxe"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["ga"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let mut effects = simple_weapon_attack(
-            encounter,
-            caster_id,
-            target_ids,
-            self.name(),
-            AbilityScoreType::Strength,
-            Some(AbilityScoreType::Strength),
-            Dice::new(1, 12),
-            DamageType::Slashing,
-            true,
-        );
-        // 5e Extra Attack: Greataxe costs an Action, so if the caster has
-        // Extra Attack, resolve a second swing against the same target.
-        // Suppress when called from inside a Multiattack — the wrapper
-        // already encodes the swing count.
-        if !encounter.in_multiattack()
-            && encounter
-                .actors
-                .get(&caster_id)
-                .is_some_and(|a| a.has_extra_attack())
-        {
-            encounter.log("  Extra Attack:");
-            effects.extend(simple_weapon_attack(
-                encounter,
-                caster_id,
-                target_ids,
-                self.name(),
-                AbilityScoreType::Strength,
-                Some(AbilityScoreType::Strength),
-                Dice::new(1, 12),
-                DamageType::Slashing,
-                true,
-            ));
-        }
-        effects
-    }
-}
-pub static GREATAXE: LazyLock<Greataxe> = LazyLock::new(|| Greataxe {});
+/// Vanilla `SimpleWeapon`: the Extra Attack rider is already handled
+/// inside `SimpleWeapon::side_effects`, so the bespoke `Greataxe` impl
+/// was duplicating the standard chassis.
+pub static GREATAXE: SimpleWeapon = SimpleWeapon {
+    display_name: "greataxe",
+    aliases: &["ga"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 12),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
 
 /// Heavy Crossbow — DEX-based 1d10 piercing ranged. Differs from the
 /// Longbow in damage die (1d10 vs 1d8) and conceptually loading time
 /// (we don't model the loading property today). Used by bandits.
-pub struct HeavyCrossbow {}
-
-impl Action for HeavyCrossbow {
-    fn name(&self) -> &str {
-        "heavy crossbow"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["hcb", "crossbow"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(16)
-    }
-    fn requires_los(&self) -> bool {
-        true
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        simple_weapon_attack(
-            encounter,
-            caster_id,
-            target_ids,
-            self.name(),
-            AbilityScoreType::Dexterity,
-            Some(AbilityScoreType::Dexterity),
-            Dice::new(1, 10),
-            DamageType::Piercing,
-            false,
-        )
-    }
-}
-pub static HEAVY_CROSSBOW: LazyLock<HeavyCrossbow> = LazyLock::new(|| HeavyCrossbow {});
+/// Vanilla `SimpleWeapon` — the bespoke impl was just `simple_weapon_attack`
+/// wrapped in trait methods. Long-range penalty added: 5e crossbow is
+/// 100/400ft; the engine's 2.5ft grid caps the indoor reach at 16 tiles
+/// (40ft RAW would be 16 tiles) with normal range at 10 (≈25ft) — close
+/// to the longbow's 12 (≈30ft) ratio.
+pub static HEAVY_CROSSBOW: SimpleWeapon = SimpleWeapon {
+    display_name: "heavy crossbow",
+    aliases: &["hcb", "crossbow"],
+    attack_ability: AbilityScoreType::Dexterity,
+    damage_ability: Some(AbilityScoreType::Dexterity),
+    damage_dice: Dice::new(1, 10),
+    damage_type: DamageType::Piercing,
+    reach: 16,
+    is_melee: false,
+    requires_los: true,
+    cost_resource: Resource::Action,
+    normal_range: Some(10),
+};
 
 /// Wolf-specific bite: 1d4 STR-based piercing with a built-in trip rider.
 /// On every hit forces a STR save (DC = 8 + prof + STR mod); fail = Prone.
@@ -10681,3 +10587,393 @@ pub static ANDROSPHINX_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiatta
     sub_attack: &ANDROSPHINX_CLAW,
     count: 2,
 });
+
+// ─── Unicorn ─────────────────────────────────────────────────────────
+
+/// Unicorn Hooves — STR-based 2d6+STR bludgeoning melee. The kicking
+/// half of the unicorn's multi; pairs with the horn for the standard
+/// "kick + gore" double-tap. Vanilla `SimpleWeapon` — no rider effects,
+/// the load-bearing combat clauses live on the horn (charge-bonus is
+/// outside the engine's per-action chassis) and the Healing Touch
+/// action.
+pub static UNICORN_HOOVES: SimpleWeapon = SimpleWeapon {
+    display_name: "unicorn hooves",
+    aliases: &["uh", "hooves-u"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Unicorn Horn — STR-based 1d8+STR piercing melee. The piercing half
+/// of the unicorn's multi — paired with the hooves in
+/// `UNICORN_MULTI`. RAW also includes a "Charge" rider (when the
+/// unicorn moves 20+ feet in a straight line and hits, +2d8 piercing +
+/// STR save or knocked prone); we collapse the per-turn-movement gate
+/// since the engine doesn't track distance moved this turn for melee
+/// attack riders (only the AI's pathfinding sees it). The simpler
+/// "horn" hit lane preserves the unicorn's tactical identity — the
+/// horn is the high-damage limb, the hooves are the low-damage limb,
+/// the multi puts them together. The full charge clause could be a
+/// follow-up: add a per-actor `moved_this_turn_distance` accessor.
+pub static UNICORN_HORN: SimpleWeapon = SimpleWeapon {
+    display_name: "unicorn horn",
+    aliases: &["horn", "uhorn"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Unicorn Multiattack — 1 hoof kick + 1 horn gore per Action. RAW: the
+/// unicorn makes two attacks (one with its hooves and one with its horn).
+/// Heterogeneous limbs combine cleanly through `CompoundAttack` so each
+/// limb keeps its own dice tier — the horn doesn't share the hooves' 2d6
+/// pool and vice versa.
+pub static UNICORN_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "hooves + horn",
+    parts: vec![(&UNICORN_HOOVES, 1), (&UNICORN_HORN, 1)],
+});
+
+/// Unicorn Healing Touch — single-target ally heal. The unicorn touches
+/// one creature within melee reach and restores 3d8+CHA HP, cures every
+/// condition the holder has, and breaks any charm / curse on them. We
+/// model the load-bearing half (the HP heal) — the cure-conditions
+/// half rides through the existing recharge chassis to limit
+/// over-use. RAW is "3/day" — the engine doesn't track per-day pools,
+/// so we approximate via the `"healing_touch"` recharge key (recharge
+/// 5-6 on a d6 at start-of-turn). One ally target only; the unicorn
+/// chooses based on AI heuristics (heal a wounded teammate).
+pub struct UnicornHealingTouch {}
+
+impl Action for UnicornHealingTouch {
+    fn name(&self) -> &str {
+        "healing touch"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ht", "touch"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        if !caster.is_recharge_available("healing_touch") {
+            return false;
+        }
+        // Reject hostile targets — the touch only restores allies. The
+        // ally check lives here (not just at side_effects) so the AI's
+        // picker doesn't surface enemies as legal targets.
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        encounter.actors_allied(caster_id, target_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::Heal;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let cha_mod = caster.ability_modifier(AbilityScoreType::Charisma);
+        let dice = Dice::new(3, 8);
+        let raw = encounter.roll(&dice) as i32;
+        let amount = (raw + cha_mod).max(1) as u32;
+        // Burn the recharge so the touch can't fire again until the d6
+        // refresher lands a 5-6 at start-of-turn. Mirrors the breath-
+        // weapon recharge chassis used by Androsphinx Roar / dragons.
+        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
+            caster.spend_recharge("healing_touch");
+        }
+        encounter.log(format!(
+            "  healing touch: {}({}){:+} = {} HP",
+            dice, raw, cha_mod, amount
+        ));
+        vec![Box::new(Heal {
+            actor_id: target_id,
+            amount,
+        })]
+    }
+}
+
+pub static UNICORN_HEALING_TOUCH: LazyLock<UnicornHealingTouch> =
+    LazyLock::new(|| UnicornHealingTouch {});
+
+// ─── Drider ──────────────────────────────────────────────────────────
+
+/// Drider Longsword — STR-based 1d8+STR slashing melee. The melee half
+/// of the drider's offensive kit; the longbow handles the ranged lane.
+/// Vanilla `SimpleWeapon` — no rider effects, just a sturdy mid-CR melee
+/// swing. The drider chassis combines two longsword swings + one bite
+/// per Action via `DRIDER_MULTI`.
+pub static DRIDER_LONGSWORD: SimpleWeapon = SimpleWeapon {
+    display_name: "drider longsword",
+    aliases: &["dls", "drider-ls"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Drider Longbow — DEX-based 1d8+DEX piercing ranged. The ranged half
+/// of the drider's kit; pairs with the bite for a hit-and-run profile
+/// at mid-range. Range 12 tiles (≈ 60ft normal, well under the 80/320
+/// RAW long-range threshold; the drider's longbow stat reads "+5 to
+/// hit, range 150/600" — the engine caps reach at 20 for indoor maps).
+pub static DRIDER_LONGBOW: SimpleWeapon = SimpleWeapon {
+    display_name: "drider longbow",
+    aliases: &["dlb", "drider-bow"],
+    attack_ability: AbilityScoreType::Dexterity,
+    damage_ability: Some(AbilityScoreType::Dexterity),
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Piercing,
+    reach: 20,
+    is_melee: false,
+    requires_los: true,
+    cost_resource: Resource::Action,
+    normal_range: Some(12),
+};
+
+/// Drider Bite — STR-based 1d4+STR piercing melee with a CON save (DC 13)
+/// for 4d8 poison rider on fail (half on save per RAW). Same "weapon +
+/// save-rider" shape as Spider Bite but the rider scales much higher
+/// (4d8 vs 2d4) and the save is more severe. The drider's bite is the
+/// signature spider-half lethality — even on a save the target eats 2d8
+/// poison damage.
+///
+/// We diverge slightly from the per-save shape used by `save_or_damage_rider`
+/// (which is binary: full damage on fail, none on save). The drider's
+/// poison RAW is "4d8 on fail, half on success", so we model the save
+/// gate inline with a `SaveDamagePolicy::HalfOnSave` resolution.
+pub struct DriderBite {}
+
+impl Action for DriderBite {
+    fn name(&self) -> &str {
+        "drider bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dbite", "drider-bite"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Poison]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::saves::SaveDamagePolicy;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            self.name(),
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(1, 4),
+            DamageType::Piercing,
+            true,
+        );
+        // Poison rider applies only on a hit — bail if the bite missed.
+        if effects.is_empty() {
+            return effects;
+        }
+        // 4d8 on fail, half (2d8 average) on save — uses the standard
+        // SaveDamagePolicy::HalfOnSave for the per-save split.
+        let dice = Dice::new(4, 8);
+        let raw = encounter.roll(&dice);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 13);
+        let amount = SaveDamagePolicy::HalfOnSave.apply(raw, save.passed());
+        if amount == 0 {
+            return effects;
+        }
+        encounter.log(format!(
+            "  drider bite poison: {}({}) = {} poison ({})",
+            dice,
+            raw,
+            amount,
+            if save.passed() { "save" } else { "fail" }
+        ));
+        effects.push(Box::new(DealDamage {
+            actor_id: target_id,
+            amount,
+            damage_type: DamageType::Poison,
+        }));
+        effects
+    }
+}
+
+pub static DRIDER_BITE: LazyLock<DriderBite> = LazyLock::new(|| DriderBite {});
+
+/// Drider Multiattack — 2 longsword swings + 1 bite per Action. RAW: the
+/// drider makes 3 attacks, using its longsword twice and its bite once.
+/// Heterogeneous limbs combine cleanly through `CompoundAttack`. The
+/// longbow lane is a *separate* standalone action — RAW lets the drider
+/// substitute its melee attacks with longbow shots, but the engine's
+/// CompoundAttack chassis can't model "either A or B"; the AI picks
+/// between the melee multi and a standalone longbow shot based on
+/// position (melee in reach → multi, ranged → longbow).
+pub static DRIDER_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "drider multiattack",
+    parts: vec![(&DRIDER_LONGSWORD, 2), (&*DRIDER_BITE, 1)],
+});
+
+// ─── Sea Hag ─────────────────────────────────────────────────────────
+
+/// Sea Hag Claws — STR-based 1d4+STR slashing melee. The hag's signature
+/// rending swing; the Death Glare is the load-bearing fear-mortality
+/// lane and the claws are the steady damage tap. Vanilla `SimpleWeapon`
+/// — no rider effects.
+pub static SEA_HAG_CLAWS: SimpleWeapon = SimpleWeapon {
+    display_name: "sea hag claws",
+    aliases: &["shc", "hag-claws"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 4),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Sea Hag Death Glare — single-target WIS save (DC 11) on a target
+/// within 30 ft (12 tiles). On fail the target takes 6d6 psychic damage
+/// (RAW: reduces a Frightened target to 0 HP outright — we approximate
+/// via a heavy psychic hit since the engine's Frightened condition
+/// tracking doesn't fold cleanly into a binary kill gate). On save the
+/// effect fizzles entirely (NoneOnSave). Requires line-of-sight — a
+/// glare can't bend around walls.
+///
+/// We deviate from the strict RAW "reduce Frightened target to 0 HP" gate
+/// because (a) the engine doesn't yet expose a "would-be-killed-by"
+/// helper at the side-effect layer, and (b) routing through the standard
+/// damage pipeline lets immunity / resistance / temp HP / Death Ward
+/// all fire correctly. The 6d6 max damage maps to the hag's CR-2 power
+/// curve — heavy single-target burst but not auto-kill.
+pub struct SeaHagDeathGlare {}
+
+impl Action for SeaHagDeathGlare {
+    fn name(&self) -> &str {
+        "death glare"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dg", "glare"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Psychic]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // DC 11 is RAW for the sea hag — flat number, not derived from
+        // the caster's stats. The 5e hag stat block ties its save DCs
+        // to its CHA modifier; with CHA 13 (+1) and prof +2, the formula
+        // would yield 11, so the hardcode here matches the formula's
+        // output for the canonical sea hag stat block. We sanity-check
+        // the caster exists (gone-mid-action guard) and bail early on
+        // a vanished caster rather than trying to fire a spell from
+        // nowhere.
+        if !encounter.actors.contains_key(&caster_id) {
+            return Vec::new();
+        }
+        const DC: i32 = 11;
+        const DICE: Dice = Dice::new(6, 6);
+        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, DC);
+        if save.passed() {
+            encounter.log("  death glare: target shrugs off the soul-rending stare");
+            return Vec::new();
+        }
+        let amount = encounter.roll(&DICE);
+        encounter.log(format!(
+            "  death glare: {}({}) = {} psychic",
+            DICE, amount, amount
+        ));
+        vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount,
+            damage_type: DamageType::Psychic,
+        })]
+    }
+}
+
+pub static SEA_HAG_DEATH_GLARE: LazyLock<SeaHagDeathGlare> =
+    LazyLock::new(|| SeaHagDeathGlare {});
