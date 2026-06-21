@@ -142,6 +142,9 @@ use crate::actors::creatures::rakshasas::RAKSHASA_TEMPLATE;
 use crate::actors::creatures::hook_horrors::HOOK_HORROR_TEMPLATE;
 use crate::actors::creatures::dragon_turtles::DRAGON_TURTLE_TEMPLATE;
 use crate::actors::creatures::krakens::KRAKEN_TEMPLATE;
+use crate::actors::creatures::helmed_horrors::HELMED_HORROR_TEMPLATE;
+use crate::actors::creatures::pixies::PIXIE_TEMPLATE;
+use crate::actors::creatures::androsphinxes::ANDROSPHINX_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -569,6 +572,37 @@ pub struct EncounterInstance {
     multiattack_depth: u32,
 }
 
+/// Apply `mode_on_mismatch` to `current` when `holder` carries `condition`
+/// AND the actor id its `link` field points at is set to someone OTHER
+/// than `counterparty`. Centralizes the "flag-plus-link locked onto the
+/// wrong opponent" pattern in `compute_attack_mode`:
+/// * Dueled + `dueled_by` ≠ target → attacker disadvantage,
+/// * Goaded + `goaded_by` ≠ target → attacker disadvantage,
+/// * Distracted + `distracted_by` ≠ attacker → target-side advantage to
+///   the *other* attackers (the tagger themselves gets no benefit).
+///
+/// Returns the (possibly combined) mode so the call sites stay terse:
+/// `mode = focus_link_mode(mode, holder, counterparty, cond, link, m);`.
+/// Adding a future "flag plus link" rider (Sentinel pinning, a vow
+/// against a specific foe, etc.) becomes a one-liner instead of a
+/// re-inlined `has_condition + link.is_some_and(!=)` block.
+fn focus_link_mode(
+    current: RollMode,
+    holder: &ActorInstance,
+    counterparty: usize,
+    condition: Condition,
+    link: fn(&ActorInstance) -> Option<usize>,
+    mode_on_mismatch: RollMode,
+) -> RollMode {
+    if holder.has_condition(condition)
+        && link(holder).is_some_and(|linked| linked != counterparty)
+    {
+        current.combine(mode_on_mismatch)
+    } else {
+        current
+    }
+}
+
 impl EncounterInstance {
     pub fn messages(&self) -> &Vec<String> {
         &self.messages
@@ -944,34 +978,30 @@ impl EncounterInstance {
             {
                 mode = mode.combine(RollMode::Advantage);
             }
-            // 5e Compelled Duel: an attacker tagged as Dueled is locked
-            // onto their duelist — attacks against anyone *else* eat
-            // disadvantage. We honor the link via `dueled_by`: same
-            // target as the duelist? No effect. Different target?
-            // Disadvantage. The duelist themselves is unaffected (they
-            // get a normal swing). The general `Dueled`-no-link case is
-            // already covered by the helper above (it's not in the
-            // cohort), so this branch is the *targeted* clause.
-            if attacker.has_condition(Condition::Dueled)
-                && attacker
-                    .dueled_by()
-                    .is_some_and(|duelist| duelist != target_id)
-            {
-                mode = mode.combine(RollMode::Disadvantage);
-            }
-            // 5e Battle Master Goading Attack: a goaded creature has
-            // disadvantage on attacks against anyone other than the
-            // goading fighter. Symmetric with the Dueled clause above —
-            // separate condition / link so they stack cleanly (a
-            // paladin's compelled duel and a fighter's goading attack
-            // on the same creature both bite at once).
-            if attacker.has_condition(Condition::Goaded)
-                && attacker
-                    .goaded_by()
-                    .is_some_and(|goader| goader != target_id)
-            {
-                mode = mode.combine(RollMode::Disadvantage);
-            }
+            // 5e Compelled Duel (Dueled + dueled_by) and Battle Master
+            // Goading Attack (Goaded + goaded_by) share the "locked onto
+            // someone other than this target" pattern: a flag-plus-link
+            // that fires disadvantage only when the wrong counterparty
+            // is being hit. Centralized so both clauses (and any future
+            // sibling — Sentinel rider, Compelled-vow flavor) route
+            // through one helper instead of re-inlining the
+            // `has_condition + link.is_some_and(!=)` shape.
+            mode = focus_link_mode(
+                mode,
+                attacker,
+                target_id,
+                Condition::Dueled,
+                ActorInstance::dueled_by,
+                RollMode::Disadvantage,
+            );
+            mode = focus_link_mode(
+                mode,
+                attacker,
+                target_id,
+                Condition::Goaded,
+                ActorInstance::goaded_by,
+                RollMode::Disadvantage,
+            );
         }
 
         // Target-side modifiers.
@@ -1032,21 +1062,24 @@ impl EncounterInstance {
             {
                 mode = mode.combine(RollMode::Disadvantage);
             }
-            // 5e Battle Master Distracting Strike rider. A distracted
-            // creature is open to attack by anyone other than the
-            // fighter who tagged them — that *other* attacker rolls with
-            // advantage. The distractor themselves gets no benefit from
-            // their own setup (RAW: "the next attack roll against the
-            // target by an attacker other than you"). Not in the static
-            // `grants_advantage_to_attackers` cohort because the
-            // attacker-skip needs target-side state (`distracted_by`).
-            if target.has_condition(Condition::Distracted)
-                && target
-                    .distracted_by()
-                    .is_some_and(|distracter| distracter != attacker_id)
-            {
-                mode = mode.combine(RollMode::Advantage);
-            }
+            // 5e Battle Master Distracting Strike — target-side mirror
+            // of the Dueled / Goaded pattern. A distracted creature is
+            // open to attack by anyone other than the fighter who
+            // tagged them: that *other* attacker rolls with advantage,
+            // the distractor themselves gets no benefit from their own
+            // setup (RAW: "the next attack roll against the target by
+            // an attacker other than you"). Same flag-plus-link shape
+            // as Dueled / Goaded, but reversed polarity (advantage
+            // instead of disadvantage) and reversed side (target-side
+            // rather than attacker-side).
+            mode = focus_link_mode(
+                mode,
+                target,
+                attacker_id,
+                Condition::Distracted,
+                ActorInstance::distracted_by,
+                RollMode::Advantage,
+            );
         }
         mode
     }
@@ -2867,6 +2900,27 @@ impl EncounterInstance {
             &HOOK_HORROR_TEMPLATE,
             &DRAGON_TURTLE_TEMPLATE,
             &KRAKEN_TEMPLATE,
+            // Newest additions filling the construct / fey / boss-tier
+            // lanes:
+            //   - Helmed Horror (CR 4 medium construct): plate-armored
+            //     spell-immune sentry; 2-longsword multi plus Force /
+            //     Necrotic / Poison damage immunity and the full
+            //     construct condition-immunity envelope. Sits between
+            //     Animated Armor (CR 1) and Stone Golem (CR 10) on the
+            //     construct ladder.
+            //   - Pixie (CR ¼ tiny fey): 1-HP glass-cannon controller —
+            //     Magic Resistance + Fey Ancestry + a 5ft Sleep Dust
+            //     burst at 30ft range (DC 12 WIS, Asleep on fail). Fills
+            //     the lowest fey CR slot below Dryad (CR 1).
+            //   - Androsphinx (CR 17 large monstrosity): wisdom-guardian
+            //     boss with a 2-claw multi, recharge-gated 50ft DC-18 WIS
+            //     Roar (Frightened on fail), nonmagical-BPS resistance,
+            //     Charmed / Frightened condition immunity, 3 Legendary
+            //     Resistance + Magic Resistance + 3 legendary actions.
+            //     The non-dragon CR-17 boss option.
+            &HELMED_HORROR_TEMPLATE,
+            &PIXIE_TEMPLATE,
+            &ANDROSPHINX_TEMPLATE,
         ]
     }
 

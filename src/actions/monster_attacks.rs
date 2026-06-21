@@ -10462,3 +10462,222 @@ impl Action for KrakenLightningStorm {
 
 pub static KRAKEN_LIGHTNING_STORM: LazyLock<KrakenLightningStorm> =
     LazyLock::new(|| KrakenLightningStorm {});
+
+// ─── Helmed Horror ───────────────────────────────────────────────────
+
+/// Helmed Horror Longsword — STR-based 2d8+STR slashing melee, reach 1.
+/// The animated armor's enchanted longsword swing. Vanilla `SimpleWeapon`
+/// — RAW pairs the construct's two longsword swings per Multiattack with
+/// no per-hit rider; the load-bearing combat threat is the spell-immunity
+/// envelope (modeled as flat Magic Resistance + force / necrotic / poison
+/// damage immunity at the template level), not a damage rider.
+pub static HELMED_HORROR_LONGSWORD: SimpleWeapon = SimpleWeapon {
+    display_name: "helmed horror longsword",
+    aliases: &["hhl", "hh-sword"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 8),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Helmed Horror Multiattack — 2 longsword swings per Action. Vanilla
+/// single-sub-attack shape (same as Knight Greatsword / Rakshasa Claw
+/// multi); each swing rolls its own d20 + STR vs AC for the canonical
+/// CR-4 construct double-strike profile.
+pub static HELMED_HORROR_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "helmed horror multiattack",
+    sub_attack: &HELMED_HORROR_LONGSWORD,
+    count: 2,
+});
+
+// ─── Pixie ───────────────────────────────────────────────────────────
+
+/// Pixie Sleep Dust — burst-1 (5 ft) save-burst centered on a chosen tile
+/// within 6 tiles (30 ft). Every creature in the burst makes a DC 12 WIS
+/// save; on fail they fall Asleep for 10 rounds (1 minute RAW). Mirrors
+/// the chosen-tile + small radius shape of the bullette's earth tremor
+/// or the orcish javelin's drop — single Action cost, no recharge
+/// (RAW: 1/day, but we use a tick-down install instead of a per-rest
+/// resource so the pixie has a hook in any encounter; the action's
+/// once-per-target Asleep install plus sleep's auto-wake-on-damage rider
+/// already self-limits abuse).
+///
+/// Sleep-immune creatures (constructs / undead / elves / etc. via the
+/// existing `dynamic_immunity_to` chokepoint) shrug it off without
+/// rolling — short-circuit via `effectively_immune_to_condition`.
+pub struct PixieSleepDust {}
+
+impl Action for PixieSleepDust {
+    fn name(&self) -> &str {
+        "sleep dust"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sd", "dust"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst { radius: 1 }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(6)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        const DC: i32 = 12;
+        const RADIUS: isize = 1;
+        encounter.log(format!(
+            "  sleep dust: 5ft burst (DC {} WIS, asleep on fail)",
+            DC
+        ));
+        crate::actions::action_template::resolve_burst_save_condition(
+            encounter,
+            caster_id,
+            point,
+            RADIUS,
+            AbilityScoreType::Wisdom,
+            DC,
+            Condition::Asleep,
+            ConditionTimer::Rounds(10),
+        )
+    }
+}
+
+pub static PIXIE_SLEEP_DUST: LazyLock<PixieSleepDust> = LazyLock::new(|| PixieSleepDust {});
+
+// ─── Androsphinx ─────────────────────────────────────────────────────
+
+/// Androsphinx Claw — STR-based 2d8+STR slashing melee. The lion-bodied
+/// guardian's signature swing; reach 1 (5 ft RAW). Vanilla `SimpleWeapon`
+/// — the load-bearing per-round threat is the burst from 2 claws plus a
+/// Roar via `ANDROSPHINX_MULTI`, not a per-hit rider. RAW also tags the
+/// claws as magical for the "non-magical resistance bypass" lane; this
+/// engine doesn't track magic-weapon typing on attacker side, so the
+/// magical-weapon clause collapses to a flat "always counts as magical"
+/// without modeling.
+pub static ANDROSPHINX_CLAW: SimpleWeapon = SimpleWeapon {
+    display_name: "androsphinx claw",
+    aliases: &["asc", "sphinx-claw"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 8),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Androsphinx Roar — every enemy within radius 10 (50 ft) with line-of-
+/// sight makes a DC 18 WIS save or is Frightened for 10 rounds. Recharge
+/// 5-6 via the shared `"breath_weapon"` pool — RAW frames the three Roars
+/// (First / Second / Third) as a per-day escalating-effect series; we
+/// collapse the three-tier ladder to the Frightened-on-fail base effect
+/// since the engine's recharge chassis fits cleanly into the start-of-turn
+/// refresher without per-day bookkeeping.
+///
+/// LOS-gated: a Roar travels by sound but RAW requires the target to hear
+/// the sphinx; we approximate by routing through
+/// `resolve_los_glare_condition` so an enemy behind a heavy stone wall
+/// shrugs off the burst (matches Mummy Lord Dreadful Glare's shape). The
+/// `skip_immune_to_damage` arg is `None` — Frightened immunity is checked
+/// at the install site by `add_condition` rather than the damage-type
+/// proxy used for undead vs glare.
+pub struct AndrosphinxRoar {}
+
+impl Action for AndrosphinxRoar {
+    fn name(&self) -> &str {
+        "roar"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["roar-s", "sphinx-roar"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_recharge_available("breath_weapon"))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        const RADIUS: isize = 10;
+        const DC: i32 = 18;
+        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
+            caster.spend_recharge("breath_weapon");
+        }
+        encounter.log(format!(
+            "  roar: 50ft burst (DC {} WIS, frightened on fail)",
+            DC
+        ));
+        crate::actions::action_template::resolve_los_glare_condition(
+            encounter,
+            caster_id,
+            RADIUS,
+            AbilityScoreType::Wisdom,
+            DC,
+            Condition::Frightened,
+            ConditionTimer::Rounds(10),
+            None,
+        )
+    }
+}
+
+pub static ANDROSPHINX_ROAR: LazyLock<AndrosphinxRoar> = LazyLock::new(|| AndrosphinxRoar {});
+
+/// Androsphinx Multiattack — 2 claw swings per Action. Vanilla single-
+/// sub-attack shape mirroring Hook Horror / Rakshasa multis. The Roar
+/// is a separate action so the sphinx can either burst-burst with two
+/// claws on a single target OR fire a Roar at the broader battlefield
+/// (RAW: the sphinx's full action profile is "2 claws AND uses Roar" per
+/// turn, but the engine's recharge chassis caps Roar by `"breath_weapon"`
+/// so binding them to a single Multi would double-spend the recharge
+/// resource and silently zero out the claws on subsequent turns).
+pub static ANDROSPHINX_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "androsphinx multiattack",
+    sub_attack: &ANDROSPHINX_CLAW,
+    count: 2,
+});

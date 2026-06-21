@@ -168,3 +168,6 @@ pub mod rakshasas;
 pub mod hook_horrors;
 pub mod dragon_turtles;
 pub mod krakens;
+pub mod helmed_horrors;
+pub mod pixies;
+pub mod androsphinxes;

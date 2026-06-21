@@ -4874,6 +4874,21 @@ mod tests {
             // (Tarrasque, Hydra) that their 4×4 footprints don't collide.
             let _ = e.instantiate_creature(&DRAGON_TURTLE_TEMPLATE, Coordinate::new(15, 5), 1, 65);
             let _ = e.instantiate_creature(&KRAKEN_TEMPLATE, Coordinate::new(20, 5), 1, 66);
+            // Newest additions: Helmed Horror (CR 4 construct — exercises
+            // the AI on a magic-immunity envelope: spells should bounce
+            // off, melee should bite normally), Pixie (CR ¼ tiny fey —
+            // exercises the burst-AoE picker on a 1-HP glass-cannon with
+            // Sleep Dust at 30 ft), and Androsphinx (CR 17 boss — exercises
+            // the self-centered NoArgs Roar through the recharge gate plus
+            // the boss-tier LR auto-pass on saves). Placed at the spare
+            // tiles on the lower-left quadrant so their footprints don't
+            // collide with the existing huge / gargantuan entries.
+            use crate::actors::creatures::androsphinxes::ANDROSPHINX_TEMPLATE;
+            use crate::actors::creatures::helmed_horrors::HELMED_HORROR_TEMPLATE;
+            use crate::actors::creatures::pixies::PIXIE_TEMPLATE;
+            let _ = e.instantiate_creature(&HELMED_HORROR_TEMPLATE, Coordinate::new(0, 17), 1, 67);
+            let _ = e.instantiate_creature(&PIXIE_TEMPLATE, Coordinate::new(0, 16), 1, 68);
+            let _ = e.instantiate_creature(&ANDROSPHINX_TEMPLATE, Coordinate::new(0, 2), 1, 69);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;
