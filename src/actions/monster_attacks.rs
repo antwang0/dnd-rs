@@ -11513,16 +11513,18 @@ pub static ETTERCAP_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundA
 /// they break free. RAW: "Web (Recharge 5–6). Ranged Weapon Attack: +4
 /// to hit, range 30/60 ft., one Large or smaller creature. Hit: The
 /// creature is Restrained by webbing. As an action, the restrained
-/// creature can make a DC 11 STR check, escaping on a success. The
-/// effect ends if the webbing is destroyed (AC 10, 5 HP, vulnerable to
-/// fire damage, immune to bludgeoning, poison, and psychic)."
+/// creature can make a DC 11 STR check, escaping on a success."
 ///
 /// We collapse RAW's "ranged weapon attack roll + saving-throw-to-
 /// escape" to a single DEX-save-on-incidence: no attack roll, just the
 /// initial DEX check. The escape clause is implicit — the engine's
 /// Restrained condition is timer-driven; we set a 3-round timer as a
 /// proxy for "spent action breaking free." Recharge 5-6 keeps the AI
-/// from spamming the web every turn.
+/// from spamming the web every turn — gated on the shared
+/// `"ettercap_web"` recharge key plugged into the template's
+/// `recharge_abilities` list. The standard recharge chassis
+/// (`is_recharge_available` validator + `spend_recharge` on resolution)
+/// matches the breath-weapon / blinding-spittle / whelm cohort.
 pub struct EttercapWeb {}
 
 impl Action for EttercapWeb {
@@ -11558,10 +11560,23 @@ impl Action for EttercapWeb {
     ) -> Vec<Resource> {
         vec![Resource::Action]
     }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_recharge_available("ettercap_web"))
+    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
-        _caster_id: usize,
+        caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
@@ -11570,6 +11585,12 @@ impl Action for EttercapWeb {
             return Vec::new();
         };
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        // Spend the recharge resource before resolving the save so a
+        // mid-resolution failure can't leave the web both spent AND
+        // restraint-applied (mirrors the breath-weapon order-of-ops).
+        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
+            caster.spend_recharge("ettercap_web");
+        }
         // Immunity gate — Restrained-immune targets (incorporeal undead,
         // gaseous form holders) short-circuit before the save.
         let Some(target) = encounter.actors.get(&target_id) else {

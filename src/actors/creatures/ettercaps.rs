@@ -72,6 +72,10 @@ pub static ETTERCAP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Monstrosity,
         actions,
+        // Web is Recharge 5–6 per RAW — gated on the shared recharge
+        // chassis (start-of-turn d6 roll, available again on 5+).
+        // Keeps the ettercap from spamming the web every turn.
+        recharge_abilities: vec![("ettercap_web", 5)],
         ..CreatureTemplate::defaults()
     }
 });
@@ -160,6 +164,64 @@ mod tests {
             got_restrained,
             "ettercap web should occasionally restrain a low-DEX ogre via the DC-11 DEX save"
         );
+    }
+
+    /// Ettercap Web is Recharge 5–6. Verify the validator gates the
+    /// action on the recharge resource — fresh ettercap can fire it,
+    /// post-use it's locked out until the start-of-turn d6 lands ≥ 5.
+    #[test]
+    fn ettercap_web_recharge_gating() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::ETTERCAP_WEB;
+        use crate::engine::encounter::EncounterInstance;
+        use crate::engine::actor_gen::ActorGenParams;
+        use crate::engine::terrain_gen::TerrainGenParams;
+        let tp = TerrainGenParams {
+            width: 30,
+            height: 20,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(13)).unwrap();
+        let attacker = e
+            .instantiate_creature(&ETTERCAP_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ETTERCAP_TEMPLATE, Coordinate::new(10, 5), 0, 0)
+            .unwrap();
+        // Fresh ettercap: web is available.
+        assert!(e.actors[&attacker].is_recharge_available("ettercap_web"));
+        assert!(ETTERCAP_WEB.validate_input(
+            &e,
+            attacker,
+            Some(&vec![target]),
+            None,
+            None
+        ));
+        // Spend the web — recharge flips off.
+        for ef in ETTERCAP_WEB.side_effects(
+            &mut e,
+            attacker,
+            Some(&vec![target]),
+            None,
+            None,
+        ) {
+            ef.apply(&mut e);
+        }
+        assert!(!e.actors[&attacker].is_recharge_available("ettercap_web"));
+        assert!(!ETTERCAP_WEB.validate_input(
+            &e,
+            attacker,
+            Some(&vec![target]),
+            None,
+            None
+        ));
     }
 
     #[test]
