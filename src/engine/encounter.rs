@@ -151,6 +151,10 @@ use crate::actors::creatures::sea_hags::SEA_HAG_TEMPLATE;
 use crate::actors::creatures::night_hags::NIGHT_HAG_TEMPLATE;
 use crate::actors::creatures::spirit_nagas::SPIRIT_NAGA_TEMPLATE;
 use crate::actors::creatures::otyughs::OTYUGH_TEMPLATE;
+use crate::actors::creatures::sprites::SPRITE_TEMPLATE;
+use crate::actors::creatures::death_dogs::DEATH_DOG_TEMPLATE;
+use crate::actors::creatures::magmins::MAGMIN_TEMPLATE;
+use crate::actors::creatures::galeb_duhrs::GALEB_DUHR_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -2964,6 +2968,33 @@ impl EncounterInstance {
             &NIGHT_HAG_TEMPLATE,
             &SPIRIT_NAGA_TEMPLATE,
             &OTYUGH_TEMPLATE,
+            // Newest additions filling the CR-¼ scout / CR-1 monstrosity /
+            // CR-½ elemental / CR-6 elemental-caster-disruptor lanes:
+            //   - Sprite (CR ¼ tiny fey): archer-scout variant of the
+            //     CR-¼ fey lane — sleep-arrow rider on a longbow at
+            //     reach 8 (40 ft) plus a flat-1 shortsword fallback in
+            //     melee. The other CR-¼ fey (Pixie) leans on at-will
+            //     area sleep dust; the sprite covers the single-target
+            //     ranged sleep opener at the same price.
+            //   - Death Dog (CR 1 medium monstrosity): the two-headed
+            //     underdark cur — 2-bite multiattack, each head rolling
+            //     an independent disease-save rider (CON 12 or Poisoned
+            //     for 10 rounds, proxy for RAW's "diseased until cured").
+            //   - Magmin (CR ½ small elemental): the lava-imp of the
+            //     Plane of Fire — touch attack with a Burning DOT
+            //     install (3 rounds), full elemental envelope (fire +
+            //     poison immunity, BPS resistance, condition envelope
+            //     via the shared `ELEMENTAL_CONDITION_IMMUNITIES`).
+            //   - Galeb Duhr (CR 6 medium elemental): the granite
+            //     guardian — 2-slam multi (3d8+STR per swing) plus
+            //     Magic Resistance on top of the standard elemental
+            //     envelope. The caster-disruption stone-cousin of the
+            //     CR-5 Earth Elemental, slotting between Otyugh (CR 5)
+            //     and Drider (CR 6).
+            &SPRITE_TEMPLATE,
+            &DEATH_DOG_TEMPLATE,
+            &MAGMIN_TEMPLATE,
+            &GALEB_DUHR_TEMPLATE,
         ]
     }
 

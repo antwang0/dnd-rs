@@ -177,3 +177,7 @@ pub mod sea_hags;
 pub mod night_hags;
 pub mod spirit_nagas;
 pub mod otyughs;
+pub mod sprites;
+pub mod death_dogs;
+pub mod magmins;
+pub mod galeb_duhrs;

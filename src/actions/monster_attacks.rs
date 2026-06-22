@@ -114,6 +114,48 @@ pub fn save_or_damage_rider(
     save
 }
 
+/// On a weapon-attack hit, roll `target_id`'s saving throw against `dc`
+/// using `save_ability`. On fail, push an `ApplyCondition` rider installing
+/// `condition` with `timer`, logging the install through `rider_name` so
+/// the log line reads e.g. `"  death dog disease: target sickens"`. Returns
+/// the save outcome so the caller can chain further per-fail side-effects.
+///
+/// The condition-immunity check is the install-site responsibility (the
+/// engine's `add_condition` chokepoint already swallows immune installs);
+/// callers that want to skip the save roll entirely for known-immune
+/// targets should short-circuit before calling this helper.
+///
+/// Mirrors `save_or_damage_rider` in shape — the two together cover the
+/// "hit + save or X" pattern shared by Sleep-arrow / Death-dog disease /
+/// Spider-bite-poison / Sea-hag death-glare and friends. Distinct from
+/// the damage variant because the install path is fundamentally different
+/// (DealDamage vs ApplyCondition), and many riders need BOTH (e.g. Spider
+/// Bite: extra poison damage AND Poisoned condition on the same failed
+/// save) — those callers call both helpers in sequence with shared `save`
+/// to compose the per-hit rider.
+pub fn save_or_condition_rider(
+    encounter: &mut EncounterInstance,
+    target_id: usize,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    condition: Condition,
+    timer: ConditionTimer,
+    rider_name: &str,
+    effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+) -> crate::engine::saves::SaveOutcome {
+    use crate::engine::side_effects::ApplyCondition;
+    let save = encounter.roll_save(target_id, save_ability, dc);
+    if !save.passed() {
+        encounter.log(format!("  {}: target fails the save", rider_name));
+        effects.push(Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition,
+            timer,
+        }));
+    }
+    save
+}
+
 /// Resolve a single weapon swing whose attack and damage modifiers both
 /// derive from the same ability (the standard "STR-to-hit STR-to-damage"
 /// shape), at an arbitrary reach. Returns `(effects, damage_dealt)` so the
@@ -205,7 +247,7 @@ pub fn simple_weapon_attack_ranged(
             damage_type,
             is_melee,
             long_range: normal_range,
-                is_spell: false,
+            is_spell: false,
         },
     )
 }
@@ -493,8 +535,6 @@ impl Action for TripAttack {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::ApplyCondition;
-
         let target_id = first_target_id(target_ids);
         let mut effects = simple_weapon_attack(
             encounter,
@@ -513,15 +553,18 @@ impl Action for TripAttack {
             return effects;
         }
         let Some(target_id) = target_id else { return effects };
-        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, 13);
-        if !save.passed() {
-            effects.push(Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Prone,
-                // Prone from a trip persists until stand-up clears it.
-                timer: crate::conditions::ConditionTimer::Permanent,
-            }));
-        }
+        // Prone from a trip persists until stand-up clears it
+        // (ConditionTimer::Permanent).
+        save_or_condition_rider(
+            encounter,
+            target_id,
+            AbilityScoreType::Strength,
+            13,
+            Condition::Prone,
+            ConditionTimer::Permanent,
+            "trip",
+            &mut effects,
+        );
         effects
     }
 }
@@ -795,10 +838,6 @@ impl Action for WolfBite {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        use crate::conditions::{Condition, ConditionTimer};
-        use crate::engine::side_effects::ApplyCondition;
-        use crate::engine::types::AbilityScoreType;
-
         let target_id = first_target_id(target_ids);
         let mut effects = simple_weapon_attack(
             encounter,
@@ -815,14 +854,16 @@ impl Action for WolfBite {
             return effects;
         }
         let Some(target_id) = target_id else { return effects };
-        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, 11);
-        if !save.passed() {
-            effects.push(Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Prone,
-                timer: ConditionTimer::Permanent,
-            }));
-        }
+        save_or_condition_rider(
+            encounter,
+            target_id,
+            AbilityScoreType::Strength,
+            11,
+            Condition::Prone,
+            ConditionTimer::Permanent,
+            "wolf trip",
+            &mut effects,
+        );
         effects
     }
 }
@@ -1510,14 +1551,16 @@ impl Action for GhoulClaws {
         let Some(target_id) = target_id else {
             return effects;
         };
-        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 10);
-        if !save.passed() {
-            effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Paralyzed,
-                timer: ConditionTimer::Rounds(2),
-            }));
-        }
+        save_or_condition_rider(
+            encounter,
+            target_id,
+            AbilityScoreType::Constitution,
+            10,
+            Condition::Paralyzed,
+            ConditionTimer::Rounds(2),
+            "ghoul paralysis",
+            &mut effects,
+        );
         effects
     }
 }
@@ -1646,14 +1689,16 @@ impl Action for DireWolfBite {
         let Some(target_id) = target_id else {
             return effects;
         };
-        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, 13);
-        if !save.passed() {
-            effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Prone,
-                timer: ConditionTimer::Permanent,
-            }));
-        }
+        save_or_condition_rider(
+            encounter,
+            target_id,
+            AbilityScoreType::Strength,
+            13,
+            Condition::Prone,
+            ConditionTimer::Permanent,
+            "dire wolf trip",
+            &mut effects,
+        );
         effects
     }
 }
@@ -1826,7 +1871,6 @@ impl Action for WerewolfBite {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::ApplyCondition;
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
@@ -1845,14 +1889,16 @@ impl Action for WerewolfBite {
             return effects;
         }
         // Lycanthropy bite rider: DC 12 CON save or Poisoned 3 rounds.
-        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 12);
-        if !save.passed() {
-            effects.push(Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Poisoned,
-                timer: ConditionTimer::Rounds(3),
-            }));
-        }
+        save_or_condition_rider(
+            encounter,
+            target_id,
+            AbilityScoreType::Constitution,
+            12,
+            Condition::Poisoned,
+            ConditionTimer::Rounds(3),
+            "lycanthropy",
+            &mut effects,
+        );
         effects
     }
 }
@@ -11144,7 +11190,6 @@ impl Action for OtyughBite {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::ApplyCondition;
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
@@ -11167,15 +11212,16 @@ impl Action for OtyughBite {
         // Poisoned condition for `Rounds(5)` — enough to be a real
         // mid-fight debuff without the "until cured" indefinite tag that
         // the engine doesn't track.
-        let save = encounter.roll_save(target_id, AbilityScoreType::Constitution, 15);
-        if !save.passed() {
-            encounter.log("  otyugh disease: target sickens with filth fever");
-            effects.push(Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Poisoned,
-                timer: ConditionTimer::Rounds(5),
-            }));
-        }
+        save_or_condition_rider(
+            encounter,
+            target_id,
+            AbilityScoreType::Constitution,
+            15,
+            Condition::Poisoned,
+            ConditionTimer::Rounds(5),
+            "otyugh disease",
+            &mut effects,
+        );
         effects
     }
 }
@@ -11273,4 +11319,305 @@ pub static OTYUGH_TENTACLE: LazyLock<OtyughTentacle> =
 pub static OTYUGH_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
     display_name: "otyugh multiattack",
     parts: vec![(&*OTYUGH_TENTACLE, 2), (&*OTYUGH_BITE, 1)],
+});
+
+// ─── Sprite ──────────────────────────────────────────────────────────
+
+/// Sprite Shortsword — DEX-based 1 piercing melee. RAW the sprite's
+/// shortsword does a flat 1 damage (the tiny fey has STR 3, and the
+/// d6 is replaced by the size-restricted minimum). We model the flat 1
+/// via a 1d1 placeholder die because the engine's `Dice` rolls a uniform
+/// `[1, n]`; rolling on a 1-sided die always returns 1, matching RAW.
+/// Vanilla `SimpleWeapon::melee` — no per-hit rider; the load-bearing
+/// threat is the sleep-arrow on the bow, not the melee jab.
+pub static SPRITE_SHORTSWORD: SimpleWeapon = SimpleWeapon::melee(
+    "sprite shortsword",
+    &["ssw", "sprite-sword"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 1),
+    DamageType::Piercing,
+);
+
+/// Sprite Longbow — DEX-based ranged arrow with a sleep-poison rider. On
+/// a confirmed hit the target makes a CON save (DC 10); on fail they fall
+/// Asleep for 10 rounds (RAW: 1 minute). The base arrow's damage is a
+/// flat 1 piercing (same size-restricted die as the shortsword) plus the
+/// optional sleep-poison save. The arrow at reach 8 (40 ft RAW) is the
+/// sprite's load-bearing tactical clause — opens a fight by knocking out
+/// the heaviest melee threat before they close.
+///
+/// The save shape mirrors Imp Sting / Spider Bite: roll the attack first,
+/// gate the save rider on a confirmed hit, and route the Asleep install
+/// through the standard `dynamic_immunity_to` chokepoint (constructs,
+/// undead, elves all shrug it off automatically). The 10-round timer is
+/// the standard "1 minute = 10 rounds" mapping.
+pub struct SpriteLongbow {}
+
+impl Action for SpriteLongbow {
+    fn name(&self) -> &str {
+        "sprite longbow"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["slb", "sprite-bow"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 40 ft RAW = reach 8 on this 2.5 ft grid (the sprite is tiny but
+        // the bow's range is fixed). Long-range to 160 ft (32 tiles) is
+        // omitted — the engine routes long-range disadvantage through
+        // `normal_range`, but the sprite's tactical envelope is the
+        // 8-tile sleep-arrow opener, not a sniper rifle from across the
+        // map. Future tuning could promote this to a SimpleWeapon-style
+        // (normal 8, reach 32) shape.
+        Some(8)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            self.name(),
+            AbilityScoreType::Dexterity,
+            Some(AbilityScoreType::Dexterity),
+            Dice::new(1, 1),
+            DamageType::Piercing,
+            false,
+        );
+        // Save rider only on a confirmed hit. Asleep-immune targets
+        // (constructs, undead, elves via Fey Ancestry) auto-skip the
+        // install at `add_condition` — but routing the save through
+        // `save_or_condition_rider` still rolls it; we short-circuit
+        // upstream so an immune target doesn't waste a roll.
+        if effects.is_empty() {
+            return effects;
+        }
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return effects;
+        };
+        if target.effectively_immune_to_condition(Condition::Asleep) {
+            encounter.log("  sleep arrow: target is immune to sleep");
+            return effects;
+        }
+        save_or_condition_rider(
+            encounter,
+            target_id,
+            AbilityScoreType::Constitution,
+            10,
+            Condition::Asleep,
+            ConditionTimer::Rounds(10),
+            "sleep arrow",
+            &mut effects,
+        );
+        effects
+    }
+}
+
+pub static SPRITE_LONGBOW: LazyLock<SpriteLongbow> = LazyLock::new(|| SpriteLongbow {});
+
+// ─── Death Dog ───────────────────────────────────────────────────────
+
+/// Death Dog Bite — STR-based 1d6+STR piercing melee with a disease save
+/// rider. On a confirmed hit the target makes a CON save (DC 12); on fail
+/// they're Poisoned (RAW: "diseased" until cured — we use Poisoned for
+/// Rounds(10) as the closest mechanical proxy, same convention as Otyugh
+/// Bite's disease save). The death dog is the two-headed canine of the
+/// underdeep; the dual-bite is what makes its CR-1 burst hit twice as
+/// often as a vanilla wolf — see `DEATH_DOG_MULTI` for the wrapper.
+pub struct DeathDogBite {}
+
+impl Action for DeathDogBite {
+    fn name(&self) -> &str {
+        "death dog bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ddb", "death-dog-bite"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            self.name(),
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(1, 6),
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        // 5e RAW: CON 12, on fail "diseased" until cured. The engine
+        // doesn't model long-term diseases, so we install Poisoned for
+        // 10 rounds — long enough to feel like a real debuff in a
+        // protracted fight without the "until cured" indefinite tag
+        // (matches Otyugh Bite's disease-save convention).
+        save_or_condition_rider(
+            encounter,
+            target_id,
+            AbilityScoreType::Constitution,
+            12,
+            Condition::Poisoned,
+            ConditionTimer::Rounds(10),
+            "death dog disease",
+            &mut effects,
+        );
+        effects
+    }
+}
+
+pub static DEATH_DOG_BITE: LazyLock<DeathDogBite> = LazyLock::new(|| DeathDogBite {});
+
+/// Death Dog Multiattack — 2 bite swings per Action. The two-headed
+/// canine's signature: each head rolls its own d20 + STR vs AC, so the
+/// per-Action damage budget is ~2 × (1d6 + STR) plus two independent rolls
+/// against the disease save. Same single-sub shape as Hook Horror /
+/// Iron Golem / Helmed Horror multis.
+pub static DEATH_DOG_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "death dog multiattack",
+    sub_attack: &*DEATH_DOG_BITE,
+    count: 2,
+});
+
+// ─── Magmin ──────────────────────────────────────────────────────────
+
+/// Magmin Touch — DEX-based 1d6+DEX fire melee. Pure fire damage (no
+/// physical component); on a confirmed hit the target is Burning for
+/// 3 rounds (RAW: "the magmin's body bursts into flames" — we use the
+/// existing Burning condition for the persistent fire DOT). The magmin
+/// is a CR ½ fire elemental, so the touch's fire-typed damage threads
+/// neatly through fire-resistant / immune targets via the standard
+/// damage pipeline.
+///
+/// The Burning install at `add_condition` checks fire immunity (via
+/// `dynamic_immunity_to` and the typed-immunity condition gate); we
+/// short-circuit upstream so a fire-immune target doesn't waste log
+/// lines on the install attempt.
+pub struct MagminTouch {}
+
+impl Action for MagminTouch {
+    fn name(&self) -> &str {
+        "magmin touch"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mt", "magmin-touch", "fiery-touch"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            self.name(),
+            AbilityScoreType::Dexterity,
+            Some(AbilityScoreType::Dexterity),
+            Dice::new(1, 6),
+            DamageType::Fire,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        // Burning DOT install — fire-immune targets shrug it off at the
+        // install site, but we short-circuit upstream so the log doesn't
+        // record a wasted install attempt.
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return effects;
+        };
+        if target.effectively_immune_to_condition(Condition::Burning) {
+            return effects;
+        }
+        encounter.log("  magmin ignites the target");
+        effects.push(Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Burning,
+            timer: ConditionTimer::Rounds(3),
+        }));
+        effects
+    }
+}
+
+pub static MAGMIN_TOUCH: LazyLock<MagminTouch> = LazyLock::new(|| MagminTouch {});
+
+// ─── Galeb Duhr ──────────────────────────────────────────────────────
+
+/// Galeb Duhr Slam — STR-based 3d8+STR bludgeoning melee, reach 1. The
+/// stone-creature's signature swing; the heavy 3d8 base die plus a STR-20
+/// modifier produces the brute-force per-Action damage budget that anchors
+/// the CR-6 slot. Vanilla `SimpleWeapon` — the load-bearing identity is
+/// the resistance / immunity envelope plus the double-slam multi, not any
+/// per-hit rider (the galeb duhr's RAW "Animate Boulders" recharge is a
+/// world-shaping clause the engine doesn't model).
+pub static GALEB_DUHR_SLAM: SimpleWeapon = SimpleWeapon::melee(
+    "galeb duhr slam",
+    &["gds", "duhr-slam"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 8),
+    DamageType::Bludgeoning,
+);
+
+/// Galeb Duhr Multiattack — 2 slam swings per Action. RAW: "The galeb
+/// duhr makes two slam attacks." Same single-sub shape as Stone Golem /
+/// Iron Golem / Helmed Horror multis — the per-Action budget is ~2 ×
+/// (3d8 + STR mod) = ~38 average against a single target.
+pub static GALEB_DUHR_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "galeb duhr multiattack",
+    sub_attack: &GALEB_DUHR_SLAM,
+    count: 2,
 });
