@@ -156,6 +156,58 @@ pub fn save_or_condition_rider(
     save
 }
 
+/// Resolve a single-target "save-or-charmed-by-caster" install. Returns
+/// the side-effects produced (empty when the target is charm-immune or
+/// saves). Pre-checks `effectively_immune_to_condition(Charmed)` so the
+/// charm-immune log fires before the save roll (matches the canonical
+/// short-circuit shared by Vampire Charming Gaze / Dryad Fey Charm).
+/// On a failed save, pushes both an `ApplyCondition(Charmed)` and a
+/// `SetCharmedBy(caster)` so the engine's "can't act hostile against
+/// your charmer" gate is wired up correctly.
+///
+/// Centralizes the "immunity-check + save + Charmed install + SetCharmedBy"
+/// loop shared by every single-target charm action — keeps the log
+/// shape uniform ("{rider}: target's mind is shielded" / "target resists"
+/// / "target is enthralled") and the charm-link bookkeeping in one place
+/// so a future charm-pipeline tweak (e.g. honoring a "save with advantage
+/// while wearing a Charm Amulet" prime) lands once instead of being
+/// re-implemented across the three current call sites.
+pub fn save_or_charmed_by_caster(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    target_id: usize,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    timer: ConditionTimer,
+    rider_name: &str,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    use crate::engine::side_effects::{ApplyCondition, SetCharmedBy};
+    let Some(target) = encounter.actors.get(&target_id) else {
+        return Vec::new();
+    };
+    if target.effectively_immune_to_condition(Condition::Charmed) {
+        encounter.log(format!("  {}: target's mind is shielded", rider_name));
+        return Vec::new();
+    }
+    let save = encounter.roll_save(target_id, save_ability, dc);
+    if save.passed() {
+        encounter.log(format!("  {}: target resists the enchantment", rider_name));
+        return Vec::new();
+    }
+    encounter.log(format!("  {}: target is enthralled", rider_name));
+    vec![
+        Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Charmed,
+            timer,
+        }),
+        Box::new(SetCharmedBy {
+            target_id,
+            charmer: Some(caster_id),
+        }),
+    ]
+}
+
 /// Resolve a single weapon swing whose attack and damage modifiers both
 /// derive from the same ability (the standard "STR-to-hit STR-to-damage"
 /// shape), at an arbitrary reach. Returns `(effects, damage_dealt)` so the
@@ -3982,34 +4034,18 @@ impl Action for VampireCharmingGaze {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::{ApplyCondition, SetCharmedBy};
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        // Charm-immune creatures (undead / constructs, plus Fey Ancestry
-        // / MindBlanked dynamic immunities) shrug it off.
-        if let Some(target) = encounter.actors.get(&target_id)
-            && target.effectively_immune_to_condition(Condition::Charmed)
-        {
-            encounter.log("  charming gaze: target is immune".to_string());
-            return Vec::new();
-        }
-        const DC: i32 = 17;
-        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, DC);
-        if save.passed() {
-            return Vec::new();
-        }
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Charmed,
-                timer: ConditionTimer::Rounds(10),
-            }),
-            Box::new(SetCharmedBy {
-                target_id,
-                charmer: Some(caster_id),
-            }),
-        ]
+        save_or_charmed_by_caster(
+            encounter,
+            caster_id,
+            target_id,
+            AbilityScoreType::Wisdom,
+            17,
+            ConditionTimer::Rounds(10),
+            "charming gaze",
+        )
     }
 }
 
@@ -8938,37 +8974,18 @@ impl Action for DryadFeyCharm {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::{ApplyCondition, SetCharmedBy};
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        // Charm-immune targets shrug it off without even rolling — match
-        // the LURING_SONG / Vampire Charm short-circuit.
-        let Some(target) = encounter.actors.get(&target_id) else {
-            return Vec::new();
-        };
-        if target.effectively_immune_to_condition(Condition::Charmed) {
-            encounter.log("  fey charm: target's mind is shielded");
-            return Vec::new();
-        }
-        const DC: i32 = 14;
-        let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, DC);
-        if save.passed() {
-            encounter.log("  fey charm: target resists the dryad's enchantment");
-            return Vec::new();
-        }
-        encounter.log("  fey charm: target is enthralled by the dryad");
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Charmed,
-                timer: ConditionTimer::Rounds(10),
-            }),
-            Box::new(SetCharmedBy {
-                target_id,
-                charmer: Some(caster_id),
-            }),
-        ]
+        save_or_charmed_by_caster(
+            encounter,
+            caster_id,
+            target_id,
+            AbilityScoreType::Wisdom,
+            14,
+            ConditionTimer::Rounds(10),
+            "fey charm",
+        )
     }
 }
 
@@ -11620,4 +11637,234 @@ pub static GALEB_DUHR_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattac
     display_name: "galeb duhr multiattack",
     sub_attack: &GALEB_DUHR_SLAM,
     count: 2,
+});
+
+// ─── Griffon ─────────────────────────────────────────────────────────
+
+/// Griffon Beak — STR-based 1d8+STR piercing melee, the chunkier half
+/// of the griffon's per-Action volley. Vanilla `SimpleWeapon` — the
+/// griffon's identity is the per-Action beak+talons compound, not any
+/// per-swing rider.
+pub static GRIFFON_BEAK: SimpleWeapon = SimpleWeapon::melee(
+    "griffon beak",
+    &["g-beak"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 8),
+    DamageType::Piercing,
+);
+
+/// Griffon Talons — STR-based 2d6+STR slashing melee. The bigger of the
+/// two swings; pairs with the beak in the per-Action compound for the
+/// flying-predator's signature dive-and-rake silhouette.
+pub static GRIFFON_TALONS: SimpleWeapon = SimpleWeapon::melee(
+    "griffon talons",
+    &["g-tal", "claws-g"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Slashing,
+);
+
+/// Griffon Multiattack — 1 beak + 1 talons per Action via
+/// `CompoundAttack`. RAW: "The griffon makes two attacks: one with its
+/// beak and one with its claws." Heterogeneous compound (different damage
+/// types per swing) is what `CompoundAttack` is for — same shape as the
+/// Vrock / Salamander / Medusa multi.
+pub static GRIFFON_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "griffon multiattack",
+    parts: vec![
+        (&GRIFFON_BEAK, 1),
+        (&GRIFFON_TALONS, 1),
+    ],
+});
+
+// ─── Lamia ───────────────────────────────────────────────────────────
+
+/// Lamia Claws — STR-based 2d10+STR slashing melee. The lamia's heavier
+/// melee lane; pairs with the intoxicating touch in the per-Action
+/// compound. Vanilla `SimpleWeapon` — no per-swing rider; the touch is
+/// where the lamia's signature curse rider lives.
+pub static LAMIA_CLAWS: SimpleWeapon = SimpleWeapon::melee(
+    "lamia claws",
+    &["l-claws"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 10),
+    DamageType::Slashing,
+);
+
+/// Lamia Intoxicating Touch — single-target curse install at reach 1.
+/// Target makes a WIS save vs DC 13; on fail, the target is magically
+/// cursed (modeled as Charmed by the lamia for 10 rounds) so they can't
+/// take hostile actions against their cursed mistress and the AI's
+/// hostile-target gate routes them away from the lamia in the target
+/// picker. RAW gives the curse a 1-hour timer and a "disadvantage on
+/// WIS saves and ability checks" clause; we collapse to Charmed since
+/// the engine doesn't tag "disadvantage on WIS saves only" cleanly and
+/// the Charmed condition already encodes the load-bearing tactical
+/// implication (can't attack the curser).
+///
+/// We drop the RAW melee-spell-attack to-hit roll and resolve as a pure
+/// save (matching the engine's treatment of similar pure-effect touches
+/// like the Medusa's Petrifying Gaze) — the to-hit + on-hit-save shape
+/// would double-gate the curse install for what's essentially a single-
+/// payload effect; one roll keeps the per-Action tempo legible and the
+/// curse-vs-claws lane distinction cleaner.
+pub struct LamiaIntoxicatingTouch {}
+
+impl Action for LamiaIntoxicatingTouch {
+    fn name(&self) -> &str {
+        "intoxicating touch"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["it", "touch", "lamia-touch"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn deals_damage(&self) -> bool {
+        // Pure curse install — no HP loss on the target. The AI's
+        // focus-fire pipeline should prefer the claws for whittling and
+        // only reach for the touch when the lockout is more valuable
+        // than raw damage tempo.
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        save_or_charmed_by_caster(
+            encounter,
+            caster_id,
+            target_id,
+            AbilityScoreType::Wisdom,
+            13,
+            ConditionTimer::Rounds(10),
+            "lamia curse",
+        )
+    }
+}
+
+pub static LAMIA_INTOXICATING_TOUCH: LazyLock<LamiaIntoxicatingTouch> =
+    LazyLock::new(|| LamiaIntoxicatingTouch {});
+
+/// Lamia Multiattack — 1 claws + 1 intoxicating touch per Action via
+/// `CompoundAttack`. RAW: "Multiattack. The lamia makes two attacks:
+/// one with its claws and one with its dagger or Intoxicating Touch."
+/// We pick the touch over the dagger because the curse is the lamia's
+/// signature (the dagger lane is essentially a tempo-fallback we omit).
+/// Same shape as the Medusa multi: heterogeneous parts, single per-
+/// Action cost envelope.
+pub static LAMIA_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "lamia multiattack",
+    parts: vec![
+        (&LAMIA_CLAWS, 1),
+        (&*LAMIA_INTOXICATING_TOUCH, 1),
+    ],
+});
+
+// ─── Werebear ────────────────────────────────────────────────────────
+
+/// Werebear Bite — STR-based 1d10+STR piercing melee with a CON save
+/// (DC 14) on hit for Poisoned (Rounds(3)), proxy for RAW's lycanthropy
+/// curse rider. Mirrors the Werewolf bite's shape (same save + condition
+/// rider chassis), tuned up one die tier (1d10 vs 1d8) to match the
+/// werebear's heftier per-swing damage budget at CR 5.
+pub struct WerebearBite {}
+
+impl Action for WerebearBite {
+    fn name(&self) -> &str {
+        "werebear bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wb-bite"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            self.name(),
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(1, 10),
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        // Lycanthropy bite rider: DC 14 CON save or Poisoned 3 rounds.
+        // Higher DC than the werewolf (RAW 12 → 14) since the werebear
+        // is a CR-5 threat to the werewolf's CR-3.
+        save_or_condition_rider(
+            encounter,
+            target_id,
+            AbilityScoreType::Constitution,
+            14,
+            Condition::Poisoned,
+            ConditionTimer::Rounds(3),
+            "lycanthropy",
+            &mut effects,
+        );
+        effects
+    }
+}
+
+pub static WEREBEAR_BITE: LazyLock<WerebearBite> = LazyLock::new(|| WerebearBite {});
+
+/// Werebear Claws — STR-based 2d8+STR slashing melee. The big-die
+/// secondary swing in the werebear's bite+claws compound. Vanilla
+/// `SimpleWeapon` — the bite carries the lycanthropy curse rider, the
+/// claws are the steady damage lane.
+pub static WEREBEAR_CLAWS: SimpleWeapon = SimpleWeapon::melee(
+    "werebear claws",
+    &["wb-claws"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Slashing,
+);
+
+/// Werebear Multiattack — 1 bite + 1 claws per Action via
+/// `CompoundAttack`. RAW (hybrid form): "Multiattack. In bear or hybrid
+/// form, it makes two attacks: one with its bite and one with its
+/// claws." Heterogeneous compound — different damage types per swing,
+/// the bite carries the curse rider, the claws are the steady damage
+/// lane. Same shape as the Griffon / Salamander / Medusa multi.
+pub static WEREBEAR_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "werebear multiattack",
+    parts: vec![
+        (&*WEREBEAR_BITE, 1),
+        (&WEREBEAR_CLAWS, 1),
+    ],
 });

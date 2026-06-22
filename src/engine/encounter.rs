@@ -153,6 +153,9 @@ use crate::actors::creatures::spirit_nagas::SPIRIT_NAGA_TEMPLATE;
 use crate::actors::creatures::otyughs::OTYUGH_TEMPLATE;
 use crate::actors::creatures::sprites::SPRITE_TEMPLATE;
 use crate::actors::creatures::death_dogs::DEATH_DOG_TEMPLATE;
+use crate::actors::creatures::griffons::GRIFFON_TEMPLATE;
+use crate::actors::creatures::lamias::LAMIA_TEMPLATE;
+use crate::actors::creatures::werebears::WEREBEAR_TEMPLATE;
 use crate::actors::creatures::magmins::MAGMIN_TEMPLATE;
 use crate::actors::creatures::galeb_duhrs::GALEB_DUHR_TEMPLATE;
 use std::collections::HashMap;
@@ -2995,6 +2998,33 @@ impl EncounterInstance {
             &DEATH_DOG_TEMPLATE,
             &MAGMIN_TEMPLATE,
             &GALEB_DUHR_TEMPLATE,
+            // Newest additions filling the CR-2 flying-predator / CR-4
+            // monstrosity-charmer / CR-5 lycanthrope-boss lanes:
+            //   - Griffon (CR 2 large monstrosity): the classic eagle-lion
+            //     hybrid, beak+talons heterogeneous compound multi
+            //     (1d8+STR piercing + 2d6+STR slashing) for ~19.5 average
+            //     per Action against a single target. Sits between
+            //     Hippogriff (CR 1) and Manticore (CR 3) on the flying-
+            //     beast ladder.
+            //   - Lamia (CR 4 large monstrosity): the desert temptress —
+            //     2d10+STR claws + a save-or-Charmed intoxicating touch
+            //     curse compound multi. The single-target charm-lockout
+            //     answer to the Sea Hag's psychic-damage glare at the
+            //     mid-CR tier, with the same `SetCharmedBy` charmer-link
+            //     so the cursed PC can't take hostile actions back at the
+            //     lamia.
+            //   - Werebear (CR 5 large humanoid lycanthrope): apex of the
+            //     lycanthrope family — bite + claws heterogeneous compound
+            //     multi (1d10+STR piercing + 2d8+STR slashing), with the
+            //     bite carrying the CON 14 lycanthropy save rider
+            //     (Poisoned 3 rounds proxy for RAW's "curse of werebear
+            //     lycanthropy"). Non-magical BPS resistance via the
+            //     shared `non_magical_physical_resistances` helper — same
+            //     defensive envelope as the Werewolf (CR 3) but on a
+            //     135-HP frame with the chunkier compound multi.
+            &GRIFFON_TEMPLATE,
+            &LAMIA_TEMPLATE,
+            &WEREBEAR_TEMPLATE,
         ]
     }
 
@@ -18171,6 +18201,58 @@ mod tests {
             }
         }
         assert!(charmed_once, "luring song should sometimes land a charm on the fighter");
+    }
+
+    #[test]
+    fn lamia_intoxicating_touch_charms_with_charmer_link() {
+        // The lamia's intoxicating touch resolves through the shared
+        // `save_or_charmed_by_caster` helper — on a failed WIS save it
+        // should both install Charmed AND set the `charmed_by` link so
+        // the cursed PC can't take hostile actions back against the
+        // lamia (gated by `Action::validate_input`).
+        use crate::actions::monster_attacks::LAMIA_INTOXICATING_TOUCH;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::lamias::LAMIA_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let lamia = e
+            .instantiate_creature(&LAMIA_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        // Loop until a save fails — DC 13 vs fighter WIS will sometimes
+        // pass, sometimes fail. We assert both the Charmed install AND
+        // the SetCharmedBy link (the load-bearing contract of the
+        // shared `save_or_charmed_by_caster` helper).
+        let mut linked = false;
+        for _ in 0..50 {
+            let effects = LAMIA_INTOXICATING_TOUCH.side_effects(
+                &mut e,
+                lamia,
+                Some(&vec![fighter]),
+                None,
+                None,
+            );
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            if e.actors[&fighter].has_condition(Condition::Charmed)
+                && e.actors[&fighter].charmed_by() == Some(lamia)
+            {
+                linked = true;
+                break;
+            }
+            // Clear any partial install before the next trial so we can
+            // observe a clean state on the next failed save.
+            if let Some(f) = e.actors.get_mut(&fighter) {
+                f.remove_condition(Condition::Charmed);
+            }
+        }
+        assert!(
+            linked,
+            "intoxicating touch should land Charmed + SetCharmedBy link in some trial"
+        );
     }
 
     #[test]

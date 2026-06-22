@@ -181,3 +181,6 @@ pub mod sprites;
 pub mod death_dogs;
 pub mod magmins;
 pub mod galeb_duhrs;
+pub mod griffons;
+pub mod lamias;
+pub mod werebears;
