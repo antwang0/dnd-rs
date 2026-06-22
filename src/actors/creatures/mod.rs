@@ -184,3 +184,7 @@ pub mod galeb_duhrs;
 pub mod griffons;
 pub mod lamias;
 pub mod werebears;
+pub mod wereboars;
+pub mod wererats;
+pub mod weretigers;
+pub mod ettercaps;

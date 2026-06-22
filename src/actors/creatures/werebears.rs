@@ -54,7 +54,7 @@ use std::sync::LazyLock;
 pub static WEREBEAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*WEREBEAR_MULTI);
-    actions.push(&*WEREBEAR_BITE);
+    actions.push(&WEREBEAR_BITE);
     actions.push(&WEREBEAR_CLAWS);
     CreatureTemplate {
         name: "Werebear",

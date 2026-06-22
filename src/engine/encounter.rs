@@ -156,6 +156,10 @@ use crate::actors::creatures::death_dogs::DEATH_DOG_TEMPLATE;
 use crate::actors::creatures::griffons::GRIFFON_TEMPLATE;
 use crate::actors::creatures::lamias::LAMIA_TEMPLATE;
 use crate::actors::creatures::werebears::WEREBEAR_TEMPLATE;
+use crate::actors::creatures::wereboars::WEREBOAR_TEMPLATE;
+use crate::actors::creatures::wererats::WERERAT_TEMPLATE;
+use crate::actors::creatures::weretigers::WERETIGER_TEMPLATE;
+use crate::actors::creatures::ettercaps::ETTERCAP_TEMPLATE;
 use crate::actors::creatures::magmins::MAGMIN_TEMPLATE;
 use crate::actors::creatures::galeb_duhrs::GALEB_DUHR_TEMPLATE;
 use std::collections::HashMap;
@@ -3025,6 +3029,28 @@ impl EncounterInstance {
             &GRIFFON_TEMPLATE,
             &LAMIA_TEMPLATE,
             &WEREBEAR_TEMPLATE,
+            // Newest additions completing the lycanthrope family and
+            // adding a spider-humanoid trapper:
+            //   - Wereboar (CR 4 medium lycanthrope): tusks + maul
+            //     compound multi, DC-12 lycanthropy curse on the
+            //     tusks. Shares the CR-4 slot with Lamia / Weretiger
+            //     but with a heavier melee profile (2d6 dice vs 1d10).
+            //   - Wererat (CR 2 medium lycanthrope): bite + finesse
+            //     shortsword multi, DC-11 lycanthropy curse on the
+            //     bite. The smallest and sneakiest wereXX — slots
+            //     next to Sea Hag / Polar Bear on the CR-2 bench.
+            //   - Weretiger (CR 4 large lycanthrope): bite + claws
+            //     multi, DC-13 lycanthropy curse on the bite. The
+            //     agile/predatory variant to the wereboar's brute
+            //     melee at the same CR.
+            //   - Ettercap (CR 2 medium monstrosity): bite (with venom
+            //     rider) + claws compound multi plus a 30-ft DEX-save
+            //     web action that lands Restrained on fail. First
+            //     ranged-restraint creature in the pool.
+            &WEREBOAR_TEMPLATE,
+            &WERERAT_TEMPLATE,
+            &WERETIGER_TEMPLATE,
+            &ETTERCAP_TEMPLATE,
         ]
     }
 

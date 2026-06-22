@@ -15,7 +15,7 @@ use std::sync::LazyLock;
 /// match the hybrid-form profile.
 pub static WEREWOLF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*WEREWOLF_BITE);
+    actions.push(&WEREWOLF_BITE);
     actions.push(&*WEREWOLF_MULTIATTACK);
     CreatureTemplate {
         name: "Werewolf",
