@@ -4889,6 +4889,20 @@ mod tests {
             let _ = e.instantiate_creature(&HELMED_HORROR_TEMPLATE, Coordinate::new(0, 17), 1, 67);
             let _ = e.instantiate_creature(&PIXIE_TEMPLATE, Coordinate::new(0, 16), 1, 68);
             let _ = e.instantiate_creature(&ANDROSPHINX_TEMPLATE, Coordinate::new(0, 2), 1, 69);
+            // Newest additions: mephit cohort (CR ¼ – ½ small elementals
+            // with on-death `DeathBurst` triggers). The AI smoke test
+            // verifies the burst fires through the engine's
+            // `cleanup_dead_actors` chokepoint mid-encounter — every
+            // mephit reduced to 0 HP will detonate before being removed,
+            // exercising the new burst path without a bespoke test fixture.
+            // The magma mephit (CR ½) anchors the bench; ice + steam
+            // mephits round out the elemental-pair lineup.
+            use crate::actors::creatures::mephits::{
+                ICE_MEPHIT_TEMPLATE, MAGMA_MEPHIT_TEMPLATE, STEAM_MEPHIT_TEMPLATE,
+            };
+            let _ = e.instantiate_creature(&MAGMA_MEPHIT_TEMPLATE, Coordinate::new(0, 10), 1, 70);
+            let _ = e.instantiate_creature(&ICE_MEPHIT_TEMPLATE, Coordinate::new(0, 12), 1, 71);
+            let _ = e.instantiate_creature(&STEAM_MEPHIT_TEMPLATE, Coordinate::new(0, 14), 1, 72);
             // `from_params` already initialised the encounter; instantiate_creature
             // wires the new actors into the initiative queue itself.
             let ai = SimpleAi;

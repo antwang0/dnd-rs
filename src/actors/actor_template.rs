@@ -404,6 +404,15 @@ pub struct CreatureTemplate {
     /// (e.g. 4 for a CR-4 sorcerer ≈ level 4). 0 = no sorcery points
     /// (the default for non-sorcerer creatures).
     pub sorcery_points: u32,
+    /// 5e **Death Burst** trigger — a final burst this creature fires
+    /// automatically when reduced to 0 HP (mephit cohort, magmin,
+    /// future ash-zombie style entries). `None` = no on-death burst
+    /// (the default for everything else). Resolved by
+    /// `EncounterInstance::cleanup_dead_actors` *before* the dying actor
+    /// is removed from the map, so the burst centers on the corpse's
+    /// own tile. The struct lives in `actions::monster_attacks` next to
+    /// `BreathWeapon` since it shares the same save-burst chassis.
+    pub death_burst: Option<&'static crate::actions::monster_attacks::DeathBurst>,
 }
 
 impl CreatureTemplate {
@@ -488,6 +497,7 @@ impl CreatureTemplate {
             has_gnome_cunning: false,
             draconic_ancestry: None,
             sorcery_points: 0,
+            death_burst: None,
         }
     }
 }
@@ -797,6 +807,11 @@ pub struct ActorInstance {
     /// Long-rest cap on the sorcery-points pool. Copied from the template
     /// at instantiation; never mutated thereafter.
     sorcery_points_max: u32,
+    /// 5e Death Burst — passive on-death trigger copied from the template.
+    /// `None` for everything that doesn't explode (the default). Read at
+    /// the death-cleanup chokepoint in `EncounterInstance` so the burst
+    /// fires before the corpse is removed from the map.
+    death_burst: Option<&'static crate::actions::monster_attacks::DeathBurst>,
 }
 
 impl ActorInstance {
@@ -905,7 +920,18 @@ impl ActorInstance {
             draconic_ancestry: ct.draconic_ancestry,
             sorcery_points: ct.sorcery_points,
             sorcery_points_max: ct.sorcery_points,
+            death_burst: ct.death_burst,
         })
+    }
+
+    /// On-death burst this actor fires when reduced to 0 HP, if any. `None`
+    /// for the vast majority of creatures; mephits / magmins / similar
+    /// templates set this to a `DeathBurst` static. Read by
+    /// `EncounterInstance::cleanup_dead_actors` at the death chokepoint.
+    pub fn death_burst(
+        &self,
+    ) -> Option<&'static crate::actions::monster_attacks::DeathBurst> {
+        self.death_burst
     }
 
     /// Remaining Mirror Image decoys (5e spell). Zero = no decoys; the

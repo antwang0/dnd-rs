@@ -1,12 +1,30 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::MAGMIN_TOUCH;
+use crate::actions::monster_attacks::{DeathBurst, MAGMIN_TOUCH};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::actors::creatures::fire_elementals::{
     ELEMENTAL_CONDITION_IMMUNITIES, elemental_damage_modifiers,
 };
-use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
+use crate::engine::dice::Dice;
+use crate::engine::types::{
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+};
 use std::collections::HashSet;
 use std::sync::LazyLock;
+
+/// Magmin **Death Burst** — when reduced to 0 HP the magmin explodes in a
+/// flash of smoldering rock, dealing 2d6 fire in a 10-ft radius (gap 2
+/// on this 2.5 ft grid). DEX save DC 11 halves; the magmin's body is
+/// gone afterward (the engine removes the corpse). Fire-immune targets
+/// (other magmins, the fire elemental, the red dragon, etc.) shrug off
+/// the burst entirely via the damage-modifier pipeline.
+pub static MAGMIN_DEATH_BURST: DeathBurst = DeathBurst {
+    display_name: "explodes",
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Fire,
+    save_ability: AbilityScoreType::Dexterity,
+    dc: 11,
+    radius: 2,
+};
 
 /// Magmin — CR ½ small elemental. The lava-imp of the Plane of Fire — a
 /// tiny smoldering creature whose body is half rock, half flame, whose
@@ -42,13 +60,12 @@ use std::sync::LazyLock;
 /// elemental dialects — Aquan / Auran / Ignan / Terran — into the
 /// single Primordial enum). Size Small. CR ½.
 ///
-/// RAW also gives the magmin **Death Burst** (when reduced to 0 HP it
-/// explodes, dealing 7 (2d6) fire damage in a 10-ft radius — DEX save
-/// halves). We omit the death-burst clause because the engine's
-/// `on_death` hook chassis isn't surfaced through the Action system,
-/// and the magmin's load-bearing combat clause is the touch's Burning
-/// rider, not the post-mortem explosion. Future "on death" trigger
-/// addition could light this up via the magmin template flag.
+/// RAW **Death Burst** is wired via the shared `DeathBurst` chassis —
+/// when reduced to 0 HP the magmin detonates for 2d6 fire in a 10-ft
+/// radius (DEX save DC 11, half on save). Fires automatically at the
+/// `cleanup_dead_actors` chokepoint before the corpse is removed; the
+/// dying magmin is excluded from its own blast via the standard
+/// `resolve_burst_save_damage` caster-exclusion gate.
 ///
 /// **Ignited Illumination** (the magmin sheds bright light in a 10-ft
 /// radius and dim light for another 10 ft) — omitted as a flavor clause
@@ -92,6 +109,12 @@ pub static MAGMIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // / Restrained). The magmin has no metabolism / joints / mind
         // to coerce.
         condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
+        // RAW Death Burst — 2d6 fire DC 11 DEX 10-ft radius. Fires at
+        // the engine's `cleanup_dead_actors` chokepoint before the
+        // corpse is removed; the magmin's own fire immunity protects
+        // it from any partial double-tap and same-typed allies
+        // (other magmins, fire elementals) shrug off the burst entirely.
+        death_burst: Some(&MAGMIN_DEATH_BURST),
         ..CreatureTemplate::defaults()
     }
 });
@@ -119,6 +142,81 @@ mod tests {
         assert_eq!(a.creature_type(), CreatureType::Elemental);
         // The magmin's one action lane — touch with Burning rider.
         assert!(a.find_action("magmin touch").is_some());
+    }
+
+    #[test]
+    fn magmin_template_has_death_burst() {
+        let burst = MAGMIN_TEMPLATE
+            .death_burst
+            .expect("magmin template should carry a death burst");
+        // 2d6 fire DC 11 DEX 10ft (gap-2) per MM. Centralized check so a
+        // future tweak (e.g. bumping the radius for the new mephit cohort)
+        // can't silently de-tune the magmin's blast.
+        assert_eq!(burst.damage_type, DamageType::Fire);
+        assert_eq!(burst.save_ability, AbilityScoreType::Dexterity);
+        assert_eq!(burst.dc, 11);
+        assert_eq!(burst.radius, 2);
+    }
+
+    /// End-to-end: a magmin reduced to 0 HP fires its 2d6 fire burst on
+    /// adjacent non-fire-immune actors. Routes through the engine's death
+    /// cleanup pipeline so the integration with `cleanup_dead_actors` and
+    /// `resolve_burst_save_damage` is exercised (not just the static
+    /// struct shape). The victim is placed gap-2 from the magmin (10 ft)
+    /// to land inside the burst; we use a CON-9 wizard chassis as the
+    /// victim so the DEX save is realistically failable but the test
+    /// asserts the HP delta directly rather than a specific roll.
+    #[test]
+    fn magmin_death_burst_damages_nearby_enemy() {
+        use crate::actors::actor_template::CreatureTemplate;
+        use crate::engine::actor_gen::ActorGenParams;
+        use crate::engine::encounter::EncounterInstance;
+        use crate::engine::terrain_gen::TerrainGenParams;
+        // Plain Medium humanoid stand-in — no fire resistance, no evasion,
+        // so the burst can land its full effect.
+        static VICTIM: LazyLock<CreatureTemplate> = LazyLock::new(|| CreatureTemplate {
+            name: "Test Victim",
+            glyph: 'v',
+            ac: 10,
+            hitpoints: "10d10".parse().unwrap(),
+            ..CreatureTemplate::defaults()
+        });
+        let tp = TerrainGenParams {
+            width: 30,
+            height: 20,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(42)).unwrap();
+        let magmin = e
+            .instantiate_creature(&MAGMIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let victim = e
+            .instantiate_creature(&VICTIM, Coordinate::new(8, 5), 1, 0)
+            .unwrap();
+        let hp_before = e.actors[&victim].hitpoints();
+        // Knock the magmin to 0 HP via direct damage (skips the action
+        // pipeline). The cleanup pass then fires the death burst and
+        // removes the corpse.
+        e.actors
+            .get_mut(&magmin)
+            .unwrap()
+            .take_typed_damage(999, DamageType::Cold);
+        e.cleanup_dead_actors();
+        assert!(!e.actors.contains_key(&magmin), "magmin should be removed");
+        let hp_after = e.actors[&victim].hitpoints();
+        assert!(
+            hp_after < hp_before,
+            "victim should take some damage from death burst (before {} after {})",
+            hp_before,
+            hp_after,
+        );
     }
 
     #[test]

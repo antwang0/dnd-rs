@@ -193,3 +193,4 @@ pub mod dretches;
 pub mod lemures;
 pub mod bearded_devils;
 pub mod blink_dogs;
+pub mod mephits;

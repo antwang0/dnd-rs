@@ -162,6 +162,9 @@ use crate::actors::creatures::weretigers::WERETIGER_TEMPLATE;
 use crate::actors::creatures::ettercaps::ETTERCAP_TEMPLATE;
 use crate::actors::creatures::magmins::MAGMIN_TEMPLATE;
 use crate::actors::creatures::galeb_duhrs::GALEB_DUHR_TEMPLATE;
+use crate::actors::creatures::mephits::{
+    ICE_MEPHIT_TEMPLATE, MAGMA_MEPHIT_TEMPLATE, STEAM_MEPHIT_TEMPLATE,
+};
 use crate::actors::creatures::awakened_trees::AWAKENED_TREE_TEMPLATE;
 use crate::actors::creatures::dretches::DRETCH_TEMPLATE;
 use crate::actors::creatures::lemures::LEMURE_TEMPLATE;
@@ -3084,6 +3087,23 @@ impl EncounterInstance {
             &LEMURE_TEMPLATE,
             &BEARDED_DEVIL_TEMPLATE,
             &BLINK_DOG_TEMPLATE,
+            // Mephit cohort (CR ¼ – ½ small elementals). First creatures
+            // wired through the new `DeathBurst` chassis — when reduced
+            // to 0 HP each detonates in a small typed burst before being
+            // removed from the map. Pairs with the Magmin (also a
+            // death-burst entry on the elemental ladder) and fills the
+            // CR-¼–½ small-elemental niche between the Imp / Fire Imp
+            // (CR 1, fiend-typed) and the Magmin / Galeb Duhr lane.
+            //   - Ice Mephit (CR ½, cold immune / fire vulnerable):
+            //     frost breath + 1d8 slashing shard death burst.
+            //   - Steam Mephit (CR ¼, fire immune): steam breath + 1d8
+            //     fire vapor death burst.
+            //   - Magma Mephit (CR ½, fire immune / cold vulnerable):
+            //     fire breath + 2d6 fire lava death burst (matches the
+            //     Magmin's burst profile on the shorter mephit radius).
+            &ICE_MEPHIT_TEMPLATE,
+            &STEAM_MEPHIT_TEMPLATE,
+            &MAGMA_MEPHIT_TEMPLATE,
         ]
     }
 
@@ -4777,6 +4797,15 @@ impl EncounterInstance {
     ///
     /// Stable actors stay on the map at 0 HP — they're out of the fight but
     /// not removed (room for healing later).
+    ///
+    /// Any actor whose template carries a `DeathBurst` static (mephits,
+    /// magmins, future ash-zombie variants) detonates inside `remove_actor`
+    /// itself — the trigger lives at the removal chokepoint so the PC
+    /// death-save path (`resolve_death_save`) gets the same fire-on-death
+    /// behavior without a duplicate hook here. Any chain-killed bystanders
+    /// the burst takes out land in the next call to `cleanup_dead_actors`
+    /// rather than being recursively swept here — keeps the loop a single,
+    /// predictable pass over the original dead list.
     pub fn cleanup_dead_actors(&mut self) {
         use crate::actors::actor_template::HpState;
         let dead: Vec<usize> = self
@@ -4790,6 +4819,50 @@ impl EncounterInstance {
             .collect();
         for id in dead {
             self.remove_actor(id);
+        }
+    }
+
+    /// Fire `id`'s death burst (if any). No-op for actors without a
+    /// `DeathBurst` template entry. Mirrors `BreathWeapon::side_effects`'s
+    /// shape — roll damage once, log the breakdown, route through
+    /// `resolve_burst_save_damage` for the per-target save + half-on-pass
+    /// resolution — but skips the recharge / action-economy wiring since
+    /// the burst is an on-death trigger, not a turn-spent ability. Damage
+    /// applies immediately (effects are flushed before returning) so the
+    /// caller can safely remove the corpse afterward without holding
+    /// onto stale `DealDamage` entries pointed at a removed actor.
+    fn trigger_death_burst(&mut self, id: usize) {
+        let Some(actor) = self.actors.get(&id) else {
+            return;
+        };
+        let Some(burst) = actor.death_burst() else {
+            return;
+        };
+        let center = actor.location();
+        let name = actor.name().to_string();
+        let dice = burst.damage_dice;
+        let damage_type = burst.damage_type;
+        let save_ability = burst.save_ability;
+        let dc = burst.dc;
+        let radius = burst.radius;
+        let label = burst.display_name;
+        let raw = self.roll(&dice);
+        self.log(format!(
+            "{} {}: {}({}) = {} {} (DC {} {}, half on save)",
+            name, label, dice, raw, raw, damage_type, dc, save_ability,
+        ));
+        let effects = crate::actions::action_template::resolve_burst_save_damage(
+            self,
+            id,
+            center,
+            radius,
+            save_ability,
+            dc,
+            raw,
+            damage_type,
+        );
+        for ef in effects {
+            ef.apply(self);
         }
     }
 
@@ -4824,7 +4897,14 @@ impl EncounterInstance {
     /// actor table. Logs the death and, for non-player-team actors, rolls
     /// a chance to drop a random item from `LOOT_POOL` on their tile and
     /// awards XP (split across surviving team-0 PCs) for the kill.
+    ///
+    /// Death-burst trigger fires here (before the actor is removed) so
+    /// every "real death" code path — monster HP→0 (`cleanup_dead_actors`)
+    /// and PC's third-failed-death-save (`resolve_death_save`) — gets the
+    /// burst uniformly. Distinct from `despawn_actor` (summon unbind), which
+    /// intentionally skips the burst since the actor isn't truly dying.
     fn remove_actor(&mut self, id: usize) {
+        self.trigger_death_burst(id);
         let Some(actor) = self.actors.remove(&id) else {
             return;
         };
@@ -5621,6 +5701,63 @@ mod tests {
         assert!(
             !e.actors.contains_key(&id),
             "monster should be removed on Killed transition"
+        );
+    }
+
+    /// End-to-end smoke test for the `DeathBurst` chassis at the engine
+    /// chokepoint: a magma mephit reduced to 0 HP fires its fire burst
+    /// through `cleanup_dead_actors`. Verifies that (a) the burst log
+    /// line lands, (b) the dying mephit is removed afterward, and (c) a
+    /// fire-immune neighbour (a second magma mephit) shrugs off the
+    /// blast via the damage-modifier pipeline. The mephits-test cohort
+    /// already covers the "non-immune victim takes damage" path with a
+    /// fresh seed; verifying it again here with whatever seed the test
+    /// helper threads through would be a flaky RNG dependency (the 2d6
+    /// roll + DC-11 DEX save can fall to 0 post-halving on the right
+    /// combo). The 0-damage immunity assertion is RNG-independent.
+    #[test]
+    fn death_burst_fires_at_cleanup_and_respects_immunity() {
+        use crate::actors::creatures::mephits::MAGMA_MEPHIT_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mephit = e
+            .instantiate_creature(&MAGMA_MEPHIT_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Fire-immune neighbour (a second magma mephit) — same template,
+        // different team. Adjacent (gap 1) so it's inside the burst's
+        // 5-ft radius. Should take 0 damage via the fire-immunity gate.
+        let fire_immune = e
+            .instantiate_creature(&MAGMA_MEPHIT_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+            .unwrap();
+        let immune_hp_before = e.actors[&fire_immune].hitpoints();
+        // Knock the mephit to 0 HP via direct typed damage (cold —
+        // the mephit's vulnerability), then run cleanup. The burst
+        // fires before the corpse is removed.
+        let max = e.actors[&mephit].max_hitpoints();
+        e.actors
+            .get_mut(&mephit)
+            .unwrap()
+            .take_typed_damage(max * 4, DamageType::Cold);
+        let log_before = e.messages().len();
+        e.cleanup_dead_actors();
+        assert!(
+            !e.actors.contains_key(&mephit),
+            "dying mephit should be cleaned up after burst fires"
+        );
+        // The death-burst log line uses the template's display_name
+        // verb ("erupts in a final spray of lava"). Look for it in the
+        // freshly-emitted log slice — proves the burst trigger fired.
+        let new_logs = &e.messages()[log_before..];
+        assert!(
+            new_logs.iter().any(|l| l.contains("erupts in a final spray of lava")),
+            "death burst log line should fire: got {:?}",
+            new_logs,
+        );
+        // The fire-immune sibling shrugs off the burst entirely via the
+        // damage-modifier pipeline.
+        assert_eq!(
+            e.actors[&fire_immune].hitpoints(),
+            immune_hp_before,
+            "fire-immune neighbour should take 0 damage from fire burst"
         );
     }
 

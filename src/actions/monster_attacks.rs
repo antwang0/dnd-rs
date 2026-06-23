@@ -3368,6 +3368,41 @@ impl Action for BreathWeapon {
     }
 }
 
+/// Passive "death burst" trigger — a creature that explodes (or shatters,
+/// or releases a final toxic gust) when reduced to 0 HP. Modeled as a
+/// data-only struct hung off `CreatureTemplate::death_burst`; the engine's
+/// `EncounterInstance::cleanup_dead_actors` fires the burst before removing
+/// the actor from the map. The burst is shaped like a `BreathWeapon` but
+/// without the action-economy / recharge wiring (it's not a turn-spent
+/// ability — it fires automatically on death).
+///
+/// Caster id passed into `resolve_burst_save_damage` is the dying creature
+/// itself; the helper's caster-exclusion gate keeps the corpse from
+/// damaging itself (a moot point — the actor is being removed anyway —
+/// but it also keeps the log clean of self-targeting noise). Allies and
+/// enemies in radius both roll the save; mephits famously can wipe their
+/// own kin if the radii overlap.
+///
+/// New death-burst creatures (mephit cohort, magmin, ash zombie variants,
+/// future shaggy-mold style monsters) land as a one-line struct literal
+/// on the template instead of a custom on-death hook per species.
+#[derive(Clone, Copy)]
+pub struct DeathBurst {
+    /// Display label for the burst log line ("explodes!", "shatters",
+    /// "erupts in icy shards", etc.). Plain English so the same struct
+    /// can describe a magmin's fire pop and an ice mephit's shard burst
+    /// without a per-creature log path.
+    pub display_name: &'static str,
+    pub damage_dice: Dice,
+    pub damage_type: DamageType,
+    pub save_ability: AbilityScoreType,
+    pub dc: i32,
+    /// Footprint-Chebyshev gap from the dying actor's tile that the burst
+    /// reaches. Mephit death bursts are 5 ft (gap 1) RAW; magmin death
+    /// burst is 10 ft (gap 2). Same units as `BreathWeapon::radius`.
+    pub radius: isize,
+}
+
 /// Dragon Fire Breath — Adult Red Dragon signature. Burst-4 radius
 /// (range 6) of searing flame. 12d6 fire, DC 21 DEX, half on save.
 /// Recharge 5-6 via the `"breath_weapon"` pool. The dragon templates
@@ -11915,3 +11950,287 @@ impl Action for BlinkDogTeleport {
 
 pub static BLINK_DOG_TELEPORT: LazyLock<BlinkDogTeleport> =
     LazyLock::new(|| BlinkDogTeleport {});
+
+// ─── Mephits ─────────────────────────────────────────────────────────
+//
+// Mephits are CR ¼ – ½ small elementals — the foot-soldiers of the
+// elemental planes. Each variant pairs two elements (Ice = water + air,
+// Steam = fire + water, etc.) and follows the same chassis:
+//   - Single Action: claws (DEX-based slashing melee).
+//   - Recharge 6 (or 4-6): breath weapon — a 2-tile cone of typed
+//     damage with a DEX or CON save for half.
+//   - Passive on-death: detonates via the shared `DeathBurst` chassis.
+//
+// We expose the variants as `SimpleWeapon` + `BreathWeapon` statics so
+// the per-variant template is a one-line `.push()` rather than three
+// bespoke Action impls per species.
+
+/// Ice Mephit Claws — DEX-based 1d4+DEX slashing melee with a 1-point
+/// cold rider. The rider is rolled as a single d1 (effectively a flat
+/// +1) and typed as cold so the damage pipeline applies cold resistance
+/// / immunity independently from the slashing portion — keeps fire- and
+/// cold-themed allies routing through the same `add_flat_damage_rider`
+/// chokepoint without a bespoke struct.
+pub struct IceMephitClaws {}
+
+impl Action for IceMephitClaws {
+    fn name(&self) -> &str {
+        "ice mephit claws"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ice-claws", "mephit-claws"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Slashing, DamageType::Cold]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            self.name(),
+            AbilityScoreType::Dexterity,
+            Some(AbilityScoreType::Dexterity),
+            Dice::new(1, 4),
+            DamageType::Slashing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        // Cold rider — typed separately so per-target cold resistance
+        // applies independently from the slashing base. Flat +1 rolled
+        // as a d1 so the rider routes through the standard chokepoint.
+        add_flat_damage_rider(
+            encounter,
+            target_id,
+            Dice::new(1, 1),
+            DamageType::Cold,
+            "icy chill",
+            &mut effects,
+        );
+        effects
+    }
+}
+
+pub static ICE_MEPHIT_CLAWS: LazyLock<IceMephitClaws> = LazyLock::new(|| IceMephitClaws {});
+
+/// Ice Mephit Frost Breath — a 15-ft cone (burst-2 / range-3 in this
+/// 2.5 ft grid) of biting cold. 1d8 cold, DC 10 DEX, half on save.
+/// Recharge 6 per RAW; we route through the shared `"breath_weapon"`
+/// pool so a mephit ambush can't double-tap with two breaths.
+pub static ICE_MEPHIT_FROST_BREATH: BreathWeapon = BreathWeapon {
+    display_name: "frost breath",
+    aliases: &["frost", "ice-breath"],
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Cold,
+    save_ability: AbilityScoreType::Dexterity,
+    dc: 10,
+    radius: 2,
+    range: 3,
+    recharge_key: "breath_weapon",
+};
+
+/// Ice Mephit **Death Burst** — 1d8 slashing in a 5-ft radius (gap 1)
+/// when reduced to 0 HP. The mephit shatters into icy shards (RAW: "the
+/// mephit explodes, dealing 4 (1d8) slashing damage to each creature
+/// within 5 feet of it"). DC 11 DEX halves. Slashing rather than cold
+/// so cold-immune targets still take the physical shrapnel — matches
+/// the RAW typing exactly.
+pub static ICE_MEPHIT_DEATH_BURST: DeathBurst = DeathBurst {
+    display_name: "shatters into icy shards",
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Slashing,
+    save_ability: AbilityScoreType::Dexterity,
+    dc: 11,
+    radius: 1,
+};
+
+/// Steam Mephit Claws — DEX-based 1d4+DEX slashing melee with a 1-point
+/// fire rider. Symmetric to `IceMephitClaws` but with fire on the rider
+/// lane (steam = fire + water elemental hybrid). Routes through the
+/// same shared `add_flat_damage_rider` chokepoint.
+pub struct SteamMephitClaws {}
+
+impl Action for SteamMephitClaws {
+    fn name(&self) -> &str {
+        "steam mephit claws"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["steam-claws"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Slashing, DamageType::Fire]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            self.name(),
+            AbilityScoreType::Dexterity,
+            Some(AbilityScoreType::Dexterity),
+            Dice::new(1, 4),
+            DamageType::Slashing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        add_flat_damage_rider(
+            encounter,
+            target_id,
+            Dice::new(1, 1),
+            DamageType::Fire,
+            "scalding steam",
+            &mut effects,
+        );
+        effects
+    }
+}
+
+pub static STEAM_MEPHIT_CLAWS: LazyLock<SteamMephitClaws> = LazyLock::new(|| SteamMephitClaws {});
+
+/// Steam Mephit Steam Breath — a 15-ft cone of scalding vapor. 1d6
+/// fire, DC 10 DEX, half on save. Recharge 6.
+pub static STEAM_MEPHIT_STEAM_BREATH: BreathWeapon = BreathWeapon {
+    display_name: "steam breath",
+    aliases: &["steam", "vapor-breath"],
+    damage_dice: Dice::new(1, 6),
+    damage_type: DamageType::Fire,
+    save_ability: AbilityScoreType::Dexterity,
+    dc: 10,
+    radius: 2,
+    range: 3,
+    recharge_key: "breath_weapon",
+};
+
+/// Steam Mephit **Death Burst** — 1d8 fire in a 5-ft radius (gap 1)
+/// when reduced to 0 HP. The mephit dissolves into scalding vapor.
+/// DC 10 DEX halves.
+pub static STEAM_MEPHIT_DEATH_BURST: DeathBurst = DeathBurst {
+    display_name: "dissolves in a burst of scalding vapor",
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Fire,
+    save_ability: AbilityScoreType::Dexterity,
+    dc: 10,
+    radius: 1,
+};
+
+/// Magma Mephit Claws — DEX-based 1d4+DEX slashing melee with a 1-point
+/// fire rider. Sibling chassis to `SteamMephitClaws` (fire-themed) but
+/// fronts the heavier death-burst variant in the mephit cohort.
+pub struct MagmaMephitClaws {}
+
+impl Action for MagmaMephitClaws {
+    fn name(&self) -> &str {
+        "magma mephit claws"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["magma-claws"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Slashing, DamageType::Fire]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            self.name(),
+            AbilityScoreType::Dexterity,
+            Some(AbilityScoreType::Dexterity),
+            Dice::new(1, 4),
+            DamageType::Slashing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        add_flat_damage_rider(
+            encounter,
+            target_id,
+            Dice::new(1, 1),
+            DamageType::Fire,
+            "molten touch",
+            &mut effects,
+        );
+        effects
+    }
+}
+
+pub static MAGMA_MEPHIT_CLAWS: LazyLock<MagmaMephitClaws> = LazyLock::new(|| MagmaMephitClaws {});
+
+/// Magma Mephit Fire Breath — a 15-ft cone of searing flame. 1d8 fire,
+/// DC 11 DEX, half on save. Recharge 6.
+pub static MAGMA_MEPHIT_FIRE_BREATH: BreathWeapon = BreathWeapon {
+    display_name: "magma fire breath",
+    aliases: &["magma-breath", "lava-breath"],
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Fire,
+    save_ability: AbilityScoreType::Dexterity,
+    dc: 11,
+    radius: 2,
+    range: 3,
+    recharge_key: "breath_weapon",
+};
+
+/// Magma Mephit **Death Burst** — 2d6 fire in a 5-ft radius (gap 1) on
+/// death. Same damage profile as the Magmin's burst but with the
+/// shorter 5-ft mephit radius (RAW). DC 11 DEX halves.
+pub static MAGMA_MEPHIT_DEATH_BURST: DeathBurst = DeathBurst {
+    display_name: "erupts in a final spray of lava",
+    damage_dice: Dice::new(2, 6),
+    damage_type: DamageType::Fire,
+    save_ability: AbilityScoreType::Dexterity,
+    dc: 11,
+    radius: 1,
+};
