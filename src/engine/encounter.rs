@@ -170,6 +170,9 @@ use crate::actors::creatures::dretches::DRETCH_TEMPLATE;
 use crate::actors::creatures::lemures::LEMURE_TEMPLATE;
 use crate::actors::creatures::bearded_devils::BEARDED_DEVIL_TEMPLATE;
 use crate::actors::creatures::blink_dogs::BLINK_DOG_TEMPLATE;
+use crate::actors::creatures::black_puddings::BLACK_PUDDING_TEMPLATE;
+use crate::actors::creatures::flesh_golems::FLESH_GOLEM_TEMPLATE;
+use crate::actors::creatures::horned_devils::HORNED_DEVIL_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -3104,6 +3107,30 @@ impl EncounterInstance {
             &ICE_MEPHIT_TEMPLATE,
             &STEAM_MEPHIT_TEMPLATE,
             &MAGMA_MEPHIT_TEMPLATE,
+            // Latest additions filling out the mid-tier monstrosity /
+            // construct / boss-fiend lanes with three iconic SRD monsters
+            // that were missing from the pool:
+            //   - Black Pudding (CR 4 large ooze): the formless tar-
+            //     blob terror of the underdark — pseudopod (1d6+STR
+            //     bludgeoning + 4d8 acid rider) with the iconic ooze
+            //     defensive envelope (acid + cold + lightning + slashing
+            //     immunity). Slots between Gelatinous Cube (CR 2) and
+            //     Shambling Mound (CR 5) on the formless-horror ladder.
+            //   - Flesh Golem (CR 5 medium construct): the patchwork
+            //     servitor — 2-slam multi (2d8+STR per swing) plus the
+            //     full construct condition envelope and lightning +
+            //     poison immunity. Slots between Salamander (CR 5) and
+            //     Galeb Duhr (CR 6) at the mid-tier, and below Stone /
+            //     Iron Golem on the construct ladder.
+            //   - Horned Devil (CR 11 large fiend): the malebranche
+            //     lieutenant — 2 forks (reach 10ft) + 1 tail (Infernal
+            //     Wound save-or-Poisoned rider) compound multi, plus
+            //     ranged Hurled Flame for stand-off pressure. Slots
+            //     between Bone Devil (CR 9) and Erinyes (CR 12) on the
+            //     devil ladder.
+            &BLACK_PUDDING_TEMPLATE,
+            &FLESH_GOLEM_TEMPLATE,
+            &HORNED_DEVIL_TEMPLATE,
         ]
     }
 
@@ -21650,6 +21677,55 @@ mod tests {
             }
         }
         assert!(shield_fired, "fire shield never reflected in 200 swings");
+    }
+
+    /// Natural melee reflect lane: the Black Pudding's Corrosive Form
+    /// passive — a creature-intrinsic version of Fire Shield, keyed off
+    /// the creature template rather than a transient condition. Hitting
+    /// the pudding in melee should reflect 1d8 acid back at the
+    /// attacker. Mirrors `fire_shield_reflects_melee_damage` shape but
+    /// keyed on the natural-reflect lane rather than the condition lane.
+    #[test]
+    fn black_pudding_corrosive_form_reflects_melee_damage() {
+        use crate::actions::monster_attacks::SLAM;
+        use crate::actors::creatures::black_puddings::BLACK_PUDDING_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let attacker = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&BLACK_PUDDING_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        let attacker_hp_pre = e.actors[&attacker].hitpoints();
+
+        // Many seeds — at least one swing should land and trigger the
+        // corrosive splash-back. 200 attempts at the fighter's hit rate
+        // vs AC 7 is overkill but keeps the test seed-independent.
+        let mut corrosive_fired = false;
+        for _ in 0..200 {
+            let a_max = e.actors[&attacker].max_hitpoints();
+            let t_max = e.actors[&target].max_hitpoints();
+            e.actors.get_mut(&attacker).unwrap().heal(a_max);
+            e.actors.get_mut(&target).unwrap().heal(t_max);
+            let target_vec = vec![target];
+            let effects = SLAM.side_effects(&mut e, attacker, Some(&target_vec), None, None);
+            let had_hit = !effects.is_empty();
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if had_hit
+                && e.actors.get(&attacker).is_some_and(|a| a.hitpoints() < attacker_hp_pre)
+            {
+                corrosive_fired = true;
+                break;
+            }
+        }
+        assert!(
+            corrosive_fired,
+            "black pudding corrosive form never reflected in 200 swings"
+        );
     }
 
     /// Lich Paralyzing Touch lands cold damage on hit and may paralyze

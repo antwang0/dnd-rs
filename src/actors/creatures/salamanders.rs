@@ -1,9 +1,25 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{SALAMANDER_MULTI, SALAMANDER_SPEAR, SALAMANDER_TAIL};
 use crate::actors::actor_template::{CreatureTemplate, non_magical_physical_resistances};
+use crate::engine::attack::{MeleeReflect, ReflectDamage};
+use crate::engine::dice::Dice;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
+
+/// Salamander **Heated Body** — RAW: "A creature that touches the
+/// salamander or hits it with a melee attack while within 5 feet of it
+/// takes 7 (1d6 + 3) fire damage." We approximate the 1d6+3 with a flat
+/// 1d6 die roll and let the damage pipeline read it through the natural-
+/// melee-reflect lane (sibling to Black Pudding Corrosive Form). The
+/// short-fall vs RAW (no +3 bonus) is small in practice — the load-
+/// bearing combat clause is the reflect itself, and the engine's
+/// natural-melee-reflect lane takes plain dice expressions for now.
+pub static SALAMANDER_HEATED_BODY: MeleeReflect = MeleeReflect {
+    damage: ReflectDamage::Dice(Dice::new(1, 6)),
+    damage_type: DamageType::Fire,
+    label: "heated body",
+};
 
 /// Salamander — CR 5 elemental. Fire-attuned serpentine giant from the
 /// Elemental Plane of Fire. Action lanes:
@@ -13,10 +29,10 @@ use std::sync::LazyLock;
 /// - **Salamander Tail** (standalone) — 2d6 bludgeoning + 1d6 fire rider.
 ///
 /// MM RAW: AC 15, ~90 HP (12d10+24), STR 18, DEX 14, CON 15. **Fire
-/// immune**, **cold vulnerable**, **fire shield** style: every melee
-/// attacker takes a hit of heat damage. We don't model the Heated Body
-/// reflect (it would need its own caster-side rider table — out of scope
-/// for this drop); the fire/cold envelope is the load-bearing flavor.
+/// immune**, **cold vulnerable**, **Heated Body** reflect — every melee
+/// attacker takes 1d6 fire damage in retaliation, routed through the
+/// engine's natural-melee-reflect lane (sibling to the Fire Shield
+/// condition keyed reflect and the Black Pudding's Corrosive Form).
 pub static SALAMANDER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*SALAMANDER_MULTI);
@@ -49,6 +65,10 @@ pub static SALAMANDER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             // Cold vulnerability — water and ice undo them.
             (DamageType::Cold, DamageModifier::Vulnerability),
         ]),
+        // Heated Body — 1d6 fire back at every melee attacker. Composes
+        // additively with condition-keyed reflects (a salamander wearing
+        // Fire Shield rolls both reflects on the same incoming swing).
+        natural_melee_reflect: Some(SALAMANDER_HEATED_BODY),
         ..CreatureTemplate::defaults()
     }
 });

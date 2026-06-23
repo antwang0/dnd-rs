@@ -413,6 +413,19 @@ pub struct CreatureTemplate {
     /// own tile. The struct lives in `actions::monster_attacks` next to
     /// `BreathWeapon` since it shares the same save-burst chassis.
     pub death_burst: Option<&'static crate::actions::monster_attacks::DeathBurst>,
+    /// 5e **natural melee reflect** — a creature-intrinsic version of the
+    /// Fire Shield / Armor of Agathys retaliation rider, but keyed off
+    /// the creature's body rather than a transient condition. Black
+    /// Pudding's Corrosive Form (1d8 acid on every melee contact) and
+    /// Salamander's Heated Body (1d6 fire) are the canonical entries.
+    /// `None` for the vast majority of creatures. The damage feeds
+    /// through the standard damage pipeline so the attacker's typed
+    /// resistance / immunity / vulnerability is honored. The reflect
+    /// fires on every melee swing connecting with the holder — distinct
+    /// from `death_burst` which fires once on 0-HP. Composes additively
+    /// with condition-keyed `MELEE_REFLECT_RIDERS`: a salamander wearing
+    /// Fire Shield rolls *both* reflects on the same incoming hit.
+    pub natural_melee_reflect: Option<crate::engine::attack::MeleeReflect>,
 }
 
 impl CreatureTemplate {
@@ -498,6 +511,7 @@ impl CreatureTemplate {
             draconic_ancestry: None,
             sorcery_points: 0,
             death_burst: None,
+            natural_melee_reflect: None,
         }
     }
 }
@@ -812,6 +826,12 @@ pub struct ActorInstance {
     /// the death-cleanup chokepoint in `EncounterInstance` so the burst
     /// fires before the corpse is removed from the map.
     death_burst: Option<&'static crate::actions::monster_attacks::DeathBurst>,
+    /// 5e natural melee reflect — passive "your touch hurts" trigger
+    /// copied from the template (Black Pudding Corrosive Form, Salamander
+    /// Heated Body). `None` for everything else. Read at the
+    /// `resolve_attack_outcome` melee-reflect chokepoint so the rider
+    /// fires alongside the condition-keyed reflect table.
+    natural_melee_reflect: Option<crate::engine::attack::MeleeReflect>,
 }
 
 impl ActorInstance {
@@ -921,6 +941,7 @@ impl ActorInstance {
             sorcery_points: ct.sorcery_points,
             sorcery_points_max: ct.sorcery_points,
             death_burst: ct.death_burst,
+            natural_melee_reflect: ct.natural_melee_reflect,
         })
     }
 
@@ -932,6 +953,16 @@ impl ActorInstance {
         &self,
     ) -> Option<&'static crate::actions::monster_attacks::DeathBurst> {
         self.death_burst
+    }
+
+    /// Natural melee reflect (Black Pudding Corrosive Form, Salamander
+    /// Heated Body, etc.) — a creature-intrinsic retaliation against
+    /// any melee swing that connects. Returns the rider description by
+    /// value (it's `Copy`); `None` for the vast majority of creatures.
+    /// Read at `resolve_attack_outcome` next to the condition-keyed
+    /// `MELEE_REFLECT_RIDERS` table.
+    pub fn natural_melee_reflect(&self) -> Option<crate::engine::attack::MeleeReflect> {
+        self.natural_melee_reflect
     }
 
     /// Remaining Mirror Image decoys (5e spell). Zero = no decoys; the

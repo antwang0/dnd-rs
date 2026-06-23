@@ -456,31 +456,57 @@ pub fn resolve_attack_outcome(
             {
                 continue;
             }
-            let amount = match rider.damage {
-                ReflectDamage::Flat(n) => {
-                    encounter.log(format!(
-                        "  {}: {} {:?} reflected",
-                        rider.label, n, rider.damage_type
-                    ));
-                    n
-                }
-                ReflectDamage::Dice(dice) => {
-                    let rolled = encounter.roll(&dice);
-                    encounter.log(format!(
-                        "  {}: {}({}) {:?} reflected",
-                        rider.label, dice, rolled, rider.damage_type
-                    ));
-                    rolled
-                }
-            };
-            effects.push(Box::new(DealDamage {
-                actor_id: p.caster_id,
-                amount,
-                damage_type: rider.damage_type,
-            }));
+            push_reflect_damage(encounter, &mut effects, p.caster_id, rider.damage,
+                rider.damage_type, rider.label);
+        }
+        // Creature-intrinsic natural reflect (Black Pudding Corrosive
+        // Form, Salamander Heated Body). Composes additively with the
+        // condition-keyed table — a salamander wearing Fire Shield rolls
+        // both reflects on the same incoming swing.
+        if let Some(natural) = encounter
+            .actors
+            .get(&p.target_id)
+            .and_then(|a| a.natural_melee_reflect())
+        {
+            push_reflect_damage(encounter, &mut effects, p.caster_id, natural.damage,
+                natural.damage_type, natural.label);
         }
     }
     (effects, damage)
+}
+
+/// Roll (or read flat) the reflect amount, log the reflection, and queue
+/// the `DealDamage` payload against the original attacker. Shared
+/// chokepoint for the condition-keyed reflect table and the creature-
+/// intrinsic natural reflect lane so the log shape stays uniform across
+/// both sources.
+fn push_reflect_damage(
+    encounter: &mut EncounterInstance,
+    effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    attacker_id: usize,
+    damage: ReflectDamage,
+    damage_type: DamageType,
+    label: &str,
+) {
+    let amount = match damage {
+        ReflectDamage::Flat(n) => {
+            encounter.log(format!("  {}: {} {:?} reflected", label, n, damage_type));
+            n
+        }
+        ReflectDamage::Dice(dice) => {
+            let rolled = encounter.roll(&dice);
+            encounter.log(format!(
+                "  {}: {}({}) {:?} reflected",
+                label, dice, rolled, damage_type
+            ));
+            rolled
+        }
+    };
+    effects.push(Box::new(DealDamage {
+        actor_id: attacker_id,
+        amount,
+        damage_type,
+    }));
 }
 
 /// Damage payload for a melee retaliation rider. Some shields roll dice
@@ -491,6 +517,20 @@ pub fn resolve_attack_outcome(
 pub enum ReflectDamage {
     Dice(Dice),
     Flat(u32),
+}
+
+/// Plain-data melee reflect descriptor, used by creature-intrinsic
+/// retaliation features (Black Pudding Corrosive Form, Salamander
+/// Heated Body). Shares the `damage` / `damage_type` / `label` shape
+/// with `MeleeReflectRider` but doesn't carry a condition key — the
+/// holder's body itself is the trigger, no transient buff needed.
+/// Const-constructible so templates can declare it inline.
+#[derive(Clone, Copy)]
+pub struct MeleeReflect {
+    pub damage: ReflectDamage,
+    pub damage_type: DamageType,
+    /// Log-friendly tag ("corrosive form", "heated body", ...).
+    pub label: &'static str,
 }
 
 /// A target-side "creature hit me in melee, take this damage back" rider.

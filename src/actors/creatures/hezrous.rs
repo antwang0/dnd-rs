@@ -16,7 +16,9 @@ use std::sync::LazyLock;
 ///
 /// Engine model: heavy bite (2d10 + STR) + 2 claws (2d6 + STR each) via
 /// the standard `CompoundAttack` chassis (same shape as Pit Fiend's bite
-/// + 2 claws). Damage profile: resistant to cold / fire / lightning + the
+/// + 2 claws).
+///
+/// Damage profile: resistant to cold / fire / lightning + the
 /// non-magical BPS triplet, immune to Poison damage AND the Poisoned
 /// condition (demon physiology). Magic Resistance gives advantage on
 /// every save vs spells / magical effects.

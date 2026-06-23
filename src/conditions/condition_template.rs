@@ -1491,6 +1491,7 @@ impl Condition {
     ///     true-sighted (attacker side),
     ///   * the advantage an attacker's own `Invisible` would otherwise
     ///     grant when their target is true-sighted (target side).
+    ///
     /// Centralizes the cohort so adding a new "illusory / invisibility-
     /// style" concealment (e.g. a future Hide-in-Mists / Etherealness)
     /// drops to a one-line edit instead of two scattered `matches!`

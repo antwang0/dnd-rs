@@ -88,6 +88,7 @@ pub fn add_flat_damage_rider(
 /// future tweak (e.g. routing the rider through a `condition_damage_
 /// taken` hook for Spirit Shroud-style retaliation) lands once instead
 /// of being scattered across the ~19 weapon+rider call sites.
+#[allow(clippy::too_many_arguments)]
 pub fn save_or_damage_rider(
     encounter: &mut EncounterInstance,
     target_id: usize,
@@ -133,6 +134,7 @@ pub fn save_or_damage_rider(
 /// Bite: extra poison damage AND Poisoned condition on the same failed
 /// save) — those callers call both helpers in sequence with shared `save`
 /// to compose the per-hit rider.
+#[allow(clippy::too_many_arguments)]
 pub fn save_or_condition_rider(
     encounter: &mut EncounterInstance,
     target_id: usize,
@@ -12234,3 +12236,273 @@ pub static MAGMA_MEPHIT_DEATH_BURST: DeathBurst = DeathBurst {
     dc: 11,
     radius: 1,
 };
+
+// ─── Black Pudding ───────────────────────────────────────────────────
+
+/// Black Pudding Pseudopod — STR-based 1d6+STR bludgeoning melee with a
+/// 4d8 acid rider. The acid rider is the load-bearing damage slice (the
+/// bludgeoning is just the flavor of the formless lash); the rider rolls
+/// independently of the base hit so per-target acid resistance / immunity
+/// applies cleanly. RAW also corrodes the target's armor by -1 AC on hit
+/// (non-stacking) — omitted since the engine doesn't model per-item
+/// durability; the acid damage is the headline penalty.
+pub struct BlackPuddingPseudopod {}
+
+impl Action for BlackPuddingPseudopod {
+    fn name(&self) -> &str {
+        "black pudding pseudopod"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pudding-pseudopod", "pp", "ooze-pseudopod"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning, DamageType::Acid]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let (mut effects, damage) = weapon_swing_with_damage(
+            encounter,
+            caster_id,
+            target_id,
+            "black pudding pseudopod",
+            AbilityScoreType::Strength,
+            Dice::new(1, 6),
+            DamageType::Bludgeoning,
+            true,
+            None,
+        );
+        if damage == 0 {
+            return effects;
+        }
+        // Acid rider — 4d8, typed separately so the damage pipeline applies
+        // per-target acid resistance / immunity independently from the
+        // bludgeoning base.
+        add_flat_damage_rider(
+            encounter,
+            target_id,
+            Dice::new(4, 8),
+            DamageType::Acid,
+            "corrosive sludge",
+            &mut effects,
+        );
+        effects
+    }
+}
+
+pub static BLACK_PUDDING_PSEUDOPOD: LazyLock<BlackPuddingPseudopod> =
+    LazyLock::new(|| BlackPuddingPseudopod {});
+
+// ─── Flesh Golem ─────────────────────────────────────────────────────
+
+/// Flesh Golem Slam — STR-based 2d8+STR bludgeoning melee. The brute-
+/// force lane of the flesh golem; the multiattack pairs two of these per
+/// Action for a heavy ~25 average damage budget at CR 5. Vanilla
+/// SimpleWeapon — no rider; the load-bearing identity lives at the
+/// template level (lightning + poison immunity, magic resistance,
+/// condition envelope) rather than on the swing itself.
+pub static FLESH_GOLEM_SLAM: SimpleWeapon = SimpleWeapon::melee(
+    "flesh golem slam",
+    &["flesh-slam", "golem-fist"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Bludgeoning,
+);
+
+/// Flesh Golem Multiattack — 2 slam swings per Action. Classic golem
+/// "two heavy hits" envelope; the flesh golem trades the iron golem's
+/// reach for sheer per-Action damage budget on a much smaller HP / AC
+/// frame.
+pub static FLESH_GOLEM_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "flesh golem multiattack",
+    sub_attack: &FLESH_GOLEM_SLAM,
+    count: 2,
+});
+
+// ─── Horned Devil ────────────────────────────────────────────────────
+
+/// Horned Devil Fork — STR-based 2d8+STR piercing melee at reach 10ft
+/// (gap 2). The horned devil's two-tined infernal trident; reach 2 lets
+/// the devil project the swing through a tile of empty space, matching
+/// the RAW reach 10ft envelope. Vanilla SimpleWeapon — no rider; the
+/// per-Action damage budget comes from the multi (2 forks + 1 tail).
+pub static HORNED_DEVIL_FORK: SimpleWeapon = SimpleWeapon {
+    display_name: "horned devil fork",
+    aliases: &["fork", "trident"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(2, 8),
+    damage_type: DamageType::Piercing,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Horned Devil Tail — STR-based 1d8+STR piercing melee at reach 10ft
+/// (gap 2). On hit, the target makes a DC-17 CON save vs **Infernal
+/// Wound**: on fail, picks up the `Poisoned` condition as a stand-in for
+/// the RAW "no HP regain + 10 ongoing damage per turn" wound. We
+/// approximate the no-regen + DoT clause with the standard Poisoned
+/// envelope (disadvantage on attacks / ability checks) for ten rounds —
+/// the RAW wound is hard to model cleanly (the engine doesn't yet have
+/// a per-actor "blocks healing" flag), and the disadvantage rider is a
+/// reasonable proxy for "this wound saps your strength to fight back."
+///
+/// One save per turn at end-of-turn to shake the wound (rolled by the
+/// `ROUND_END_SAVES` table that already wires Poisoned cleanup) would
+/// fit cleanly here as future polish.
+pub struct HornedDevilTail {}
+
+impl Action for HornedDevilTail {
+    fn name(&self) -> &str {
+        "horned devil tail"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["tail", "horned-tail"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(2)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let (mut effects, damage) = weapon_swing_with_damage(
+            encounter,
+            caster_id,
+            target_id,
+            "horned devil tail",
+            AbilityScoreType::Strength,
+            Dice::new(1, 8),
+            DamageType::Piercing,
+            true,
+            None,
+        );
+        if damage == 0 {
+            return effects;
+        }
+        // Infernal Wound: CON save DC 17 vs Poisoned (10 rounds) as the
+        // proxy for RAW's no-regen + 10-ongoing-damage clause. The save +
+        // condition install routes through the standard chokepoint so
+        // poison-immune targets shrug it off cleanly.
+        save_or_condition_rider(
+            encounter,
+            target_id,
+            AbilityScoreType::Constitution,
+            17,
+            Condition::Poisoned,
+            ConditionTimer::Rounds(10),
+            "infernal wound",
+            &mut effects,
+        );
+        effects
+    }
+}
+
+pub static HORNED_DEVIL_TAIL: LazyLock<HornedDevilTail> = LazyLock::new(|| HornedDevilTail {});
+
+/// Horned Devil Multiattack — 2 forks + 1 tail per Action via the
+/// shared `CompoundAttack` chassis. Heterogeneous compound — the forks
+/// run the primary damage budget, the tail carries the Infernal Wound
+/// rider. Mixed reach (both legs are reach 2) so the multi can land on
+/// a target a tile beyond MELEE_REACH; the CompoundAttack inherits the
+/// first sub-attack's reach via `reach_tiles`.
+pub static HORNED_DEVIL_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "horned devil multiattack",
+    parts: vec![(&HORNED_DEVIL_FORK, 2), (&*HORNED_DEVIL_TAIL, 1)],
+});
+
+/// Horned Devil Hurled Flame — ranged spell-attack-style fire bolt at 150
+/// ft range (we cap at 30 tiles ≈ 75 ft for the 40×20 maps). Attack
+/// uses the devil's CHA mod + proficiency (the infernal-spellcaster
+/// stat); on hit, 4d6 fire. Doesn't require a recharge — the horned
+/// devil can keep flinging hellfire turn after turn (RAW: at will).
+pub struct HornedDevilHurledFlame {}
+
+impl Action for HornedDevilHurledFlame {
+    fn name(&self) -> &str {
+        "hurled flame"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["flame", "hurl"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(30)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // CHA-based spell-attack: +CHA mod + proficiency to hit, then 4d6
+        // fire on connect. No damage modifier add — the devil's CHA-attack
+        // typing doesn't pile a flat CHA mod onto the damage roll (RAW).
+        let attack_mod =
+            caster.ability_modifier(AbilityScoreType::Charisma) + caster.proficiency_bonus();
+        crate::engine::attack::resolve_attack(
+            encounter,
+            crate::engine::attack::AttackParams {
+                caster_id,
+                target_id,
+                action_name: "hurled flame",
+                attack_bonus: attack_mod,
+                damage_dice: Dice::new(4, 6),
+                damage_bonus: 0,
+                damage_type: DamageType::Fire,
+                is_melee: false,
+                long_range: None,
+                is_spell: true,
+            },
+        )
+    }
+}
+
+pub static HORNED_DEVIL_HURLED_FLAME: LazyLock<HornedDevilHurledFlame> =
+    LazyLock::new(|| HornedDevilHurledFlame {});

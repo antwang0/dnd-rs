@@ -194,3 +194,6 @@ pub mod lemures;
 pub mod bearded_devils;
 pub mod blink_dogs;
 pub mod mephits;
+pub mod black_puddings;
+pub mod flesh_golems;
+pub mod horned_devils;
