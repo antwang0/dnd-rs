@@ -12506,3 +12506,117 @@ impl Action for HornedDevilHurledFlame {
 
 pub static HORNED_DEVIL_HURLED_FLAME: LazyLock<HornedDevilHurledFlame> =
     LazyLock::new(|| HornedDevilHurledFlame {});
+
+// ─── Nalfeshnee ──────────────────────────────────────────────────────
+
+/// Nalfeshnee Bite — STR-based 5d10+STR piercing melee. The Type V
+/// demon's monstrous boar-tusk chomp; the heaviest single-die attack at
+/// CR 13 — `5d10` averages ~27 + STR mod for the bite alone, which the
+/// `CompoundAttack` pairs with two claws for a per-Action damage budget
+/// in line with the Marilith / Glabrezu profile.
+pub static NALFESHNEE_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "nalfeshnee bite",
+    &["nbite", "nalfeshnee-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(5, 10),
+    DamageType::Piercing,
+);
+
+/// Nalfeshnee Claw — STR-based 3d6+STR slashing melee. The supporting
+/// swings to the bite's heavy chomp; the `CompoundAttack` runs two of
+/// these alongside the bite per Action.
+pub static NALFESHNEE_CLAW: SimpleWeapon = SimpleWeapon::melee(
+    "nalfeshnee claw",
+    &["nclaw", "nalfeshnee-claw"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 6),
+    DamageType::Slashing,
+);
+
+/// Nalfeshnee Multiattack — 1 bite + 2 claws per Action via the shared
+/// `CompoundAttack` chassis. Mixed-limb heterogeneous compound matching
+/// the canonical Hezrou / Pit Fiend pattern. The 5d10 bite + 2×3d6
+/// claws lands around 50 average damage per Action — the load-bearing
+/// per-turn budget for a CR-13 boss.
+pub static NALFESHNEE_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "nalfeshnee multiattack",
+    parts: vec![(&NALFESHNEE_BITE, 1), (&NALFESHNEE_CLAW, 2)],
+});
+
+/// Nalfeshnee Horror Nimbus — Recharge 5–6 area-of-effect Frighten.
+/// RAW: "Each creature within 15 ft of the Nalfeshnee that can see it
+/// must succeed on a DC 15 WIS save or be Frightened for 1 minute."
+/// Engine model: routes the burst through the shared `resolve_burst_save_
+/// condition` helper at the Nalfeshnee's own footprint (radius 3 tiles
+/// ≈ 15 ft) with a Frightened (10 round) install on fail. The 24-hour
+/// "creature that saves is immune" RAW clause is omitted — the engine's
+/// combat envelope is short enough that a single encounter rarely re-
+/// triggers Horror Nimbus against the same target enough times to make
+/// the immunity clause matter.
+pub struct NalfeshneeHorrorNimbus {}
+
+impl Action for NalfeshneeHorrorNimbus {
+    fn name(&self) -> &str {
+        "horror nimbus"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["nimbus", "horror", "hn"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_recharge_available("horror_nimbus"))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // Spend the recharge resource before resolving so a mid-
+        // resolution failure can't leave the nimbus both spent AND
+        // condition-applied (matches the breath / web order-of-ops).
+        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
+            caster.spend_recharge("horror_nimbus");
+        }
+        let Some(caster_loc) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
+            return Vec::new();
+        };
+        encounter.log("  horror nimbus: a wave of mind-bending terror radiates outward");
+        crate::actions::action_template::resolve_burst_save_condition(
+            encounter,
+            caster_id,
+            caster_loc,
+            3,
+            AbilityScoreType::Wisdom,
+            15,
+            Condition::Frightened,
+            ConditionTimer::Rounds(10),
+        )
+    }
+}
+
+pub static NALFESHNEE_HORROR_NIMBUS: LazyLock<NalfeshneeHorrorNimbus> =
+    LazyLock::new(|| NalfeshneeHorrorNimbus {});

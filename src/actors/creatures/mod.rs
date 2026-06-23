@@ -197,3 +197,4 @@ pub mod mephits;
 pub mod black_puddings;
 pub mod flesh_golems;
 pub mod horned_devils;
+pub mod nalfeshnees;

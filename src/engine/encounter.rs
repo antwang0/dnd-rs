@@ -173,6 +173,7 @@ use crate::actors::creatures::blink_dogs::BLINK_DOG_TEMPLATE;
 use crate::actors::creatures::black_puddings::BLACK_PUDDING_TEMPLATE;
 use crate::actors::creatures::flesh_golems::FLESH_GOLEM_TEMPLATE;
 use crate::actors::creatures::horned_devils::HORNED_DEVIL_TEMPLATE;
+use crate::actors::creatures::nalfeshnees::NALFESHNEE_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -3131,6 +3132,17 @@ impl EncounterInstance {
             &BLACK_PUDDING_TEMPLATE,
             &FLESH_GOLEM_TEMPLATE,
             &HORNED_DEVIL_TEMPLATE,
+            // Nalfeshnee (CR 13 large demon, Type V): the malformed
+            // boar-headed bruiser slotting between Glabrezu (CR 9) and
+            // Marilith (CR 16) on the demon ladder. 1 bite + 2 claws
+            // compound multi (~50 avg damage per Action) plus the
+            // signature Recharge 5–6 Horror Nimbus aoe Frighten install
+            // (15-ft burst, DC 15 WIS, 10 rounds). First creature wired
+            // through the `resolve_burst_save_condition` chassis with
+            // a unique recharge pool key (`"horror_nimbus"`) so a co-
+            // located dragon's breath_weapon recharge doesn't share
+            // state.
+            &NALFESHNEE_TEMPLATE,
         ]
     }
 
@@ -21677,6 +21689,51 @@ mod tests {
             }
         }
         assert!(shield_fired, "fire shield never reflected in 200 swings");
+    }
+
+    /// Salamander Heated Body — symmetric to Black Pudding Corrosive Form
+    /// on the natural-melee-reflect lane. Hitting the salamander in
+    /// melee should reflect 1d6 fire back at the attacker. End-to-end
+    /// verification that the lane is wired up for fire-typed reflects
+    /// too, not just the acid-typed Corrosive Form variant.
+    #[test]
+    fn salamander_heated_body_reflects_melee_damage() {
+        use crate::actions::monster_attacks::SLAM;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::salamanders::SALAMANDER_TEMPLATE;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let attacker = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&SALAMANDER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        let attacker_hp_pre = e.actors[&attacker].hitpoints();
+
+        let mut heated_fired = false;
+        for _ in 0..200 {
+            let a_max = e.actors[&attacker].max_hitpoints();
+            let t_max = e.actors[&target].max_hitpoints();
+            e.actors.get_mut(&attacker).unwrap().heal(a_max);
+            e.actors.get_mut(&target).unwrap().heal(t_max);
+            let target_vec = vec![target];
+            let effects = SLAM.side_effects(&mut e, attacker, Some(&target_vec), None, None);
+            let had_hit = !effects.is_empty();
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if had_hit
+                && e.actors.get(&attacker).is_some_and(|a| a.hitpoints() < attacker_hp_pre)
+            {
+                heated_fired = true;
+                break;
+            }
+        }
+        assert!(
+            heated_fired,
+            "salamander heated body never reflected in 200 swings"
+        );
     }
 
     /// Natural melee reflect lane: the Black Pudding's Corrosive Form
