@@ -5474,29 +5474,22 @@ impl Action for GhostHorrifyingVisage {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::ApplyCondition;
         const DC: i32 = 13;
         const RADIUS: isize = 24; // 60 ft
         let Some(caster_loc) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
             return Vec::new();
         };
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for tid in encounter.enemy_burst_targets(caster_id, caster_loc, RADIUS) {
-            let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, DC);
-            if save.passed() {
-                continue;
-            }
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::Frightened,
-                timer: ConditionTimer::Rounds(5),
-            }));
-            encounter.log(format!(
-                "  horrifying visage: actor #{} is Frightened",
-                tid
-            ));
-        }
-        effects
+        encounter.log("  horrifying visage: enemies make a WIS save vs DC 13");
+        crate::actions::action_template::resolve_burst_save_condition(
+            encounter,
+            caster_id,
+            caster_loc,
+            RADIUS,
+            AbilityScoreType::Wisdom,
+            DC,
+            Condition::Frightened,
+            ConditionTimer::Rounds(5),
+        )
     }
 }
 
@@ -5556,26 +5549,22 @@ impl Action for StoneGolemSlow {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::ApplyCondition;
         const DC: i32 = 17;
         const RADIUS: isize = 2; // 10ft
         let Some(caster_loc) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
             return Vec::new();
         };
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for tid in encounter.enemy_burst_targets(caster_id, caster_loc, RADIUS) {
-            let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, DC);
-            if save.passed() {
-                continue;
-            }
-            effects.push(Box::new(ApplyCondition {
-                actor_id: tid,
-                condition: Condition::Slowed,
-                timer: ConditionTimer::Rounds(5),
-            }));
-            encounter.log(format!("  stone golem slow: actor #{} is Slowed", tid));
-        }
-        effects
+        encounter.log("  stone golem slow: enemies make a WIS save vs DC 17");
+        crate::actions::action_template::resolve_burst_save_condition(
+            encounter,
+            caster_id,
+            caster_loc,
+            RADIUS,
+            AbilityScoreType::Wisdom,
+            DC,
+            Condition::Slowed,
+            ConditionTimer::Rounds(5),
+        )
     }
 }
 
