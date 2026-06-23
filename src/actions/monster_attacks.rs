@@ -1763,66 +1763,36 @@ pub static DIRE_WOLF_BITE: LazyLock<DireWolfBite> = LazyLock::new(|| DireWolfBit
 /// fire-themed monsters a handle into the same Action.
 pub use crate::actions::spells::FIRE_BOLT;
 
+/// Owlbear Beak — STR-based 1d10+STR piercing melee. Vanilla
+/// `SimpleWeapon` — pairs with the claws in the per-Action compound.
+pub static OWLBEAR_BEAK: SimpleWeapon = SimpleWeapon::melee(
+    "owlbear beak",
+    &["ob-beak"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 10),
+    DamageType::Piercing,
+);
+
+/// Owlbear Claws — STR-based 2d8+STR slashing melee. The bigger-die
+/// secondary swing of the owlbear's beak + claws compound.
+pub static OWLBEAR_CLAWS: SimpleWeapon = SimpleWeapon::melee(
+    "owlbear claws",
+    &["ob-claws"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Slashing,
+);
+
 /// Owlbear's signature multiattack rolled into one Action: a beak (1d10+5
-/// piercing) and a claws (2d8+5 slashing) swing at the same target. We
-/// resolve them sequentially so each rolls independently for hit, crit
-/// and damage; both go into the same `Vec<DealDamage>` so the engine
-/// applies them in order. Cost is a single Action — the multiattack
-/// trade is "spend one Action, get two attack rolls" without a slot.
-pub struct OwlbearMultiattack {}
-
-impl Action for OwlbearMultiattack {
-    fn name(&self) -> &str {
-        "owlbear multiattack"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["om", "owl"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Piercing, DamageType::Slashing]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let mut all = simple_weapon_attack(
-            encounter,
-            caster_id,
-            target_ids,
-            "owlbear beak",
-            AbilityScoreType::Strength,
-            Some(AbilityScoreType::Strength),
-            Dice::new(1, 10),
-            DamageType::Piercing,
-            true,
-        );
-        all.extend(simple_weapon_attack(
-            encounter,
-            caster_id,
-            target_ids,
-            "owlbear claws",
-            AbilityScoreType::Strength,
-            Some(AbilityScoreType::Strength),
-            Dice::new(2, 8),
-            DamageType::Slashing,
-            true,
-        ));
-        all
-    }
-}
-
-pub static OWLBEAR_MULTIATTACK: LazyLock<OwlbearMultiattack> =
-    LazyLock::new(|| OwlbearMultiattack {});
+/// piercing) and a claws (2d8+5 slashing) swing at the same target.
+/// Heterogeneous `CompoundAttack` — same shape as the wereXX bite +
+/// claws compound, the salamander tail + bite, etc. Cost is a single
+/// Action — the multiattack trade is "spend one Action, get two attack
+/// rolls" without a slot.
+pub static OWLBEAR_MULTIATTACK: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "owlbear multiattack",
+    parts: vec![(&OWLBEAR_BEAK, 1), (&OWLBEAR_CLAWS, 1)],
+});
 
 /// Will-o-Wisp's shock — at-will incorporeal touch attack. DEX-based
 /// melee spell-style swing for 2d8 lightning. The +DEX-to-hit shape
@@ -3056,66 +3026,37 @@ impl Action for ManticoreSpikes {
 
 pub static MANTICORE_SPIKES: LazyLock<ManticoreSpikes> = LazyLock::new(|| ManticoreSpikes {});
 
+/// Manticore Bite — STR-based 1d8+STR piercing melee. Vanilla
+/// `SimpleWeapon` — pairs with the claws in the per-Action compound.
+pub static MANTICORE_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "manticore bite",
+    &["m-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 8),
+    DamageType::Piercing,
+);
+
+/// Manticore Claw — STR-based 1d6+STR slashing melee. The two claws
+/// share this single template — `CompoundAttack` runs the swing twice
+/// per Action via the `count: 2` slot.
+pub static MANTICORE_CLAW: SimpleWeapon = SimpleWeapon::melee(
+    "manticore claw",
+    &["m-claw"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Slashing,
+);
+
 /// Manticore Multiattack — Action: bite (1d8 piercing) + two claws
 /// (1d6 slashing each). All strikes share the same target. This is the
 /// melee half of the manticore's kit — the ranged Tail Spikes covers the
-/// stand-off lane.
-pub struct ManticoreMultiattack {}
-
-impl Action for ManticoreMultiattack {
-    fn name(&self) -> &str {
-        "manticore multiattack"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["mm", "claws"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Piercing, DamageType::Slashing]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let mut all = simple_weapon_attack(
-            encounter,
-            caster_id,
-            target_ids,
-            "manticore bite",
-            AbilityScoreType::Strength,
-            Some(AbilityScoreType::Strength),
-            Dice::new(1, 8),
-            DamageType::Piercing,
-            true,
-        );
-        for _ in 0..2 {
-            all.extend(simple_weapon_attack(
-                encounter,
-                caster_id,
-                target_ids,
-                "manticore claw",
-                AbilityScoreType::Strength,
-                Some(AbilityScoreType::Strength),
-                Dice::new(1, 6),
-                DamageType::Slashing,
-                true,
-            ));
-        }
-        all
-    }
-}
-
-pub static MANTICORE_MULTIATTACK: LazyLock<ManticoreMultiattack> =
-    LazyLock::new(|| ManticoreMultiattack {});
+/// stand-off lane. Heterogeneous `CompoundAttack` (piercing + slashing,
+/// uneven counts) — same chassis as the pit fiend's 1 bite + 2 claws
+/// and the otyugh's 1 bite + 2 tentacles.
+pub static MANTICORE_MULTIATTACK: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "manticore multiattack",
+    parts: vec![(&MANTICORE_BITE, 1), (&MANTICORE_CLAW, 2)],
+});
 
 /// Hill Giant Greatclub — STR-based 3d8 bludgeoning, reach 2 tiles
 /// (10 ft). Mirrors the ogre's club but bumped to giant-tier dice; the
@@ -3172,53 +3113,14 @@ pub static TREANT_SLAM: SimpleWeapon = SimpleWeapon {
 /// Treant Multiattack — Action: two Treant Slam swings against the same
 /// target. The pair of 3d6+STR slams averages ~25 damage at the treant's
 /// stat block — eats through PCs in a couple of rounds and gives the
-/// CR-9 frame a believable threat profile.
-pub struct TreantMultiattack {}
-
-impl Action for TreantMultiattack {
-    fn name(&self) -> &str {
-        "treant multiattack"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["tm", "double-slam"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(2)
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Bludgeoning]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let mut all = Vec::new();
-        for _ in 0..2 {
-            all.extend(simple_weapon_attack(
-                encounter,
-                caster_id,
-                target_ids,
-                "treant slam",
-                AbilityScoreType::Strength,
-                Some(AbilityScoreType::Strength),
-                Dice::new(3, 6),
-                DamageType::Bludgeoning,
-                true,
-            ));
-        }
-        all
-    }
-}
-
-pub static TREANT_MULTIATTACK: LazyLock<TreantMultiattack> =
-    LazyLock::new(|| TreantMultiattack {});
+/// CR-9 frame a believable threat profile. Vanilla `Multiattack` —
+/// homogeneous twin-swing of the same sub-attack, matches the zombie
+/// multislam / bandit captain triple scimitar shape.
+pub static TREANT_MULTIATTACK: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "treant multiattack",
+    sub_attack: &TREANT_SLAM,
+    count: 2,
+});
 
 /// Fire Elemental Touch — melee, +DEX to hit, 2d6 fire damage and the
 /// target is ignited (Burning, 3 rounds). The elemental's whole-body
@@ -11615,3 +11517,412 @@ impl Action for EttercapWeb {
 }
 
 pub static ETTERCAP_WEB: LazyLock<EttercapWeb> = LazyLock::new(|| EttercapWeb {});
+
+// ─── Awakened Tree ───────────────────────────────────────────────────
+
+/// Awakened Tree Slam — STR-based 3d6+STR bludgeoning at reach 10ft.
+/// Same per-swing shape as `TREANT_SLAM` (3d6+STR, reach 2) — we keep a
+/// dedicated constant so the action name reads "awakened tree slam" in
+/// the log and the bestiary's CR-2 plant doesn't borrow the CR-9
+/// treant's flavor text. Vanilla `SimpleWeapon` — no rider; the tree's
+/// load-bearing pressure is the double-slam multi at the awakened
+/// tree's STR 19 (+4 mod), not any per-hit effect.
+pub static AWAKENED_TREE_SLAM: SimpleWeapon = SimpleWeapon {
+    display_name: "awakened tree slam",
+    aliases: &["at-slam", "tree-slam"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(3, 6),
+    damage_type: DamageType::Bludgeoning,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Awakened Tree Multiattack — 2 slams per Action via the standard
+/// `Multiattack` chassis. RAW: "Multiattack. The tree makes two
+/// attacks." Same shape as the zombie multislam / bandit captain triple
+/// scimitar — homogeneous sub-attack with a fixed count.
+pub static AWAKENED_TREE_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "awakened tree multiattack",
+    sub_attack: &AWAKENED_TREE_SLAM,
+    count: 2,
+});
+
+// ─── Dretch ──────────────────────────────────────────────────────────
+
+/// Dretch Bite — STR-based 1d6 piercing melee, no STR mod to damage
+/// (the dretch is STR 11 / +0 so the distinction is moot, but we leave
+/// damage_ability off to keep the manes-tier weakness legible — RAW
+/// dretch deals a flat 3 (1d6) bite, not 1d6+STR). Vanilla
+/// `SimpleWeapon` — the per-hit pressure is the claws multi and the
+/// Fetid Cloud burst, not the bite.
+pub static DRETCH_BITE: SimpleWeapon = SimpleWeapon {
+    display_name: "dretch bite",
+    aliases: &["d-bite", "dretch-bite"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: None,
+    damage_dice: Dice::new(1, 6),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Dretch Claws — STR-based 2d4 slashing melee, no STR mod. RAW: "Hit:
+/// 5 (2d4) slashing damage." The dretch's bite + claws multi runs at
+/// CR 1/4 budget — the average 5 slashing per Action lane plus the 3
+/// piercing bite gives a 7–8 expected per-turn damage envelope before
+/// the once-per-day Fetid Cloud lands its Poisoned rider.
+pub static DRETCH_CLAWS: SimpleWeapon = SimpleWeapon {
+    display_name: "dretch claws",
+    aliases: &["d-claws", "dretch-claws"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: None,
+    damage_dice: Dice::new(2, 4),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Dretch Multiattack — 1 bite + 1 claws per Action via `CompoundAttack`.
+/// Heterogeneous compound (piercing + slashing) — both swings carry no
+/// rider; the Fetid Cloud bonus-action burst is where the dretch's
+/// signature condition install lives.
+pub static DRETCH_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "dretch multiattack",
+    parts: vec![(&DRETCH_BITE, 1), (&DRETCH_CLAWS, 1)],
+});
+
+/// Dretch Fetid Cloud — Recharge 6 (RAW: 1/Day; we promote to Recharge
+/// 6 so the burst occasionally fires more than once per long combat
+/// while still respecting the "exhaustible resource" RAW envelope).
+/// 10-ft radius cloud of poisonous fumes centered on the dretch.
+/// Each non-demon creature in the burst makes a DC 11 CON save or is
+/// Poisoned until the start of the dretch's next turn. We model the
+/// "until start of caster's next turn" timer as a 1-round Poisoned
+/// install — close enough to the RAW window for a tempo-control engine.
+///
+/// Demon-immunity gate: dretch is itself a Fiend, but the engine's
+/// Poison immunity already short-circuits the install (fiends typically
+/// resist or are immune to Poison). We rely on the standard
+/// `effectively_immune_to_condition(Poisoned)` chokepoint instead of a
+/// per-action creature-type filter — keeps the engine's "the condition
+/// install chokepoint handles immunity uniformly" invariant in place.
+pub struct DretchFetidCloud {}
+
+impl Action for DretchFetidCloud {
+    fn name(&self) -> &str {
+        "fetid cloud"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fc", "fetid", "dretch-cloud"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // Burst centered on self — no point/target args.
+        TargetingSchema::NoArgs
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_recharge_available("dretch_fetid_cloud"))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // Spend the recharge resource up-front so a mid-resolution
+        // failure can't leave the cloud both spent AND condition-applied
+        // (mirrors the breath-weapon / ettercap-web order-of-ops).
+        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
+            caster.spend_recharge("dretch_fetid_cloud");
+        }
+        let Some(caster_loc) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
+            return Vec::new();
+        };
+        encounter.log("  fetid cloud: poisonous fumes billow around the dretch");
+        // 10 ft radius = 4 tile gap on the 2.5 ft grid.
+        crate::actions::action_template::resolve_burst_save_condition(
+            encounter,
+            caster_id,
+            caster_loc,
+            4,
+            AbilityScoreType::Constitution,
+            11,
+            Condition::Poisoned,
+            ConditionTimer::Rounds(1),
+        )
+    }
+}
+
+pub static DRETCH_FETID_CLOUD: LazyLock<DretchFetidCloud> =
+    LazyLock::new(|| DretchFetidCloud {});
+
+// ─── Lemure ──────────────────────────────────────────────────────────
+
+/// Lemure Fist — STR-based 1d4 bludgeoning melee, no STR mod (the lemure
+/// has STR 10 / +0). The lowest-tier devil's only attack — a flat
+/// 2 (1d4) bludgeoning slap. Vanilla `SimpleWeapon` — no rider.
+pub static LEMURE_FIST: SimpleWeapon = SimpleWeapon {
+    display_name: "lemure fist",
+    aliases: &["l-fist", "lemure-fist"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: None,
+    damage_dice: Dice::new(1, 4),
+    damage_type: DamageType::Bludgeoning,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+// ─── Bearded Devil (Barbazu) ─────────────────────────────────────────
+
+/// Bearded Devil Glaive — STR-based 1d10+STR slashing melee at reach
+/// 10ft. The polearm-style primary lane — pairs with the beard for the
+/// per-Action multi. Vanilla `SimpleWeapon` with reach 2 — no rider;
+/// the beard carries the per-Action condition install.
+pub static BEARDED_DEVIL_GLAIVE: SimpleWeapon = SimpleWeapon {
+    display_name: "bearded devil glaive",
+    aliases: &["bd-glaive", "barbazu-glaive"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 10),
+    damage_type: DamageType::Slashing,
+    reach: 2,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::Action,
+    normal_range: None,
+};
+
+/// Bearded Devil Beard — STR-based 1d8+STR piercing melee, reach 5 ft.
+/// On hit, target makes a CON save vs DC 12 or is Poisoned for 3
+/// rounds. RAW: "While poisoned in this way, the target can't regain
+/// hit points. The target can repeat the saving throw at the end of
+/// each of its turns, ending the effect on a successful save." We
+/// approximate the "no-healing-while-poisoned" RAW clause by leaning on
+/// the engine's standard `Poisoned` condition (which already imposes
+/// disadvantage on attacks and ability checks); the no-healing clause
+/// is dropped since healing isn't a tactically-load-bearing axis in
+/// most combat scenarios this engine simulates.
+pub struct BeardedDevilBeard {}
+
+impl Action for BeardedDevilBeard {
+    fn name(&self) -> &str {
+        "bearded devil beard"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["beard", "barbazu-beard"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let mut effects = simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            self.name(),
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(1, 8),
+            DamageType::Piercing,
+            true,
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        // CON save vs DC 12 or Poisoned 3 rounds. Same chassis as the
+        // lycanthrope curse rider — the engine's condition-immunity
+        // chokepoint handles the no-op install for poison-immune targets.
+        save_or_condition_rider(
+            encounter,
+            target_id,
+            AbilityScoreType::Constitution,
+            12,
+            Condition::Poisoned,
+            ConditionTimer::Rounds(3),
+            "infernal beard",
+            &mut effects,
+        );
+        effects
+    }
+}
+
+pub static BEARDED_DEVIL_BEARD: LazyLock<BeardedDevilBeard> =
+    LazyLock::new(|| BeardedDevilBeard {});
+
+/// Bearded Devil Multiattack — 1 glaive + 1 beard per Action via
+/// `CompoundAttack`. Heterogeneous compound (slashing + piercing) — the
+/// beard carries the Poisoned rider, the glaive is the steady damage
+/// lane. Same shape as the Werewolf / Werebear / Wereboar multi.
+pub static BEARDED_DEVIL_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "bearded devil multiattack",
+    parts: vec![(&BEARDED_DEVIL_GLAIVE, 1), (&*BEARDED_DEVIL_BEARD, 1)],
+});
+
+// ─── Blink Dog ───────────────────────────────────────────────────────
+
+/// Blink Dog Bite — STR-based 1d6+STR piercing melee. RAW: "Melee
+/// Weapon Attack: +3 to hit, reach 5 ft., one target. Hit: 4 (1d6 + 1)
+/// piercing damage." Vanilla `SimpleWeapon::melee` — no rider; the
+/// blink dog's signature is the Teleport bonus action, not the bite.
+pub static BLINK_DOG_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "blink dog bite",
+    &["bd-bite", "blink-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+);
+
+/// Blink Dog Teleport — bonus action short-range teleport. RAW: "The
+/// blink dog magically teleports, along with any equipment it is
+/// wearing or carrying, up to 40 feet to an unoccupied space it can
+/// see." Recharge 4–6 per RAW (the dog has to "phase back in" — once
+/// per short rest in 5e).
+///
+/// We model the teleport as a `SinglePoint` action whose only side
+/// effect is a `Move` to the target tile — no damage, no save, no
+/// condition install. Range gate: 16 tiles (40 ft on the 2.5 ft grid).
+/// LOS required (the dog teleports to a tile it can see). Recharge 4
+/// means the dog's d6 roll at start-of-turn restores the teleport on a
+/// 4+, matching the "blink-out cooldown" tempo.
+pub struct BlinkDogTeleport {}
+
+impl Action for BlinkDogTeleport {
+    fn name(&self) -> &str {
+        "blink"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bd-blink", "teleport", "blink-dog-teleport"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 40 ft RAW = reach 16 on the 2.5 ft grid.
+        Some(16)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_recharge_available("blink_dog_teleport"))
+        {
+            return false;
+        }
+        let Some(point) = first_target_location(target_locations) else {
+            return false;
+        };
+        // Destination tile must accept the actor's footprint — `can_move_to`
+        // handles bounds, wall, and occupancy in one shot.
+        encounter.can_move_to(caster_id, point)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::TeleportActor;
+        // Spend the recharge resource up-front so a no-op resolution
+        // can't leave the teleport both spent AND not-moved.
+        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
+            caster.spend_recharge("blink_dog_teleport");
+        }
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        vec![Box::new(TeleportActor {
+            actor_id: caster_id,
+            dest: point,
+        })]
+    }
+}
+
+pub static BLINK_DOG_TELEPORT: LazyLock<BlinkDogTeleport> =
+    LazyLock::new(|| BlinkDogTeleport {});

@@ -188,3 +188,8 @@ pub mod wereboars;
 pub mod wererats;
 pub mod weretigers;
 pub mod ettercaps;
+pub mod awakened_trees;
+pub mod dretches;
+pub mod lemures;
+pub mod bearded_devils;
+pub mod blink_dogs;

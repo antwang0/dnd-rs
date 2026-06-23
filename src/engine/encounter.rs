@@ -162,6 +162,11 @@ use crate::actors::creatures::weretigers::WERETIGER_TEMPLATE;
 use crate::actors::creatures::ettercaps::ETTERCAP_TEMPLATE;
 use crate::actors::creatures::magmins::MAGMIN_TEMPLATE;
 use crate::actors::creatures::galeb_duhrs::GALEB_DUHR_TEMPLATE;
+use crate::actors::creatures::awakened_trees::AWAKENED_TREE_TEMPLATE;
+use crate::actors::creatures::dretches::DRETCH_TEMPLATE;
+use crate::actors::creatures::lemures::LEMURE_TEMPLATE;
+use crate::actors::creatures::bearded_devils::BEARDED_DEVIL_TEMPLATE;
+use crate::actors::creatures::blink_dogs::BLINK_DOG_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -3051,6 +3056,34 @@ impl EncounterInstance {
             &WERERAT_TEMPLATE,
             &WERETIGER_TEMPLATE,
             &ETTERCAP_TEMPLATE,
+            // Latest additions filling out the lower-tier fiend bench
+            // and a new fey + plant pick:
+            //   - Awakened Tree (CR 2 huge plant): double-slam Multi at
+            //     reach 10ft, fire-vulnerable / BP-resistant. The
+            //     "little cousin of the treant" silhouette at a much
+            //     lower CR.
+            //   - Dretch (CR ¼ small fiend, demon-tier): bite + claws
+            //     Compound multi plus Recharge-6 Fetid Cloud (10ft
+            //     radius DC-11 CON or Poisoned). The lowest-tier demon
+            //     in the pool.
+            //   - Lemure (CR 0 medium fiend, devil-tier): single-attack
+            //     Fist (1d4 bludgeoning), devil damage envelope (fire/
+            //     poison immune, cold resistant), Charmed/Frightened/
+            //     Poisoned condition immunity. Cheapest fiend in the
+            //     pool — fills the swarm-grunt slot.
+            //   - Bearded Devil / Barbazu (CR 3 medium fiend): glaive
+            //     (reach 10ft) + beard (Poisoned rider on CON-12 save)
+            //     Compound multi. Mid-tier devil with magic resistance
+            //     and the standard hellish damage envelope.
+            //   - Blink Dog (CR ¼ medium fey): bite (1d6+STR piercing)
+            //     plus a 40-ft bonus-action Teleport (Recharge 4–6).
+            //     First teleport-mobility creature in the pool — phases
+            //     in for the bite, then out to reposition.
+            &AWAKENED_TREE_TEMPLATE,
+            &DRETCH_TEMPLATE,
+            &LEMURE_TEMPLATE,
+            &BEARDED_DEVIL_TEMPLATE,
+            &BLINK_DOG_TEMPLATE,
         ]
     }
 
