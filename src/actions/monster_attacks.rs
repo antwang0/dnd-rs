@@ -74,6 +74,70 @@ pub fn add_flat_damage_rider(
     amt
 }
 
+/// Resolve a weapon swing AND an unconditional flat typed-damage rider on
+/// a confirmed hit, in one call. Wraps the recurring three-step pattern:
+///
+/// 1. `weapon_swing_with_damage` — resolves the d20 swing, returns the
+///    damage actually dealt (post-mitigation) and the side-effects list.
+/// 2. Early-return on miss (`damage == 0`) — no rider on a no-hit swing.
+/// 3. `add_flat_damage_rider` — rolls and pushes the typed-damage rider.
+///
+/// Used by every "weapon hit + one typed-damage rider, no save, no chain"
+/// attack: Dragon Bite (fire), Mummy Lord Rotting Fist (necrotic),
+/// Yuan-Ti Bite (poison), Death Knight Longsword (necrotic), Wereboar
+/// Tusks (fire), Magmin Touch (fire), Djinni Scimitar (thunder), Efreeti
+/// Scimitar (fire), Giant Constrictor Bite (poison). Cuts each impl's
+/// `side_effects` block from ~20 lines of plumbing to a single call.
+///
+/// Use this when:
+///   1. The rider's typing differs from the base (the main reason — fire
+///      on a piercing bite, necrotic on a slashing claw, etc.), AND
+///   2. There's no per-rider gate on damage, save, or downstream chain —
+///      the rider is unconditional on a hit and its return value isn't
+///      consumed by the caller.
+///
+/// For save-gated riders, use `save_or_damage_rider`; for chained logic
+/// (Wraith Drain's max-HP drop scaled by the necrotic dealt), call
+/// `add_flat_damage_rider` directly so the caller can use its return.
+#[allow(clippy::too_many_arguments)]
+pub fn weapon_swing_with_flat_rider(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    target_id: usize,
+    action_name: &'static str,
+    ability: AbilityScoreType,
+    damage_dice: Dice,
+    damage_type: DamageType,
+    is_melee: bool,
+    rider_dice: Dice,
+    rider_type: DamageType,
+    rider_name: &'static str,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let (mut effects, damage) = weapon_swing_with_damage(
+        encounter,
+        caster_id,
+        target_id,
+        action_name,
+        ability,
+        damage_dice,
+        damage_type,
+        is_melee,
+        None,
+    );
+    if damage == 0 {
+        return effects;
+    }
+    add_flat_damage_rider(
+        encounter,
+        target_id,
+        rider_dice,
+        rider_type,
+        rider_name,
+        &mut effects,
+    );
+    effects
+}
+
 /// On a weapon-attack hit, roll `target_id`'s saving throw against `dc`
 /// using `save_ability`. On fail, push a `DealDamage` rider of
 /// `rider_dice` typed as `rider_type`, logging the roll with
@@ -2632,10 +2696,11 @@ impl Action for MummyRottingFist {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        // STR-based melee swing — `weapon_swing_with_damage` collapses the
-        // caster-mod / AttackParams boilerplate and returns `damage` so
-        // the necrotic rider can gate cleanly on a confirmed hit.
-        let (mut effects, damage) = weapon_swing_with_damage(
+        // 2d6 bludgeoning + 3d6 necrotic rider routed through the shared
+        // `weapon_swing_with_flat_rider` helper — the rider rides the
+        // hit, both layers feed through the damage pipeline so the target's
+        // typed resistance applies independently to each.
+        weapon_swing_with_flat_rider(
             encounter,
             caster_id,
             target_id,
@@ -2644,26 +2709,10 @@ impl Action for MummyRottingFist {
             Dice::new(2, 6),
             DamageType::Bludgeoning,
             true,
-            None,
-        );
-        if damage == 0 {
-            return effects;
-        }
-        // Necrotic rider: 3d6 typed separately so resistance is checked
-        // independently. No additional roll vs AC — the rider rides the
-        // hit. Routes through the shared `add_flat_damage_rider` helper so
-        // the roll / log / DealDamage trio lives in one chokepoint with
-        // the rest of the on-hit typed-damage riders (Dragon Bite, Mummy
-        // Lord Rotting Fist, Rakshasa Claw, etc.).
-        add_flat_damage_rider(
-            encounter,
-            target_id,
             Dice::new(3, 6),
             DamageType::Necrotic,
             "rotting fist",
-            &mut effects,
-        );
-        effects
+        )
     }
 }
 
@@ -2854,10 +2903,11 @@ impl Action for YetiClaws {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        // STR-based melee swing — `weapon_swing_with_damage` collapses the
-        // caster-mod / AttackParams boilerplate and returns `damage` so
-        // the cold rider can gate cleanly on a confirmed hit.
-        let (mut effects, damage) = weapon_swing_with_damage(
+        // 1d6 slashing + 1d6 cold rider routed through the shared
+        // `weapon_swing_with_flat_rider` helper — both layers feed the
+        // damage pipeline independently so cold-resistant targets shrug
+        // off the rider but still take full slashing.
+        weapon_swing_with_flat_rider(
             encounter,
             caster_id,
             target_id,
@@ -2866,23 +2916,10 @@ impl Action for YetiClaws {
             Dice::new(1, 6),
             DamageType::Slashing,
             true,
-            None,
-        );
-        if damage == 0 {
-            return effects;
-        }
-        // Cold rider routes through the shared `add_flat_damage_rider`
-        // helper so the roll / log / DealDamage trio lives in one
-        // chokepoint with the rest of the on-hit typed-damage riders.
-        add_flat_damage_rider(
-            encounter,
-            target_id,
             Dice::new(1, 6),
             DamageType::Cold,
             "yeti claws",
-            &mut effects,
-        );
-        effects
+        )
     }
 }
 
@@ -3525,12 +3562,11 @@ impl Action for DragonBite {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        // STR-based melee swing — `weapon_swing_with_damage` collapses the
-        // caster-mod / AttackParams boilerplate and returns `damage` so
-        // the fire rider can gate cleanly on a confirmed hit. The fire
-        // layer rides as a separate DealDamage so per-target resistance /
-        // immunity applies to each damage type independently.
-        let (mut effects, damage) = weapon_swing_with_damage(
+        // 2d10 piercing + 4d6 fire rider routed through the shared
+        // `weapon_swing_with_flat_rider` helper — each layer feeds the
+        // damage pipeline independently so per-target piercing / fire
+        // resistance applies cleanly.
+        weapon_swing_with_flat_rider(
             encounter,
             caster_id,
             target_id,
@@ -3539,25 +3575,10 @@ impl Action for DragonBite {
             Dice::new(2, 10),
             DamageType::Piercing,
             true,
-            None,
-        );
-        if damage == 0 {
-            return effects;
-        }
-        // Fire rider: 4d6 typed separately so per-target resistance applies
-        // to it independently from the piercing. Routes through the shared
-        // `add_flat_damage_rider` helper so the roll / log / DealDamage
-        // trio lives in one chokepoint with the rest of the on-hit
-        // typed-damage riders.
-        add_flat_damage_rider(
-            encounter,
-            target_id,
             Dice::new(4, 6),
             DamageType::Fire,
             "dragon bite",
-            &mut effects,
-        );
-        effects
+        )
     }
 }
 
@@ -9397,10 +9418,11 @@ impl Action for MummyLordRottingFist {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        // STR-based melee swing — `weapon_swing_with_damage` collapses the
-        // caster-mod / AttackParams boilerplate and returns `damage` so
-        // the necrotic rider can gate cleanly on a confirmed hit.
-        let (mut effects, damage) = weapon_swing_with_damage(
+        // 3d6 bludgeoning + 6d6 necrotic rider routed through the shared
+        // `weapon_swing_with_flat_rider` helper. Necrotic packet is typed
+        // separately so per-type resistance is checked independently and
+        // the rider rides through bludgeoning-resistant targets cleanly.
+        weapon_swing_with_flat_rider(
             encounter,
             caster_id,
             target_id,
@@ -9409,20 +9431,10 @@ impl Action for MummyLordRottingFist {
             Dice::new(3, 6),
             DamageType::Bludgeoning,
             true,
-            None,
-        );
-        if damage == 0 {
-            return effects;
-        }
-        add_flat_damage_rider(
-            encounter,
-            target_id,
             Dice::new(6, 6),
             DamageType::Necrotic,
             "lord rotting fist",
-            &mut effects,
-        );
-        effects
+        )
     }
 }
 
@@ -9605,10 +9617,11 @@ impl Action for RakshasaClaw {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        // DEX-based melee swing — `weapon_swing_with_damage` returns the
-        // post-crit damage value so the necrotic rider can gate on a
-        // confirmed hit without re-rolling.
-        let (mut effects, damage) = weapon_swing_with_damage(
+        // DEX-based melee swing — 2d6 slashing + 2d10 necrotic rider
+        // routed through the shared `weapon_swing_with_flat_rider`
+        // helper so the necrotic packet rides on a confirmed hit and
+        // both damage layers feed the damage pipeline independently.
+        weapon_swing_with_flat_rider(
             encounter,
             caster_id,
             target_id,
@@ -9617,20 +9630,10 @@ impl Action for RakshasaClaw {
             Dice::new(2, 6),
             DamageType::Slashing,
             true,
-            None,
-        );
-        if damage == 0 {
-            return effects;
-        }
-        add_flat_damage_rider(
-            encounter,
-            target_id,
             Dice::new(2, 10),
             DamageType::Necrotic,
             "rakshasa claw",
-            &mut effects,
-        );
-        effects
+        )
     }
 }
 
@@ -12275,7 +12278,12 @@ impl Action for BlackPuddingPseudopod {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        let (mut effects, damage) = weapon_swing_with_damage(
+        // 1d6 bludgeoning + 4d8 acid rider routed through the shared
+        // `weapon_swing_with_flat_rider` helper — the acid is the load-
+        // bearing damage slice, but typed separately so per-target acid
+        // resistance / immunity applies independently from the
+        // bludgeoning base.
+        weapon_swing_with_flat_rider(
             encounter,
             caster_id,
             target_id,
@@ -12284,23 +12292,10 @@ impl Action for BlackPuddingPseudopod {
             Dice::new(1, 6),
             DamageType::Bludgeoning,
             true,
-            None,
-        );
-        if damage == 0 {
-            return effects;
-        }
-        // Acid rider — 4d8, typed separately so the damage pipeline applies
-        // per-target acid resistance / immunity independently from the
-        // bludgeoning base.
-        add_flat_damage_rider(
-            encounter,
-            target_id,
             Dice::new(4, 8),
             DamageType::Acid,
             "corrosive sludge",
-            &mut effects,
-        );
-        effects
+        )
     }
 }
 
@@ -12620,3 +12615,400 @@ impl Action for NalfeshneeHorrorNimbus {
 
 pub static NALFESHNEE_HORROR_NIMBUS: LazyLock<NalfeshneeHorrorNimbus> =
     LazyLock::new(|| NalfeshneeHorrorNimbus {});
+
+// ─── Djinni ──────────────────────────────────────────────────────────
+
+/// Djinni Scimitar — STR-based 1d6+STR slashing melee with a flat 1d6
+/// thunder rider. The air genie's curved blade carries a clap of roaring
+/// wind on every strike: the slashing is the headline damage, the thunder
+/// rider routes through the standard `add_flat_damage_rider` chokepoint so
+/// per-target thunder resistance applies independently from the slashing
+/// base. RAW: the djinni picks lightning OR thunder on each swing — we pin
+/// to thunder for log-line consistency (the engine's other thunder-rider
+/// creatures all use the same display lane).
+pub struct DjinniScimitar {}
+
+impl Action for DjinniScimitar {
+    fn name(&self) -> &str {
+        "djinni scimitar"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["djinni-scimitar", "dj-scim"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Slashing, DamageType::Thunder]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        weapon_swing_with_flat_rider(
+            encounter,
+            caster_id,
+            target_id,
+            "djinni scimitar",
+            AbilityScoreType::Strength,
+            Dice::new(1, 6),
+            DamageType::Slashing,
+            true,
+            Dice::new(1, 6),
+            DamageType::Thunder,
+            "thunderous wind",
+        )
+    }
+}
+
+pub static DJINNI_SCIMITAR: LazyLock<DjinniScimitar> = LazyLock::new(|| DjinniScimitar {});
+
+/// Djinni Multiattack — 3 scimitar swings per Action via the homogeneous
+/// `Multiattack` chassis. Heavier per-Action damage budget than the Bandit
+/// Captain's triple-scimitar — the thunder rider stacks on every swing,
+/// so a clean three-hit Action lands ~21 slashing + ~10 thunder against a
+/// medium-AC target.
+pub static DJINNI_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "djinni multiattack",
+    sub_attack: &*DJINNI_SCIMITAR,
+    count: 3,
+});
+
+// ─── Efreeti ─────────────────────────────────────────────────────────
+
+/// Efreeti Scimitar — STR-based 2d6+STR slashing melee with a flat 2d6
+/// fire rider. The fire genie's massive curved blade is wreathed in
+/// continuous flame — every swing carries the hellish heat alongside the
+/// physical cut. Heavier dice than the djinni's scimitar (2d6 vs 1d6
+/// slashing, 2d6 vs 1d6 elemental) reflecting RAW's bigger STR build
+/// (22 vs 21) and the efreeti's signature "burning blade" flavor.
+pub struct EfreetiScimitar {}
+
+impl Action for EfreetiScimitar {
+    fn name(&self) -> &str {
+        "efreeti scimitar"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["efreeti-scimitar", "ef-scim"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Slashing, DamageType::Fire]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        weapon_swing_with_flat_rider(
+            encounter,
+            caster_id,
+            target_id,
+            "efreeti scimitar",
+            AbilityScoreType::Strength,
+            Dice::new(2, 6),
+            DamageType::Slashing,
+            true,
+            Dice::new(2, 6),
+            DamageType::Fire,
+            "burning blade",
+        )
+    }
+}
+
+pub static EFREETI_SCIMITAR: LazyLock<EfreetiScimitar> = LazyLock::new(|| EfreetiScimitar {});
+
+/// Efreeti Multiattack — 2 scimitar swings per Action via the homogeneous
+/// `Multiattack` chassis. Fewer swings than the djinni's triple, but each
+/// swing carries the 2d6 fire rider — ~26 average per-Action damage
+/// (clean 2-hit) before factoring in the fire rider, which crushes any
+/// non-fire-resistant target.
+pub static EFREETI_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "efreeti multiattack",
+    sub_attack: &*EFREETI_SCIMITAR,
+    count: 2,
+});
+
+/// Efreeti Hurl Flame — ranged spell-attack-style fire bolt at 120 ft range
+/// (we cap at 30 tiles ≈ 75 ft for the 40×20 maps, matching the horned
+/// devil's same pattern). Attack uses the efreeti's CHA mod + proficiency
+/// to hit; on hit, 5d6 fire. At-will (no recharge); the efreeti's "stay
+/// out of melee and lob fireballs" stand-off lane mirroring Horned Devil's
+/// Hurled Flame at the same CR but on a heftier 5d6 damage die.
+pub struct EfreetiHurlFlame {}
+
+impl Action for EfreetiHurlFlame {
+    fn name(&self) -> &str {
+        "efreeti hurl flame"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hurl-flame", "ef-flame"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(30)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Fire]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_mod =
+            caster.ability_modifier(AbilityScoreType::Charisma) + caster.proficiency_bonus();
+        crate::engine::attack::resolve_attack(
+            encounter,
+            crate::engine::attack::AttackParams {
+                caster_id,
+                target_id,
+                action_name: "efreeti hurl flame",
+                attack_bonus: attack_mod,
+                damage_dice: Dice::new(5, 6),
+                damage_bonus: 0,
+                damage_type: DamageType::Fire,
+                is_melee: false,
+                long_range: None,
+                is_spell: true,
+            },
+        )
+    }
+}
+
+pub static EFREETI_HURL_FLAME: LazyLock<EfreetiHurlFlame> =
+    LazyLock::new(|| EfreetiHurlFlame {});
+
+// ─── Constrictor Snake ───────────────────────────────────────────────
+
+/// Constrictor Snake Bite — STR-based 1d6+STR piercing melee. Vanilla
+/// SimpleWeapon — the snake's bite is pure damage; the grapple lane lives
+/// on the separate `CONSTRICTOR_SNAKE_CONSTRICT` action.
+pub static CONSTRICTOR_SNAKE_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "constrictor snake bite",
+    &["snake-bite", "constrictor-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+);
+
+/// Constrictor Snake Constrict — STR-based 1d8+STR bludgeoning melee. On
+/// a hit, the target makes a DC 14 STR save vs **Constrict**: on fail,
+/// picks up the `Grappled` condition for 10 rounds (RAW: "until this
+/// grapple ends"). The save + condition install routes through the
+/// shared `save_or_condition_rider` chokepoint so grapple-immune targets
+/// (the elemental envelope, large-or-larger creatures vs a Medium snake)
+/// shrug it off cleanly.
+pub struct ConstrictorSnakeConstrict {}
+
+impl Action for ConstrictorSnakeConstrict {
+    fn name(&self) -> &str {
+        "constrict"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["constrict", "constrictor-constrict"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let (mut effects, damage) = weapon_swing_with_damage(
+            encounter,
+            caster_id,
+            target_id,
+            "constrict",
+            AbilityScoreType::Strength,
+            Dice::new(1, 8),
+            DamageType::Bludgeoning,
+            true,
+            None,
+        );
+        if damage == 0 {
+            return effects;
+        }
+        save_or_condition_rider(
+            encounter,
+            target_id,
+            AbilityScoreType::Strength,
+            14,
+            Condition::Grappled,
+            ConditionTimer::Rounds(10),
+            "constrict",
+            &mut effects,
+        );
+        effects
+    }
+}
+
+pub static CONSTRICTOR_SNAKE_CONSTRICT: LazyLock<ConstrictorSnakeConstrict> =
+    LazyLock::new(|| ConstrictorSnakeConstrict {});
+
+/// Giant Constrictor Snake Bite — STR-based 2d6+STR piercing melee with a
+/// flat 1d4 poison rider. The huge snake's bite carries a mild venom RAW
+/// ("2d4 poison"); we collapse to a flat 1d4 rider so per-target poison
+/// resistance applies cleanly via the standard `add_flat_damage_rider`
+/// chokepoint.
+pub struct GiantConstrictorSnakeBite {}
+
+impl Action for GiantConstrictorSnakeBite {
+    fn name(&self) -> &str {
+        "giant constrictor snake bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["giant-snake-bite", "gcs-bite"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(2)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Poison]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        weapon_swing_with_flat_rider(
+            encounter,
+            caster_id,
+            target_id,
+            "giant constrictor snake bite",
+            AbilityScoreType::Strength,
+            Dice::new(2, 6),
+            DamageType::Piercing,
+            true,
+            Dice::new(1, 4),
+            DamageType::Poison,
+            "snake venom",
+        )
+    }
+}
+
+pub static GIANT_CONSTRICTOR_SNAKE_BITE: LazyLock<GiantConstrictorSnakeBite> =
+    LazyLock::new(|| GiantConstrictorSnakeBite {});
+
+/// Giant Constrictor Snake Constrict — STR-based 2d8+STR bludgeoning melee
+/// at reach 2 tiles (10ft — the huge serpent loops around larger prey).
+/// On hit, the target makes a DC 16 STR save vs **Constrict**: on fail,
+/// picks up the `Grappled` condition for 10 rounds. Higher DC than the
+/// regular constrictor's DC 14 — the giant snake's coils are much harder
+/// to break.
+pub struct GiantConstrictorSnakeConstrict {}
+
+impl Action for GiantConstrictorSnakeConstrict {
+    fn name(&self) -> &str {
+        "giant constrict"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["giant-constrict", "gcs-constrict"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(2)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let (mut effects, damage) = weapon_swing_with_damage(
+            encounter,
+            caster_id,
+            target_id,
+            "giant constrict",
+            AbilityScoreType::Strength,
+            Dice::new(2, 8),
+            DamageType::Bludgeoning,
+            true,
+            None,
+        );
+        if damage == 0 {
+            return effects;
+        }
+        save_or_condition_rider(
+            encounter,
+            target_id,
+            AbilityScoreType::Strength,
+            16,
+            Condition::Grappled,
+            ConditionTimer::Rounds(10),
+            "giant constrict",
+            &mut effects,
+        );
+        effects
+    }
+}
+
+pub static GIANT_CONSTRICTOR_SNAKE_CONSTRICT: LazyLock<GiantConstrictorSnakeConstrict> =
+    LazyLock::new(|| GiantConstrictorSnakeConstrict {});

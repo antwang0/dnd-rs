@@ -174,6 +174,11 @@ use crate::actors::creatures::black_puddings::BLACK_PUDDING_TEMPLATE;
 use crate::actors::creatures::flesh_golems::FLESH_GOLEM_TEMPLATE;
 use crate::actors::creatures::horned_devils::HORNED_DEVIL_TEMPLATE;
 use crate::actors::creatures::nalfeshnees::NALFESHNEE_TEMPLATE;
+use crate::actors::creatures::constrictor_snakes::{
+    CONSTRICTOR_SNAKE_TEMPLATE, GIANT_CONSTRICTOR_SNAKE_TEMPLATE,
+};
+use crate::actors::creatures::djinn::DJINNI_TEMPLATE;
+use crate::actors::creatures::efreeti::EFREETI_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -3143,6 +3148,35 @@ impl EncounterInstance {
             // located dragon's breath_weapon recharge doesn't share
             // state.
             &NALFESHNEE_TEMPLATE,
+            // Newest additions filling the CR-11 genie / CR-¼ + CR-2
+            // serpent slots:
+            //   - Djinni (CR 11 large elemental, air genie): 3-scimitar
+            //     multi with a 1d6 thunder rider on every swing. Magic
+            //     Resistance + lightning / thunder resistance on top of
+            //     the standard elemental envelope. The non-fiend CR-11
+            //     elemental slot — pairs with the Horned Devil (CR 11
+            //     fiend) and Nalfeshnee (CR 13 fiend) at the upper-mid
+            //     extraplanar bench.
+            //   - Efreeti (CR 11 large elemental, fire genie): 2-
+            //     scimitar multi at 2d6 base + 2d6 fire rider per swing,
+            //     plus a 5d6 ranged Hurl Flame stand-off lane. Fire
+            //     immunity + Magic Resistance on top of the elemental
+            //     envelope. Sister to the djinni — heavier per-swing,
+            //     fewer swings, ranged fire option.
+            //   - Constrictor Snake (CR ¼ large beast): bite + 1d8
+            //     Constrict (DC 14 STR save-or-Grappled rider, 10
+            //     rounds). The first snake-shaped creature in the pool;
+            //     fills the low-end ambient-beast lane alongside Boar /
+            //     Stirge / Giant Crab.
+            //   - Giant Constrictor Snake (CR 2 huge beast): reach-2
+            //     2d6 bite (1d4 poison rider) + 2d8 reach-2 Constrict
+            //     (DC 16 STR save-or-Grappled). Heavier huge-beast
+            //     variant slotting between Polar Bear and Carrion
+            //     Crawler on the CR-2 bench.
+            &DJINNI_TEMPLATE,
+            &EFREETI_TEMPLATE,
+            &CONSTRICTOR_SNAKE_TEMPLATE,
+            &GIANT_CONSTRICTOR_SNAKE_TEMPLATE,
         ]
     }
 
