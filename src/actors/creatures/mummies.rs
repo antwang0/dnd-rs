@@ -16,7 +16,7 @@ use std::sync::LazyLock;
 /// range.
 pub static MUMMY_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*MUMMY_ROTTING_FIST);
+    actions.push(&MUMMY_ROTTING_FIST);
     actions.push(&*MUMMY_DREADFUL_GLARE);
     CreatureTemplate {
         name: "Mummy",

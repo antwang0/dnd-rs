@@ -179,6 +179,8 @@ use crate::actors::creatures::constrictor_snakes::{
 };
 use crate::actors::creatures::djinn::DJINNI_TEMPLATE;
 use crate::actors::creatures::efreeti::EFREETI_TEMPLATE;
+use crate::actors::creatures::marids::MARID_TEMPLATE;
+use crate::actors::creatures::crocodiles::{CROCODILE_TEMPLATE, GIANT_CROCODILE_TEMPLATE};
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -3177,6 +3179,28 @@ impl EncounterInstance {
             &EFREETI_TEMPLATE,
             &CONSTRICTOR_SNAKE_TEMPLATE,
             &GIANT_CONSTRICTOR_SNAKE_TEMPLATE,
+            // Marid (CR 11 large elemental, water genie): 3-trident
+            // multi at 2d6 piercing per swing plus a Recharge 4–6 ranged
+            // Water Jet (DC 17 DEX save, 6d6 bludgeoning + 20ft push on
+            // fail). Acid immunity + cold resistance + Magic Resistance
+            // on top of the standard elemental envelope. Completes the
+            // noble genie family — Djinni (air), Efreeti (fire), and
+            // now Marid (water) — at the same CR-11 tier.
+            &MARID_TEMPLATE,
+            // Crocodile family — canonical SRD amphibious predators:
+            //   - Crocodile (CR ½ large beast): 1d10+STR piercing bite
+            //     with an auto-Grappled rider on hit. The bite IS the
+            //     lock-down — no save, just an automatic grapple. Slots
+            //     alongside Lizardfolk / Bullywug / Boar on the low-CR
+            //     ambush-predator bench.
+            //   - Giant Crocodile (CR 5 huge beast): 1 bite + 1 tail
+            //     compound multi at reach 2 tiles. Bite is 3d10+STR
+            //     piercing with the same auto-grapple rider; tail is
+            //     2d8+STR bludgeoning vanilla. Sits between Owlbear
+            //     (CR 3) and Werebear (CR 5) on the upper-mid beast
+            //     ladder.
+            &CROCODILE_TEMPLATE,
+            &GIANT_CROCODILE_TEMPLATE,
         ]
     }
 

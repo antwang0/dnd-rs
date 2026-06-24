@@ -80,7 +80,7 @@ pub static BLACK_PUDDING_CORROSIVE_FORM: MeleeReflect = MeleeReflect {
 /// eyes per RAW). Languages: none. Size Large. CR 4.
 pub static BLACK_PUDDING_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*BLACK_PUDDING_PSEUDOPOD);
+    actions.push(&BLACK_PUDDING_PSEUDOPOD);
     CreatureTemplate {
         name: "Black Pudding",
         // 'p' (lowercase) — distinct from existing P (Pixie/Pegasus) and

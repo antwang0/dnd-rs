@@ -39,7 +39,7 @@ static DRAGON_LEGENDARY_SAVES: LazyLock<HashSet<AbilityScoreType>> = LazyLock::n
 pub static ADULT_RED_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*DRAGON_MULTI);
-    actions.push(&*DRAGON_BITE);
+    actions.push(&DRAGON_BITE);
     actions.push(&DRAGON_CLAW);
     actions.push(&DRAGON_BREATH_FIRE);
     actions.push(&*FRIGHTFUL_PRESENCE);
@@ -89,7 +89,7 @@ pub static ADULT_RED_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
 /// breath weapon. AC 17, ~133 average HP.
 pub static YOUNG_WHITE_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*DRAGON_BITE);
+    actions.push(&DRAGON_BITE);
     actions.push(&DRAGON_CLAW);
     actions.push(&DRAGON_BREATH_COLD);
     CreatureTemplate {
@@ -131,7 +131,7 @@ pub static YOUNG_WHITE_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
 pub static ANCIENT_BLUE_DRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*DRAGON_MULTI);
-    actions.push(&*DRAGON_BITE);
+    actions.push(&DRAGON_BITE);
     actions.push(&DRAGON_CLAW);
     actions.push(&DRAGON_BREATH_LIGHTNING);
     actions.push(&*FRIGHTFUL_PRESENCE);

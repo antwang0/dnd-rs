@@ -44,7 +44,7 @@ use std::sync::LazyLock;
 pub static DJINNI_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*DJINNI_MULTI);
-    actions.push(&*DJINNI_SCIMITAR);
+    actions.push(&DJINNI_SCIMITAR);
     CreatureTemplate {
         name: "Djinni",
         // 'D' (uppercase) — distinct from existing 'd' (Drow / Dryad /

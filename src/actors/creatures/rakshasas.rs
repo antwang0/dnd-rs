@@ -51,7 +51,7 @@ use std::sync::LazyLock;
 pub static RAKSHASA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*RAKSHASA_MULTI);
-    actions.push(&*RAKSHASA_CLAW);
+    actions.push(&RAKSHASA_CLAW);
     CreatureTemplate {
         name: "Rakshasa",
         // 'K' — distinct from 'R' (Adult Red Dragon) and unused in the

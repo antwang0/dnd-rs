@@ -201,3 +201,5 @@ pub mod nalfeshnees;
 pub mod djinn;
 pub mod efreeti;
 pub mod constrictor_snakes;
+pub mod marids;
+pub mod crocodiles;

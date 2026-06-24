@@ -49,7 +49,7 @@ use std::sync::LazyLock;
 pub static EFREETI_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*EFREETI_MULTI);
-    actions.push(&*EFREETI_SCIMITAR);
+    actions.push(&EFREETI_SCIMITAR);
     actions.push(&*EFREETI_HURL_FLAME);
     CreatureTemplate {
         name: "Efreeti",
