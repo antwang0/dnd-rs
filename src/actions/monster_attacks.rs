@@ -406,16 +406,42 @@ impl SimpleWeapon {
     /// `cost_resource = Action`, `normal_range = None`,
     /// `damage_ability = Some(attack_ability)`) so a new attack literal
     /// collapses from a 12-field struct expression to a 5-argument call.
-    /// Callers who need a non-standard reach or an Action/BonusAction
-    /// override should construct the struct directly — those are rare
-    /// enough that a second const constructor would just shift the
-    /// complexity sideways.
+    /// Callers who need a non-standard reach can call `reach_melee`; for
+    /// the bonus-action / no-mod / no-LOS edge cases the struct form is
+    /// the right escape hatch.
     pub const fn melee(
         display_name: &'static str,
         aliases: &'static [&'static str],
         attack_ability: AbilityScoreType,
         damage_dice: Dice,
         damage_type: DamageType,
+    ) -> Self {
+        Self::reach_melee(
+            display_name,
+            aliases,
+            attack_ability,
+            damage_dice,
+            damage_type,
+            MELEE_REACH,
+        )
+    }
+
+    /// Const constructor for the "melee swing with an extended reach"
+    /// shape — the giant's greatclub (reach 2 = 10ft), the wyvern's tail
+    /// stinger (reach 3 = 15ft), the dragon's claw (reach 2). Identical
+    /// to `melee` but lets the caller pin a custom reach in tile-gap
+    /// units. Shrinks a ~12-field struct literal to a 6-argument call so
+    /// reach-2+ natural weapons stop carrying the same `is_melee = true,
+    /// requires_los = false, cost_resource = Action, normal_range = None,
+    /// damage_ability = Some(attack_ability)` boilerplate at every
+    /// declaration site.
+    pub const fn reach_melee(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        attack_ability: AbilityScoreType,
+        damage_dice: Dice,
+        damage_type: DamageType,
+        reach: isize,
     ) -> Self {
         Self {
             display_name,
@@ -424,11 +450,46 @@ impl SimpleWeapon {
             damage_ability: Some(attack_ability),
             damage_dice,
             damage_type,
-            reach: MELEE_REACH,
+            reach,
             is_melee: true,
             requires_los: false,
             cost_resource: Resource::Action,
             normal_range: None,
+        }
+    }
+
+    /// Const constructor for the standard "Action-cost ranged weapon
+    /// attack" shape — longbow / heavy crossbow / hill giant boulder /
+    /// frost giant rock. Pins the boilerplate fields (`is_melee = false`,
+    /// `requires_los = true`, `cost_resource = Action`,
+    /// `damage_ability = Some(attack_ability)`) so a ranged-weapon literal
+    /// collapses from a 12-field struct expression to a 7-argument call.
+    /// `reach` is the maximum effective range in tile-gap units (5e's
+    /// "long range" — attacks beyond `normal_range` but within `reach`
+    /// roll at disadvantage). Callers who need a bonus-action shot
+    /// (Shortbow) should keep the struct form.
+    #[allow(clippy::too_many_arguments)]
+    pub const fn ranged(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        attack_ability: AbilityScoreType,
+        damage_dice: Dice,
+        damage_type: DamageType,
+        reach: isize,
+        normal_range: isize,
+    ) -> Self {
+        Self {
+            display_name,
+            aliases,
+            attack_ability,
+            damage_ability: Some(attack_ability),
+            damage_dice,
+            damage_type,
+            reach,
+            is_melee: false,
+            requires_los: true,
+            cost_resource: Resource::Action,
+            normal_range: Some(normal_range),
         }
     }
 }
@@ -560,13 +621,43 @@ impl WeaponWithRider {
         rider_type: DamageType,
         rider_name: &'static str,
     ) -> Self {
+        Self::reach_melee(
+            display_name,
+            aliases,
+            attack_ability,
+            damage_dice,
+            damage_type,
+            MELEE_REACH,
+            rider_dice,
+            rider_type,
+            rider_name,
+        )
+    }
+
+    /// Const constructor for the "weapon-with-rider with extended melee
+    /// reach" shape — the dragon bite (reach 2 = 10ft + fire rider). Mirrors
+    /// `SimpleWeapon::reach_melee` but with the additional rider triple
+    /// (dice + type + name). Lets reach-2+ natural weapons with a typed
+    /// rider drop from a 10-field struct literal to a 9-argument call.
+    #[allow(clippy::too_many_arguments)]
+    pub const fn reach_melee(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        attack_ability: AbilityScoreType,
+        damage_dice: Dice,
+        damage_type: DamageType,
+        reach: isize,
+        rider_dice: Dice,
+        rider_type: DamageType,
+        rider_name: &'static str,
+    ) -> Self {
         Self {
             display_name,
             aliases,
             attack_ability,
             damage_dice,
             damage_type,
-            reach: MELEE_REACH,
+            reach,
             is_melee: true,
             rider_dice,
             rider_type,
@@ -640,19 +731,15 @@ impl Action for WeaponWithRider {
 /// Standard 5e longbow: ranged, requires line-of-sight, +DEX to hit and damage.
 /// Reach is in tiles (not feet); 20 tiles = 50ft on this 2.5ft grid, which is
 /// short of the 5e 80/320 normal/long range but plenty for our 40×20 maps.
-pub static LONGBOW: SimpleWeapon = SimpleWeapon {
-    display_name: "longbow",
-    aliases: &["bow", "shoot"],
-    attack_ability: AbilityScoreType::Dexterity,
-    damage_ability: Some(AbilityScoreType::Dexterity),
-    damage_dice: Dice::new(1, 8),
-    damage_type: DamageType::Piercing,
-    reach: 20,
-    is_melee: false,
-    requires_los: true,
-    cost_resource: Resource::Action,
-    normal_range: Some(12),
-};
+pub static LONGBOW: SimpleWeapon = SimpleWeapon::ranged(
+    "longbow",
+    &["bow", "shoot"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 8),
+    DamageType::Piercing,
+    20,
+    12,
+);
 
 /// Generic STR-based 2d6 bludgeoning slam used by zombies. Stays as the
 /// canonical "monster fist" attack so multislams (and tests) reference it.
@@ -703,19 +790,14 @@ pub static DAGGER: SimpleWeapon = SimpleWeapon::melee(
 
 /// Greatclub — Ogre's signature weapon. STR-based 1d10 bludgeoning with
 /// **reach 2** (10ft) — first polearm-style attack in the codebase.
-pub static GREATCLUB: SimpleWeapon = SimpleWeapon {
-    display_name: "greatclub",
-    aliases: &["gc"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(1, 10),
-    damage_type: DamageType::Bludgeoning,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static GREATCLUB: SimpleWeapon = SimpleWeapon::reach_melee(
+    "greatclub",
+    &["gc"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 10),
+    DamageType::Bludgeoning,
+    2,
+);
 
 /// Warhammer — STR-based 1d8 bludgeoning martial weapon. The classic
 /// dwarven sidearm; in our engine the versatile-2H clause collapses to
@@ -1041,19 +1123,15 @@ pub static GREATAXE: SimpleWeapon = SimpleWeapon::melee(
 /// 100/400ft; the engine's 2.5ft grid caps the indoor reach at 16 tiles
 /// (40ft RAW would be 16 tiles) with normal range at 10 (≈25ft) — close
 /// to the longbow's 12 (≈30ft) ratio.
-pub static HEAVY_CROSSBOW: SimpleWeapon = SimpleWeapon {
-    display_name: "heavy crossbow",
-    aliases: &["hcb", "crossbow"],
-    attack_ability: AbilityScoreType::Dexterity,
-    damage_ability: Some(AbilityScoreType::Dexterity),
-    damage_dice: Dice::new(1, 10),
-    damage_type: DamageType::Piercing,
-    reach: 16,
-    is_melee: false,
-    requires_los: true,
-    cost_resource: Resource::Action,
-    normal_range: Some(10),
-};
+pub static HEAVY_CROSSBOW: SimpleWeapon = SimpleWeapon::ranged(
+    "heavy crossbow",
+    &["hcb", "crossbow"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 10),
+    DamageType::Piercing,
+    16,
+    10,
+);
 
 /// Wolf-specific bite: 1d4 STR-based piercing with a built-in trip rider.
 /// On every hit forces a STR save (DC = 8 + prof + STR mod); fail = Prone.
@@ -2328,19 +2406,14 @@ pub static GREATSWORD: SimpleWeapon = SimpleWeapon::melee(
 /// Lance — 1d12 piercing reach-2 melee weapon. Mounted-only RAW, but we
 /// drop the mount gate so the Knight gets a polearm option to swing from
 /// 10 ft (one tile beyond a standard sword reach).
-pub static LANCE: SimpleWeapon = SimpleWeapon {
-    display_name: "lance",
-    aliases: &["lnc"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(1, 12),
-    damage_type: DamageType::Piercing,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static LANCE: SimpleWeapon = SimpleWeapon::reach_melee(
+    "lance",
+    &["lnc"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 12),
+    DamageType::Piercing,
+    2,
+);
 
 /// Knight's double-longsword multiattack — two swings per Action,
 /// modeled on top of the existing Multiattack wrapper.
@@ -3147,54 +3220,40 @@ pub static MANTICORE_MULTIATTACK: LazyLock<CompoundAttack> = LazyLock::new(|| Co
 /// Hill Giant Greatclub — STR-based 3d8 bludgeoning, reach 2 tiles
 /// (10 ft). Mirrors the ogre's club but bumped to giant-tier dice; the
 /// extra reach is the hill giant's signature spacing advantage.
-pub static HILL_GIANT_GREATCLUB: SimpleWeapon = SimpleWeapon {
-    display_name: "giant greatclub",
-    aliases: &["ggc", "giant-club"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(3, 8),
-    damage_type: DamageType::Bludgeoning,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static HILL_GIANT_GREATCLUB: SimpleWeapon = SimpleWeapon::reach_melee(
+    "giant greatclub",
+    &["ggc", "giant-club"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 8),
+    DamageType::Bludgeoning,
+    2,
+);
 
 /// Hill Giant Boulder — STR-based 3d10 bludgeoning thrown rock with
 /// reach 24 (60 ft). Ranged STR throw is unusual but matches the 5e
 /// stat block: giants chuck rocks for big damage at long range.
-pub static HILL_GIANT_BOULDER: SimpleWeapon = SimpleWeapon {
-    display_name: "boulder",
-    aliases: &["bld", "rock"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(3, 10),
-    damage_type: DamageType::Bludgeoning,
-    reach: 24,
-    is_melee: false,
-    requires_los: true,
-    cost_resource: Resource::Action,
-    normal_range: Some(16),
-};
+pub static HILL_GIANT_BOULDER: SimpleWeapon = SimpleWeapon::ranged(
+    "boulder",
+    &["bld", "rock"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 10),
+    DamageType::Bludgeoning,
+    24,
+    16,
+);
 
 /// Treant Slam — STR-based 3d6 bludgeoning, reach 2 (10 ft). The treant
 /// is a slow CR-9 wall of HP that swings massive trunks; 3d6+STR per
 /// strike, no rider, but the Treant template attaches the Multiattack
 /// wrapper to swing twice per Action.
-pub static TREANT_SLAM: SimpleWeapon = SimpleWeapon {
-    display_name: "treant slam",
-    aliases: &["tslam"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(3, 6),
-    damage_type: DamageType::Bludgeoning,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static TREANT_SLAM: SimpleWeapon = SimpleWeapon::reach_melee(
+    "treant slam",
+    &["tslam"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 6),
+    DamageType::Bludgeoning,
+    2,
+);
 
 /// Treant Multiattack — Action: two Treant Slam swings against the same
 /// target. The pair of 3d6+STR slams averages ~25 damage at the treant's
@@ -3579,37 +3638,31 @@ pub static BEHIR_LIGHTNING_BREATH: BreathWeapon = BreathWeapon {
 /// (STR+prof at CR 17), on hit 2d10+8 piercing + 4d6 fire at reach 10ft.
 /// The fire rider is a separate `DealDamage` so per-target resistance /
 /// immunity applies to it independently from the piercing.
-pub static DRAGON_BITE: WeaponWithRider = WeaponWithRider {
-    display_name: "dragon bite",
-    aliases: &["bite-d", "dbite"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_dice: Dice::new(2, 10),
-    damage_type: DamageType::Piercing,
-    reach: 2,
-    is_melee: true,
-    rider_dice: Dice::new(4, 6),
-    rider_type: DamageType::Fire,
-    rider_name: "dragon bite",
-};
+pub static DRAGON_BITE: WeaponWithRider = WeaponWithRider::reach_melee(
+    "dragon bite",
+    &["bite-d", "dbite"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 10),
+    DamageType::Piercing,
+    2,
+    Dice::new(4, 6),
+    DamageType::Fire,
+    "dragon bite",
+);
 
 /// Dragon Claw — Adult Red Dragon's swipe. Identical resolution to a
 /// `SimpleWeapon` (no rider), tuned to 2d6+8 slashing at the dragon's
 /// hit modifier. Two claws + bite = the dragon multiattack; we issue
 /// the data-only SimpleWeapon variant so the AI picks Bite for the
 /// fire rider and Claw as fallback.
-pub static DRAGON_CLAW: SimpleWeapon = SimpleWeapon {
-    display_name: "dragon claw",
-    aliases: &["dclaw", "claw-d"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(2, 6),
-    damage_type: DamageType::Slashing,
-    is_melee: true,
-    reach: 2,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static DRAGON_CLAW: SimpleWeapon = SimpleWeapon::reach_melee(
+    "dragon claw",
+    &["dclaw", "claw-d"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Slashing,
+    2,
+);
 
 /// Lich Paralyzing Touch — touch attack with a paralysis rider. d20 +
 /// 12 (INT-cast attack mod at CR 21) vs AC. On hit: 3d6 cold and the
@@ -3828,37 +3881,28 @@ pub static DROW_POISONED_CROSSBOW: LazyLock<DrowPoisonedCrossbow> =
 /// One of the heaviest single-swing weapons in the bestiary: dice on par
 /// with the Hill Giant's club but cycled into slashing damage to keep
 /// damage-type variety on the giant tier. CR-8 numbers.
-pub static FROST_GIANT_GREATAXE: SimpleWeapon = SimpleWeapon {
-    display_name: "frost giant greataxe",
-    aliases: &["fgx", "frost-axe"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(3, 12),
-    damage_type: DamageType::Slashing,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static FROST_GIANT_GREATAXE: SimpleWeapon = SimpleWeapon::reach_melee(
+    "frost giant greataxe",
+    &["fgx", "frost-axe"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 12),
+    DamageType::Slashing,
+    2,
+);
 
 /// Frost Giant Rock — STR-based 4d10 bludgeoning thrown rock at reach
 /// 24 (60 ft). Frost Giants chuck boulders like Hill Giants but harder
 /// — the extra die is the CR-8 vs CR-5 step. Same template as the Hill
 /// Giant Boulder.
-pub static FROST_GIANT_ROCK: SimpleWeapon = SimpleWeapon {
-    display_name: "frost rock",
-    aliases: &["frock"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(4, 10),
-    damage_type: DamageType::Bludgeoning,
-    reach: 24,
-    is_melee: false,
-    requires_los: true,
-    cost_resource: Resource::Action,
-    normal_range: Some(16),
-};
+pub static FROST_GIANT_ROCK: SimpleWeapon = SimpleWeapon::ranged(
+    "frost rock",
+    &["frock"],
+    AbilityScoreType::Strength,
+    Dice::new(4, 10),
+    DamageType::Bludgeoning,
+    24,
+    16,
+);
 
 /// Vampire Charming Gaze — Action. Target within 30ft makes a WIS save
 /// vs DC 17 (vampire's CHA-based spell DC). Fail = Charmed for 1 minute
@@ -4089,19 +4133,15 @@ pub static PIT_FIEND_BITE: SimpleWeapon = SimpleWeapon::melee(
 /// melee attack to the bite; together they make up the pit fiend's
 /// 4-attack multiattack (1 bite + 1 claw + 1 mace + 1 tail in MM RAW).
 /// We collapse to bite+claw bursting via the Multiattack wrapper below.
-pub static PIT_FIEND_CLAW: SimpleWeapon = SimpleWeapon {
-    display_name: "devil claw",
-    aliases: &["pf-claw"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(2, 8),
-    damage_type: DamageType::Slashing,
-    reach: 2, // 10ft reach — the pit fiend's natural reach for non-bite limbs.
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+// 10ft reach — the pit fiend's natural reach for non-bite limbs.
+pub static PIT_FIEND_CLAW: SimpleWeapon = SimpleWeapon::reach_melee(
+    "devil claw",
+    &["pf-claw"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Slashing,
+    2,
+);
 
 /// Pit Fiend Multiattack — Action: 1 bite + 2 devil-claw swings,
 /// expressed as a single heterogeneous CompoundAttack so the boss's
@@ -4193,37 +4233,29 @@ pub static MONK_UNARMED_STRIKE: SimpleWeapon = SimpleWeapon::melee(
 /// the tarrasque's massive STR (30 → +10 + prof 9 = +19 RAW; we let
 /// the engine compute the modifier from STR + prof so the boss's stat
 /// block stays authoritative).
-pub static TARRASQUE_BITE: SimpleWeapon = SimpleWeapon {
-    display_name: "tarrasque bite",
-    aliases: &["t-bite", "tbite"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(4, 12),
-    damage_type: DamageType::Piercing,
-    reach: 4, // 15ft reach — gargantuan natural reach for the bite.
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+// 15ft reach — gargantuan natural reach for the bite.
+pub static TARRASQUE_BITE: SimpleWeapon = SimpleWeapon::reach_melee(
+    "tarrasque bite",
+    &["t-bite", "tbite"],
+    AbilityScoreType::Strength,
+    Dice::new(4, 12),
+    DamageType::Piercing,
+    4,
+);
 
 /// Tarrasque Claw — STR-based 3d8 slashing. Companion melee that fills
 /// out the multiattack with two swings per Action. Reach matches the
 /// tarrasque's body footprint (10ft for the claws — slightly shorter
 /// than the bite's 15ft).
-pub static TARRASQUE_CLAW: SimpleWeapon = SimpleWeapon {
-    display_name: "tarrasque claw",
-    aliases: &["t-claw", "tclaw"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(3, 8),
-    damage_type: DamageType::Slashing,
-    reach: 3, // 10ft reach for the claw lanes.
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+// 10ft reach for the claw lanes.
+pub static TARRASQUE_CLAW: SimpleWeapon = SimpleWeapon::reach_melee(
+    "tarrasque claw",
+    &["t-claw", "tclaw"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 8),
+    DamageType::Slashing,
+    3,
+);
 
 /// Tarrasque Tail Sweep — STR-based 3d8 bludgeoning + Prone-on-hit. The
 /// sweep lands at the tarrasque's far edge so the reach is generous; on
@@ -4314,19 +4346,14 @@ pub static TARRASQUE_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Compound
 /// Aboleth Tentacle — STR-based 2d6 bludgeoning melee, reach 2 tiles
 /// (10ft). Iconic MM aboleth attack — paired with the tentacle multi
 /// below to deal a brutal melee burst out at near-reach distance.
-pub static ABOLETH_TENTACLE: SimpleWeapon = SimpleWeapon {
-    display_name: "tentacle",
-    aliases: &["tent"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(2, 6),
-    damage_type: DamageType::Bludgeoning,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static ABOLETH_TENTACLE: SimpleWeapon = SimpleWeapon::reach_melee(
+    "tentacle",
+    &["tent"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Bludgeoning,
+    2,
+);
 
 /// Aboleth Multiattack — 3 tentacle swings per Action. Single same-sub
 /// pattern through the `Multiattack` wrapper.
@@ -4787,19 +4814,14 @@ pub static HELL_HOUND_FIRE_BREATH: LazyLock<HellHoundFireBreath> =
 
 /// Wyvern Bite — 2d6+STR piercing melee (a chomp; no rider). The
 /// stinger is a separate action with its own poison save rider.
-pub static WYVERN_BITE: SimpleWeapon = SimpleWeapon {
-    display_name: "wyvern bite",
-    aliases: &["wbite"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(2, 6),
-    damage_type: DamageType::Piercing,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static WYVERN_BITE: SimpleWeapon = SimpleWeapon::reach_melee(
+    "wyvern bite",
+    &["wbite"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Piercing,
+    2,
+);
 
 /// Wyvern Stinger — 2d6+STR piercing melee with a brutal poison rider:
 /// target makes a DC 15 CON save or takes 7d6 poison (half on save).
@@ -4875,36 +4897,27 @@ pub static WYVERN_STINGER: LazyLock<WyvernStinger> = LazyLock::new(|| WyvernStin
 /// Storm Giant Greatsword — STR-based 6d6 + STR slashing melee. Reach 3
 /// (15ft for a Huge-footprint giant). One of the heaviest single-swing
 /// damage dice in the codebase — averages ~30 slashing per hit.
-pub static STORM_GIANT_GREATSWORD: SimpleWeapon = SimpleWeapon {
-    display_name: "storm greatsword",
-    aliases: &["sgs", "sgreatsword"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(6, 6),
-    damage_type: DamageType::Slashing,
-    reach: 3,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static STORM_GIANT_GREATSWORD: SimpleWeapon = SimpleWeapon::reach_melee(
+    "storm greatsword",
+    &["sgs", "sgreatsword"],
+    AbilityScoreType::Strength,
+    Dice::new(6, 6),
+    DamageType::Slashing,
+    3,
+);
 
 /// Storm Giant Thrown Rock — STR-based 4d12 + STR bludgeoning ranged
 /// attack. Range 240ft RAW; capped at 40 tiles to fit the map. The
 /// storm giant's stand-off lane when the front line is buttoned up.
-pub static STORM_GIANT_ROCK: SimpleWeapon = SimpleWeapon {
-    display_name: "storm rock",
-    aliases: &["sgr", "srock"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(4, 12),
-    damage_type: DamageType::Bludgeoning,
-    reach: 40,
-    is_melee: false,
-    requires_los: true,
-    cost_resource: Resource::Action,
-    normal_range: Some(24),
-};
+pub static STORM_GIANT_ROCK: SimpleWeapon = SimpleWeapon::ranged(
+    "storm rock",
+    &["sgr", "srock"],
+    AbilityScoreType::Strength,
+    Dice::new(4, 12),
+    DamageType::Bludgeoning,
+    40,
+    24,
+);
 
 /// Storm Giant Lightning Strike — bonus-action signature ability. Hurls
 /// a bolt of lightning at a single target within 500ft. DC 17 DEX save:
@@ -4981,19 +4994,14 @@ pub static STORM_GIANT_LIGHTNING_STRIKE: LazyLock<StormGiantLightningStrike> =
 /// reach for the gargantuan head). The Hydra has 5 of these per turn via
 /// HYDRA_MULTI. Standalone so the hydra can still bite when only one
 /// target is in melee range.
-pub static HYDRA_BITE: SimpleWeapon = SimpleWeapon {
-    display_name: "hydra bite",
-    aliases: &["h-bite", "hbite"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(1, 10),
-    damage_type: DamageType::Piercing,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static HYDRA_BITE: SimpleWeapon = SimpleWeapon::reach_melee(
+    "hydra bite",
+    &["h-bite", "hbite"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 10),
+    DamageType::Piercing,
+    2,
+);
 
 /// Hydra Multiattack — 5 simultaneous bites (one per head). The number
 /// of heads is fixed at 5 RAW; the engine doesn't model head-severing
@@ -5007,36 +5015,27 @@ pub static HYDRA_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
 /// Stone Giant Greatclub — STR-based 3d8+STR bludgeoning melee, reach 3.
 /// The greatclub is the giant's go-to melee, with the boulder filling
 /// the ranged lane.
-pub static STONE_GIANT_GREATCLUB: SimpleWeapon = SimpleWeapon {
-    display_name: "stone greatclub",
-    aliases: &["s-gc", "sgc"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(3, 8),
-    damage_type: DamageType::Bludgeoning,
-    reach: 3,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static STONE_GIANT_GREATCLUB: SimpleWeapon = SimpleWeapon::reach_melee(
+    "stone greatclub",
+    &["s-gc", "sgc"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 8),
+    DamageType::Bludgeoning,
+    3,
+);
 
 /// Stone Giant Boulder — STR-based 4d10+STR bludgeoning ranged, reach 24.
 /// The boulder is the giant's signature ranged threat — paired with the
 /// greatclub for melee, the AI picks whichever the action picker validates.
-pub static STONE_GIANT_BOULDER: SimpleWeapon = SimpleWeapon {
-    display_name: "stone boulder",
-    aliases: &["s-boulder", "sboulder"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(4, 10),
-    damage_type: DamageType::Bludgeoning,
-    reach: 24,
-    is_melee: false,
-    requires_los: true,
-    cost_resource: Resource::Action,
-    normal_range: Some(16),
-};
+pub static STONE_GIANT_BOULDER: SimpleWeapon = SimpleWeapon::ranged(
+    "stone boulder",
+    &["s-boulder", "sboulder"],
+    AbilityScoreType::Strength,
+    Dice::new(4, 10),
+    DamageType::Bludgeoning,
+    24,
+    16,
+);
 
 /// Stone Giant Multiattack — 2 greatclub swings per Action. Mirrors the
 /// frost giant / hill giant pattern: physical thresher boss melee, no
@@ -6123,19 +6122,14 @@ pub static MARILITH_LONGSWORD: SimpleWeapon = SimpleWeapon::melee(
 /// the engine's grapple gate doesn't yet model the "creature one size
 /// larger or smaller" clause, and the long reach + the multi's volume
 /// already make the marilith threatening enough.
-pub static MARILITH_TAIL: SimpleWeapon = SimpleWeapon {
-    display_name: "marilith tail",
-    aliases: &["mtail", "marilith-t"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(2, 10),
-    damage_type: DamageType::Bludgeoning,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static MARILITH_TAIL: SimpleWeapon = SimpleWeapon::reach_melee(
+    "marilith tail",
+    &["mtail", "marilith-t"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 10),
+    DamageType::Bludgeoning,
+    2,
+);
 
 /// Marilith Multiattack — 6 longswords + 1 tail per Action via the
 /// `CompoundAttack` wrapper. The marilith's signature seven-swing volley
@@ -6355,19 +6349,14 @@ pub static SHAMBLING_MOUND_ENGULF: LazyLock<ShamblingMoundEngulf> =
 /// Displacer Beast tentacle — STR-based 2d6 bludgeoning melee attack with
 /// 10ft reach (2 tiles). The displacer beast lashes out with a barbed
 /// tentacle; two of these compose its multiattack.
-pub static TENTACLE: SimpleWeapon = SimpleWeapon {
-    display_name: "tentacle",
-    aliases: &["tent"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(2, 6),
-    damage_type: DamageType::Bludgeoning,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static TENTACLE: SimpleWeapon = SimpleWeapon::reach_melee(
+    "tentacle",
+    &["tent"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Bludgeoning,
+    2,
+);
 
 /// Displacer Beast multiattack — two tentacle strikes per Action.
 pub static DISPLACER_BEAST_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
@@ -6388,19 +6377,14 @@ pub static UMBER_CLAW: SimpleWeapon = SimpleWeapon::melee(
 
 /// Cloaker tail — STR-based 1d8 slashing melee attack with 10ft reach
 /// (2 tiles). The cloaker whips its barbed tail at nearby prey.
-pub static CLOAKER_TAIL: SimpleWeapon = SimpleWeapon {
-    display_name: "cloaker tail",
-    aliases: &["ctail"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(1, 8),
-    damage_type: DamageType::Slashing,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static CLOAKER_TAIL: SimpleWeapon = SimpleWeapon::reach_melee(
+    "cloaker tail",
+    &["ctail"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 8),
+    DamageType::Slashing,
+    2,
+);
 
 // ─── Basilisk ────────────────────────────────────────────────────────
 
@@ -6912,19 +6896,14 @@ pub static GRICK_BEAK: LazyLock<GrickBeak> = LazyLock::new(|| GrickBeak {});
 /// Two-handed polearm used by gnoll pack lords and similar martial
 /// leaders. Reach 2 lets the wielder strike from one tile back, matching
 /// the 5e polearm reach property.
-pub static GLAIVE: SimpleWeapon = SimpleWeapon {
-    display_name: "glaive",
-    aliases: &["glv", "polearm"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(1, 10),
-    damage_type: DamageType::Slashing,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static GLAIVE: SimpleWeapon = SimpleWeapon::reach_melee(
+    "glaive",
+    &["glv", "polearm"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 10),
+    DamageType::Slashing,
+    2,
+);
 
 /// Gnoll Pack Lord multiattack — 2 glaive swings per Action. The pack
 /// lord's signature move: two reach-2 slashing strikes that let it
@@ -6990,19 +6969,15 @@ impl Action for SpectatorEyeRay {
 pub static SPECTATOR_EYE_RAY: LazyLock<SpectatorEyeRay> = LazyLock::new(|| SpectatorEyeRay {});
 
 /// Javelin -- STR-based thrown weapon: 1d6 piercing, 30ft normal / 120ft max.
-pub static JAVELIN: SimpleWeapon = SimpleWeapon {
-    display_name: "javelin",
-    aliases: &["jav", "throw"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(1, 6),
-    damage_type: DamageType::Piercing,
-    reach: 48,
-    is_melee: false,
-    requires_los: true,
-    cost_resource: Resource::Action,
-    normal_range: Some(12),
-};
+pub static JAVELIN: SimpleWeapon = SimpleWeapon::ranged(
+    "javelin",
+    &["jav", "throw"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+    48,
+    12,
+);
 
 /// Hobgoblin Warlord multiattack -- three longsword swings per Action.
 pub static HOBGOBLIN_WARLORD_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
@@ -7113,19 +7088,15 @@ pub static GIANT_APE_FIST: SimpleWeapon = SimpleWeapon::melee(
 /// Giant Ape rock — STR-based 7d6 bludgeoning thrown rock with extreme
 /// range. Big single-die hit when the ape can't close — mirrors the Hill
 /// Giant boulder shape but tuned for CR 7 hp budgets.
-pub static GIANT_APE_ROCK: SimpleWeapon = SimpleWeapon {
-    display_name: "rock",
-    aliases: &["throw", "boulder"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(7, 6),
-    damage_type: DamageType::Bludgeoning,
-    reach: 24,
-    is_melee: false,
-    requires_los: true,
-    cost_resource: Resource::Action,
-    normal_range: Some(20),
-};
+pub static GIANT_APE_ROCK: SimpleWeapon = SimpleWeapon::ranged(
+    "rock",
+    &["throw", "boulder"],
+    AbilityScoreType::Strength,
+    Dice::new(7, 6),
+    DamageType::Bludgeoning,
+    24,
+    20,
+);
 
 /// Giant Ape multiattack — two fist slams per Action, mirroring the
 /// SRD stat block's "Multiattack: makes two fist attacks" entry.
@@ -7138,19 +7109,14 @@ pub static GIANT_APE_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack
 /// Centaur pike — STR-based 1d10 piercing, reach 2 (10 ft polearm).
 /// Outranges every other martial weapon in the centaur's kit and slots
 /// neatly into the multi as the heavier of the two limbs.
-pub static CENTAUR_PIKE: SimpleWeapon = SimpleWeapon {
-    display_name: "pike",
-    aliases: &["polearm", "p"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(1, 10),
-    damage_type: DamageType::Piercing,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static CENTAUR_PIKE: SimpleWeapon = SimpleWeapon::reach_melee(
+    "pike",
+    &["polearm", "p"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 10),
+    DamageType::Piercing,
+    2,
+);
 
 /// Centaur hooves — STR-based 2d6 bludgeoning melee. The kicker
 /// follow-up to the pike thrust; pairs with `CENTAUR_PIKE` in the multi.
@@ -7549,55 +7515,41 @@ pub static LION_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttac
 /// blacksmith" rather than the storm giant's celestial scale. CR-9 melee
 /// damage; mirrors the Frost Giant Greataxe (3d12) at the dice tier but
 /// in dice-count-vs-die-size shape.
-pub static FIRE_GIANT_GREATSWORD: SimpleWeapon = SimpleWeapon {
-    display_name: "fire giant greatsword",
-    aliases: &["fgs", "fire-sword"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(6, 6),
-    damage_type: DamageType::Slashing,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static FIRE_GIANT_GREATSWORD: SimpleWeapon = SimpleWeapon::reach_melee(
+    "fire giant greatsword",
+    &["fgs", "fire-sword"],
+    AbilityScoreType::Strength,
+    Dice::new(6, 6),
+    DamageType::Slashing,
+    2,
+);
 
 /// Fire Giant Rock — STR-based 4d10+STR bludgeoning thrown rock, reach
 /// 24 (60ft). Same chassis as the Hill/Frost/Stone Giant Rock; the Fire
 /// Giant gets the heavier 4d10 die (matches Frost Giant's 4d10) at the
 /// CR-9 tier.
-pub static FIRE_GIANT_ROCK: SimpleWeapon = SimpleWeapon {
-    display_name: "fire rock",
-    aliases: &["fgrock", "firock"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(4, 10),
-    damage_type: DamageType::Bludgeoning,
-    reach: 24,
-    is_melee: false,
-    requires_los: true,
-    cost_resource: Resource::Action,
-    normal_range: Some(16),
-};
+pub static FIRE_GIANT_ROCK: SimpleWeapon = SimpleWeapon::ranged(
+    "fire rock",
+    &["fgrock", "firock"],
+    AbilityScoreType::Strength,
+    Dice::new(4, 10),
+    DamageType::Bludgeoning,
+    24,
+    16,
+);
 
 /// Cyclops Greatclub — STR-based 3d8+STR bludgeoning, reach 3 (15ft).
 /// Same dice as Stone Giant's club; the Cyclops sits a tier lower (CR 6
 /// vs CR 7) on lower CON/INT but the same melee envelope. The one-eyed
 /// brute's single signature swing.
-pub static CYCLOPS_GREATCLUB: SimpleWeapon = SimpleWeapon {
-    display_name: "cyclops greatclub",
-    aliases: &["cgc", "cyclub"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(3, 8),
-    damage_type: DamageType::Bludgeoning,
-    reach: 3,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static CYCLOPS_GREATCLUB: SimpleWeapon = SimpleWeapon::reach_melee(
+    "cyclops greatclub",
+    &["cgc", "cyclub"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 8),
+    DamageType::Bludgeoning,
+    3,
+);
 
 /// Cyclops Rock — STR-based 4d10+STR bludgeoning thrown rock, reach 24
 /// (60ft). The Cyclops is a notoriously poor shot in 5e (their one eye
@@ -7605,19 +7557,15 @@ pub static CYCLOPS_GREATCLUB: SimpleWeapon = SimpleWeapon {
 /// the rock as a clean ranged option — the AI rarely picks it when
 /// melee is available, and the disadvantage flavor reads through the
 /// normal_range cap that already imposes disadvantage at long range.
-pub static CYCLOPS_ROCK: SimpleWeapon = SimpleWeapon {
-    display_name: "cyclops rock",
-    aliases: &["crock"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(4, 10),
-    damage_type: DamageType::Bludgeoning,
-    reach: 24,
-    is_melee: false,
-    requires_los: true,
-    cost_resource: Resource::Action,
-    normal_range: Some(12),
-};
+pub static CYCLOPS_ROCK: SimpleWeapon = SimpleWeapon::ranged(
+    "cyclops rock",
+    &["crock"],
+    AbilityScoreType::Strength,
+    Dice::new(4, 10),
+    DamageType::Bludgeoning,
+    24,
+    12,
+);
 
 /// Cyclops Multiattack — 2 greatclub swings per Action. Mirrors the
 /// Stone Giant / Frost Giant Multiattack: pure physical thresher, no
@@ -7633,36 +7581,26 @@ pub static CYCLOPS_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
 /// (4x4 footprint) but Huge (3x3) is the largest size the engine
 /// supports cleanly — we use Huge here so the spawn placement code
 /// doesn't choke on the 4x4 footprint.
-pub static ROC_BEAK: SimpleWeapon = SimpleWeapon {
-    display_name: "roc beak",
-    aliases: &["rbeak"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(4, 8),
-    damage_type: DamageType::Piercing,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static ROC_BEAK: SimpleWeapon = SimpleWeapon::reach_melee(
+    "roc beak",
+    &["rbeak"],
+    AbilityScoreType::Strength,
+    Dice::new(4, 8),
+    DamageType::Piercing,
+    2,
+);
 
 /// Roc Talons — STR-based 4d6+STR slashing, reach 2 (10ft). The second
 /// half of the multi; the talons rake after the beak strike. Mirrors
 /// the Giant Eagle beak + talons shape at much higher dice.
-pub static ROC_TALONS: SimpleWeapon = SimpleWeapon {
-    display_name: "roc talons",
-    aliases: &["rtalons"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(4, 6),
-    damage_type: DamageType::Slashing,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static ROC_TALONS: SimpleWeapon = SimpleWeapon::reach_melee(
+    "roc talons",
+    &["rtalons"],
+    AbilityScoreType::Strength,
+    Dice::new(4, 6),
+    DamageType::Slashing,
+    2,
+);
 
 /// Roc multiattack — 1 beak + 1 talons per Action. CR-11 dice tier:
 /// the Roc bursts an unguarded target down hard in a single round.
@@ -7774,19 +7712,14 @@ pub static WINTER_WOLF_BREATH: BreathWeapon = BreathWeapon {
 /// Charge rider on a straight-line move-then-hit (Prone on STR save);
 /// we collapse to the vanilla high-damage hit since the engine doesn't
 /// track straight-line movement for trampling-style triggers.
-pub static TRICERATOPS_GORE: SimpleWeapon = SimpleWeapon {
-    display_name: "gore",
-    aliases: &["gr", "horn-charge"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(4, 8),
-    damage_type: DamageType::Piercing,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static TRICERATOPS_GORE: SimpleWeapon = SimpleWeapon::reach_melee(
+    "gore",
+    &["gr", "horn-charge"],
+    AbilityScoreType::Strength,
+    Dice::new(4, 8),
+    DamageType::Piercing,
+    2,
+);
 
 /// Triceratops Stomp — STR-based 3d10+STR bludgeoning, reach 1. RAW
 /// only triggers vs Prone targets; we expose it as a vanilla swing the
@@ -7805,37 +7738,27 @@ pub static TRICERATOPS_STOMP: SimpleWeapon = SimpleWeapon::melee(
 /// rider (grappled + restrained vs Large or smaller); we collapse to
 /// the vanilla high-die hit since grapple-from-monster is a niche the
 /// engine doesn't currently use on huge predators.
-pub static T_REX_BITE: SimpleWeapon = SimpleWeapon {
-    display_name: "rex bite",
-    aliases: &["rb", "trex-bite"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(4, 12),
-    damage_type: DamageType::Piercing,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static T_REX_BITE: SimpleWeapon = SimpleWeapon::reach_melee(
+    "rex bite",
+    &["rb", "trex-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(4, 12),
+    DamageType::Piercing,
+    2,
+);
 
 /// Tyrannosaurus Rex Tail — STR-based 3d8+STR bludgeoning, reach 2.
 /// The second multi-lane attack. Lower dice than the bite (no grapple
 /// risk on the RAW lane), so the tail is the "everything not in front
 /// of me also dies" sweep.
-pub static T_REX_TAIL: SimpleWeapon = SimpleWeapon {
-    display_name: "rex tail",
-    aliases: &["rt", "trex-tail"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(3, 8),
-    damage_type: DamageType::Bludgeoning,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static T_REX_TAIL: SimpleWeapon = SimpleWeapon::reach_melee(
+    "rex tail",
+    &["rt", "trex-tail"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 8),
+    DamageType::Bludgeoning,
+    2,
+);
 
 /// T-Rex multiattack — 1 bite + 1 tail per Action. RAW: can't target
 /// the same creature with both attacks; we don't enforce that because
@@ -9065,19 +8988,14 @@ pub static XORN_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttac
 /// large-giant STR bump. Pairs with the claw via `ONI_MULTI` so the
 /// per-Action damage budget reads as "one big polearm sweep + one
 /// follow-up rake".
-pub static ONI_GLAIVE: SimpleWeapon = SimpleWeapon {
-    display_name: "glaive",
-    aliases: &["gv", "polearm"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(2, 10),
-    damage_type: DamageType::Slashing,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static ONI_GLAIVE: SimpleWeapon = SimpleWeapon::reach_melee(
+    "glaive",
+    &["gv", "polearm"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 10),
+    DamageType::Slashing,
+    2,
+);
 
 /// Oni Claw — STR-based 1d8 slashing melee. The secondary swing in the
 /// oni's kit; combines with the glaive via `ONI_MULTI` for the canonical
@@ -9136,19 +9054,14 @@ pub static MERROW_CLAWS: SimpleWeapon = SimpleWeapon::melee(
 /// (range 20/60) and a STR-save "pull 20ft" rider on hit; we surface
 /// the melee swing only since the engine's reach-2 covers the load-bearing
 /// "I can hit you from a tile away" envelope.
-pub static MERROW_HARPOON: SimpleWeapon = SimpleWeapon {
-    display_name: "harpoon",
-    aliases: &["hrp", "harpoon"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(2, 6),
-    damage_type: DamageType::Piercing,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static MERROW_HARPOON: SimpleWeapon = SimpleWeapon::reach_melee(
+    "harpoon",
+    &["hrp", "harpoon"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Piercing,
+    2,
+);
 
 /// Merrow Multiattack — 1 harpoon swing + 1 bite per Action via
 /// `CompoundAttack`. RAW: the merrow makes two attacks — one bite and one
@@ -9186,37 +9099,28 @@ pub static GIANT_CRAB_CLAW: SimpleWeapon = SimpleWeapon::melee(
 /// morningstar head. Sits one rung above the Fire Giant on the giant
 /// ladder (CR 9 with the same 3d8 die but heavier STR, so the per-swing
 /// average lands ~3 higher than Fire Giant Greatsword in practice).
-pub static CLOUD_GIANT_MORNINGSTAR: SimpleWeapon = SimpleWeapon {
-    display_name: "cloud morningstar",
-    aliases: &["cms", "cloud-club"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(3, 8),
-    damage_type: DamageType::Piercing,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static CLOUD_GIANT_MORNINGSTAR: SimpleWeapon = SimpleWeapon::reach_melee(
+    "cloud morningstar",
+    &["cms", "cloud-club"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 8),
+    DamageType::Piercing,
+    2,
+);
 
 /// Cloud Giant Rock — STR-based 4d10 bludgeoning thrown rock with reach 24
 /// (60 ft). Same chassis as every other giant rock; the Cloud Giant uses
 /// the heavier 4d10 die (matching Frost / Fire / Stone Giant rocks) at
 /// the CR-9 tier.
-pub static CLOUD_GIANT_ROCK: SimpleWeapon = SimpleWeapon {
-    display_name: "cloud rock",
-    aliases: &["cgrock", "clrock"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(4, 10),
-    damage_type: DamageType::Bludgeoning,
-    reach: 24,
-    is_melee: false,
-    requires_los: true,
-    cost_resource: Resource::Action,
-    normal_range: Some(16),
-};
+pub static CLOUD_GIANT_ROCK: SimpleWeapon = SimpleWeapon::ranged(
+    "cloud rock",
+    &["cgrock", "clrock"],
+    AbilityScoreType::Strength,
+    Dice::new(4, 10),
+    DamageType::Bludgeoning,
+    24,
+    16,
+);
 
 /// Cloud Giant Multiattack — 2 morningstar swings per Action. Same chassis
 /// as the Stone Giant / Frost Giant / Cyclops Multiattack: pure physical
@@ -9496,22 +9400,17 @@ pub static IRON_GOLEM_SLAM: SimpleWeapon = SimpleWeapon::melee(
 /// the golem threaten an extra ring of tiles around its 2×2 Large footprint,
 /// matching the RAW "10 ft. reach" stat-block clause. Pairs with the slam
 /// for the mixed-limb multiattack.
-pub static IRON_GOLEM_SWORD: SimpleWeapon = SimpleWeapon {
-    display_name: "iron sword",
-    aliases: &["isword", "iron-blade"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(3, 10),
-    damage_type: DamageType::Slashing,
-    // RAW: 10 ft reach on the iron-golem blade — one extra tile-gap beyond
-    // the standard MELEE_REACH so a flanking PC can't kite the golem at
-    // 2-tile range with impunity.
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+// RAW: 10 ft reach on the iron-golem blade — one extra tile-gap beyond
+// the standard MELEE_REACH so a flanking PC can't kite the golem at
+// 2-tile range with impunity.
+pub static IRON_GOLEM_SWORD: SimpleWeapon = SimpleWeapon::reach_melee(
+    "iron sword",
+    &["isword", "iron-blade"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 10),
+    DamageType::Slashing,
+    2,
+);
 
 /// Iron Golem Multiattack — 1 sword + 1 slam per Action. Heterogeneous
 /// limb pattern routes through `CompoundAttack` (sword first since it's
@@ -9581,20 +9480,15 @@ pub static RAKSHASA_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack 
 /// Action. Vanilla `SimpleWeapon` since there's no rider on the hook hits —
 /// the load-bearing per-round threat is the burst from the double swing,
 /// not any per-hit condition / typed-damage payload.
-pub static HOOK_HORROR_HOOK: SimpleWeapon = SimpleWeapon {
-    display_name: "hook horror hook",
-    aliases: &["hhh", "hook"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(1, 10),
-    damage_type: DamageType::Piercing,
-    // 10 ft RAW = reach 2 on this 2.5 ft grid.
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+// 10 ft RAW = reach 2 on this 2.5 ft grid.
+pub static HOOK_HORROR_HOOK: SimpleWeapon = SimpleWeapon::reach_melee(
+    "hook horror hook",
+    &["hhh", "hook"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 10),
+    DamageType::Piercing,
+    2,
+);
 
 /// Hook Horror Multiattack — 2 hook swings per Action. Vanilla
 /// single-sub-attack shape; each swing rolls its own d20 + STR vs AC and
@@ -9613,20 +9507,15 @@ pub static HOOK_HORROR_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiatta
 /// turtle threaten well past its 4×4 Gargantuan footprint so retreating
 /// melee PCs eat opportunity attacks. Vanilla `SimpleWeapon` — the load-
 /// bearing threat is the raw damage, not a rider.
-pub static DRAGON_TURTLE_BITE: SimpleWeapon = SimpleWeapon {
-    display_name: "dragon turtle bite",
-    aliases: &["dt-bite", "turtle-bite"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(3, 12),
-    damage_type: DamageType::Piercing,
-    // 15 ft RAW = reach 3 on this 2.5 ft grid.
-    reach: 3,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+// 15 ft RAW = reach 3 on this 2.5 ft grid.
+pub static DRAGON_TURTLE_BITE: SimpleWeapon = SimpleWeapon::reach_melee(
+    "dragon turtle bite",
+    &["dt-bite", "turtle-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 12),
+    DamageType::Piercing,
+    3,
+);
 
 /// Dragon Turtle Claw — STR-based 2d8+STR slashing melee, reach 2 (10 ft
 /// RAW). The supplementary swing in the dragon turtle's kit; paired with
@@ -9635,19 +9524,14 @@ pub static DRAGON_TURTLE_BITE: SimpleWeapon = SimpleWeapon {
 /// `CompoundAttack` wrapper validates off the heaviest-reach first
 /// sub-attack and the claws fall through cleanly when the target is
 /// closer.
-pub static DRAGON_TURTLE_CLAW: SimpleWeapon = SimpleWeapon {
-    display_name: "dragon turtle claw",
-    aliases: &["dt-claw", "turtle-claw"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(2, 8),
-    damage_type: DamageType::Slashing,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static DRAGON_TURTLE_CLAW: SimpleWeapon = SimpleWeapon::reach_melee(
+    "dragon turtle claw",
+    &["dt-claw", "turtle-claw"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Slashing,
+    2,
+);
 
 /// Dragon Turtle Multiattack — 1 bite + 2 claws per Action. Mixed-limb
 /// `CompoundAttack` (bite first to drive the reach-3 envelope so the
@@ -9698,20 +9582,15 @@ pub static DRAGON_TURTLE_STEAM_BREATH: BreathWeapon = BreathWeapon {
 /// (only the spell-cast `Grappled` install lane); the load-bearing per-
 /// round threat is the burst from triple 30 ft reach swings, which by
 /// itself ranks among the heaviest melee profiles in the engine.
-pub static KRAKEN_TENTACLE: SimpleWeapon = SimpleWeapon {
-    display_name: "kraken tentacle",
-    aliases: &["kt", "tentacle-k"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(3, 6),
-    damage_type: DamageType::Bludgeoning,
-    // 30 ft RAW = reach 6 on this 2.5 ft grid.
-    reach: 6,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+// 30 ft RAW = reach 6 on this 2.5 ft grid.
+pub static KRAKEN_TENTACLE: SimpleWeapon = SimpleWeapon::reach_melee(
+    "kraken tentacle",
+    &["kt", "tentacle-k"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 6),
+    DamageType::Bludgeoning,
+    6,
+);
 
 /// Kraken Multiattack — 3 tentacle swings per Action. Vanilla
 /// single-sub-attack shape; each tentacle rolls its own d20 + STR vs AC
@@ -10192,19 +10071,15 @@ pub static DRIDER_LONGSWORD: SimpleWeapon = SimpleWeapon::melee(
 /// at mid-range. Range 12 tiles (≈ 60ft normal, well under the 80/320
 /// RAW long-range threshold; the drider's longbow stat reads "+5 to
 /// hit, range 150/600" — the engine caps reach at 20 for indoor maps).
-pub static DRIDER_LONGBOW: SimpleWeapon = SimpleWeapon {
-    display_name: "drider longbow",
-    aliases: &["dlb", "drider-bow"],
-    attack_ability: AbilityScoreType::Dexterity,
-    damage_ability: Some(AbilityScoreType::Dexterity),
-    damage_dice: Dice::new(1, 8),
-    damage_type: DamageType::Piercing,
-    reach: 20,
-    is_melee: false,
-    requires_los: true,
-    cost_resource: Resource::Action,
-    normal_range: Some(12),
-};
+pub static DRIDER_LONGBOW: SimpleWeapon = SimpleWeapon::ranged(
+    "drider longbow",
+    &["dlb", "drider-bow"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 8),
+    DamageType::Piercing,
+    20,
+    12,
+);
 
 /// Drider Bite — STR-based 1d4+STR piercing melee with a CON save (DC 13)
 /// for 4d8 poison rider on fail (half on save per RAW). Same "weapon +
@@ -11478,19 +11353,14 @@ pub static ETTERCAP_WEB: LazyLock<EttercapWeb> = LazyLock::new(|| EttercapWeb {}
 /// treant's flavor text. Vanilla `SimpleWeapon` — no rider; the tree's
 /// load-bearing pressure is the double-slam multi at the awakened
 /// tree's STR 19 (+4 mod), not any per-hit effect.
-pub static AWAKENED_TREE_SLAM: SimpleWeapon = SimpleWeapon {
-    display_name: "awakened tree slam",
-    aliases: &["at-slam", "tree-slam"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(3, 6),
-    damage_type: DamageType::Bludgeoning,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static AWAKENED_TREE_SLAM: SimpleWeapon = SimpleWeapon::reach_melee(
+    "awakened tree slam",
+    &["at-slam", "tree-slam"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 6),
+    DamageType::Bludgeoning,
+    2,
+);
 
 /// Awakened Tree Multiattack — 2 slams per Action via the standard
 /// `Multiattack` chassis. RAW: "Multiattack. The tree makes two
@@ -11669,19 +11539,14 @@ pub static LEMURE_FIST: SimpleWeapon = SimpleWeapon {
 /// 10ft. The polearm-style primary lane — pairs with the beard for the
 /// per-Action multi. Vanilla `SimpleWeapon` with reach 2 — no rider;
 /// the beard carries the per-Action condition install.
-pub static BEARDED_DEVIL_GLAIVE: SimpleWeapon = SimpleWeapon {
-    display_name: "bearded devil glaive",
-    aliases: &["bd-glaive", "barbazu-glaive"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(1, 10),
-    damage_type: DamageType::Slashing,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static BEARDED_DEVIL_GLAIVE: SimpleWeapon = SimpleWeapon::reach_melee(
+    "bearded devil glaive",
+    &["bd-glaive", "barbazu-glaive"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 10),
+    DamageType::Slashing,
+    2,
+);
 
 /// Bearded Devil Beard — STR-based 1d8+STR piercing melee, reach 5 ft.
 /// On hit, target makes a CON save vs DC 12 or is Poisoned for 3
@@ -12216,19 +12081,14 @@ pub static FLESH_GOLEM_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiatta
 /// the devil project the swing through a tile of empty space, matching
 /// the RAW reach 10ft envelope. Vanilla SimpleWeapon — no rider; the
 /// per-Action damage budget comes from the multi (2 forks + 1 tail).
-pub static HORNED_DEVIL_FORK: SimpleWeapon = SimpleWeapon {
-    display_name: "horned devil fork",
-    aliases: &["fork", "trident"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(2, 8),
-    damage_type: DamageType::Piercing,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static HORNED_DEVIL_FORK: SimpleWeapon = SimpleWeapon::reach_melee(
+    "horned devil fork",
+    &["fork", "trident"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Piercing,
+    2,
+);
 
 /// Horned Devil Tail — STR-based 1d8+STR piercing melee at reach 10ft
 /// (gap 2). On hit, the target makes a DC-17 CON save vs **Infernal
@@ -13068,19 +12928,14 @@ pub static GIANT_CROCODILE_BITE: LazyLock<GiantCrocodileBite> =
 /// a DC 16 Strength saving throw or be knocked prone." We collapse to
 /// vanilla 2d8+STR — the load-bearing combat clause is the per-Action
 /// damage budget, not the conditional prone rider.
-pub static GIANT_CROCODILE_TAIL: SimpleWeapon = SimpleWeapon {
-    display_name: "giant crocodile tail",
-    aliases: &["giant-croc-tail", "gc-tail"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: Some(AbilityScoreType::Strength),
-    damage_dice: Dice::new(2, 8),
-    damage_type: DamageType::Bludgeoning,
-    reach: 2,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+pub static GIANT_CROCODILE_TAIL: SimpleWeapon = SimpleWeapon::reach_melee(
+    "giant crocodile tail",
+    &["giant-croc-tail", "gc-tail"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Bludgeoning,
+    2,
+);
 
 /// Giant Crocodile Multiattack — 1 bite + 1 tail per Action via the
 /// heterogeneous `CompoundAttack` chassis. The bite carries the auto-
@@ -13094,3 +12949,154 @@ pub static GIANT_CROCODILE_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Co
         (&GIANT_CROCODILE_TAIL, 1),
     ],
 });
+
+// ─── Dao ─────────────────────────────────────────────────────────────
+
+/// Dao Maul — STR-based 2d6+STR bludgeoning melee with a flat 2d10
+/// thunder rider. The earth genie's signature weapon: a massive iron
+/// maul that drives the ground itself into the target on impact, the
+/// shockwave ringing through the victim's bones. Heavier rider dice
+/// than the djinni's scimitar (1d6 thunder) and a different damage
+/// shape from the efreeti's burning blade (2d10 thunder vs 2d6 fire)
+/// — the dao trades the per-target damage-type defensibility of the
+/// efreeti's smaller fire die for a beefier elemental burst that
+/// crushes targets without thunder resistance.
+///
+/// Per-swing average: ~6 + ~11 = ~17 base + ~11 thunder ≈ 28 typed
+/// damage per landing swing (RAW: 13 bludgeoning + 11 thunder = 24,
+/// matching the MM stat block within rounding tolerance).
+pub static DAO_MAUL: WeaponWithRider = WeaponWithRider::melee(
+    "dao maul",
+    &["dao-maul", "da-maul"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Bludgeoning,
+    Dice::new(2, 10),
+    DamageType::Thunder,
+    "earth-shaking blow",
+);
+
+/// Dao Multiattack — 2 maul swings per Action via the homogeneous
+/// `Multiattack` chassis. Fewer swings than the djinni's triple-
+/// scimitar but each maul carries the 2d10 thunder rider on top of
+/// the 2d6 bludgeoning — ~56 per-Action average damage on a clean
+/// double-hit, the heaviest melee output among the genie family.
+/// Mirrors the efreeti's 2-swing shape but with a thunder rider in
+/// place of fire.
+pub static DAO_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "dao multiattack",
+    sub_attack: &DAO_MAUL,
+    count: 2,
+});
+
+/// Dao Stone Snare — Recharge 5–6 ranged save-or-restrain attack at
+/// 30ft range (12 tiles). The dao stomps the ground and slabs of
+/// living stone erupt around a single distant target: DC 17 STR save
+/// or take 4d8 bludgeoning damage and become `EarthenGrasped` for one
+/// round (RAW: until the dao's next turn). On a successful save: half
+/// damage, no restrain. Distinct from the marid's `Water Jet` (DEX
+/// save + push) — the dao's ranged tool is a STR-save crowd-control
+/// rather than a positioning push, matching the earth genie's
+/// "trap-and-pin" combat flavor.
+///
+/// The save-for-half damage policy mirrors `Water Jet` so a target
+/// who passes still eats meaningful chip damage. The
+/// `EarthenGrasped` install routes through the standard
+/// `ApplyCondition` chokepoint so condition immunities (large
+/// elementals, the existing `effectively_immune_to_condition`
+/// gate) shrug it off cleanly. The recharge key `"stone_snare"` is
+/// distinct from `"water_jet"` so genie templates with both could
+/// coexist without resource collision (the dao only declares the
+/// `"stone_snare"` recharge slot).
+pub struct DaoStoneSnare {}
+
+impl Action for DaoStoneSnare {
+    fn name(&self) -> &str {
+        "stone snare"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ss", "dao-snare"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft = 12 tiles. Shorter than the marid's water jet (24
+        // tiles) — the dao's stone reach is grounded and doesn't shoot
+        // across rooms.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Recharge gate — the dao spends its `"stone_snare"` recharge
+        // resource on cast, refreshed at the start of its turn on a d6
+        // roll of 5+ (matching the standard "Recharge 5–6" gate on
+        // dragon breath / horror nimbus / web).
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_recharge_available("stone_snare"))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // Spend the recharge resource up-front so a mid-resolution
+        // failure can't leave the snare both unspent AND damage-
+        // applied (matches the marid water jet / dragon breath /
+        // horror nimbus order-of-ops).
+        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
+            caster.spend_recharge("stone_snare");
+        }
+        const DC: i32 = 17;
+        encounter.log("  stone snare: slabs of living rock erupt around the target");
+        let damage = encounter.roll(&Dice::new(4, 8));
+        let save = encounter.roll_save(target_id, AbilityScoreType::Strength, DC);
+        let dmg = crate::engine::saves::SaveDamagePolicy::HalfOnSave
+            .apply(damage, save.passed());
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        if dmg > 0 {
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: dmg,
+                damage_type: DamageType::Bludgeoning,
+            }));
+        }
+        // EarthenGrasped install only on a failed save — mirrors the
+        // marid water jet's push-on-fail-only shape but with a
+        // condition install instead of a positioning effect. The
+        // condition's immunity gate is the install-site responsibility
+        // (Restrained-immune elementals shrug it off via
+        // `add_condition`'s effective immunity check).
+        if !save.passed() {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::EarthenGrasped,
+                timer: ConditionTimer::Rounds(1),
+            }));
+        }
+        effects
+    }
+}
+
+pub static DAO_STONE_SNARE: LazyLock<DaoStoneSnare> = LazyLock::new(|| DaoStoneSnare {});

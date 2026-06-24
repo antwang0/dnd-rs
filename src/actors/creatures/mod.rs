@@ -203,3 +203,4 @@ pub mod efreeti;
 pub mod constrictor_snakes;
 pub mod marids;
 pub mod crocodiles;
+pub mod daos;

@@ -12,11 +12,11 @@ use std::sync::LazyLock;
 
 /// Marid — CR 11 large elemental (water genie). The proud noble of the
 /// Plane of Water: a bronze-blue-skinned giant wreathed in living
-/// surf, wielding a trident of coral and brass. Completes the noble
-/// genie family — Djinni (CR 11 air), Efreeti (CR 11 fire), and now
-/// Marid (CR 11 water). The dao (earth genie) and most of the other
-/// elemental flavor is filled by the lower-tier elemental quartet
-/// (Air / Earth / Fire / Water Elementals at CR 5–6).
+/// surf, wielding a trident of coral and brass. One of the four noble
+/// genies — Djinni (CR 11 air), Efreeti (CR 11 fire), Marid (CR 11
+/// water), and Dao (CR 11 earth) — alongside the lower-tier elemental
+/// quartet (Air / Earth / Fire / Water Elementals at CR 5–6) that
+/// fills the bench-tier elemental flavor.
 ///
 /// Action lanes:
 /// - **marid multiattack** — 3 trident swings per Action via the shared

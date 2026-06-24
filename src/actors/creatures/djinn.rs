@@ -16,8 +16,8 @@ use std::sync::LazyLock;
 /// the CR 5–6 elemental quartet (Fire / Water / Earth / Air Elemental)
 /// and alongside the Nalfeshnee (CR 13 demon), Horned Devil (CR 11),
 /// Roper (CR 5), and Behir (CR 11) on the upper-mid extraplanar bench.
-/// The genie family canonically also includes the efreeti (fire),
-/// marid (water — not yet modeled), and dao (earth — not yet modeled).
+/// The genie family also includes the efreeti (fire), marid (water),
+/// and dao (earth) — all four CR-11 noble genies now modeled.
 ///
 /// Action lanes:
 /// - **djinni multiattack** — 3 scimitar swings per Action via the shared
