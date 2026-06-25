@@ -3,8 +3,8 @@ use std::sync::LazyLock;
 
 use crate::{
     actions::action_template::{
-        Action, MELEE_REACH, TargetingSchema, bonus_action_only, first_target_id,
-        first_target_location,
+        Action, MELEE_REACH, TargetingSchema, actor_has_recharge, bonus_action_only,
+        first_target_id, first_target_location,
     },
     conditions::{Condition, ConditionTimer},
     engine::{
@@ -3467,10 +3467,7 @@ impl Action for BreathWeapon {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_recharge_available(self.recharge_key))
+        actor_has_recharge(encounter, caster_id, self.recharge_key)
     }
     fn side_effects(
         &self,
@@ -7932,10 +7929,7 @@ impl Action for WaterElementalWhelm {
         // Recharge gate. The encounter's start-of-turn roller flips the
         // "whelm" slot back on a 4+; until then the action is hidden
         // from the picker via `validate_input`.
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_recharge_available("whelm"))
+        actor_has_recharge(encounter, caster_id, "whelm")
     }
     fn side_effects(
         &self,
@@ -8147,10 +8141,7 @@ impl Action for GorgonPetrifyingBreath {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_recharge_available("breath_weapon"))
+        actor_has_recharge(encounter, caster_id, "breath_weapon")
     }
     fn side_effects(
         &self,
@@ -9242,10 +9233,7 @@ impl Action for GibberingMoutherBlindingSpittle {
         // enough this turn. The mouther template registers
         // ("blinding spittle", 5) so the spittle recharges on a d6 ≥ 5
         // at turn start — matching RAW's "Recharge 5-6".
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_recharge_available(self.name()))
+        actor_has_recharge(encounter, caster_id, self.name())
     }
     fn side_effects(
         &self,
@@ -9657,10 +9645,7 @@ impl Action for KrakenLightningStorm {
         // Standard recharge gate via the shared `"breath_weapon"` pool —
         // mirrors the BreathWeapon / IronGolemBreath / GorgonBreath
         // custom_validate shape.
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_recharge_available("breath_weapon"))
+        actor_has_recharge(encounter, caster_id, "breath_weapon")
     }
     fn side_effects(
         &self,
@@ -9858,10 +9843,7 @@ impl Action for AndrosphinxRoar {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_recharge_available("breath_weapon"))
+        actor_has_recharge(encounter, caster_id, "breath_weapon")
     }
     fn side_effects(
         &self,
@@ -11296,10 +11278,7 @@ impl Action for EttercapWeb {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_recharge_available("ettercap_web"))
+        actor_has_recharge(encounter, caster_id, "ettercap_web")
     }
     fn side_effects(
         &self,
@@ -11474,10 +11453,7 @@ impl Action for DretchFetidCloud {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_recharge_available("dretch_fetid_cloud"))
+        actor_has_recharge(encounter, caster_id, "dretch_fetid_cloud")
     }
     fn side_effects(
         &self,
@@ -11702,11 +11678,7 @@ impl Action for BlinkDogTeleport {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        if !encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_recharge_available("blink_dog_teleport"))
-        {
+        if !actor_has_recharge(encounter, caster_id, "blink_dog_teleport") {
             return false;
         }
         let Some(point) = first_target_location(target_locations) else {
@@ -12318,10 +12290,7 @@ impl Action for NalfeshneeHorrorNimbus {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_recharge_available("horror_nimbus"))
+        actor_has_recharge(encounter, caster_id, "horror_nimbus")
     }
     fn side_effects(
         &self,
@@ -12725,10 +12694,7 @@ impl Action for MaridWaterJet {
         // resource on cast, refreshed at the start of its turn on a d6
         // roll of 4+. The encounter's recharge table tracks this state
         // per-actor.
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_recharge_available("water_jet"))
+        actor_has_recharge(encounter, caster_id, "water_jet")
     }
     fn side_effects(
         &self,
@@ -13044,10 +13010,7 @@ impl Action for DaoStoneSnare {
         // resource on cast, refreshed at the start of its turn on a d6
         // roll of 5+ (matching the standard "Recharge 5–6" gate on
         // dragon breath / horror nimbus / web).
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.is_recharge_available("stone_snare"))
+        actor_has_recharge(encounter, caster_id, "stone_snare")
     }
     fn side_effects(
         &self,
@@ -13100,3 +13063,222 @@ impl Action for DaoStoneSnare {
 }
 
 pub static DAO_STONE_SNARE: LazyLock<DaoStoneSnare> = LazyLock::new(|| DaoStoneSnare {});
+
+// ─── Invisible Stalker ───────────────────────────────────────────────
+
+/// Invisible Stalker Slam — STR-based 2d8+STR bludgeoning melee, reach 1.
+/// Same per-swing dice as the Air Elemental's slam (the stalker is, RAW,
+/// "an air elemental shaped into a tracking form"). Vanilla `SimpleWeapon`
+/// — the stalker's signature defensive envelope (permanent native
+/// Invisibility installed via the template's `innate_conditions` lane)
+/// is what differentiates it from the plain air elemental, not the
+/// swing itself. The standard attacker-side advantage from `Invisible`
+/// reads through `compute_attack_mode` so the stalker connects more
+/// reliably than the air elemental at the same per-swing damage.
+pub static INVISIBLE_STALKER_SLAM: SimpleWeapon = SimpleWeapon::melee(
+    "invisible stalker slam",
+    &["islam", "stalker-slam"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Bludgeoning,
+);
+
+/// Invisible Stalker Multiattack — 2 slams per Action. Mirrors the air
+/// elemental wrapper exactly; the stalker's per-turn output is two
+/// invisible slams to whichever target it's been bound to hunt down.
+pub static INVISIBLE_STALKER_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "invisible stalker multiattack",
+    sub_attack: &INVISIBLE_STALKER_SLAM,
+    count: 2,
+});
+
+// ─── Mammoth ─────────────────────────────────────────────────────────
+
+/// Mammoth Gore — STR-based 4d8+STR piercing melee, reach 1 (5 ft).
+/// The headline weapon — RAW 4d8+7 averages to ~25 per swing on the
+/// CR-6 Huge frame, second only to the Earth Elemental's 4d8 slam
+/// among the engine's CR-5 to CR-7 melee strikers. Vanilla
+/// `SimpleWeapon` shape; the load-bearing combat clause lives on the
+/// `MAMMOTH_MULTI` wrapper that pairs the gore with the stomp.
+pub static MAMMOTH_GORE: SimpleWeapon = SimpleWeapon::melee(
+    "mammoth gore",
+    &["mgore", "tusks-m"],
+    AbilityScoreType::Strength,
+    Dice::new(4, 8),
+    DamageType::Piercing,
+);
+
+/// Mammoth Stomp — STR-based 4d10+STR bludgeoning melee, reach 1, but
+/// gated on the target being **Prone** (RAW: "The mammoth can only use
+/// this attack against a creature that is Prone"). RAW averages to ~29
+/// per stomp on the CR-6 Huge frame — the higher-damage limb in the
+/// gore + stomp combo, paired in the `MAMMOTH_MULTI` wrapper.
+///
+/// The Prone gate is enforced via `custom_validate_input` reading the
+/// target's condition set: the stomp validates only when the target has
+/// the `Prone` condition. Mirrors the gate shape of the Vampire Bite
+/// (which validates only against Charmed / Restrained / Incapacitated /
+/// Grappled / Unconscious / Willing targets) — the engine's "I can only
+/// hit you if you're already down" idiom. Out of the multiattack, the
+/// stomp is a single-target standalone the AI can fall back to if the
+/// target is already prone from a previous round (Trampling Charge rider
+/// install, Booming Blade follow-up, etc.).
+pub struct MammothStomp {}
+
+impl Action for MammothStomp {
+    fn name(&self) -> &str {
+        "mammoth stomp"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mstomp", "stomp-m"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Bludgeoning]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // RAW: "the mammoth can only make this attack against a target
+        // that is prone." Gate the validate so the AI / player can't
+        // queue a stomp at a standing target. Missing target / missing
+        // actor returns false (fail-closed — same convention as the
+        // recharge gates on the dao stone snare / dragon breath).
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| a.has_condition(Condition::Prone))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        simple_weapon_attack(
+            encounter,
+            caster_id,
+            target_ids,
+            "mammoth stomp",
+            AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
+            Dice::new(4, 10),
+            DamageType::Bludgeoning,
+            true,
+        )
+    }
+}
+
+pub static MAMMOTH_STOMP: LazyLock<MammothStomp> = LazyLock::new(|| MammothStomp {});
+
+/// Mammoth Trampling Charge — STR-based 4d8+STR piercing melee gore
+/// that, on a confirmed hit, knocks the target Prone via the standard
+/// `save_or_condition_rider` chassis. RAW: "If the mammoth moves at
+/// least 20 ft straight toward a target and then hits it with a gore
+/// attack on the same turn, the target must succeed on a DC 18 STR
+/// saving throw or be knocked prone." We collapse the "moved 20 ft
+/// straight" gate to a recharge-style validate (Recharge 5–6 via the
+/// shared `"breath_weapon"`-style key `"trampling_charge"`) so the rider
+/// fires once or twice per fight rather than every Action when the
+/// engine can't introspect path geometry. The Prone install is
+/// permanent (until the target spends movement to stand up via
+/// `StandUp`), opening the door for the standalone `MAMMOTH_STOMP`
+/// follow-up the next round.
+pub struct MammothTramplingCharge {}
+
+impl Action for MammothTramplingCharge {
+    fn name(&self) -> &str {
+        "trampling charge"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mtcharge", "charge-m"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Recharge-gated so the high-impact prone rider doesn't fire
+        // every Action. The engine's start-of-turn recharge hook flips
+        // the resource back on automatically (same chassis as the
+        // dragon's breath weapon).
+        actor_has_recharge(encounter, caster_id, "trampling_charge")
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if let Some(c) = encounter.actors.get_mut(&caster_id) {
+            c.spend_recharge("trampling_charge");
+        }
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // Resolve the gore swing first via the shared damage chassis;
+        // returns (effects, damage_dealt) so we can early-return on a
+        // miss (no save-or-prone rider on a no-hit charge).
+        let (mut effects, damage) = weapon_swing_with_damage(
+            encounter,
+            caster_id,
+            target_id,
+            "trampling charge",
+            AbilityScoreType::Strength,
+            Dice::new(4, 8),
+            DamageType::Piercing,
+            true,
+            None,
+        );
+        if damage == 0 {
+            return effects;
+        }
+        // DC 18 STR save (RAW) — Prone on fail. The rider is permanent
+        // (until the target stands back up at half-speed cost), so the
+        // `MAMMOTH_STOMP` standalone has a window to follow up.
+        const DC: i32 = 18;
+        save_or_condition_rider(
+            encounter,
+            target_id,
+            AbilityScoreType::Strength,
+            DC,
+            Condition::Prone,
+            ConditionTimer::Permanent,
+            "trampling charge: target knocked prone",
+            &mut effects,
+        );
+        effects
+    }
+}
+
+pub static MAMMOTH_TRAMPLING_CHARGE: LazyLock<MammothTramplingCharge> =
+    LazyLock::new(|| MammothTramplingCharge {});

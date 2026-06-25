@@ -324,6 +324,39 @@ pub fn actor_lacks_condition(
         .is_some_and(|a| !a.has_condition(condition))
 }
 
+/// Recharge-pool availability gate. Returns `true` when `actor_id` exists
+/// in the encounter AND has `recharge_key` currently available (i.e. the
+/// last d6 roll at start-of-turn ticked it back on). Symmetric to
+/// `actor_lacks_condition` — same "actor missing → fail" shape — but for
+/// the recharge-pool resource lane.
+///
+/// Centralizes the recurring three-line pattern that every recharge-gated
+/// action (`AndrosphinxRoar`, `BreathWeapon`, `Whelm`, `EttercapWeb`,
+/// `BlinkDogTeleport`, `WaterJet`, `StoneSnare`, `MammothTramplingCharge`,
+/// `HorrorNimbus`, `DretchFetidCloud`, `UnicornHealingTouch`):
+///
+/// ```ignore
+/// encounter
+///     .actors
+///     .get(&caster_id)
+///     .is_some_and(|a| a.is_recharge_available("breath_weapon"))
+/// ```
+///
+/// Single source of truth: future tweaks to recharge semantics (e.g.
+/// "Magic Resistance also halves recharge ticks") land here once instead
+/// of being scattered across the ~13 `custom_validate_input` impls that
+/// gate on recharge availability today.
+pub fn actor_has_recharge(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    recharge_key: &str,
+) -> bool {
+    encounter
+        .actors
+        .get(&actor_id)
+        .is_some_and(|a| a.is_recharge_available(recharge_key))
+}
+
 /// Standard leveled-spell cost shape: one Action plus a level-`lvl` slot.
 /// Used by ~60 leveled-spell impls; the helper keeps the cost block to
 /// one line at the call site and gives us a single chokepoint for any

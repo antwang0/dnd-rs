@@ -181,6 +181,9 @@ use crate::actors::creatures::djinn::DJINNI_TEMPLATE;
 use crate::actors::creatures::efreeti::EFREETI_TEMPLATE;
 use crate::actors::creatures::marids::MARID_TEMPLATE;
 use crate::actors::creatures::crocodiles::{CROCODILE_TEMPLATE, GIANT_CROCODILE_TEMPLATE};
+use crate::actors::creatures::daos::DAO_TEMPLATE;
+use crate::actors::creatures::invisible_stalkers::INVISIBLE_STALKER_TEMPLATE;
+use crate::actors::creatures::mammoths::MAMMOTH_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -3201,6 +3204,35 @@ impl EncounterInstance {
             //     ladder.
             &CROCODILE_TEMPLATE,
             &GIANT_CROCODILE_TEMPLATE,
+            // Dao (CR 11 large elemental, earth genie): 2-maul Multi +
+            // standalone maul + Recharge-5/6 Stone Snare. Completes the
+            // noble genie family with the surly Pasha of the Plane of
+            // Earth — slots next to Djinni / Efreeti / Marid in the
+            // upper-mid elemental bench.
+            //
+            // Invisible Stalker (CR 6 large elemental, air-tracker): the
+            // canonical "born invisible" air-elemental. Routes through
+            // the new `innate_conditions` template lane to install
+            // permanent Invisibility at instantiation, so the stalker's
+            // first slam already benefits from attacker-side advantage
+            // and target-side disadvantage to attacks. Same per-swing
+            // dice as the Air Elemental's slam (2d8+STR bludgeoning,
+            // doubled in the Multi); the invisibility envelope is what
+            // separates the two CR-6/CR-5 elementals at adjacent CR
+            // tiers — the stalker punches above its CR via attack-mode
+            // advantage rather than larger dice.
+            &DAO_TEMPLATE,
+            &INVISIBLE_STALKER_TEMPLATE,
+            // Mammoth (CR 6 huge beast): ice-age elephant — gore +
+            // Recharge-5/6 Trampling Charge (DC 18 STR save-or-Prone)
+            // + Prone-gated Stomp. First creature wired through a
+            // condition-gated `custom_validate_input` against the
+            // target's condition set (rather than the caster's own
+            // recharge / resource pool). Slots above the Polar Bear
+            // (CR 2) on the arctic-beast ladder and fills the apex
+            // huge-beast bench between Cyclops (CR 6 giant) and Roc
+            // (CR 11 huge beast).
+            &MAMMOTH_TEMPLATE,
         ]
     }
 
@@ -4737,6 +4769,14 @@ impl EncounterInstance {
                 Condition::Displaced,
                 crate::conditions::ConditionTimer::Permanent,
             );
+        }
+        // 5e "creature is born already X" lane — Invisible Stalker's
+        // permanent invisibility, future always-on body buffs. Applied
+        // once at instantiation; not auto-restored if dispelled later
+        // (the displacement-restore lane above handles that case for
+        // its own mechanic).
+        for &(c, timer) in &creature_template.innate_conditions {
+            actor.add_condition(c, timer);
         }
 
         if self.initialized {
@@ -24982,6 +25022,94 @@ mod tests {
             }
         }
         assert!(dominated, "dominate person never landed across 30 attempts");
+    }
+
+    /// Dominate Beast: validates only against a Beast-typed target.
+    /// On a Humanoid target the action's `custom_validate_input` should
+    /// short-circuit to false so the slot isn't wasted; on a Beast the
+    /// save-or-Dominated install lands like Dominate Person.
+    #[test]
+    fn dominate_beast_gates_on_beast_creature_type() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::DOMINATE_BEAST;
+        use crate::actors::creatures::brown_bears::BROWN_BEAR_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        let bear = e
+            .instantiate_creature(&BROWN_BEAR_TEMPLATE, Coordinate::new(12, 10), 1, 0)
+            .unwrap();
+        // Humanoid target: validate fails.
+        let goblin_targets = vec![goblin];
+        assert!(
+            !DOMINATE_BEAST.custom_validate_input(
+                &e,
+                wiz,
+                Some(&goblin_targets),
+                None,
+                None
+            ),
+            "dominate beast must NOT validate against a humanoid",
+        );
+        // Beast target: validate succeeds.
+        let bear_targets = vec![bear];
+        assert!(
+            DOMINATE_BEAST.custom_validate_input(
+                &e,
+                wiz,
+                Some(&bear_targets),
+                None,
+                None
+            ),
+            "dominate beast must validate against a beast",
+        );
+    }
+
+    /// Dominate Beast: on a successful install (failed WIS save), applies
+    /// Charmed + Dominated and links charmed_by → caster, identically to
+    /// Dominate Person. The lv4 slot cost is the only mechanical difference.
+    #[test]
+    fn dominate_beast_charms_and_dominates_a_beast() {
+        use crate::actions::spells::DOMINATE_BEAST;
+        use crate::actors::creatures::brown_bears::BROWN_BEAR_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        let mut dominated = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let bear = e
+                .instantiate_creature(&BROWN_BEAR_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+                .unwrap();
+            let tv = vec![bear];
+            let effs = DOMINATE_BEAST.side_effects(&mut e, wiz, Some(&tv), None, None);
+            for ef in effs {
+                ef.apply(&mut e);
+            }
+            if e.actors[&bear].has_condition(Condition::Dominated) {
+                dominated = true;
+                assert!(e.actors[&bear].has_condition(Condition::Charmed));
+                assert_eq!(e.actors[&bear].charmed_by(), Some(wiz));
+                assert!(e.actors[&wiz].is_concentrating());
+                let mode = e.compute_attack_mode(bear, wiz, true);
+                assert!(matches!(mode, RollMode::Disadvantage));
+                break;
+            }
+        }
+        assert!(
+            dominated,
+            "dominate beast never landed across 30 attempts",
+        );
     }
 
     /// Flurry of Blows: grants the monk an extra Action so a second

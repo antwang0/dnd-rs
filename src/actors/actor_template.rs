@@ -426,6 +426,21 @@ pub struct CreatureTemplate {
     /// with condition-keyed `MELEE_REFLECT_RIDERS`: a salamander wearing
     /// Fire Shield rolls *both* reflects on the same incoming hit.
     pub natural_melee_reflect: Option<crate::engine::attack::MeleeReflect>,
+    /// Conditions to install on this creature the moment it enters the
+    /// encounter — the "creature is born already X" lane. Each entry is
+    /// applied once via `add_condition` at instantiation. The canonical
+    /// case is the **Invisible Stalker** (RAW: "The stalker is invisible.")
+    /// installing `(Invisible, Permanent)`; new templates whose flavor
+    /// includes a passive always-on body-state buff (a future Flesh-Golem
+    /// `DamageResistant`, a permanent self-haste, etc.) add an entry
+    /// here. Empty for the vast majority of creatures.
+    ///
+    /// Distinct from `has_displacement`, which also re-installs the
+    /// `Displaced` condition at start-of-turn after damage strips it —
+    /// the displacement-restore lane is a separate mechanic. Innate
+    /// conditions listed here are installed exactly once and not
+    /// auto-restored if dispelled / consumed mid-fight.
+    pub innate_conditions: Vec<(Condition, ConditionTimer)>,
 }
 
 impl CreatureTemplate {
@@ -512,6 +527,7 @@ impl CreatureTemplate {
             sorcery_points: 0,
             death_burst: None,
             natural_melee_reflect: None,
+            innate_conditions: Vec::new(),
         }
     }
 }

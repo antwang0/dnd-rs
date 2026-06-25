@@ -278,6 +278,17 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // resistance to non-magical physical damage. Dropping concentration
     // despawns the elemental via the shared `Conjured` cleanup path.
     actions.push(&*crate::actions::spells::CONJURE_ELEMENTAL);
+    // lv4 **Dominate Beast** (enchantment): single-target concentration
+    // charm + dominate on a Beast-typed enemy. WIS save vs the druid's
+    // spell DC; on fail target is Charmed by the druid AND has
+    // disadvantage on every attack (the `Dominated` clause) for 10
+    // rounds. Beast-only gate via `custom_validate_input` keeps the AI
+    // from wasting the slot on a stone golem or undead. Slots cleanly
+    // into the druid's lv4 control lane next to Polymorph (target-form
+    // swap) and Confusion (AoE chaos) — Dominate Beast is the single-
+    // target lockdown for the wild-animal threats the druid encounters
+    // most often (Brown Bear, Tiger, Wolf, Mammoth, Owlbear).
+    actions.push(&*crate::actions::spells::DOMINATE_BEAST);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',

@@ -204,3 +204,5 @@ pub mod constrictor_snakes;
 pub mod marids;
 pub mod crocodiles;
 pub mod daos;
+pub mod invisible_stalkers;
+pub mod mammoths;

@@ -926,6 +926,49 @@ fn install_charmed_by(
     ]
 }
 
+/// Install the canonical Dominate spell payload: Charmed by the caster
+/// (via `install_charmed_by`) plus Dominated (the
+/// `imposes_attacker_disadvantage` clause) for `Rounds(10)`, anchored
+/// on the caster's concentration so dropping concentration strips both
+/// marks in lockstep via the standard concentration-cleanup hook.
+///
+/// Replaces the hand-copied 4-Box trio (install_charmed_by + Dominated
+/// ApplyCondition + StartConcentration with the two-condition cleanup
+/// list) that lived inline in **Dominate Person**, **Dominate Beast**,
+/// and **Dominate Monster**. Each of those spells differs only in their
+/// slot level (5 / 4 / 8), reach gate, and target type filter — the
+/// payload itself is identical RAW. A future Dominate-style spell drops
+/// to a single call.
+///
+/// `spell_name` is the human-readable label used by the concentration
+/// log and the dispel sweep — pass the spell's display name verbatim
+/// ("Dominate Person", "Dominate Beast", "Dominate Monster") so the log
+/// reads cleanly.
+fn install_dominated_by(
+    target_id: usize,
+    caster_id: usize,
+    spell_name: &'static str,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let mut effects =
+        install_charmed_by(target_id, caster_id, ConditionTimer::Rounds(10));
+    effects.push(Box::new(ApplyCondition {
+        actor_id: target_id,
+        condition: Condition::Dominated,
+        timer: ConditionTimer::Rounds(10),
+    }));
+    effects.push(Box::new(StartConcentration {
+        caster_id,
+        data: ConcentrationData::with_conditions(
+            spell_name,
+            vec![
+                (target_id, Condition::Charmed),
+                (target_id, Condition::Dominated),
+            ],
+        ),
+    }));
+    effects
+}
+
 /// Enemy-only AoE burst whose only effect is "save or pick up a
 /// concentration-anchored condition" — no damage. Mirror of
 /// `concentration_burst_with_rider` but without the shared damage roll:
@@ -12468,31 +12511,114 @@ impl Action for DominatePerson {
             return Vec::new();
         }
         // Layer Dominated on top of the standard Charmed + `charmed_by`
-        // install lane. Concentration anchors both marks so dropping
-        // concentration strips them in lockstep via the shared cleanup
-        // hook.
-        let mut effects =
-            install_charmed_by(target_id, caster_id, ConditionTimer::Rounds(10));
-        effects.push(Box::new(ApplyCondition {
-            actor_id: target_id,
-            condition: Condition::Dominated,
-            timer: ConditionTimer::Rounds(10),
-        }));
-        effects.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::with_conditions(
-                "Dominate Person",
-                vec![
-                    (target_id, Condition::Charmed),
-                    (target_id, Condition::Dominated),
-                ],
-            ),
-        }));
-        effects
+        // install lane via the shared `install_dominated_by` helper.
+        install_dominated_by(target_id, caster_id, "Dominate Person")
     }
 }
 
 pub static DOMINATE_PERSON: LazyLock<DominatePerson> = LazyLock::new(|| DominatePerson {});
+
+/// Dominate Beast — 5e level-4 enchantment, concentration, action. Slots
+/// between Charm Person (lv1) / Charm Monster (lv4) on the low-end and
+/// Dominate Person (lv5) / Dominate Monster (lv8) on the high-end of the
+/// dominate ladder. Targets one **Beast** within 60 ft; the target makes
+/// a WIS save vs the caster's spell DC. On fail, the target is Charmed
+/// AND Dominated for 10 rounds (1 minute RAW). The `Charmed` half blocks
+/// the target from attacking the dominator (via `charmed_by`); the
+/// `Dominated` half folds into `Condition::imposes_attacker_disadvantage`.
+/// Concentration-bound on the caster — drop concentration to free the
+/// target.
+///
+/// The headline gate vs Dominate Person / Monster: a Beast-only filter
+/// via `custom_validate_input`. RAW: "You attempt to beguile a beast that
+/// you can see within range." The engine's first spell that reads the
+/// target's `creature_type()`; the install payload itself routes through
+/// the shared `install_dominated_by` helper alongside Dominate Person /
+/// Dominate Monster so only the slot level, name, and target-type gate
+/// differ between the three spells.
+pub struct DominateBeast {}
+
+impl Action for DominateBeast {
+    fn name(&self) -> &str {
+        "dominate beast"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["domb", "dom-beast"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // RAW Beast-only gate — distinguishes lv4 Dominate Beast from
+        // lv5 Dominate Person (Humanoid-coded, though our engine doesn't
+        // enforce that side) and lv8 Dominate Monster (any creature
+        // type). Fail-closed on missing target / actor — same convention
+        // as the recharge gates on the dao / mammoth / dragon side.
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| {
+                a.creature_type() == crate::engine::types::CreatureType::Beast
+            })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
+        // Caster-aware save so Heightened Spell can force disadvantage.
+        let save =
+            encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
+        if save.passed() {
+            return Vec::new();
+        }
+        // Same Charmed + `charmed_by` + Dominated install lane as
+        // Dominate Person / Dominate Monster via the shared helper.
+        install_dominated_by(target_id, caster_id, "Dominate Beast")
+    }
+}
+
+pub static DOMINATE_BEAST: LazyLock<DominateBeast> = LazyLock::new(|| DominateBeast {});
 
 /// Magic Stone — 5e druid / artificer cantrip. The caster blesses up to
 /// three pebbles; flinging one is a ranged spell attack (60ft) with the
@@ -21364,27 +21490,8 @@ impl Action for DominateMonster {
             return Vec::new();
         }
         // Layer Dominated on top of the standard Charmed + `charmed_by`
-        // install lane (shared with Charm Person / Charm Monster /
-        // Geas / Dominate Person). Concentration anchors both marks so
-        // dropping concentration strips them cleanly.
-        let mut effects =
-            install_charmed_by(target_id, caster_id, ConditionTimer::Rounds(10));
-        effects.push(Box::new(ApplyCondition {
-            actor_id: target_id,
-            condition: Condition::Dominated,
-            timer: ConditionTimer::Rounds(10),
-        }));
-        effects.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::with_conditions(
-                "Dominate Monster",
-                vec![
-                    (target_id, Condition::Charmed),
-                    (target_id, Condition::Dominated),
-                ],
-            ),
-        }));
-        effects
+        // install lane via the shared `install_dominated_by` helper.
+        install_dominated_by(target_id, caster_id, "Dominate Monster")
     }
 }
 
