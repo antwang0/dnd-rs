@@ -11,7 +11,7 @@ use std::sync::LazyLock;
 /// adjacency footprint the engine handles via `get_tiles_from_size`.
 pub static DIRE_WOLF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*DIRE_WOLF_BITE);
+    actions.push(&DIRE_WOLF_BITE);
     CreatureTemplate {
         name: "Dire Wolf",
         // 'D' — distinct from 'W' (wolf).

@@ -12,7 +12,7 @@ use std::sync::LazyLock;
 /// canonical action.
 pub static WOLF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*WOLF_BITE);
+    actions.push(&WOLF_BITE);
     actions.push(&*FRIGHTFUL_HOWL);
     CreatureTemplate {
         name: "Wolf",

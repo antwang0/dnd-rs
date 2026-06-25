@@ -207,3 +207,6 @@ pub mod daos;
 pub mod invisible_stalkers;
 pub mod mammoths;
 pub mod purple_worms;
+pub mod devas;
+pub mod quaggoths;
+pub mod allips;

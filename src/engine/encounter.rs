@@ -5979,9 +5979,10 @@ mod tests {
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
             .unwrap();
         let aei =
-            ActionExecutionInfo::new(&*WOLF_BITE, wolf, Some(vec![target]), None, None);
+            ActionExecutionInfo::new(&WOLF_BITE, wolf, Some(vec![target]), None, None);
         assert!(aei.validate(&e));
         // Reach is plain melee (1-tile gap).
+        use crate::actions::action_template::Action;
         assert_eq!(WOLF_BITE.reach_tiles(), Some(1));
     }
 

@@ -728,6 +728,151 @@ impl Action for WeaponWithRider {
     }
 }
 
+/// A `SimpleWeapon`-shaped attack with a save-or-condition rider on a
+/// confirmed hit. Same to-hit / damage backbone as `SimpleWeapon`, but the
+/// swing's `side_effects` adds a `save_or_condition_rider` install on hit:
+/// roll the target's save against `save_dc`; on fail, queue an
+/// `ApplyCondition(condition, timer)`. Per-target condition-immunity is
+/// handled by the standard `add_condition` chokepoint.
+///
+/// Companion to `WeaponWithRider` (which lands a flat typed-damage rider on
+/// hit). Collapses the recurring "weapon swing + save_or_condition_rider"
+/// shape used by Wolf Bite (DC 11 STR -> Prone), Dire Wolf Bite (DC 13 STR
+/// -> Prone), and similar trip-style bites — each previously a hand-rolled
+/// ~40-line `impl Action` block that varied only in the seven scalar
+/// fields exposed here.
+///
+/// Extra Attack chains the same way as `WeaponWithRider`: an Action-cost
+/// swing rolled outside a `Multiattack` triggers a second swing with its
+/// own save-or-condition rider for creatures with `has_extra_attack`.
+///
+/// Distinct from the parametric `LycanthropeBite` (CON save -> Poisoned 3
+/// rounds, used only by the wereXX cohort): that chassis is keyed on the
+/// shared lycanthropy flavor (always CON / always Poisoned), while
+/// `WeaponWithSaveCondition` exposes the save ability, condition, and
+/// timer as fields so a Worg-style STR-vs-Prone bite and a future
+/// scorpion-tail-vs-Poisoned variant can share the lane.
+pub struct WeaponWithSaveCondition {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub attack_ability: AbilityScoreType,
+    pub damage_dice: Dice,
+    pub damage_type: DamageType,
+    pub reach: isize,
+    pub is_melee: bool,
+    pub save_ability: AbilityScoreType,
+    pub save_dc: i32,
+    pub condition: Condition,
+    pub timer: ConditionTimer,
+    pub rider_name: &'static str,
+}
+
+impl WeaponWithSaveCondition {
+    /// Const constructor for the standard "STR-based 1H melee swing whose
+    /// hit forces a save-or-condition rider" shape (the wolf-style trip
+    /// bite). Pins `reach = MELEE_REACH`, `is_melee = true`, and uses the
+    /// same ability for attack + damage.
+    #[allow(clippy::too_many_arguments)]
+    pub const fn melee(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        attack_ability: AbilityScoreType,
+        damage_dice: Dice,
+        damage_type: DamageType,
+        save_ability: AbilityScoreType,
+        save_dc: i32,
+        condition: Condition,
+        timer: ConditionTimer,
+        rider_name: &'static str,
+    ) -> Self {
+        Self {
+            display_name,
+            aliases,
+            attack_ability,
+            damage_dice,
+            damage_type,
+            reach: MELEE_REACH,
+            is_melee: true,
+            save_ability,
+            save_dc,
+            condition,
+            timer,
+            rider_name,
+        }
+    }
+}
+
+impl Action for WeaponWithSaveCondition {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.reach)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![self.damage_type]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // Mirror `WeaponWithRider`'s swing-+-Extra-Attack chain so the
+        // rider lands on every successful hit in the chain (RAW: Extra
+        // Attack is a second swing, not a second action).
+        let swing = |e: &mut EncounterInstance| {
+            let (mut effects, dealt) = weapon_swing_with_damage(
+                e,
+                caster_id,
+                target_id,
+                self.display_name,
+                self.attack_ability,
+                self.damage_dice,
+                self.damage_type,
+                self.is_melee,
+                None,
+            );
+            if dealt == 0 {
+                return effects;
+            }
+            save_or_condition_rider(
+                e,
+                target_id,
+                self.save_ability,
+                self.save_dc,
+                self.condition,
+                self.timer,
+                self.rider_name,
+                &mut effects,
+            );
+            effects
+        };
+        let mut effects = swing(encounter);
+        if !encounter.in_multiattack()
+            && encounter
+                .actors
+                .get(&caster_id)
+                .is_some_and(|a| a.has_extra_attack())
+        {
+            encounter.log("  Extra Attack:");
+            effects.extend(swing(encounter));
+        }
+        effects
+    }
+}
+
 /// Standard 5e longbow: ranged, requires line-of-sight, +DEX to hit and damage.
 /// Reach is in tiles (not feet); 20 tiles = 50ft on this 2.5ft grid, which is
 /// short of the 5e 80/320 normal/long range but plenty for our 40×20 maps.
@@ -1136,62 +1281,23 @@ pub static HEAVY_CROSSBOW: SimpleWeapon = SimpleWeapon::ranged(
 /// Wolf-specific bite: 1d4 STR-based piercing with a built-in trip rider.
 /// On every hit forces a STR save (DC = 8 + prof + STR mod); fail = Prone.
 /// For a plain bite without the trip use BITE instead.
-pub struct WolfBite {}
-
-impl Action for WolfBite {
-    fn name(&self) -> &str {
-        "wolf bite"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["wb"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Piercing]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
-        let target_id = first_target_id(target_ids);
-        let mut effects = simple_weapon_attack(
-            encounter,
-            caster_id,
-            target_ids,
-            self.name(),
-            AbilityScoreType::Strength,
-            Some(AbilityScoreType::Strength),
-            Dice::new(1, 4),
-            DamageType::Piercing,
-            true,
-        );
-        if effects.is_empty() {
-            return effects;
-        }
-        let Some(target_id) = target_id else { return effects };
-        save_or_condition_rider(
-            encounter,
-            target_id,
-            AbilityScoreType::Strength,
-            11,
-            Condition::Prone,
-            ConditionTimer::Permanent,
-            "wolf trip",
-            &mut effects,
-        );
-        effects
-    }
-}
-pub static WOLF_BITE: LazyLock<WolfBite> = LazyLock::new(|| WolfBite {});
+/// Wolf bite — 1d4+STR piercing with a Trip rider (DC 11 STR save or
+/// knocked Prone on a hit). Routes through the shared
+/// `WeaponWithSaveCondition` chassis so the swing + save-and-condition
+/// install share one chokepoint with Dire Wolf Bite and future
+/// trip-style natural weapons.
+pub static WOLF_BITE: WeaponWithSaveCondition = WeaponWithSaveCondition::melee(
+    "wolf bite",
+    &["wb"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 4),
+    DamageType::Piercing,
+    AbilityScoreType::Strength,
+    11,
+    Condition::Prone,
+    ConditionTimer::Permanent,
+    "wolf trip",
+);
 
 /// Frightful Howl — wolf bonus action. Every enemy within 4 tiles must
 /// make a WIS save against DC 11 or be Frightened for 3 rounds.
@@ -1969,65 +2075,23 @@ pub static BUGBEAR_MORNINGSTAR: LazyLock<BugbearMorningstar> =
 /// data-flavored copies of an existing pattern can share most of the
 /// structure; we don't extract a shared "bite with trip" helper yet
 /// because the rider's DC and dice differ per template.
-pub struct DireWolfBite {}
-
-impl Action for DireWolfBite {
-    fn name(&self) -> &str {
-        "dire wolf bite"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["dwb"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Piercing]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let target_id = first_target_id(target_ids);
-        let mut effects = simple_weapon_attack(
-            encounter,
-            caster_id,
-            target_ids,
-            self.name(),
-            AbilityScoreType::Strength,
-            Some(AbilityScoreType::Strength),
-            Dice::new(2, 6),
-            DamageType::Piercing,
-            true,
-        );
-        if effects.is_empty() {
-            return effects;
-        }
-        let Some(target_id) = target_id else {
-            return effects;
-        };
-        save_or_condition_rider(
-            encounter,
-            target_id,
-            AbilityScoreType::Strength,
-            13,
-            Condition::Prone,
-            ConditionTimer::Permanent,
-            "dire wolf trip",
-            &mut effects,
-        );
-        effects
-    }
-}
-
-pub static DIRE_WOLF_BITE: LazyLock<DireWolfBite> = LazyLock::new(|| DireWolfBite {});
+/// Dire Wolf bite — 2d6+STR piercing with a Trip rider (DC 13 STR save
+/// or knocked Prone on a hit). Same shape as the wolf's bite with a
+/// heavier damage die and a stiffer save DC — both ride the shared
+/// `WeaponWithSaveCondition` chassis so the trip-rider chokepoint
+/// stays uniform across the bestiary.
+pub static DIRE_WOLF_BITE: WeaponWithSaveCondition = WeaponWithSaveCondition::melee(
+    "dire wolf bite",
+    &["dwb"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Piercing,
+    AbilityScoreType::Strength,
+    13,
+    Condition::Prone,
+    ConditionTimer::Permanent,
+    "dire wolf trip",
+);
 
 /// Re-export the spell-table FIRE_BOLT here so monster files that import
 /// `crate::actions::monster_attacks::FIRE_BOLT` keep working — the
@@ -13549,3 +13613,187 @@ pub static PURPLE_WORM_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Compou
         (&*PURPLE_WORM_TAIL_STINGER, 1),
     ],
 });
+
+// ─── Deva ────────────────────────────────────────────────────────────
+
+/// Deva Mace — STR-based 1d6+STR bludgeoning melee with a flat 4d8
+/// radiant rider. The lesser angel's blessed weapon — every swing
+/// carries the smiting glow of celestial purity. RAW MM stat: "Hit:
+/// (1d6+4) bludgeoning damage plus (4d8) radiant damage." Routes
+/// through `WeaponWithRider` so the radiant rider's per-target
+/// resistance / immunity is honored cleanly — undead and fiends eat
+/// the full pile, radiant-resistant outsiders eat half. Heavy rider
+/// dice (~18 average) make this the load-bearing burst lane at CR 10.
+pub static DEVA_MACE: WeaponWithRider = WeaponWithRider::melee(
+    "deva mace",
+    &["deva-mace", "blessed-mace"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Bludgeoning,
+    Dice::new(4, 8),
+    DamageType::Radiant,
+    "celestial smite",
+);
+
+/// Deva Multiattack — 2 mace swings per Action via the homogeneous
+/// `Multiattack` chassis. Each swing carries the full radiant rider —
+/// RAW: "The deva makes two melee attacks." A clean two-hit Action
+/// lands ~9 bludgeoning + ~36 radiant against a medium-AC target, the
+/// per-round threat envelope that defines the CR-10 celestial slot.
+pub static DEVA_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "deva multiattack",
+    sub_attack: &DEVA_MACE,
+    count: 2,
+});
+
+/// Deva Healing Touch — single-target ally heal, 4d8 HP restored, plus
+/// cures any disease / poison the holder has. Gated on the
+/// `"healing_touch"` recharge key (recharge 4-6 on a d6 at start of
+/// turn) so it can't fire every round. RAW is "1/day" — the engine
+/// doesn't track per-day pools, so the recharge envelope is the
+/// closest approximation. Same chassis as the unicorn's healing touch
+/// but the deva's 4d8 envelope is one step heavier (RAW: "The angel
+/// touches another creature. The target magically regains 20 (4d8)
+/// hit points") and the recharge threshold is one notch lower (4-6
+/// vs the unicorn's 5-6) to reflect the deva's higher CR / role as a
+/// dedicated celestial healer.
+pub struct DevaHealingTouch {}
+
+impl Action for DevaHealingTouch {
+    fn name(&self) -> &str {
+        "deva healing touch"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["deva-ht", "deva-touch"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        if !caster.is_recharge_available("healing_touch") {
+            return false;
+        }
+        // Reject hostile targets — the touch only restores allies. The
+        // ally check lives here (not just at side_effects) so the AI's
+        // picker doesn't surface enemies as legal targets.
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        encounter.actors_allied(caster_id, target_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::Heal;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let dice = Dice::new(4, 8);
+        let raw = encounter.roll(&dice);
+        // Burn the recharge so the touch can't fire again until the d6
+        // refresher lands a 4-6 at start-of-turn.
+        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
+            caster.spend_recharge("healing_touch");
+        }
+        encounter.log(format!(
+            "  deva healing touch: {}({}) = {} HP",
+            dice, raw, raw
+        ));
+        vec![Box::new(Heal {
+            actor_id: target_id,
+            amount: raw,
+        })]
+    }
+}
+
+pub static DEVA_HEALING_TOUCH: LazyLock<DevaHealingTouch> =
+    LazyLock::new(|| DevaHealingTouch {});
+
+// ─── Quaggoth ────────────────────────────────────────────────────────
+
+/// Quaggoth Claw — STR-based 1d6+STR slashing melee, vanilla
+/// `SimpleWeapon`. The bear-like Underdark thrall's primary natural
+/// weapon — paired in the `QUAGGOTH_MULTI` for a two-swing Action.
+/// No rider; the quaggoth's whole identity is "berserker that just
+/// keeps swinging" — the multiattack chassis carries the per-turn
+/// damage envelope. RAW: "Hit: (1d6+3) slashing damage."
+pub static QUAGGOTH_CLAW: SimpleWeapon = SimpleWeapon::melee(
+    "quaggoth claw",
+    &["qclaw", "claw-q"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Slashing,
+);
+
+/// Quaggoth Multiattack — 2 claw rakes per Action. RAW: "The
+/// quaggoth makes two claw attacks." The chassis-driven multi means
+/// pack-tactics-style adjacency benefits both swings without per-impl
+/// plumbing. Wounded Fury (RAW: "While it has 10 hit points or fewer,
+/// the quaggoth has advantage on attack rolls") is omitted as a
+/// deliberate scope cut — the engine doesn't yet have a generic
+/// "below HP threshold → grant advantage" hook on the attacker side,
+/// and adding one for a single low-CR creature would be over-scope.
+pub static QUAGGOTH_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "quaggoth multiattack",
+    sub_attack: &QUAGGOTH_CLAW,
+    count: 2,
+});
+
+// ─── Allip ───────────────────────────────────────────────────────────
+
+/// Allip Maddening Touch — STR-based 1d4+STR psychic melee with a
+/// DC 13 INT save-or-Charmed rider on hit. The incorporeal spectre of
+/// a sage who died from madness drifts close and pushes a sliver of
+/// its own broken mind into its victim's. Routes through the shared
+/// `WeaponWithSaveCondition` chassis: the save-or-condition install
+/// fires only on a confirmed hit, and per-target immunity is handled
+/// by the standard `add_condition` chokepoint. INT save (not WIS) per
+/// the RAW intelligence-undead flavor — the allip's whisper is a
+/// cognitive intrusion, not a fear effect. Charmed is the closest
+/// in-engine condition to RAW's "babbling" stun-style debuff: it locks
+/// the target out of hostile actions against the allip and routes
+/// cleanly through the existing condition pipeline.
+pub static ALLIP_MADDENING_TOUCH: WeaponWithSaveCondition =
+    WeaponWithSaveCondition::melee(
+        "allip maddening touch",
+        &["allip-touch", "mad-touch"],
+        AbilityScoreType::Strength,
+        Dice::new(1, 4),
+        DamageType::Psychic,
+        AbilityScoreType::Intelligence,
+        13,
+        Condition::Charmed,
+        ConditionTimer::Rounds(3),
+        "babbling madness",
+    );
+
