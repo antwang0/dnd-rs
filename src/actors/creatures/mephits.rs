@@ -1,8 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
-    ICE_MEPHIT_CLAWS, ICE_MEPHIT_DEATH_BURST, ICE_MEPHIT_FROST_BREATH, MAGMA_MEPHIT_CLAWS,
-    MAGMA_MEPHIT_DEATH_BURST, MAGMA_MEPHIT_FIRE_BREATH, STEAM_MEPHIT_CLAWS,
-    STEAM_MEPHIT_DEATH_BURST, STEAM_MEPHIT_STEAM_BREATH,
+    DUST_MEPHIT_BLINDING_BREATH, DUST_MEPHIT_CLAWS, DUST_MEPHIT_DEATH_BURST, ICE_MEPHIT_CLAWS,
+    ICE_MEPHIT_DEATH_BURST, ICE_MEPHIT_FROST_BREATH, MAGMA_MEPHIT_CLAWS, MAGMA_MEPHIT_DEATH_BURST,
+    MAGMA_MEPHIT_FIRE_BREATH, STEAM_MEPHIT_CLAWS, STEAM_MEPHIT_DEATH_BURST,
+    STEAM_MEPHIT_STEAM_BREATH,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::actors::creatures::fire_elementals::{
@@ -204,6 +205,72 @@ pub static MAGMA_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
     }
 });
 
+/// Dust Mephit — CR ½ small elemental. The whirling grit-imp of the
+/// Para-Elemental Plane of Dust — a Dust Bowl in miniature, kicking up
+/// fine sand and choking grit with every flap of its translucent
+/// papery wings. Distinct from the Ice / Steam / Magma mephits in that
+/// its signature breath is **damage-free** — it just blinds — making
+/// it the cohort's control variant rather than a tiny AoE damager.
+///
+/// Action lanes:
+/// - **dust mephit claws** — DEX-based 1d4+DEX slashing melee. No
+///   typed-rider tail (RAW the dust mephit's scrape is just grit, not
+///   a typed energy bite).
+/// - **blinding breath** — Recharge-6 15-ft cone (burst-2 / range-3) of
+///   choking grit. DC 10 CON, **Blinded for 1 round on fail** via the
+///   new `BreathWeaponCondition` chassis. Routes through the same
+///   `"breath_weapon"` recharge pool the damage-cone mephits share so a
+///   mixed mephit ambush can't double-tap.
+/// - **death burst** (passive on-death) — 1d4 bludgeoning in a 5-ft
+///   radius when reduced to 0 HP. DC 10 CON halves. The grit is
+///   physical sand-spray, not a typed elemental energy.
+///
+/// Defensive identity: AC 12, ~17 HP (5d6). Poison immunity + non-
+/// magical BPS resistance from the shared elemental baseline. NO
+/// fire / cold vulnerability — the dust mephit doesn't have a paired
+/// elemental opposite (unlike Ice ↔ Fire and Magma ↔ Cold). Standard
+/// 9-condition elemental immunity envelope.
+///
+/// Stat shape: AC 12, ~17 HP (5d6), STR 5, DEX 14, CON 10, INT 9,
+/// WIS 11, CHA 10. Speed 30. Senses: Darkvision 60. Languages:
+/// Primordial. Size Small. CR ½.
+pub static DUST_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&DUST_MEPHIT_CLAWS);
+    actions.push(&DUST_MEPHIT_BLINDING_BREATH);
+    CreatureTemplate {
+        name: "Dust Mephit",
+        // 'd' (lowercase) — distinct from 'D' (Djinni) and the other
+        // mephit glyphs ('i' Ice, 's' Steam, 'g' Magma). 'd' reads as
+        // the slim grit-imp silhouette and slots cleanly into the
+        // lowercase-mephit family pattern.
+        glyph: 'd',
+        ac: 12,
+        // 5d6 ≈ 17 average per MM (CR ½).
+        hitpoints: "5d6".parse().unwrap(),
+        speed: 30.,
+        strength: 5,
+        intelligence: 9,
+        dexterity: 14,
+        wisdom: 11,
+        constitution: 10,
+        charisma: 10,
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
+        languages: HashSet::from([Language::Primordial]),
+        cr: 0.5,
+        size: Size::Small,
+        creature_type: CreatureType::Elemental,
+        actions,
+        // No fire / cold vulnerability — RAW. The dust mephit is a
+        // grit-imp without a paired elemental opposite.
+        damage_modifiers: elemental_damage_modifiers([]),
+        condition_immunities: ELEMENTAL_CONDITION_IMMUNITIES.clone(),
+        recharge_abilities: vec![("breath_weapon", 6)],
+        death_burst: Some(&DUST_MEPHIT_DEATH_BURST),
+        ..CreatureTemplate::defaults()
+    }
+});
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,6 +369,85 @@ mod tests {
         assert_eq!(
             a.damage_modifier(DamageType::Cold),
             Some(DamageModifier::Vulnerability)
+        );
+    }
+
+    #[test]
+    fn dust_mephit_blinding_breath_is_recharge_gated() {
+        // Pin the recharge gate so a future refactor of the
+        // `BreathWeaponCondition` chassis doesn't strip the
+        // `custom_validate_input` check. The breath should only fire
+        // while `"breath_weapon"` is available — symmetric to the
+        // damage-variant Breath weapons.
+        use crate::engine::actor_gen::ActorGenParams;
+        use crate::engine::encounter::EncounterInstance;
+        use crate::engine::terrain_gen::TerrainGenParams;
+        let tp = TerrainGenParams {
+            width: 20,
+            height: 20,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(0)).unwrap();
+        let mephit = e
+            .instantiate_creature(&DUST_MEPHIT_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let breath = e.actors[&mephit]
+            .find_action("blinding breath")
+            .expect("dust mephit should have blinding breath");
+        // Available on round 1 — recharge resources start in the
+        // "available" state.
+        assert!(
+            breath.custom_validate_input(&e, mephit, None, None, None),
+            "blinding breath should validate while recharged",
+        );
+        e.actors
+            .get_mut(&mephit)
+            .unwrap()
+            .spend_recharge("breath_weapon");
+        assert!(
+            !breath.custom_validate_input(&e, mephit, None, None, None),
+            "blinding breath should not validate after the recharge is spent",
+        );
+    }
+
+    #[test]
+    fn dust_mephit_template_shape() {
+        let a = ActorInstance::from_creature_template(
+            &DUST_MEPHIT_TEMPLATE,
+            Coordinate::new(0, 0),
+            1,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        assert_eq!(a.cr(), 0.5);
+        assert_eq!(a.creature_type(), CreatureType::Elemental);
+        assert!(a.find_action("dust mephit claws").is_some());
+        assert!(a.find_action("blinding breath").is_some());
+        // Death burst should be wired through.
+        assert!(a.death_burst().is_some());
+        // No fire / cold vulnerability — the dust mephit's defensive
+        // profile is the "no paired elemental opposite" variant. Distinct
+        // from Ice (fire-vulnerable) and Magma (cold-vulnerable).
+        assert!(
+            a.damage_modifier(DamageType::Fire).is_none(),
+            "Dust Mephit should NOT have fire vulnerability (RAW)",
+        );
+        assert!(
+            a.damage_modifier(DamageType::Cold).is_none(),
+            "Dust Mephit should NOT have cold vulnerability (RAW)",
+        );
+        // Standard elemental baseline still applies.
+        assert_eq!(
+            a.damage_modifier(DamageType::Poison),
+            Some(DamageModifier::Immunity),
         );
     }
 }

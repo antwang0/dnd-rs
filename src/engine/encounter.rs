@@ -163,7 +163,7 @@ use crate::actors::creatures::ettercaps::ETTERCAP_TEMPLATE;
 use crate::actors::creatures::magmins::MAGMIN_TEMPLATE;
 use crate::actors::creatures::galeb_duhrs::GALEB_DUHR_TEMPLATE;
 use crate::actors::creatures::mephits::{
-    ICE_MEPHIT_TEMPLATE, MAGMA_MEPHIT_TEMPLATE, STEAM_MEPHIT_TEMPLATE,
+    DUST_MEPHIT_TEMPLATE, ICE_MEPHIT_TEMPLATE, MAGMA_MEPHIT_TEMPLATE, STEAM_MEPHIT_TEMPLATE,
 };
 use crate::actors::creatures::awakened_trees::AWAKENED_TREE_TEMPLATE;
 use crate::actors::creatures::dretches::DRETCH_TEMPLATE;
@@ -184,6 +184,7 @@ use crate::actors::creatures::crocodiles::{CROCODILE_TEMPLATE, GIANT_CROCODILE_T
 use crate::actors::creatures::daos::DAO_TEMPLATE;
 use crate::actors::creatures::invisible_stalkers::INVISIBLE_STALKER_TEMPLATE;
 use crate::actors::creatures::mammoths::MAMMOTH_TEMPLATE;
+use crate::actors::creatures::purple_worms::PURPLE_WORM_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -3118,6 +3119,13 @@ impl EncounterInstance {
             &ICE_MEPHIT_TEMPLATE,
             &STEAM_MEPHIT_TEMPLATE,
             &MAGMA_MEPHIT_TEMPLATE,
+            // Dust Mephit (CR ½, no fire / cold vulnerability): grit
+            // breath that imposes the Blinded condition instead of
+            // dealing damage — the first creature wired through the
+            // new `BreathWeaponCondition` chassis. Slots alongside the
+            // Ice / Magma mephits on the same CR shelf but with the
+            // control-flavored breath envelope.
+            &DUST_MEPHIT_TEMPLATE,
             // Latest additions filling out the mid-tier monstrosity /
             // construct / boss-fiend lanes with three iconic SRD monsters
             // that were missing from the pool:
@@ -3223,6 +3231,14 @@ impl EncounterInstance {
             // advantage rather than larger dice.
             &DAO_TEMPLATE,
             &INVISIBLE_STALKER_TEMPLATE,
+            // Purple Worm (CR 15 gargantuan monstrosity): the iconic
+            // dungeon devourer — 1 bite + 1 tail stinger compound
+            // multiattack, the stinger carrying a DC 19 CON save-or-
+            // 7d6-poison rider via the shared `save_or_damage_rider`
+            // chassis. The non-dragon, non-undead boss option at CR 15
+            // — slots between the Aboleth (CR 10) and the Adult Red
+            // Dragon (CR 17) on the upper-tier brute ladder.
+            &PURPLE_WORM_TEMPLATE,
             // Mammoth (CR 6 huge beast): ice-age elephant — gore +
             // Recharge-5/6 Trampling Charge (DC 18 STR save-or-Prone)
             // + Prone-gated Stomp. First creature wired through a

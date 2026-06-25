@@ -4,7 +4,7 @@ use std::sync::LazyLock;
 use crate::{
     actions::action_template::{
         Action, MELEE_REACH, TargetingSchema, actor_has_recharge, bonus_action_only,
-        first_target_id, first_target_location,
+        first_target_id, first_target_location, target_has_condition,
     },
     conditions::{Condition, ConditionTimer},
     engine::{
@@ -3420,6 +3420,12 @@ pub static GELATINOUS_CUBE_ENGULF: LazyLock<GelatinousCubeEngulf> =
 /// was pure boilerplate. Recharge gating + DEX-vs-CON save shape lives
 /// in this one place now; the abbreviation aliases ("fb", "cb", "lb",
 /// "pb") survive verbatim.
+///
+/// See `BreathWeaponCondition` for the save-or-condition sibling — same
+/// chassis shape (radius, range, recharge_key, save_ability, dc) but
+/// the resolution path installs a condition on fail instead of dealing
+/// half-on-save damage. Use that variant for damage-free control cones
+/// like the Dust Mephit's Blinding Breath.
 pub struct BreathWeapon {
     pub display_name: &'static str,
     pub aliases: &'static [&'static str],
@@ -3543,6 +3549,108 @@ pub struct DeathBurst {
     /// reaches. Mephit death bursts are 5 ft (gap 1) RAW; magmin death
     /// burst is 10 ft (gap 2). Same units as `BreathWeapon::radius`.
     pub radius: isize,
+}
+
+/// Recharge-gated burst that imposes a condition rather than dealing
+/// damage — the save-or-condition sibling of `BreathWeapon`. Modeled as
+/// a data-only struct so a new save-or-blinded / save-or-restrained
+/// monster cone lands as a single literal on the template instead of a
+/// bespoke `impl Action`.
+///
+/// Targeting / reach / cost / recharge wiring mirror `BreathWeapon`
+/// exactly — what changes is the resolution path: damage is replaced by
+/// `resolve_burst_save_condition`, which installs `condition` for `timer`
+/// on every enemy in `radius` that fails the save. The `display_name`
+/// drives the log line; per-target immunity to the condition is handled
+/// by the standard `add_condition` chokepoint (no caller-side gate
+/// needed — same as `save_or_condition_rider`).
+///
+/// Canonical entry: the Dust Mephit's Blinding Breath (5 ft cone of
+/// fine grit, DC 10 CON, Blinded on fail). Future Mud Mephit (save-or-
+/// Restrained) and Smoke Mephit (save-or-disadvantage) bursts plug into
+/// the same chassis with their own `(condition, timer)` pair.
+pub struct BreathWeaponCondition {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub save_ability: AbilityScoreType,
+    pub dc: i32,
+    pub radius: isize,
+    pub range: isize,
+    pub recharge_key: &'static str,
+    /// Condition installed on every burst target that fails the save.
+    pub condition: Condition,
+    /// How long the installed condition sticks. Mephit cone-breaths use
+    /// `Rounds(1)` (the "until end of [creature]'s next turn" RAW clause
+    /// collapses to one round at the encounter's per-round granularity).
+    pub timer: ConditionTimer,
+}
+
+impl Action for BreathWeaponCondition {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst {
+            radius: self.radius,
+        }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.range)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        actor_has_recharge(encounter, caster_id, self.recharge_key)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        // Spend the recharge resource before resolving the save so a
+        // mid-resolution failure can't leave the breath both spent AND
+        // condition-installed (mirrors the damage variant's order-of-ops).
+        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
+            caster.spend_recharge(self.recharge_key);
+        }
+        encounter.log(format!(
+            "  {}: burst centered at ({}, {}) (DC {} {}, {} on fail)",
+            self.display_name, point.x, point.y, self.dc, self.save_ability, self.condition,
+        ));
+        crate::actions::action_template::resolve_burst_save_condition(
+            encounter,
+            caster_id,
+            point,
+            self.radius,
+            self.save_ability,
+            self.dc,
+            self.condition,
+            self.timer,
+        )
+    }
 }
 
 /// Dragon Fire Breath — Adult Red Dragon signature. Burst-4 radius
@@ -13150,17 +13258,10 @@ impl Action for MammothStomp {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
         // RAW: "the mammoth can only make this attack against a target
-        // that is prone." Gate the validate so the AI / player can't
-        // queue a stomp at a standing target. Missing target / missing
-        // actor returns false (fail-closed — same convention as the
-        // recharge gates on the dao stone snare / dragon breath).
-        let Some(target_id) = first_target_id(target_ids) else {
-            return false;
-        };
-        encounter
-            .actors
-            .get(&target_id)
-            .is_some_and(|a| a.has_condition(Condition::Prone))
+        // that is prone." Routes through the shared `target_has_condition`
+        // helper so the missing-target / missing-actor fail-closed
+        // convention stays consistent with the recharge gates.
+        target_has_condition(encounter, target_ids, Condition::Prone)
     }
     fn side_effects(
         &self,
@@ -13282,3 +13383,169 @@ impl Action for MammothTramplingCharge {
 
 pub static MAMMOTH_TRAMPLING_CHARGE: LazyLock<MammothTramplingCharge> =
     LazyLock::new(|| MammothTramplingCharge {});
+
+// ─── Dust Mephit ─────────────────────────────────────────────────────
+
+/// Dust Mephit Claws — DEX-based 1d4+DEX slashing melee. The vanilla
+/// mephit-claw shape, identical in dice to the Ice / Steam / Magma
+/// variants but without a typed-rider tail (the dust mephit's damage
+/// envelope is just gritty dust scrapes — its load-bearing pressure is
+/// the Blinding Breath save-or-Blinded gate, not the claws themselves).
+/// Vanilla `SimpleWeapon`.
+pub static DUST_MEPHIT_CLAWS: SimpleWeapon = SimpleWeapon::melee(
+    "dust mephit claws",
+    &["dust-claws", "grit-claws"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 4),
+    DamageType::Slashing,
+);
+
+/// Dust Mephit Blinding Breath — a 15-ft cone (burst-2 / range-3) of
+/// fine choking grit. Save-or-Blinded for 1 round on a failed DC 10
+/// CON save; no damage. Recharge 6.
+///
+/// Showcases the new `BreathWeaponCondition` chassis — the damage-free
+/// sibling of `BreathWeapon`. RAW's "until the end of the mephit's next
+/// turn" timer collapses to `Rounds(1)` at the engine's per-round
+/// granularity. The cone is the dust mephit's only ranged threat; the
+/// claws are a fallback for adjacent targets after the breath spends.
+pub static DUST_MEPHIT_BLINDING_BREATH: BreathWeaponCondition = BreathWeaponCondition {
+    display_name: "blinding breath",
+    aliases: &["blinding", "dust-breath", "grit-cone"],
+    save_ability: AbilityScoreType::Constitution,
+    dc: 10,
+    radius: 2,
+    range: 3,
+    recharge_key: "breath_weapon",
+    condition: Condition::Blinded,
+    timer: ConditionTimer::Rounds(1),
+};
+
+/// Dust Mephit **Death Burst** — 1d4 bludgeoning in a 5-ft radius
+/// (gap 1) when reduced to 0 HP. The mephit collapses into a spray of
+/// fine sand and dust shards (RAW: "the mephit explodes in a burst of
+/// dust"). DC 10 CON halves. Bludgeoning rather than a typed energy so
+/// elemental-immune kin (other dust mephits in the cohort) still take
+/// the physical grit — same convention the Ice Mephit's slashing burst
+/// uses to keep the radius lethal to its own cohort.
+pub static DUST_MEPHIT_DEATH_BURST: DeathBurst = DeathBurst {
+    display_name: "collapses in a burst of dust",
+    damage_dice: Dice::new(1, 4),
+    damage_type: DamageType::Bludgeoning,
+    save_ability: AbilityScoreType::Constitution,
+    dc: 10,
+    radius: 1,
+};
+
+// ─── Purple Worm ─────────────────────────────────────────────────────
+
+/// Purple Worm Bite — STR-based 3d8+STR piercing melee at reach 2
+/// (10 ft) — the gargantuan worm's signature maw can engulf a target
+/// from one tile away. Vanilla `SimpleWeapon::reach_melee`; the
+/// signature combat clause is the multi-attack pairing with the Tail
+/// Stinger and the worm's gargantuan Tunneler trait (which lives on the
+/// template as flavor only — the engine isn't 3D and doesn't model
+/// underground movement separately from surface speed).
+pub static PURPLE_WORM_BITE: SimpleWeapon = SimpleWeapon::reach_melee(
+    "purple worm bite",
+    &["pw-bite", "worm-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 8),
+    DamageType::Piercing,
+    2,
+);
+
+/// Purple Worm Tail Stinger — STR-based 3d6+STR piercing melee at
+/// reach 2 (10 ft), with a CON DC 19 save-or-extra-poison rider. RAW
+/// the venom hits for 7d6 poison on a failed save (half on success);
+/// we collapse "half on save" to "full on fail, 0 on save" via the
+/// shared `save_or_damage_rider` chassis so the typed-resistance lane
+/// still applies per-target. The save DC and rider dice are CR-15
+/// boss-tier — a failed save by a Medium PC eats ~24 average extra
+/// poison, on top of the ~17 average from the swing base.
+///
+/// Showcases the "weapon hit + save-or-poison-damage" pattern shared
+/// by Imp Sting, Spider Bite, Wyvern Stinger, and now Purple Worm
+/// Tail Stinger — the rider chassis is the same; only the dice and
+/// DC differ.
+pub struct PurpleWormTailStinger {}
+
+impl Action for PurpleWormTailStinger {
+    fn name(&self) -> &str {
+        "purple worm tail stinger"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pw-stinger", "worm-stinger", "tail-stinger"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(2)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Piercing, DamageType::Poison]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // Resolve the piercing base swing first; rider only fires on a
+        // confirmed hit (RAW: "the target must make a Constitution
+        // saving throw" only applies "on a hit").
+        let (mut effects, damage) = weapon_swing_with_damage(
+            encounter,
+            caster_id,
+            target_id,
+            "purple worm tail stinger",
+            AbilityScoreType::Strength,
+            Dice::new(3, 6),
+            DamageType::Piercing,
+            true,
+            None,
+        );
+        if damage == 0 {
+            return effects;
+        }
+        // DC 19 CON save — 7d6 poison on a failed save. Half-on-save is
+        // collapsed to all-or-nothing via the shared
+        // `save_or_damage_rider` chokepoint (matches Spider Bite /
+        // Wyvern Stinger). Per-target poison resistance / immunity is
+        // honored by the standard damage pipeline.
+        save_or_damage_rider(
+            encounter,
+            target_id,
+            AbilityScoreType::Constitution,
+            19,
+            Dice::new(7, 6),
+            DamageType::Poison,
+            "purple worm venom",
+            &mut effects,
+        );
+        effects
+    }
+}
+
+pub static PURPLE_WORM_TAIL_STINGER: LazyLock<PurpleWormTailStinger> =
+    LazyLock::new(|| PurpleWormTailStinger {});
+
+/// Purple Worm Multiattack — 1 bite + 1 tail stinger per Action via the
+/// shared `CompoundAttack` chassis. The bite is the bulk-damage limb
+/// (~18 average on a hit); the stinger trails with the save-or-poison
+/// rider that opens the burst-damage window. Mixed-limb compound so the
+/// AI / player can't pick "two bites" by spamming the bite alone —
+/// matches the SRD's per-Action shape exactly.
+pub static PURPLE_WORM_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "purple worm multiattack",
+    parts: vec![
+        (&PURPLE_WORM_BITE, 1),
+        (&*PURPLE_WORM_TAIL_STINGER, 1),
+    ],
+});

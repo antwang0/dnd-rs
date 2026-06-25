@@ -206,3 +206,4 @@ pub mod crocodiles;
 pub mod daos;
 pub mod invisible_stalkers;
 pub mod mammoths;
+pub mod purple_worms;

@@ -357,6 +357,32 @@ pub fn actor_has_recharge(
         .is_some_and(|a| a.is_recharge_available(recharge_key))
 }
 
+/// `SingleActor` `custom_validate_input` gate for "this swing only lands
+/// against a target who already has condition X." Returns `true` when the
+/// first id in `target_ids` resolves to a live actor holding `condition`;
+/// fails closed on missing target / missing actor (same convention as
+/// `actor_has_recharge`).
+///
+/// Centralizes the recurring three-line pattern that every "I can only
+/// hit you if you're already down" combat clause reimplements — Mammoth
+/// Stomp (Prone), future Coup-de-Grace / pinned-only stinger / sleeper-
+/// throat-slit variants. Single source of truth so a future tweak
+/// ("Mind-Blanked targets are immune to this prone-gate exception",
+/// etc.) lands once instead of across N inlined gates.
+pub fn target_has_condition(
+    encounter: &EncounterInstance,
+    target_ids: Option<&Vec<usize>>,
+    condition: crate::conditions::Condition,
+) -> bool {
+    let Some(target_id) = first_target_id(target_ids) else {
+        return false;
+    };
+    encounter
+        .actors
+        .get(&target_id)
+        .is_some_and(|a| a.has_condition(condition))
+}
+
 /// Standard leveled-spell cost shape: one Action plus a level-`lvl` slot.
 /// Used by ~60 leveled-spell impls; the helper keeps the cost block to
 /// one line at the call site and gives us a single chokepoint for any
