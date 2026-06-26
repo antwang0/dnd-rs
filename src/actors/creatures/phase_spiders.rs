@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 
 pub static PHASE_SPIDER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*SPIDER_BITE);
+    actions.push(&SPIDER_BITE);
     CreatureTemplate {
         name: "Phase Spider",
         glyph: 'p',

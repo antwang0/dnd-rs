@@ -143,7 +143,6 @@ mod tests {
         // a side-effect list that's bounded by the swing's hit and
         // the target's save result. A future chassis refactor that
         // strips the save rider would regress this assertion.
-        use crate::actions::action_template::Action;
         use crate::engine::actor_gen::ActorGenParams;
         use crate::engine::encounter::EncounterInstance;
         use crate::engine::terrain_gen::TerrainGenParams;

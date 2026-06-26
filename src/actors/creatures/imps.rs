@@ -16,7 +16,7 @@ use std::sync::LazyLock;
 /// ranged options. INT-primary so Fire Bolt actually hurts.
 pub static IMP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*IMP_STING);
+    actions.push(&IMP_STING);
     actions.push(&*FIRE_BOLT);
     CreatureTemplate {
         name: "Imp",

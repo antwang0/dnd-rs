@@ -46,7 +46,7 @@ use std::sync::LazyLock;
 pub static ETTERCAP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*ETTERCAP_MULTI);
-    actions.push(&*ETTERCAP_BITE);
+    actions.push(&ETTERCAP_BITE);
     actions.push(&ETTERCAP_CLAWS);
     actions.push(&*ETTERCAP_WEB);
     CreatureTemplate {

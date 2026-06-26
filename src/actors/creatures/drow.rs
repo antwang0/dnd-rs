@@ -13,7 +13,7 @@ use std::sync::LazyLock;
 pub static DROW_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&SCIMITAR);
-    actions.push(&*DROW_POISONED_CROSSBOW);
+    actions.push(&DROW_POISONED_CROSSBOW);
     CreatureTemplate {
         name: "Drow",
         glyph: 'D',

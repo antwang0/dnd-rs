@@ -58,7 +58,7 @@ pub static HORNED_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*HORNED_DEVIL_MULTI);
     actions.push(&HORNED_DEVIL_FORK);
-    actions.push(&*HORNED_DEVIL_TAIL);
+    actions.push(&HORNED_DEVIL_TAIL);
     actions.push(&*HORNED_DEVIL_HURLED_FLAME);
     CreatureTemplate {
         name: "Horned Devil",

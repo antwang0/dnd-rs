@@ -11,7 +11,7 @@ use std::sync::LazyLock;
 /// own venom.
 pub static SPIDER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*SPIDER_BITE);
+    actions.push(&SPIDER_BITE);
     CreatureTemplate {
         name: "Spider",
         glyph: 'X',

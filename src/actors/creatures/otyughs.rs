@@ -47,7 +47,7 @@ use std::sync::LazyLock;
 pub static OTYUGH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*OTYUGH_MULTI);
-    actions.push(&*OTYUGH_BITE);
+    actions.push(&OTYUGH_BITE);
     actions.push(&*OTYUGH_TENTACLE);
     CreatureTemplate {
         name: "Otyugh",

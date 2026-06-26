@@ -22,7 +22,7 @@ use std::sync::LazyLock;
 /// terrain.
 pub static QUASIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*QUASIT_CLAWS);
+    actions.push(&QUASIT_CLAWS);
     actions.push(&*QUASIT_SCARE);
     CreatureTemplate {
         name: "Quasit",

@@ -58,7 +58,7 @@ use std::sync::LazyLock;
 pub static PURPLE_WORM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&PURPLE_WORM_BITE);
-    actions.push(&*PURPLE_WORM_TAIL_STINGER);
+    actions.push(&PURPLE_WORM_TAIL_STINGER);
     actions.push(&*PURPLE_WORM_MULTI);
     CreatureTemplate {
         name: "Purple Worm",

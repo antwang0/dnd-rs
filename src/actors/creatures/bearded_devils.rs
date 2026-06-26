@@ -56,7 +56,7 @@ pub static BEARDED_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*BEARDED_DEVIL_MULTI);
     actions.push(&BEARDED_DEVIL_GLAIVE);
-    actions.push(&*BEARDED_DEVIL_BEARD);
+    actions.push(&BEARDED_DEVIL_BEARD);
     CreatureTemplate {
         name: "Bearded Devil",
         // 'B' (uppercase) — distinct from 'b' (Bandit lowercase). Shared

@@ -800,6 +800,42 @@ impl WeaponWithSaveCondition {
             rider_name,
         }
     }
+
+    /// Long-reach melee variant. Same as `melee()` but takes an explicit
+    /// `reach` in tiles, for save-or-condition weapons like the giant
+    /// constrictor snake's reach-2 coil or the giant octopus's reach-3
+    /// tentacles. Mirrors `SimpleWeapon::reach_melee` / `WeaponWithRider::
+    /// reach_melee` so the long-reach lane is one declaration on every
+    /// save-or-condition chassis instead of a struct-literal sprawl.
+    #[allow(clippy::too_many_arguments)]
+    pub const fn reach_melee(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        attack_ability: AbilityScoreType,
+        damage_dice: Dice,
+        damage_type: DamageType,
+        save_ability: AbilityScoreType,
+        save_dc: i32,
+        condition: Condition,
+        timer: ConditionTimer,
+        rider_name: &'static str,
+        reach: isize,
+    ) -> Self {
+        Self {
+            display_name,
+            aliases,
+            attack_ability,
+            damage_dice,
+            damage_type,
+            reach,
+            is_melee: true,
+            save_ability,
+            save_dc,
+            condition,
+            timer,
+            rider_name,
+        }
+    }
 }
 
 impl Action for WeaponWithSaveCondition {
@@ -857,6 +893,253 @@ impl Action for WeaponWithSaveCondition {
                 self.rider_name,
                 &mut effects,
             );
+            effects
+        };
+        let mut effects = swing(encounter);
+        if !encounter.in_multiattack()
+            && encounter
+                .actors
+                .get(&caster_id)
+                .is_some_and(|a| a.has_extra_attack())
+        {
+            encounter.log("  Extra Attack:");
+            effects.extend(swing(encounter));
+        }
+        effects
+    }
+}
+
+/// Data-only `Action` chassis for the "weapon swing → on hit, target saves
+/// vs DC; on fail, extra typed-damage rider (full damage on fail, 0 on
+/// save)" cohort: Imp Sting, Quasit Claws, Purple Worm Tail Stinger. The
+/// `also_install` field optionally tacks on an `ApplyCondition` install
+/// on the SAME failed save — the Spider Bite / Ettercap Bite / Drow
+/// Poisoned Crossbow shape (extra damage AND a Poisoned/etc. condition
+/// share one save). When `also_install` is `None`, the chassis is pure
+/// save-or-damage; when `Some(...)`, the condition only installs on a
+/// failed save (matching the canonical "one save gates both riders"
+/// semantics).
+///
+/// Mirrors `WeaponWithSaveCondition`'s shape (constructors `melee` /
+/// `reach_melee`, ability-aware swing + Extra Attack chain). Distinct
+/// from `WeaponWithRider` (unconditional flat damage rider, no save) and
+/// from `WeaponWithSaveCondition` (rider is a condition install, not
+/// extra damage).
+///
+/// Replaces the ~120 lines of hand-rolled `impl Action` blocks that
+/// previously sat on each of Imp Sting / Quasit Claws / Purple Worm
+/// Tail Stinger / Spider Bite / Ettercap Bite / Drow Poisoned Crossbow.
+/// Each was the same 5-step skeleton (swing → bail-on-miss → save_or_
+/// damage_rider → optional condition install → return effects); only
+/// the dice / DC / typing differed.
+pub struct WeaponWithSaveDamage {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub attack_ability: AbilityScoreType,
+    pub damage_dice: Dice,
+    pub damage_type: DamageType,
+    pub reach: isize,
+    pub is_melee: bool,
+    pub save_ability: AbilityScoreType,
+    pub save_dc: i32,
+    pub rider_dice: Dice,
+    pub rider_type: DamageType,
+    pub rider_name: &'static str,
+    /// Optional condition install on a failed save. `None` for pure
+    /// save-or-damage (Imp Sting / Quasit Claws / Purple Worm Tail
+    /// Stinger); `Some((cond, timer))` for the save-damage-plus-
+    /// condition variant (Spider Bite / Ettercap Bite / Drow Poisoned
+    /// Crossbow). Same single save gates both riders — matches the RAW
+    /// shared-roll semantics.
+    pub also_install: Option<(Condition, ConditionTimer)>,
+}
+
+impl WeaponWithSaveDamage {
+    /// Const constructor for the standard "STR-or-DEX based 1H melee
+    /// swing whose hit forces a save-or-extra-damage rider" shape. Pins
+    /// `reach = MELEE_REACH`, `is_melee = true`, `also_install = None`.
+    /// For long-reach or ranged or condition-piggybacked variants, use
+    /// `reach_melee` / `ranged` / `melee_with_condition` instead.
+    #[allow(clippy::too_many_arguments)]
+    pub const fn melee(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        attack_ability: AbilityScoreType,
+        damage_dice: Dice,
+        damage_type: DamageType,
+        save_ability: AbilityScoreType,
+        save_dc: i32,
+        rider_dice: Dice,
+        rider_type: DamageType,
+        rider_name: &'static str,
+    ) -> Self {
+        Self {
+            display_name,
+            aliases,
+            attack_ability,
+            damage_dice,
+            damage_type,
+            reach: MELEE_REACH,
+            is_melee: true,
+            save_ability,
+            save_dc,
+            rider_dice,
+            rider_type,
+            rider_name,
+            also_install: None,
+        }
+    }
+
+    /// Long-reach melee variant — takes an explicit `reach` in tiles.
+    /// Pins `is_melee = true`, `also_install = None`. Mirrors
+    /// `WeaponWithSaveCondition::reach_melee` so the long-reach lane is
+    /// one declaration on every save-or-damage chassis instead of a
+    /// struct-literal sprawl.
+    #[allow(clippy::too_many_arguments)]
+    pub const fn reach_melee(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        attack_ability: AbilityScoreType,
+        damage_dice: Dice,
+        damage_type: DamageType,
+        save_ability: AbilityScoreType,
+        save_dc: i32,
+        rider_dice: Dice,
+        rider_type: DamageType,
+        rider_name: &'static str,
+        reach: isize,
+    ) -> Self {
+        Self {
+            display_name,
+            aliases,
+            attack_ability,
+            damage_dice,
+            damage_type,
+            reach,
+            is_melee: true,
+            save_ability,
+            save_dc,
+            rider_dice,
+            rider_type,
+            rider_name,
+            also_install: None,
+        }
+    }
+
+    /// Ranged variant — takes an explicit `reach` in tiles and pins
+    /// `is_melee = false` so the LOS gate fires. `also_install = None`.
+    /// Used for save-or-damage ranged shots like the Drow Poisoned
+    /// Hand Crossbow (the `also_install` field can still be flipped via
+    /// struct-literal init for the save-damage-plus-condition variant).
+    #[allow(clippy::too_many_arguments)]
+    pub const fn ranged(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        attack_ability: AbilityScoreType,
+        damage_dice: Dice,
+        damage_type: DamageType,
+        save_ability: AbilityScoreType,
+        save_dc: i32,
+        rider_dice: Dice,
+        rider_type: DamageType,
+        rider_name: &'static str,
+        reach: isize,
+    ) -> Self {
+        Self {
+            display_name,
+            aliases,
+            attack_ability,
+            damage_dice,
+            damage_type,
+            reach,
+            is_melee: false,
+            save_ability,
+            save_dc,
+            rider_dice,
+            rider_type,
+            rider_name,
+            also_install: None,
+        }
+    }
+}
+
+impl Action for WeaponWithSaveDamage {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.reach)
+    }
+    fn requires_los(&self) -> bool {
+        // Ranged variants need LOS like every other ranged attack; melee
+        // doesn't. Matches `SimpleWeapon`'s `is_melee`-gated LOS rule.
+        !self.is_melee
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        // Surface both the base and the rider type so the AI's damage-
+        // type lookahead (resistance / immunity gates) reads correctly.
+        // If they collide (rider == base), de-dup for cleanliness.
+        if self.rider_type == self.damage_type {
+            vec![self.damage_type]
+        } else {
+            vec![self.damage_type, self.rider_type]
+        }
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // Mirror `WeaponWithSaveCondition`'s swing-+-Extra-Attack chain so
+        // the rider lands on every successful hit in the chain (RAW:
+        // Extra Attack is a second swing, not a second action).
+        let swing = |e: &mut EncounterInstance| {
+            let (mut effects, dealt) = weapon_swing_with_damage(
+                e,
+                caster_id,
+                target_id,
+                self.display_name,
+                self.attack_ability,
+                self.damage_dice,
+                self.damage_type,
+                self.is_melee,
+                None,
+            );
+            if dealt == 0 {
+                return effects;
+            }
+            let save = save_or_damage_rider(
+                e,
+                target_id,
+                self.save_ability,
+                self.save_dc,
+                self.rider_dice,
+                self.rider_type,
+                self.rider_name,
+                &mut effects,
+            );
+            if let Some((condition, timer)) = self.also_install {
+                if !save.passed() {
+                    effects.push(Box::new(ApplyCondition {
+                        actor_id: target_id,
+                        condition,
+                        timer,
+                    }));
+                }
+            }
             effects
         };
         let mut effects = swing(encounter);
@@ -1176,74 +1459,28 @@ pub static ACID_SPIT: LazyLock<AcidSpit> = LazyLock::new(|| AcidSpit {});
 /// Giant-spider melee bite with a poison rider. Hit deals 1d10 piercing
 /// (the biting jaws); on hit, the target also makes a CON save vs DC 11
 /// — fail = 2d4 poison damage and Poisoned for 2 rounds.
-pub struct SpiderBite {}
-
-impl Action for SpiderBite {
-    fn name(&self) -> &str {
-        "spider bite"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["sbite"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Bludgeoning]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::ApplyCondition;
-        let target_id = match first_target_id(target_ids) {
-            Some(id) => id,
-            None => return Vec::new(),
-        };
-        let mut effects = simple_weapon_attack(
-            encounter,
-            caster_id,
-            target_ids,
-            self.name(),
-            AbilityScoreType::Strength,
-            Some(AbilityScoreType::Strength),
-            Dice::new(1, 10),
-            DamageType::Piercing,
-            true,
-        );
-        if effects.is_empty() {
-            return effects;
-        }
-        // Poison rider — separate save. On fail: extra poison damage AND
-        // Poisoned for 2 rounds.
-        let save = save_or_damage_rider(
-            encounter,
-            target_id,
-            AbilityScoreType::Constitution,
-            11,
-            Dice::new(2, 4),
-            DamageType::Poison,
-            "spider venom",
-            &mut effects,
-        );
-        if !save.passed() {
-            effects.push(Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Poisoned,
-                timer: ConditionTimer::Rounds(2),
-            }));
-        }
-        effects
-    }
-}
-pub static SPIDER_BITE: LazyLock<SpiderBite> = LazyLock::new(|| SpiderBite {});
+/// Spider Bite — STR-based 1d10+STR piercing melee with a CON DC 11
+/// save-or-2d4-poison-AND-Poisoned-2-rounds rider. The "extra damage AND
+/// condition both ride on the same failed save" shape — `also_install`
+/// is `Some((Poisoned, Rounds(2)))` so the chassis adds the condition
+/// install only when the save fails. Routes through the shared
+/// `WeaponWithSaveDamage` chassis alongside Ettercap Bite / Drow
+/// Poisoned Crossbow.
+pub static SPIDER_BITE: WeaponWithSaveDamage = WeaponWithSaveDamage {
+    display_name: "spider bite",
+    aliases: &["sbite"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_dice: Dice::new(1, 10),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    save_ability: AbilityScoreType::Constitution,
+    save_dc: 11,
+    rider_dice: Dice::new(2, 4),
+    rider_type: DamageType::Poison,
+    rider_name: "spider venom",
+    also_install: Some((Condition::Poisoned, ConditionTimer::Rounds(2))),
+};
 
 
 /// Greataxe — Orc-flavored heavy two-hander. STR-based 1d12 slashing,
@@ -1619,64 +1856,24 @@ pub static BANDIT_CAPTAIN_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multia
 /// a CON save (DC 11) for 2d10 poison rider damage. Showcases the
 /// "weapon attack + ability save rider" pattern using the SimpleWeapon
 /// + custom side-effect blend.
-pub struct ImpSting {}
-
-impl Action for ImpSting {
-    fn name(&self) -> &str {
-        "sting"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["st", "imp-sting"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Piercing, DamageType::Poison]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        let mut effects = simple_weapon_attack(
-            encounter,
-            caster_id,
-            target_ids,
-            self.name(),
-            AbilityScoreType::Dexterity,
-            Some(AbilityScoreType::Dexterity),
-            Dice::new(1, 4),
-            DamageType::Piercing,
-            true,
-        );
-        if effects.is_empty() {
-            return effects;
-        }
-        save_or_damage_rider(
-            encounter,
-            target_id,
-            AbilityScoreType::Constitution,
-            11,
-            Dice::new(2, 10),
-            DamageType::Poison,
-            "imp venom",
-            &mut effects,
-        );
-        effects
-    }
-}
-
-pub static IMP_STING: LazyLock<ImpSting> = LazyLock::new(|| ImpSting {});
+/// Imp Sting — DEX-based 1d4+DEX piercing melee with a CON DC 11
+/// save-or-2d10-poison rider. Routes through the shared
+/// `WeaponWithSaveDamage` chassis alongside Quasit Claws / Purple Worm
+/// Tail Stinger — same "weapon hit + save-or-typed-damage" shape, only
+/// the dice / DC / typing differ. The "all damage on fail, zero on
+/// save" semantics match the canonical save_or_damage_rider chokepoint.
+pub static IMP_STING: WeaponWithSaveDamage = WeaponWithSaveDamage::melee(
+    "sting",
+    &["st", "imp-sting"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 4),
+    DamageType::Piercing,
+    AbilityScoreType::Constitution,
+    11,
+    Dice::new(2, 10),
+    DamageType::Poison,
+    "imp venom",
+);
 
 /// Frightful Presence — bonus action AoE save effect: every enemy within
 /// 6 tiles makes a WIS save (DC 11) or is Frightened for 3 rounds.
@@ -3974,77 +4171,30 @@ pub static DRAGON_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
 /// 2 rounds (we collapse the 5e "unconscious for 1 hour on fail-by-5"
 /// clause into a simple Poisoned). Mirrors the Drow's signature
 /// crossbow-and-venom pattern from the Monster Manual.
-pub struct DrowPoisonedCrossbow {}
-
-impl Action for DrowPoisonedCrossbow {
-    fn name(&self) -> &str {
-        "poisoned hand crossbow"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["phcb", "drowbow"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(12)
-    }
-    fn requires_los(&self) -> bool {
-        true
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Piercing, DamageType::Poison]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::ApplyCondition;
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        let mut effects = simple_weapon_attack(
-            encounter,
-            caster_id,
-            target_ids,
-            self.name(),
-            AbilityScoreType::Dexterity,
-            Some(AbilityScoreType::Dexterity),
-            Dice::new(1, 6),
-            DamageType::Piercing,
-            false,
-        );
-        // Miss = no rider.
-        if effects.is_empty() {
-            return effects;
-        }
-        let save = save_or_damage_rider(
-            encounter,
-            target_id,
-            AbilityScoreType::Constitution,
-            13,
-            Dice::new(2, 4),
-            DamageType::Poison,
-            "drow poison",
-            &mut effects,
-        );
-        if !save.passed() {
-            effects.push(Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Poisoned,
-                timer: ConditionTimer::Rounds(2),
-            }));
-        }
-        effects
-    }
-}
-
-pub static DROW_POISONED_CROSSBOW: LazyLock<DrowPoisonedCrossbow> =
-    LazyLock::new(|| DrowPoisonedCrossbow {});
+/// Drow Poisoned Hand Crossbow — DEX-based 1d6+DEX piercing ranged
+/// shot at reach 12 tiles (30 ft) with a CON DC 13 save-or-2d4-poison-
+/// AND-Poisoned-2-rounds rider. Routes through the shared
+/// `WeaponWithSaveDamage` chassis (ranged variant) with
+/// `also_install = Some((Poisoned, Rounds(2)))`, mirroring the Spider
+/// Bite / Ettercap Bite shape. The 2-round Poisoned timer is a tighter
+/// proxy for RAW's 1-hour "magically poisoned by drow knock-out venom"
+/// duration; the engine compresses to keep the rider relevant without
+/// permanently disabling the target across an encounter.
+pub static DROW_POISONED_CROSSBOW: WeaponWithSaveDamage = WeaponWithSaveDamage {
+    display_name: "poisoned hand crossbow",
+    aliases: &["phcb", "drowbow"],
+    attack_ability: AbilityScoreType::Dexterity,
+    damage_dice: Dice::new(1, 6),
+    damage_type: DamageType::Piercing,
+    reach: 12,
+    is_melee: false,
+    save_ability: AbilityScoreType::Constitution,
+    save_dc: 13,
+    rider_dice: Dice::new(2, 4),
+    rider_type: DamageType::Poison,
+    rider_name: "drow poison",
+    also_install: Some((Condition::Poisoned, ConditionTimer::Rounds(2))),
+};
 
 /// Frost Giant Greataxe — STR-based 3d12 slashing melee, reach 2 (10 ft).
 /// One of the heaviest single-swing weapons in the bestiary: dice on par
@@ -8687,68 +8837,23 @@ pub static BULLYWUG_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundA
 // ─── Quasit ──────────────────────────────────────────────────────────
 
 /// Quasit Claws — DEX-based 1d4+DEX piercing melee with a CON save (DC 10)
-/// for 2d4 poison rider on fail. Same "weapon + save-rider" shape as
-/// `ImpSting` — Quasits are a chaotic-evil mirror of the Imp's lawful-evil
-/// devil chassis, sharing the tiny-fiend stat envelope and the poisoned
-/// natural attack pattern.
-pub struct QuasitClaws {}
-
-impl Action for QuasitClaws {
-    fn name(&self) -> &str {
-        "claws"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["cl", "quasit-claws"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Piercing, DamageType::Poison]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        let mut effects = simple_weapon_attack(
-            encounter,
-            caster_id,
-            target_ids,
-            self.name(),
-            AbilityScoreType::Dexterity,
-            Some(AbilityScoreType::Dexterity),
-            Dice::new(1, 4),
-            DamageType::Piercing,
-            true,
-        );
-        if effects.is_empty() {
-            return effects;
-        }
-        save_or_damage_rider(
-            encounter,
-            target_id,
-            AbilityScoreType::Constitution,
-            10,
-            Dice::new(2, 4),
-            DamageType::Poison,
-            "quasit venom",
-            &mut effects,
-        );
-        effects
-    }
-}
-
-pub static QUASIT_CLAWS: LazyLock<QuasitClaws> = LazyLock::new(|| QuasitClaws {});
+/// for 2d4 poison rider on fail. Quasits are a chaotic-evil mirror of
+/// the Imp's lawful-evil devil chassis — they share the tiny-fiend stat
+/// envelope and the poisoned-natural-attack pattern. Routes through the
+/// shared `WeaponWithSaveDamage` chassis alongside Imp Sting / Purple
+/// Worm Tail Stinger — same "weapon hit + save-or-typed-damage" shape.
+pub static QUASIT_CLAWS: WeaponWithSaveDamage = WeaponWithSaveDamage::melee(
+    "claws",
+    &["cl", "quasit-claws"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 4),
+    DamageType::Piercing,
+    AbilityScoreType::Constitution,
+    10,
+    Dice::new(2, 4),
+    DamageType::Poison,
+    "quasit venom",
+);
 
 /// Quasit Scare — single-target action at 4-tile (20 ft) range. The target
 /// makes a WIS save vs DC 10; on fail they're Frightened for 1 round (RAW:
@@ -10551,70 +10656,22 @@ pub static SPIRIT_NAGA_BITE: LazyLock<SpiritNagaBite> =
 /// timer (Rounds(5)) as the closest mechanical equivalent. The save is
 /// rolled once per bite; multiple bites in the same multi each roll
 /// independently (matching the per-attack save shape of every other
-/// "weapon hit + save" rider in the codebase).
-pub struct OtyughBite {}
-
-impl Action for OtyughBite {
-    fn name(&self) -> &str {
-        "otyugh bite"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["obite", "otyugh-bite"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Piercing]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        let mut effects = simple_weapon_attack(
-            encounter,
-            caster_id,
-            target_ids,
-            self.name(),
-            AbilityScoreType::Strength,
-            Some(AbilityScoreType::Strength),
-            Dice::new(2, 8),
-            DamageType::Piercing,
-            true,
-        );
-        // Disease rider only on a confirmed hit — bail if the bite missed.
-        if effects.is_empty() {
-            return effects;
-        }
-        // CON 15 RAW "or contract disease". We model the disease via the
-        // Poisoned condition for `Rounds(5)` — enough to be a real
-        // mid-fight debuff without the "until cured" indefinite tag that
-        // the engine doesn't track.
-        save_or_condition_rider(
-            encounter,
-            target_id,
-            AbilityScoreType::Constitution,
-            15,
-            Condition::Poisoned,
-            ConditionTimer::Rounds(5),
-            "otyugh disease",
-            &mut effects,
-        );
-        effects
-    }
-}
-
-pub static OTYUGH_BITE: LazyLock<OtyughBite> = LazyLock::new(|| OtyughBite {});
+/// "weapon hit + save" rider in the codebase). Routes through the shared
+/// `WeaponWithSaveCondition` chassis so the save + condition install
+/// lives at one chokepoint alongside the bearded-devil-beard / horned-
+/// devil-tail / constrictor / giant-octopus cohort.
+pub static OTYUGH_BITE: WeaponWithSaveCondition = WeaponWithSaveCondition::melee(
+    "otyugh bite",
+    &["obite", "otyugh-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Piercing,
+    AbilityScoreType::Constitution,
+    15,
+    Condition::Poisoned,
+    ConditionTimer::Rounds(5),
+    "otyugh disease",
+);
 
 /// Otyugh Tentacle — STR-based 1d8+STR bludgeoning + 1d8 piercing rider
 /// melee at reach 2 (10 ft RAW for the otyugh's prehensile tentacles).
@@ -10706,7 +10763,7 @@ pub static OTYUGH_TENTACLE: LazyLock<OtyughTentacle> =
 /// tentacle's reach envelope.
 pub static OTYUGH_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
     display_name: "otyugh multiattack",
-    parts: vec![(&*OTYUGH_TENTACLE, 2), (&*OTYUGH_BITE, 1)],
+    parts: vec![(&*OTYUGH_TENTACLE, 2), (&OTYUGH_BITE, 1)],
 });
 
 // ─── Sprite ──────────────────────────────────────────────────────────
@@ -11291,84 +11348,27 @@ pub static WERETIGER_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Compound
 // ─── Ettercap ────────────────────────────────────────────────────────
 
 /// Ettercap Bite — STR-based 1d8+STR piercing melee with a CON save
-/// (DC 11) for an extra 2d4 poison damage on fail. Mirrors the
-/// `SpiderBite` rider shape — RAW: "Bite. Melee Weapon Attack: +4 to
-/// hit, reach 5 ft., one creature. Hit: 6 (1d8+2) piercing damage plus
-/// 4 (1d8) poison damage. The target must succeed on a DC 11 CON saving
-/// throw or be Poisoned for 1 minute." We collapse the "extra damage +
-/// Poisoned condition" both onto a single failed save, matching the
-/// shared `save_or_damage_rider` / `save_or_condition_rider` cohort.
-pub struct EttercapBite {}
+/// (DC 11) for an extra 2d4 poison damage AND a Poisoned condition (2
+/// rounds, tighter proxy for RAW's 1-minute / ~10 round duration) on
+/// fail. Same "extra damage + condition both ride one save" shape as
+/// Spider Bite — routes through the shared `WeaponWithSaveDamage`
+/// chassis with `also_install = Some((Poisoned, Rounds(2)))`.
+pub static ETTERCAP_BITE: WeaponWithSaveDamage = WeaponWithSaveDamage {
+    display_name: "ettercap bite",
+    aliases: &["ebite", "ettercap-bite"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_dice: Dice::new(1, 8),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    save_ability: AbilityScoreType::Constitution,
+    save_dc: 11,
+    rider_dice: Dice::new(2, 4),
+    rider_type: DamageType::Poison,
+    rider_name: "ettercap venom",
+    also_install: Some((Condition::Poisoned, ConditionTimer::Rounds(2))),
+};
 
-impl Action for EttercapBite {
-    fn name(&self) -> &str {
-        "ettercap bite"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["ebite", "ettercap-bite"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Piercing, DamageType::Poison]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::ApplyCondition;
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        let mut effects = simple_weapon_attack(
-            encounter,
-            caster_id,
-            target_ids,
-            self.name(),
-            AbilityScoreType::Strength,
-            Some(AbilityScoreType::Strength),
-            Dice::new(1, 8),
-            DamageType::Piercing,
-            true,
-        );
-        if effects.is_empty() {
-            return effects;
-        }
-        // Poison rider — on fail: extra 2d4 poison damage AND Poisoned 2
-        // rounds. Same shared-save shape as Spider Bite. The 2-round
-        // timer is a tighter proxy for RAW's 1-minute (~10 rounds)
-        // duration to keep the rider relevant without permanently
-        // disabling the target.
-        let save = save_or_damage_rider(
-            encounter,
-            target_id,
-            AbilityScoreType::Constitution,
-            11,
-            Dice::new(2, 4),
-            DamageType::Poison,
-            "ettercap venom",
-            &mut effects,
-        );
-        if !save.passed() {
-            effects.push(Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Poisoned,
-                timer: ConditionTimer::Rounds(2),
-            }));
-        }
-        effects
-    }
-}
-
-pub static ETTERCAP_BITE: LazyLock<EttercapBite> = LazyLock::new(|| EttercapBite {});
 
 /// Ettercap Claws — STR-based 2d4+STR slashing melee. The chitin-tipped
 /// secondary swing of the ettercap's bite + claws multi. Vanilla
@@ -11387,7 +11387,7 @@ pub static ETTERCAP_CLAWS: SimpleWeapon = SimpleWeapon::melee(
 /// bite, slashing from the claws); the bite carries the venom rider.
 pub static ETTERCAP_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
     display_name: "ettercap multiattack",
-    parts: vec![(&*ETTERCAP_BITE, 1), (&ETTERCAP_CLAWS, 1)],
+    parts: vec![(&ETTERCAP_BITE, 1), (&ETTERCAP_CLAWS, 1)],
 });
 
 /// Ettercap Web — ranged 30 ft single-target restraint, no attack roll.
@@ -11705,69 +11705,22 @@ pub static BEARDED_DEVIL_GLAIVE: SimpleWeapon = SimpleWeapon::reach_melee(
 /// the engine's standard `Poisoned` condition (which already imposes
 /// disadvantage on attacks and ability checks); the no-healing clause
 /// is dropped since healing isn't a tactically-load-bearing axis in
-/// most combat scenarios this engine simulates.
-pub struct BeardedDevilBeard {}
-
-impl Action for BeardedDevilBeard {
-    fn name(&self) -> &str {
-        "bearded devil beard"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["beard", "barbazu-beard"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Piercing]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        let mut effects = simple_weapon_attack(
-            encounter,
-            caster_id,
-            target_ids,
-            self.name(),
-            AbilityScoreType::Strength,
-            Some(AbilityScoreType::Strength),
-            Dice::new(1, 8),
-            DamageType::Piercing,
-            true,
-        );
-        if effects.is_empty() {
-            return effects;
-        }
-        // CON save vs DC 12 or Poisoned 3 rounds. Same chassis as the
-        // lycanthrope curse rider — the engine's condition-immunity
-        // chokepoint handles the no-op install for poison-immune targets.
-        save_or_condition_rider(
-            encounter,
-            target_id,
-            AbilityScoreType::Constitution,
-            12,
-            Condition::Poisoned,
-            ConditionTimer::Rounds(3),
-            "infernal beard",
-            &mut effects,
-        );
-        effects
-    }
-}
-
-pub static BEARDED_DEVIL_BEARD: LazyLock<BeardedDevilBeard> =
-    LazyLock::new(|| BeardedDevilBeard {});
+/// most combat scenarios this engine simulates. Routes through the
+/// shared `WeaponWithSaveCondition` chassis so the save + condition
+/// install lives at one chokepoint alongside the wolf-trip / constrictor
+/// / giant-octopus cohort.
+pub static BEARDED_DEVIL_BEARD: WeaponWithSaveCondition = WeaponWithSaveCondition::melee(
+    "bearded devil beard",
+    &["beard", "barbazu-beard"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 8),
+    DamageType::Piercing,
+    AbilityScoreType::Constitution,
+    12,
+    Condition::Poisoned,
+    ConditionTimer::Rounds(3),
+    "infernal beard",
+);
 
 /// Bearded Devil Multiattack — 1 glaive + 1 beard per Action via
 /// `CompoundAttack`. Heterogeneous compound (slashing + piercing) — the
@@ -11775,7 +11728,7 @@ pub static BEARDED_DEVIL_BEARD: LazyLock<BeardedDevilBeard> =
 /// lane. Same shape as the Werewolf / Werebear / Wereboar multi.
 pub static BEARDED_DEVIL_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
     display_name: "bearded devil multiattack",
-    parts: vec![(&BEARDED_DEVIL_GLAIVE, 1), (&*BEARDED_DEVIL_BEARD, 1)],
+    parts: vec![(&BEARDED_DEVIL_GLAIVE, 1), (&BEARDED_DEVIL_BEARD, 1)],
 });
 
 // ─── Blink Dog ───────────────────────────────────────────────────────
@@ -12247,68 +12200,33 @@ pub static HORNED_DEVIL_FORK: SimpleWeapon = SimpleWeapon::reach_melee(
 /// One save per turn at end-of-turn to shake the wound (rolled by the
 /// `ROUND_END_SAVES` table that already wires Poisoned cleanup) would
 /// fit cleanly here as future polish.
-pub struct HornedDevilTail {}
-
-impl Action for HornedDevilTail {
-    fn name(&self) -> &str {
-        "horned devil tail"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["tail", "horned-tail"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(2)
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Piercing]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        let (mut effects, damage) = weapon_swing_with_damage(
-            encounter,
-            caster_id,
-            target_id,
-            "horned devil tail",
-            AbilityScoreType::Strength,
-            Dice::new(1, 8),
-            DamageType::Piercing,
-            true,
-            None,
-        );
-        if damage == 0 {
-            return effects;
-        }
-        // Infernal Wound: CON save DC 17 vs Poisoned (10 rounds) as the
-        // proxy for RAW's no-regen + 10-ongoing-damage clause. The save +
-        // condition install routes through the standard chokepoint so
-        // poison-immune targets shrug it off cleanly.
-        save_or_condition_rider(
-            encounter,
-            target_id,
-            AbilityScoreType::Constitution,
-            17,
-            Condition::Poisoned,
-            ConditionTimer::Rounds(10),
-            "infernal wound",
-            &mut effects,
-        );
-        effects
-    }
-}
-
-pub static HORNED_DEVIL_TAIL: LazyLock<HornedDevilTail> = LazyLock::new(|| HornedDevilTail {});
+/// Horned Devil Tail — STR-based 1d8+STR piercing melee at reach 2
+/// tiles (10 ft — the horned devil's barbed prehensile tail strikes
+/// from outside normal melee range). On hit, target makes a CON save vs
+/// DC 17 or picks up the `Poisoned` condition for 10 rounds as the
+/// in-engine proxy for RAW's "Infernal Wound" (no HP regain + 10
+/// ongoing damage per turn) clause — we approximate the no-regen + DoT
+/// clause with the standard Poisoned envelope (disadvantage on attacks
+/// / ability checks) since the engine doesn't yet have a per-actor
+/// "blocks healing" flag.
+///
+/// Routes through the shared `WeaponWithSaveCondition` chassis (long-
+/// reach variant) so the save + condition install lives at one
+/// chokepoint alongside the bearded-devil-beard / constrictor / giant-
+/// octopus cohort.
+pub static HORNED_DEVIL_TAIL: WeaponWithSaveCondition = WeaponWithSaveCondition::reach_melee(
+    "horned devil tail",
+    &["tail", "horned-tail"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 8),
+    DamageType::Piercing,
+    AbilityScoreType::Constitution,
+    17,
+    Condition::Poisoned,
+    ConditionTimer::Rounds(10),
+    "infernal wound",
+    2,
+);
 
 /// Horned Devil Multiattack — 2 forks + 1 tail per Action via the
 /// shared `CompoundAttack` chassis. Heterogeneous compound — the forks
@@ -12318,7 +12236,7 @@ pub static HORNED_DEVIL_TAIL: LazyLock<HornedDevilTail> = LazyLock::new(|| Horne
 /// first sub-attack's reach via `reach_tiles`.
 pub static HORNED_DEVIL_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
     display_name: "horned devil multiattack",
-    parts: vec![(&HORNED_DEVIL_FORK, 2), (&*HORNED_DEVIL_TAIL, 1)],
+    parts: vec![(&HORNED_DEVIL_FORK, 2), (&HORNED_DEVIL_TAIL, 1)],
 });
 
 /// Horned Devil Hurled Flame — ranged spell-attack-style fire bolt at 150
@@ -12640,69 +12558,22 @@ pub static CONSTRICTOR_SNAKE_BITE: SimpleWeapon = SimpleWeapon::melee(
 /// Constrictor Snake Constrict — STR-based 1d8+STR bludgeoning melee. On
 /// a hit, the target makes a DC 14 STR save vs **Constrict**: on fail,
 /// picks up the `Grappled` condition for 10 rounds (RAW: "until this
-/// grapple ends"). The save + condition install routes through the
-/// shared `save_or_condition_rider` chokepoint so grapple-immune targets
-/// (the elemental envelope, large-or-larger creatures vs a Medium snake)
-/// shrug it off cleanly.
-pub struct ConstrictorSnakeConstrict {}
-
-impl Action for ConstrictorSnakeConstrict {
-    fn name(&self) -> &str {
-        "constrict"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["constrict", "constrictor-constrict"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Bludgeoning]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        let (mut effects, damage) = weapon_swing_with_damage(
-            encounter,
-            caster_id,
-            target_id,
-            "constrict",
-            AbilityScoreType::Strength,
-            Dice::new(1, 8),
-            DamageType::Bludgeoning,
-            true,
-            None,
-        );
-        if damage == 0 {
-            return effects;
-        }
-        save_or_condition_rider(
-            encounter,
-            target_id,
-            AbilityScoreType::Strength,
-            14,
-            Condition::Grappled,
-            ConditionTimer::Rounds(10),
-            "constrict",
-            &mut effects,
-        );
-        effects
-    }
-}
-
-pub static CONSTRICTOR_SNAKE_CONSTRICT: LazyLock<ConstrictorSnakeConstrict> =
-    LazyLock::new(|| ConstrictorSnakeConstrict {});
+/// grapple ends"). Routes through the shared `WeaponWithSaveCondition`
+/// chassis so the save + condition install lives at one chokepoint —
+/// the grapple-immune envelope (elementals / oversized creatures) shrugs
+/// it off via the standard `add_condition` gate.
+pub static CONSTRICTOR_SNAKE_CONSTRICT: WeaponWithSaveCondition = WeaponWithSaveCondition::melee(
+    "constrict",
+    &["constrict", "constrictor-constrict"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 8),
+    DamageType::Bludgeoning,
+    AbilityScoreType::Strength,
+    14,
+    Condition::Grappled,
+    ConditionTimer::Rounds(10),
+    "constrict",
+);
 
 /// Giant Constrictor Snake Bite — STR-based 2d6+STR piercing melee with a
 /// flat 1d4 poison rider at reach 2 tiles (10ft — the huge serpent's
@@ -12727,66 +12598,23 @@ pub static GIANT_CONSTRICTOR_SNAKE_BITE: WeaponWithRider = WeaponWithRider {
 /// On hit, the target makes a DC 16 STR save vs **Constrict**: on fail,
 /// picks up the `Grappled` condition for 10 rounds. Higher DC than the
 /// regular constrictor's DC 14 — the giant snake's coils are much harder
-/// to break.
-pub struct GiantConstrictorSnakeConstrict {}
-
-impl Action for GiantConstrictorSnakeConstrict {
-    fn name(&self) -> &str {
-        "giant constrict"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["giant-constrict", "gcs-constrict"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(2)
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Bludgeoning]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        let (mut effects, damage) = weapon_swing_with_damage(
-            encounter,
-            caster_id,
-            target_id,
-            "giant constrict",
-            AbilityScoreType::Strength,
-            Dice::new(2, 8),
-            DamageType::Bludgeoning,
-            true,
-            None,
-        );
-        if damage == 0 {
-            return effects;
-        }
-        save_or_condition_rider(
-            encounter,
-            target_id,
-            AbilityScoreType::Strength,
-            16,
-            Condition::Grappled,
-            ConditionTimer::Rounds(10),
-            "giant constrict",
-            &mut effects,
-        );
-        effects
-    }
-}
-
-pub static GIANT_CONSTRICTOR_SNAKE_CONSTRICT: LazyLock<GiantConstrictorSnakeConstrict> =
-    LazyLock::new(|| GiantConstrictorSnakeConstrict {});
+/// to break. Routes through the shared `WeaponWithSaveCondition` chassis
+/// (long-reach variant) so the save + condition install lives at one
+/// chokepoint alongside the regular constrictor.
+pub static GIANT_CONSTRICTOR_SNAKE_CONSTRICT: WeaponWithSaveCondition =
+    WeaponWithSaveCondition::reach_melee(
+        "giant constrict",
+        &["giant-constrict", "gcs-constrict"],
+        AbilityScoreType::Strength,
+        Dice::new(2, 8),
+        DamageType::Bludgeoning,
+        AbilityScoreType::Strength,
+        16,
+        Condition::Grappled,
+        ConditionTimer::Rounds(10),
+        "giant constrict",
+        2,
+    );
 
 // ─── Marid ───────────────────────────────────────────────────────────
 
@@ -13530,75 +13358,24 @@ pub static PURPLE_WORM_BITE: SimpleWeapon = SimpleWeapon::reach_melee(
 ///
 /// Showcases the "weapon hit + save-or-poison-damage" pattern shared
 /// by Imp Sting, Spider Bite, Wyvern Stinger, and now Purple Worm
-/// Tail Stinger — the rider chassis is the same; only the dice and
-/// DC differ.
-pub struct PurpleWormTailStinger {}
-
-impl Action for PurpleWormTailStinger {
-    fn name(&self) -> &str {
-        "purple worm tail stinger"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["pw-stinger", "worm-stinger", "tail-stinger"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(2)
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Piercing, DamageType::Poison]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        // Resolve the piercing base swing first; rider only fires on a
-        // confirmed hit (RAW: "the target must make a Constitution
-        // saving throw" only applies "on a hit").
-        let (mut effects, damage) = weapon_swing_with_damage(
-            encounter,
-            caster_id,
-            target_id,
-            "purple worm tail stinger",
-            AbilityScoreType::Strength,
-            Dice::new(3, 6),
-            DamageType::Piercing,
-            true,
-            None,
-        );
-        if damage == 0 {
-            return effects;
-        }
-        // DC 19 CON save — 7d6 poison on a failed save. Half-on-save is
-        // collapsed to all-or-nothing via the shared
-        // `save_or_damage_rider` chokepoint (matches Spider Bite /
-        // Wyvern Stinger). Per-target poison resistance / immunity is
-        // honored by the standard damage pipeline.
-        save_or_damage_rider(
-            encounter,
-            target_id,
-            AbilityScoreType::Constitution,
-            19,
-            Dice::new(7, 6),
-            DamageType::Poison,
-            "purple worm venom",
-            &mut effects,
-        );
-        effects
-    }
-}
-
-pub static PURPLE_WORM_TAIL_STINGER: LazyLock<PurpleWormTailStinger> =
-    LazyLock::new(|| PurpleWormTailStinger {});
+/// Tail Stinger — routes through the shared `WeaponWithSaveDamage`
+/// chassis (long-reach variant). Half-on-save is collapsed to all-or-
+/// nothing via the shared `save_or_damage_rider` chokepoint (matches
+/// Imp Sting / Quasit Claws); per-target poison resistance / immunity
+/// is honored by the standard damage pipeline.
+pub static PURPLE_WORM_TAIL_STINGER: WeaponWithSaveDamage = WeaponWithSaveDamage::reach_melee(
+    "purple worm tail stinger",
+    &["pw-stinger", "worm-stinger", "tail-stinger"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 6),
+    DamageType::Piercing,
+    AbilityScoreType::Constitution,
+    19,
+    Dice::new(7, 6),
+    DamageType::Poison,
+    "purple worm venom",
+    2,
+);
 
 /// Purple Worm Multiattack — 1 bite + 1 tail stinger per Action via the
 /// shared `CompoundAttack` chassis. The bite is the bulk-damage limb
@@ -13610,7 +13387,7 @@ pub static PURPLE_WORM_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Compou
     display_name: "purple worm multiattack",
     parts: vec![
         (&PURPLE_WORM_BITE, 1),
-        (&*PURPLE_WORM_TAIL_STINGER, 1),
+        (&PURPLE_WORM_TAIL_STINGER, 1),
     ],
 });
 
@@ -13796,4 +13573,73 @@ pub static ALLIP_MADDENING_TOUCH: WeaponWithSaveCondition =
         ConditionTimer::Rounds(3),
         "babbling madness",
     );
+
+// ─── Giant Octopus ───────────────────────────────────────────────────
+
+/// Giant Octopus Tentacles — STR-based 2d6+STR bludgeoning melee at
+/// reach 3 tiles (15 ft — the eight-armed embrace of a Large cephalopod
+/// strikes from outside normal melee range). On hit, the target makes a
+/// DC 16 STR save vs **Tentacles**: on fail, picks up the `Restrained`
+/// condition for 10 rounds. Routes through the shared
+/// `WeaponWithSaveCondition` chassis (long-reach variant) alongside the
+/// Giant Constrictor Snake's Constrict — same shape, just a different
+/// save DC and tile reach.
+///
+/// RAW: "the target is grappled (escape DC 16). Until this grapple ends,
+/// the target is restrained, and the octopus can't use its tentacles on
+/// another target." We model the load-bearing portion as `Restrained`
+/// directly (which subsumes Grappled's movement-zero and adds the
+/// attack-disadvantage + advantage-to-attackers + DEX-save-disadvantage
+/// envelope the RAW grapple-then-restrain chain produces). The "can't
+/// tentacle another target while holding this one" clause is omitted —
+/// the engine has no per-action target-lock and Restrained's stat
+/// envelope on the target is the meaningful payoff. Distinct from
+/// `Adhered` (Mimic) so cleanse pickers / dispel sweeps target the
+/// tentacle grasp specifically.
+pub static GIANT_OCTOPUS_TENTACLES: WeaponWithSaveCondition =
+    WeaponWithSaveCondition::reach_melee(
+        "giant octopus tentacles",
+        &["tentacles", "octopus-tentacles", "octo-grab"],
+        AbilityScoreType::Strength,
+        Dice::new(2, 6),
+        DamageType::Bludgeoning,
+        AbilityScoreType::Strength,
+        16,
+        Condition::Restrained,
+        ConditionTimer::Rounds(10),
+        "tentacles",
+        3,
+    );
+
+// ─── Plesiosaurus ────────────────────────────────────────────────────
+
+/// Plesiosaurus Bite — STR-based 3d6+STR piercing melee at reach 2
+/// tiles (10 ft — the long-necked aquatic reptile lashes out from
+/// outside normal melee range). Vanilla `SimpleWeapon::reach_melee` —
+/// the bite is pure damage; the plesiosaurus has no rider clause and
+/// relies on its long-necked reach + huge HP bar (CR 2 ~68 HP, the
+/// fattest in its CR bracket alongside the Giant Constrictor Snake).
+pub static PLESIOSAURUS_BITE: SimpleWeapon = SimpleWeapon::reach_melee(
+    "plesiosaurus bite",
+    &["plesio-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 6),
+    DamageType::Piercing,
+    2,
+);
+
+// ─── Pteranodon ──────────────────────────────────────────────────────
+
+/// Pteranodon Bite — STR-based 2d4+STR piercing melee. Vanilla
+/// `SimpleWeapon::melee` — the flying reptile's snapping beak is pure
+/// damage; the pteranodon's threat profile sits on its fly speed
+/// (which we collapse to a high ground speed since the engine isn't
+/// 3D) rather than a per-swing rider.
+pub static PTERANODON_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "pteranodon bite",
+    &["ptero-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 4),
+    DamageType::Piercing,
+);
 

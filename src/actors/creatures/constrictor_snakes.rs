@@ -37,7 +37,7 @@ use std::sync::LazyLock;
 pub static CONSTRICTOR_SNAKE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&CONSTRICTOR_SNAKE_BITE);
-    actions.push(&*CONSTRICTOR_SNAKE_CONSTRICT);
+    actions.push(&CONSTRICTOR_SNAKE_CONSTRICT);
     CreatureTemplate {
         name: "Constrictor Snake",
         // 'n' (lowercase) — distinct from 'N' (Nalfeshnee / Nothic) and
@@ -90,7 +90,7 @@ pub static CONSTRICTOR_SNAKE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
 pub static GIANT_CONSTRICTOR_SNAKE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&GIANT_CONSTRICTOR_SNAKE_BITE);
-    actions.push(&*GIANT_CONSTRICTOR_SNAKE_CONSTRICT);
+    actions.push(&GIANT_CONSTRICTOR_SNAKE_CONSTRICT);
     CreatureTemplate {
         name: "Giant Constrictor Snake",
         // 'N' (uppercase) — sibling glyph to the 'n' constrictor; the

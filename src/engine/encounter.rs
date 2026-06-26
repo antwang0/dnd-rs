@@ -185,6 +185,9 @@ use crate::actors::creatures::daos::DAO_TEMPLATE;
 use crate::actors::creatures::invisible_stalkers::INVISIBLE_STALKER_TEMPLATE;
 use crate::actors::creatures::mammoths::MAMMOTH_TEMPLATE;
 use crate::actors::creatures::purple_worms::PURPLE_WORM_TEMPLATE;
+use crate::actors::creatures::giant_octopuses::GIANT_OCTOPUS_TEMPLATE;
+use crate::actors::creatures::plesiosauruses::PLESIOSAURUS_TEMPLATE;
+use crate::actors::creatures::pteranodons::PTERANODON_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -3249,6 +3252,29 @@ impl EncounterInstance {
             // huge-beast bench between Cyclops (CR 6 giant) and Roc
             // (CR 11 huge beast).
             &MAMMOTH_TEMPLATE,
+            // Aquatic + dino cohort:
+            //   - Giant Octopus (CR 1 large beast): reach-3 tentacles
+            //     (2d6+STR bludgeoning) with a DC 16 STR save-or-
+            //     Restrained rider for 10 rounds. Routes through the
+            //     `WeaponWithSaveCondition` chassis (long-reach variant)
+            //     alongside the Giant Constrictor Snake. The reach-3
+            //     standoff + Restrained envelope (movement-zero +
+            //     attack-disadvantage + advantage-to-attackers +
+            //     DEX-save-disadvantage) is the load-bearing combat
+            //     identity at CR 1 — heavier lock-down than the
+            //     constrictor's plain Grappled at one extra tile of
+            //     reach.
+            //   - Plesiosaurus (CR 2 large beast): reach-2 bite (3d6+STR
+            //     piercing) on a ~68 HP envelope. Vanilla heavy biter —
+            //     no rider; the threat profile is fat HP + long-neck
+            //     standoff. Fills the CR-2 spot under the Triceratops
+            //     (CR 5) and T-Rex (CR 8) apex dinos.
+            //   - Pteranodon (CR ¼ medium beast): vanilla 2d4 bite on a
+            //     fly-derived speed of 60. The swarm-tier flying-dino
+            //     filler; mobility is the threat profile, not damage.
+            &GIANT_OCTOPUS_TEMPLATE,
+            &PLESIOSAURUS_TEMPLATE,
+            &PTERANODON_TEMPLATE,
         ]
     }
 
@@ -14262,7 +14288,7 @@ mod tests {
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
             .unwrap();
         let aei = ActionExecutionInfo::new(
-            &*IMP_STING,
+            &IMP_STING,
             imp,
             Some(vec![target]),
             None,

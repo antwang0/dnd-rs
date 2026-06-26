@@ -210,3 +210,6 @@ pub mod purple_worms;
 pub mod devas;
 pub mod quaggoths;
 pub mod allips;
+pub mod giant_octopuses;
+pub mod plesiosauruses;
+pub mod pteranodons;
