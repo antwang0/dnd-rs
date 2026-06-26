@@ -193,6 +193,11 @@ use crate::actors::creatures::tribal_warriors::TRIBAL_WARRIOR_TEMPLATE;
 use crate::actors::creatures::scouts::SCOUT_TEMPLATE;
 use crate::actors::creatures::giant_rats::GIANT_RAT_TEMPLATE;
 use crate::actors::creatures::ghasts::GHAST_TEMPLATE;
+use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+use crate::actors::creatures::mastiffs::MASTIFF_TEMPLATE;
+use crate::actors::creatures::guards::GUARD_TEMPLATE;
+use crate::actors::creatures::grimlocks::GRIMLOCK_TEMPLATE;
+use crate::actors::creatures::giant_frogs::GIANT_FROG_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -3315,6 +3320,35 @@ impl EncounterInstance {
             &SCOUT_TEMPLATE,
             &GIANT_RAT_TEMPLATE,
             &GHAST_TEMPLATE,
+            // Civilian-and-watchman tier + cave-dweller / swamp-beast
+            // fill-ins. These templates round out the low-CR encounter
+            // bench so a random-encounter roll surfaces the canonical
+            // "town watch + townsfolk" silhouette and the "swamp / cave
+            // beast" ambient lane:
+            //   - Commoner (CR 0 humanoid): the baseline townsfolk.
+            //     1d4 club, AC 10, no Pack Tactics — a civilian, not a
+            //     credible threat. Floors the NPC-CR ladder.
+            //   - Mastiff (CR ⅛ medium beast): trained guard dog. Same
+            //     trip-bite shape as Wolf (DC 11 STR-vs-Prone) at a
+            //     heavier 1d6 die, deliberately lacking Pack Tactics
+            //     so it feels distinct from the wild-pack lane.
+            //   - Guard (CR ⅛ humanoid): city watchman. AC 16 (chain
+            //     shirt + shield) — the *highest AC* on the CR-⅛
+            //     humanoid bench. The defensive-shell tradeoff vs the
+            //     bandit's damage-focus.
+            //   - Grimlock (CR ¼ humanoid): blind Underdark savage.
+            //     Spiked bone club (1d4 bludgeoning + 1d4 piercing
+            //     rider) + Blindsight 30. The "immune to Invisibility
+            //     inside its perception radius" niche.
+            //   - Giant Frog (CR ¼ medium beast): swamp ambusher.
+            //     Auto-Grappled bite (no save) — first user of the new
+            //     `WeaponWithCondition` chassis. Pins targets in melee
+            //     for the rest of the swamp pack.
+            &COMMONER_TEMPLATE,
+            &MASTIFF_TEMPLATE,
+            &GUARD_TEMPLATE,
+            &GRIMLOCK_TEMPLATE,
+            &GIANT_FROG_TEMPLATE,
         ]
     }
 

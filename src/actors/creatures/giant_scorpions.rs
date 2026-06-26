@@ -12,7 +12,7 @@ use std::sync::LazyLock;
 /// one sting per turn.
 pub static GIANT_SCORPION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*GIANT_SCORPION_CLAW);
+    actions.push(&GIANT_SCORPION_CLAW);
     actions.push(&*GIANT_SCORPION_STING);
     CreatureTemplate {
         name: "Giant Scorpion",

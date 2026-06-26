@@ -1156,6 +1156,183 @@ impl Action for WeaponWithSaveDamage {
     }
 }
 
+/// A `SimpleWeapon`-shaped attack that unconditionally installs a condition
+/// on a confirmed hit — no save gate, no extra damage rider. The 5e auto-
+/// grapple shape: Giant Frog Bite (hit → Grappled, escape DC 11), Mimic
+/// Adhesive (hit → Adhered), Chuul Tentacle (hit → Grappled). RAW these
+/// have an *escape* DC (a later Action), not a *prevention* save, so the
+/// install fires the moment the swing lands.
+///
+/// Companion to `WeaponWithSaveCondition` (which gates the install on a
+/// failed save) and `WeaponWithRider` (which lands flat typed damage on
+/// hit, no condition). Use this when:
+///   1. The condition installs whenever the swing connects (no
+///      prevention save), AND
+///   2. There's no extra typed-damage rider.
+///
+/// For save-gated condition installs use `WeaponWithSaveCondition`; for
+/// flat-damage riders use `WeaponWithRider`; for "save-or-damage-plus-
+/// condition" combinations use `WeaponWithSaveDamage` with `also_install`.
+///
+/// Per-target condition immunity is handled at the standard
+/// `add_condition` chokepoint — a Grapple-immune target (e.g. an actor of
+/// Huge+ size beyond the holder's grapple cap) shrugs the install off
+/// silently, same as every other condition install path.
+///
+/// Extra Attack chains the same way as the other weapon chassis: an
+/// Action-cost swing rolled outside a `Multiattack` triggers a second
+/// swing with its own condition install for creatures with
+/// `has_extra_attack`. The install only fires on hits (`damage > 0`).
+pub struct WeaponWithCondition {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub attack_ability: AbilityScoreType,
+    pub damage_dice: Dice,
+    pub damage_type: DamageType,
+    pub reach: isize,
+    pub is_melee: bool,
+    pub condition: Condition,
+    pub timer: ConditionTimer,
+    /// Log-friendly tag for the install line ("auto-grapple", "adhesive",
+    /// ...). Mirrors the `rider_name` slot on the sibling chassis so log
+    /// shapes stay uniform across the weapon-rider family.
+    pub rider_name: &'static str,
+}
+
+impl WeaponWithCondition {
+    /// Const constructor for the standard "STR-based 1H melee swing whose
+    /// hit auto-installs a condition" shape (the giant-frog auto-grapple
+    /// bite). Pins `reach = MELEE_REACH`, `is_melee = true`, and uses the
+    /// same ability for attack + damage. For long-reach variants use
+    /// `reach_melee`.
+    #[allow(clippy::too_many_arguments)]
+    pub const fn melee(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        attack_ability: AbilityScoreType,
+        damage_dice: Dice,
+        damage_type: DamageType,
+        condition: Condition,
+        timer: ConditionTimer,
+        rider_name: &'static str,
+    ) -> Self {
+        Self::reach_melee(
+            display_name,
+            aliases,
+            attack_ability,
+            damage_dice,
+            damage_type,
+            condition,
+            timer,
+            rider_name,
+            MELEE_REACH,
+        )
+    }
+
+    /// Long-reach melee variant. Same as `melee()` but takes an explicit
+    /// `reach` in tiles, for auto-install-on-hit weapons like the
+    /// chuul's reach-2 tentacles or a future reach-3 net-style attack.
+    /// Mirrors `WeaponWithSaveCondition::reach_melee` so the long-reach
+    /// lane is one declaration on every install-on-hit chassis instead
+    /// of a struct-literal sprawl.
+    #[allow(clippy::too_many_arguments)]
+    pub const fn reach_melee(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        attack_ability: AbilityScoreType,
+        damage_dice: Dice,
+        damage_type: DamageType,
+        condition: Condition,
+        timer: ConditionTimer,
+        rider_name: &'static str,
+        reach: isize,
+    ) -> Self {
+        Self {
+            display_name,
+            aliases,
+            attack_ability,
+            damage_dice,
+            damage_type,
+            reach,
+            is_melee: true,
+            condition,
+            timer,
+            rider_name,
+        }
+    }
+}
+
+impl Action for WeaponWithCondition {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.reach)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![self.damage_type]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::ApplyCondition;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // Mirror the swing-+-Extra-Attack chain on the rest of the
+        // weapon-rider family so the auto-install lands on every hit in
+        // the chain (RAW: Extra Attack is a second swing, not a second
+        // action).
+        let swing = |e: &mut EncounterInstance| {
+            let (mut effects, dealt) = weapon_swing_with_damage(
+                e,
+                caster_id,
+                target_id,
+                self.display_name,
+                self.attack_ability,
+                self.damage_dice,
+                self.damage_type,
+                self.is_melee,
+                None,
+            );
+            // No hit, no install — matches the "rider only fires on hits"
+            // contract on every sibling chassis.
+            if dealt == 0 {
+                return effects;
+            }
+            e.log(format!("  {}: target is now {}", self.rider_name, self.condition));
+            effects.push(Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: self.condition,
+                timer: self.timer,
+            }));
+            effects
+        };
+        let mut effects = swing(encounter);
+        if !encounter.in_multiattack()
+            && encounter
+                .actors
+                .get(&caster_id)
+                .is_some_and(|a| a.has_extra_attack())
+        {
+            encounter.log("  Extra Attack:");
+            effects.extend(swing(encounter));
+        }
+        effects
+    }
+}
+
 /// Standard 5e longbow: ranged, requires line-of-sight, +DEX to hit and damage.
 /// Reach is in tiles (not feet); 20 tiles = 50ft on this 2.5ft grid, which is
 /// short of the 5e 80/320 normal/long range but plenty for our 40×20 maps.
@@ -1283,6 +1460,21 @@ pub static SHORTSWORD: SimpleWeapon = SimpleWeapon::melee(
     AbilityScoreType::Dexterity,
     Dice::new(1, 6),
     DamageType::Piercing,
+);
+
+/// Club — STR-based 1d4 bludgeoning simple weapon. The peasant's only
+/// sidearm — a stick. Lowest damage tier in the weapon pool (tied with
+/// Dagger). The canonical Commoner / Acolyte / generic-peasant NPC
+/// sidearm. Distinct from `GREATCLUB` (1d10 reach-2 ogre-tier club) and
+/// `WARHAMMER` (1d8 martial); slots beneath both as the "bare-bones
+/// 1H stick" baseline. Shared static so a Commoner / future Acolyte /
+/// generic peasant point at one source of truth.
+pub static CLUB: SimpleWeapon = SimpleWeapon::melee(
+    "club",
+    &["cl"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 4),
+    DamageType::Bludgeoning,
 );
 
 /// Generic STR-based bite attack — 1d6+STR piercing, no rider. Use this
@@ -6907,76 +7099,32 @@ pub static BASILISK_BITE: LazyLock<BasiliskBite> = LazyLock::new(|| BasiliskBite
 
 // ─── Chuul ───────────────────────────────────────────────────────────
 
-/// Chuul pincer — STR-based 2d6+4 bludgeoning melee, grapples on hit.
-pub static CHUUL_PINCER_WEAPON: SimpleWeapon = SimpleWeapon::melee(
+/// Chuul Pincer — STR-based 2d6+STR bludgeoning melee with an
+/// auto-Grappled install on hit (no save). The CR-4 lobster-aberration's
+/// signature swing: the pincer snaps shut, the target is grappled, and
+/// the chuul's bonus-action Tentacles paralyze rider follows up on the
+/// pinned target. RAW: "Hit: 11 (2d6 + 4) bludgeoning damage, and the
+/// target is grappled (escape DC 14)."
+///
+/// Routes through the shared `WeaponWithCondition::melee` chassis —
+/// same auto-install-on-hit lane as `GIANT_FROG_BITE` / `MIMIC_BITE`-
+/// adjacent abilities. Re-installing Grappled on an already-grappled
+/// actor is a clean no-op at the `add_condition` chokepoint (timer
+/// resolution picks the longer of the two), so the chassis's hit-or-
+/// no-install contract folds cleanly into the chuul's per-Action
+/// rhythm. Replaced the previous ~70 lines of hand-rolled
+/// `impl Action for ChuulPincer` + `LazyLock` boilerplate with the
+/// shared data-only literal.
+pub static CHUUL_PINCER: WeaponWithCondition = WeaponWithCondition::melee(
     "pincer",
-    &["claw", "pincer"],
+    &["claw"],
     AbilityScoreType::Strength,
     Dice::new(2, 6),
     DamageType::Bludgeoning,
+    Condition::Grappled,
+    ConditionTimer::Rounds(10),
+    "chuul pincer",
 );
-
-/// Chuul pincer with grapple rider.
-pub struct ChuulPincer {}
-
-impl Action for ChuulPincer {
-    fn name(&self) -> &str {
-        "pincer"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["claw"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Bludgeoning]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        let mut effects = simple_weapon_attack(
-            encounter,
-            caster_id,
-            target_ids,
-            "pincer",
-            AbilityScoreType::Strength,
-            Some(AbilityScoreType::Strength),
-            Dice::new(2, 6),
-            DamageType::Bludgeoning,
-            true,
-        );
-        if effects.is_empty() {
-            return effects;
-        }
-        let already = encounter
-            .actors
-            .get(&target_id)
-            .is_some_and(|a| a.has_condition(Condition::Grappled));
-        if !already {
-            encounter.log("  the chuul grapples with its pincer!");
-            effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Grappled,
-                timer: ConditionTimer::Rounds(10),
-            }));
-        }
-        effects
-    }
-}
-
-pub static CHUUL_PINCER: LazyLock<ChuulPincer> = LazyLock::new(|| ChuulPincer {});
 
 /// Chuul tentacles — paralyzing tentacle attack. Deals 1d6+4 poison
 /// and forces a CON save (DC 13) or Paralyzed (1 round). In 5e, this
@@ -7158,67 +7306,30 @@ pub static ANKHEG_ACID_SPRAY: LazyLock<AnkhegAcidSpray> = LazyLock::new(|| Ankhe
 
 // ─── Giant Scorpion ──────────────────────────────────────────────────
 
-/// Giant Scorpion claw — STR-based 1d8+2 bludgeoning, grapple on hit.
-pub struct GiantScorpionClaw {}
-
-impl Action for GiantScorpionClaw {
-    fn name(&self) -> &str {
-        "claw"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["scorpion-claw"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Bludgeoning]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        let mut effects = simple_weapon_attack(
-            encounter,
-            caster_id,
-            target_ids,
-            "claw",
-            AbilityScoreType::Strength,
-            Some(AbilityScoreType::Strength),
-            Dice::new(1, 8),
-            DamageType::Bludgeoning,
-            true,
-        );
-        if !effects.is_empty() {
-            let already = encounter
-                .actors
-                .get(&target_id)
-                .is_some_and(|a| a.has_condition(Condition::Grappled));
-            if !already {
-                encounter.log("  the scorpion grapples with its claw!");
-                effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
-                    actor_id: target_id,
-                    condition: Condition::Grappled,
-                    timer: ConditionTimer::Rounds(10),
-                }));
-            }
-        }
-        effects
-    }
-}
-
-pub static GIANT_SCORPION_CLAW: LazyLock<GiantScorpionClaw> =
-    LazyLock::new(|| GiantScorpionClaw {});
+/// Giant Scorpion Claw — STR-based 1d8+STR bludgeoning melee with an
+/// auto-Grappled install on hit (no save). The CR-3 desert hunter's
+/// pincer swing: the claw snaps shut, the target is grappled, and the
+/// scorpion's tail-sting follow-up lands on the pinned target. RAW:
+/// "Hit: 6 (1d8 + 2) bludgeoning damage. The target is grappled
+/// (escape DC 12)."
+///
+/// Routes through the shared `WeaponWithCondition::melee` chassis —
+/// same auto-install-on-hit lane as `CHUUL_PINCER` / `GIANT_FROG_BITE`.
+/// Re-installing Grappled on an already-grappled actor is a clean
+/// no-op at the `add_condition` chokepoint (timer resolution picks
+/// the longer of the two). Replaced ~60 lines of hand-rolled
+/// `impl Action for GiantScorpionClaw` + `LazyLock` boilerplate with
+/// the shared data-only literal.
+pub static GIANT_SCORPION_CLAW: WeaponWithCondition = WeaponWithCondition::melee(
+    "claw",
+    &["scorpion-claw"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 8),
+    DamageType::Bludgeoning,
+    Condition::Grappled,
+    ConditionTimer::Rounds(10),
+    "scorpion claw",
+);
 
 /// Giant Scorpion sting — STR-based 1d10+2 piercing + 4d10 poison
 /// (CON save DC 12 for half).
@@ -13793,5 +13904,85 @@ pub static PTERANODON_BITE: SimpleWeapon = SimpleWeapon::melee(
     AbilityScoreType::Strength,
     Dice::new(2, 4),
     DamageType::Piercing,
+);
+
+// ─── Mastiff ─────────────────────────────────────────────────────────
+
+/// Mastiff Bite — STR-based 1d6+STR piercing melee with a DC 11 STR
+/// save-or-Prone trip rider. The CR-⅛ small-dog beast's signature
+/// swing: same shape as `WOLF_BITE` (1d4 STR + DC 11 STR-vs-Prone),
+/// but a heavier 1d6 die — the mastiff is the "guard dog" upgrade of
+/// the wolf-style trip lane. RAW: "If the target is a creature, it
+/// must succeed on a DC 11 Strength saving throw or be knocked Prone."
+///
+/// Routes through the shared `WeaponWithSaveCondition::melee` chassis
+/// so the swing + Extra-Attack + save-or-condition loop lives in one
+/// place alongside Wolf / Dire Wolf / Worg. Keeps the canonical "bite
+/// trips the target" pattern uniform across the four trip-bite holders.
+pub static MASTIFF_BITE: WeaponWithSaveCondition = WeaponWithSaveCondition::melee(
+    "mastiff bite",
+    &["mb", "dog-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+    AbilityScoreType::Strength,
+    11,
+    Condition::Prone,
+    ConditionTimer::Permanent,
+    "mastiff trip",
+);
+
+// ─── Grimlock ────────────────────────────────────────────────────────
+
+/// Grimlock Spiked Bone Club — STR-based 1d4+STR bludgeoning melee
+/// with a flat 1d4 piercing rider on hit. The CR-¼ blind-savage's
+/// signature crude weapon: bludgeoning base from the bone shaft +
+/// piercing rider from the carved spikes. RAW: +3 to hit, 6 (1d4+3)
+/// bludgeoning + 2 (1d4) piercing.
+///
+/// Routes through the shared `WeaponWithRider::melee` chassis so the
+/// "weapon swing + unconditional flat typed-damage rider" loop lives
+/// in one place. The bludgeoning/piercing split matters for
+/// resistance-aware targets — a fully bludgeoning-resistant skeleton
+/// still eats the spike rider at full value, and vice versa for a
+/// piercing-resistant target.
+pub static GRIMLOCK_SPIKED_CLUB: WeaponWithRider = WeaponWithRider::melee(
+    "spiked bone club",
+    &["sbc", "bone-club"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 4),
+    DamageType::Bludgeoning,
+    Dice::new(1, 4),
+    DamageType::Piercing,
+    "bone spikes",
+);
+
+// ─── Giant Frog ──────────────────────────────────────────────────────
+
+/// Giant Frog Bite — STR-based 1d6+STR piercing melee with an
+/// auto-Grappled install on hit (no save). The CR-¼ amphibian's
+/// signature swing: the tongue snaps out, latches on, and the target
+/// is grappled. RAW: "Hit: 4 (1d6 + 1) piercing damage, and the target
+/// is grappled (escape DC 11)." The "escape DC" is a later Action the
+/// grappled actor can spend, not a prevention save — the install
+/// itself is automatic on hit.
+///
+/// First user of the new `WeaponWithCondition` chassis (companion to
+/// `WeaponWithSaveCondition`'s save-gated install). The shape matters:
+/// every other "save-or-Grappled" creature in the pool uses a STR DC
+/// to *prevent* the grapple at install time, but the frog RAW grapples
+/// unconditionally — modeling it as a save-or-grapple would let some
+/// targets shrug the install off entirely, breaking the "bite means
+/// tongue-stuck" flavor. The Swallow follow-up (RAW: bite again with
+/// a grappled Small target → swallow whole) is omitted as scope.
+pub static GIANT_FROG_BITE: WeaponWithCondition = WeaponWithCondition::melee(
+    "giant frog bite",
+    &["gfb", "frog-bite", "tongue"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+    Condition::Grappled,
+    ConditionTimer::Permanent,
+    "tongue grab",
 );
 

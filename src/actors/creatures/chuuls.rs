@@ -14,7 +14,7 @@ use std::sync::LazyLock;
 /// 60ft and tremorsense 60ft.
 pub static CHUUL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*CHUUL_PINCER);
+    actions.push(&CHUUL_PINCER);
     actions.push(&*CHUUL_TENTACLES);
     CreatureTemplate {
         name: "Chuul",
