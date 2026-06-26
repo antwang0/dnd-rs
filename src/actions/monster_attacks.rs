@@ -1241,6 +1241,50 @@ pub static WARHAMMER: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Bludgeoning,
 );
 
+/// Mace — STR-based 1d6 bludgeoning simple weapon. The canonical Thug /
+/// Acolyte / Priest sidearm in 5e — same damage die as the scimitar but
+/// a different damage type so creatures that resist slashing (Skeleton,
+/// some constructs) still feel a Mace swing. Slots between Dagger (1d4)
+/// and Warhammer (1d8) for STR-build mooks who don't carry a martial
+/// weapon. Shared static so the Thug / future NPC priest etc. point at
+/// one source of truth instead of duplicating the literal.
+pub static MACE: SimpleWeapon = SimpleWeapon::melee(
+    "mace",
+    &["mc"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Bludgeoning,
+);
+
+/// Spear — STR-based 1d6 piercing simple weapon. Tribal Warrior /
+/// generic-tribal NPC sidearm. RAW the spear is versatile (1d8 two-handed)
+/// and thrown (20/60 ft); we collapse to the one-hand 1d6 melee base
+/// since the engine doesn't surface per-action grip toggles and the
+/// thrown lane is already covered by `JAVELIN`. Shared static so Tribal
+/// Warrior and any future spear-wielding humanoid point at one source.
+pub static SPEAR: SimpleWeapon = SimpleWeapon::melee(
+    "spear",
+    &["sp"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+);
+
+/// Shortsword — DEX-based 1d6 piercing finesse weapon. Standard Scout /
+/// Spy / Assassin sidearm in 5e. Distinct from the Rogue's bespoke
+/// `RogueShortsword` (which carries the Sneak Attack rider) and from
+/// the per-creature `SPRITE_SHORTSWORD` / `WERERAT_SHORTSWORD` literals
+/// (those use different ability scores / dice). Shared static so the
+/// Scout multiattack and any future finesse-using mook point at one
+/// source of truth.
+pub static SHORTSWORD: SimpleWeapon = SimpleWeapon::melee(
+    "shortsword",
+    &["ssw", "short"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+);
+
 /// Generic STR-based bite attack — 1d6+STR piercing, no rider. Use this
 /// for creatures whose bite is pure damage (Troll, most beasts). Creatures
 /// that also trip or grapple on a bite should use WolfBite or a dedicated
@@ -1852,6 +1896,52 @@ pub static BANDIT_CAPTAIN_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multia
     count: 3,
 });
 
+/// Thug multiattack — 2 mace swings per Action (RAW: "The thug makes
+/// two melee attacks"). Slots between the bandit (1 swing) and the
+/// bandit captain (3 swings) for the canonical CR ½ humanoid melee
+/// pace. Routes through the shared `Multiattack` chassis so the
+/// homogeneous double-swing lane lives at the same chokepoint as the
+/// goblin boss / hobgoblin warlord doubles.
+pub static THUG_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double mace",
+    sub_attack: &MACE,
+    count: 2,
+});
+
+/// Tribal Warrior bonus-spear lane — RAW the warrior's Multiattack is
+/// two spear swings per Action when it has nothing else equipped. The
+/// homogeneous double-spear here mirrors `THUG_MULTI` / `GOBLIN_BOSS_MULTI`
+/// shape, sub'd in for the spear. Slots in between the single-attack
+/// CR ⅛ bandit and the CR ½ thug for the canonical Pack-Tactics tribal
+/// melee pace.
+pub static TRIBAL_WARRIOR_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double spear",
+    sub_attack: &SPEAR,
+    count: 2,
+});
+
+/// Scout melee multiattack — 2 shortsword swings per Action. RAW the
+/// scout has "Multiattack. The scout makes two melee attacks or two
+/// ranged attacks"; this is the melee half. The ranged half is
+/// `SCOUT_RANGED_MULTI` (two longbow shots). Both lanes route through
+/// the shared `Multiattack` chassis so the homogeneous double-swing
+/// pattern lives at one chokepoint.
+pub static SCOUT_MELEE_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double shortsword",
+    sub_attack: &SHORTSWORD,
+    count: 2,
+});
+
+/// Scout ranged multiattack — 2 longbow shots per Action. The ranged
+/// half of the scout's RAW Multiattack ("two melee attacks OR two
+/// ranged attacks"). Pairs with `SCOUT_MELEE_MULTI` so the AI / player
+/// picks the lane that matches the engagement distance.
+pub static SCOUT_RANGED_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double longbow",
+    sub_attack: &LONGBOW,
+    count: 2,
+});
+
 /// Imp's poisoned sting — finesse melee, 1d4+DEX piercing on hit plus
 /// a CON save (DC 11) for 2d10 poison rider damage. Showcases the
 /// "weapon attack + ability save rider" pattern using the SimpleWeapon
@@ -2193,6 +2283,53 @@ impl Action for GhoulClaws {
 }
 
 pub static GHOUL_CLAWS: LazyLock<GhoulClaws> = LazyLock::new(|| GhoulClaws {});
+
+/// Ghast Bite — STR-based 2d8+STR piercing melee. The CR-2 ghast's
+/// heavier-die secondary swing of the bite + claws compound. Pure
+/// damage — the paralysis rider lives on the claws. RAW MM ghast bite:
+/// 2d8+3 = ~12 piercing.
+pub static GHAST_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "ghast bite",
+    &["g-bite", "ghast-chomp"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Piercing,
+);
+
+/// Ghast Claws — STR-based 2d6+STR slashing melee with a DC 10 CON
+/// save-or-Paralyzed rider on hit. Identical chassis to Wolf Bite /
+/// Dire Wolf Bite (save-or-condition on a confirmed hit) routed through
+/// the shared `WeaponWithSaveCondition` chassis — replacing the
+/// hand-rolled `GhoulClaws` impl shape with the data-only declaration.
+/// Distinct from `GHOUL_CLAWS` only in the dice (2d6 vs 2d4) and the
+/// paralysis duration (10 rounds = 1 minute RAW vs the ghoul's 2 rounds).
+/// The Paralyzed envelope turns subsequent melee hits within 5 ft into
+/// auto-crits — a lone ghast that lands a save-fail claw can lock a PC
+/// out of multiple turns and feed crits to its allies.
+pub static GHAST_CLAWS: WeaponWithSaveCondition = WeaponWithSaveCondition::melee(
+    "ghast claws",
+    &["g-claws"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Slashing,
+    AbilityScoreType::Constitution,
+    10,
+    Condition::Paralyzed,
+    ConditionTimer::Rounds(10),
+    "ghast paralysis",
+);
+
+/// Ghast multiattack — 1 bite + 1 claws per Action. RAW: "The ghast
+/// makes two attacks: one with its bite and one with its claws." Same
+/// chassis as the Owlbear (beak + claws) / Wereboar (tusks + slam) /
+/// Wererat (bite + shortsword) heterogeneous multis — routes through
+/// `CompoundAttack` so the two-limb Action lives at one chokepoint.
+/// The claws-second ordering matches RAW so the bite damage lands
+/// before any paralysis-induced auto-crit on a same-turn follow-up.
+pub static GHAST_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "ghast multiattack",
+    parts: vec![(&GHAST_BITE, 1), (&GHAST_CLAWS, 1)],
+});
 
 /// Bugbear morningstar — 1d8+2 piercing, with a Surprise-Attack rider
 /// that deals an extra 2d6 damage on the first hit of the encounter
@@ -8376,6 +8513,21 @@ pub static GIANT_HYENA_BITE: SimpleWeapon = SimpleWeapon::melee(
     &["ghb", "giant-bite"],
     AbilityScoreType::Strength,
     Dice::new(2, 6),
+    DamageType::Piercing,
+);
+
+/// Giant Rat Bite — STR-based 1d4 + STR piercing melee. The CR-⅛ vermin
+/// pack scavenger's only swing. The bite is the lowest dice tier in the
+/// monster pool (1d4 — same as a Dagger). Combined with the giant rat's
+/// `has_pack_tactics: true` template flag, the bite goes to advantage
+/// whenever an ally rat is adjacent — the canonical "swarm in the
+/// sewers" multiplier. Standalone the swing is trivial; the swarm IS the
+/// threat profile.
+pub static GIANT_RAT_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "giant rat bite",
+    &["grb", "rat-bite", "nibble"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 4),
     DamageType::Piercing,
 );
 

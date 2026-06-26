@@ -213,3 +213,8 @@ pub mod allips;
 pub mod giant_octopuses;
 pub mod plesiosauruses;
 pub mod pteranodons;
+pub mod thugs;
+pub mod tribal_warriors;
+pub mod scouts;
+pub mod giant_rats;
+pub mod ghasts;

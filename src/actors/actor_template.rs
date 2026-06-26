@@ -1954,6 +1954,36 @@ impl ActorInstance {
         &self.name
     }
 
+    /// The actor's special-senses pool (Darkvision / Blindsight /
+    /// Tremorsense / Truesight). Copied from the creature template at
+    /// instantiation; doesn't change over the encounter's lifetime.
+    /// Read by `has_truesight` for the truesight-suppress-illusion
+    /// gate, by future blindsight / tremorsense gates, and by tests
+    /// pinning per-template sense pools (so a future sense-set
+    /// refactor surfaces breakage at the instance level rather than
+    /// requiring the template literal to be re-read).
+    pub fn senses(&self) -> &HashSet<SpecialSense> {
+        &self.senses
+    }
+
+    /// True if the actor sees with Truesight — either intrinsically via
+    /// a template `SpecialSense::Truesight(_)` (Deva, Solar, Pit Fiend,
+    /// Marilith, Nalfeshnee, Lich, Kraken, Couatl, Glabrezu, Erinyes,
+    /// Androsphinx, Nothic) OR via a transient `Condition::TrueSighted`
+    /// (the True Seeing spell, the Eyes of Truth magic item). Read by
+    /// `compute_attack_mode` at the illusion-concealment suppression
+    /// gate so the intrinsic-senses cohort actually counters Invisible
+    /// / Blurred / Displaced — matching the RAW intent. Without this
+    /// any-of accessor the engine quietly let a Pit Fiend miss an
+    /// invisible mage at disadvantage even though RAW the fiend should
+    /// see right through the spell.
+    pub fn has_truesight(&self) -> bool {
+        self.senses
+            .iter()
+            .any(|s| matches!(s, SpecialSense::Truesight(_)))
+            || self.has_condition(Condition::TrueSighted)
+    }
+
     pub fn team(&self) -> usize {
         self.team_id
     }

@@ -188,6 +188,11 @@ use crate::actors::creatures::purple_worms::PURPLE_WORM_TEMPLATE;
 use crate::actors::creatures::giant_octopuses::GIANT_OCTOPUS_TEMPLATE;
 use crate::actors::creatures::plesiosauruses::PLESIOSAURUS_TEMPLATE;
 use crate::actors::creatures::pteranodons::PTERANODON_TEMPLATE;
+use crate::actors::creatures::thugs::THUG_TEMPLATE;
+use crate::actors::creatures::tribal_warriors::TRIBAL_WARRIOR_TEMPLATE;
+use crate::actors::creatures::scouts::SCOUT_TEMPLATE;
+use crate::actors::creatures::giant_rats::GIANT_RAT_TEMPLATE;
+use crate::actors::creatures::ghasts::GHAST_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -953,14 +958,21 @@ impl EncounterInstance {
         // matching invisibility / illusion advantages and disadvantages
         // on the per-side condition sweeps below. Keeps the condition-
         // cohort loops branch-free of the "who is true-sighted?" lookup.
+        // Routes through `ActorInstance::has_truesight` so a creature
+        // with template `SpecialSense::Truesight(_)` (Deva, Solar, Pit
+        // Fiend, Lich, Kraken, Nalfeshnee, etc.) automatically counters
+        // illusion-concealment without needing the True Seeing spell or
+        // an Eyes-of-Truth trinket — matching RAW. Pre-accessor this
+        // gate only fired on the transient condition, silently letting
+        // a Solar miss an invisible mage at disadvantage.
         let attacker_truesight = self
             .actors
             .get(&attacker_id)
-            .is_some_and(|a| a.has_condition(Condition::TrueSighted));
+            .is_some_and(|a| a.has_truesight());
         let target_truesight = self
             .actors
             .get(&target_id)
-            .is_some_and(|a| a.has_condition(Condition::TrueSighted));
+            .is_some_and(|a| a.has_truesight());
 
         // Attacker-side modifiers. The disadvantage / advantage cohorts
         // live on `Condition` itself (`imposes_attacker_disadvantage` /
@@ -3275,6 +3287,34 @@ impl EncounterInstance {
             &GIANT_OCTOPUS_TEMPLATE,
             &PLESIOSAURUS_TEMPLATE,
             &PTERANODON_TEMPLATE,
+            // Low-CR humanoid mook + ambient beast cohort filling the
+            // NPC bench and the rat-tier vermin slot:
+            //   - Thug (CR ½ humanoid): Pack Tactics + double-mace
+            //     multi + heavy crossbow ranged fallback. Slots between
+            //     Bandit (CR ⅛) and Bandit Captain (CR 2) as the mid
+            //     bandit-family mook.
+            //   - Tribal Warrior (CR ⅛ humanoid): Pack Tactics + double-
+            //     spear multi. The "primitive raider" mook — soft alone,
+            //     dangerous in a swarm; mirrors the wolf / kobold pack
+            //     pattern at the humanoid lane.
+            //   - Scout (CR ½ humanoid): Multiattack with shortsword (2x
+            //     melee) OR longbow (2x ranged), picked by engagement
+            //     distance. The Ranger-flavored NPC slot in the low-CR
+            //     bench.
+            //   - Giant Rat (CR ⅛ small beast): Pack Tactics + 1d4 bite.
+            //     Cheapest pack-tactics vermin in the pool, fills the
+            //     dungeon-rat ambient creature slot below Stirge (CR ⅛
+            //     too but lacks Pack Tactics).
+            //   - Ghast (CR 2 undead): upgraded Ghoul — 2-claw + bite
+            //     multiattack with a DC 10 paralyze claw rider. Slots
+            //     between Ghoul (CR 1) and Wight (CR 3) on the undead
+            //     ladder; the paralysis-auto-crit envelope is the load-
+            //     bearing threat.
+            &THUG_TEMPLATE,
+            &TRIBAL_WARRIOR_TEMPLATE,
+            &SCOUT_TEMPLATE,
+            &GIANT_RAT_TEMPLATE,
+            &GHAST_TEMPLATE,
         ]
     }
 
@@ -43016,6 +43056,41 @@ mod tests {
         assert_eq!(
             e.compute_attack_mode(attacker, target, true),
             RollMode::Normal
+        );
+    }
+
+    /// 5e intrinsic Truesight: a creature with template
+    /// `SpecialSense::Truesight(_)` (Deva, Solar, Pit Fiend, etc.)
+    /// counters illusion-concealment **without** needing the True
+    /// Seeing spell on it. Pre-`has_truesight` this gate only read the
+    /// `Condition::TrueSighted` flag, silently letting a Solar miss an
+    /// invisible mage at disadvantage even though RAW the Solar sees
+    /// straight through. This test pins the bug fix: an attacker with
+    /// template Truesight neutralizes a target's Invisible just like
+    /// the spell-installed condition does.
+    #[test]
+    fn template_truesight_counters_target_invisible() {
+        use crate::actors::creatures::devas::DEVA_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&DEVA_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Rounds(10));
+        // Deva carries template Truesight 120; the goblin's Invisible
+        // does not impose disadvantage on the deva's swing. Without
+        // `has_truesight` reading the senses pool, this would resolve
+        // to RollMode::Disadvantage.
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Normal,
+            "Deva's intrinsic Truesight must counter target Invisible"
         );
     }
 

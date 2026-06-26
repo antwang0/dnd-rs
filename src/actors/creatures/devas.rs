@@ -200,15 +200,22 @@ mod tests {
         // Pin the load-bearing defensive clause: the deva's Truesight
         // is what flavors it as a credible counter to invisible /
         // illusion-wrapped enemies. A future refactor of the sense
-        // set shouldn't strip this template field. (The engine
-        // doesn't yet have a senses() accessor on the instance — we
-        // pin via the template directly until that lane lands.)
+        // set shouldn't strip this template field. Routes through the
+        // instance-level `senses()` accessor so a template-internal
+        // sense refactor that moves the field but preserves the
+        // semantic behavior still passes the pin.
+        let a = make();
         assert!(
-            DEVA_TEMPLATE
-                .senses
-                .iter()
-                .any(|s| matches!(s, SpecialSense::Truesight(120))),
+            a.senses().iter().any(|s| matches!(s, SpecialSense::Truesight(120))),
             "deva must carry Truesight 120 — the celestial perception lane",
+        );
+        // And the load-bearing behavioral clause: `has_truesight`
+        // returns true so the compute_attack_mode illusion-suppression
+        // gate actually fires for a deva. Without this the template
+        // sense would be a flavor field with no in-engine effect.
+        assert!(
+            a.has_truesight(),
+            "deva must report has_truesight() — the gate the engine reads"
         );
     }
 }
