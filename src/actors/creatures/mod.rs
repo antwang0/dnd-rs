@@ -234,3 +234,5 @@ pub mod giant_vultures;
 pub mod giant_bats;
 pub mod giant_centipedes;
 pub mod vine_blights;
+pub mod twig_blights;
+pub mod needle_blights;

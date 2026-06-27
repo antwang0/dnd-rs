@@ -211,6 +211,8 @@ use crate::actors::creatures::giant_vultures::GIANT_VULTURE_TEMPLATE;
 use crate::actors::creatures::giant_bats::GIANT_BAT_TEMPLATE;
 use crate::actors::creatures::giant_centipedes::GIANT_CENTIPEDE_TEMPLATE;
 use crate::actors::creatures::vine_blights::VINE_BLIGHT_TEMPLATE;
+use crate::actors::creatures::twig_blights::TWIG_BLIGHT_TEMPLATE;
+use crate::actors::creatures::needle_blights::NEEDLE_BLIGHT_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -3444,6 +3446,22 @@ impl EncounterInstance {
             &GIANT_BAT_TEMPLATE,
             &GIANT_CENTIPEDE_TEMPLATE,
             &VINE_BLIGHT_TEMPLATE,
+            // Twig + Needle Blight: completes the blight family beside
+            // Vine Blight so a random "haunted grove" pool can roll the
+            // full RAW evil-druid trio.
+            //   - Twig Blight (CR ⅛ small plant): 1d4 piercing claws
+            //     ambusher with Blindsight 60 and fire vulnerability.
+            //     Slots on the CR-⅛ vermin bench beside the Stirge /
+            //     Mastiff / Giant Rat — the fragile entry tier of the
+            //     blight ladder.
+            //   - Needle Blight (CR ¼ medium plant): switch-hitter with
+            //     a 2d4 claws melee lane AND a 2d6 ranged needle volley
+            //     out to 30/60ft. Slots on the CR-¼ skirmisher bench
+            //     between Twig and Vine Blight — the middle tier whose
+            //     ranged option distinguishes it from the melee-only
+            //     twig / grapple-only vine cohort.
+            &TWIG_BLIGHT_TEMPLATE,
+            &NEEDLE_BLIGHT_TEMPLATE,
         ]
     }
 

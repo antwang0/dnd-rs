@@ -14288,3 +14288,53 @@ pub static VINE_BLIGHT_CONSTRICT: WeaponWithSaveCondition = WeaponWithSaveCondit
     ConditionTimer::Rounds(10),
     "vine constrict",
 );
+
+// ─── Twig Blight ────────────────────────────────────────────────────
+
+/// Twig Blight Claws — STR-based 1d4+STR piercing melee. RAW: "+3 to
+/// hit, reach 5 ft, one target. Hit: 3 (1d4+1) piercing damage." The
+/// CR-⅛ sapling blight's only swing — a fragile dryad-spawn whose
+/// threat profile is its 60ft Blindsight (it sees in pitch-black caves
+/// or under canopy) plus the per-template fire vulnerability, not the
+/// claw dice. Vanilla `SimpleWeapon`. Sister to `NEEDLE_BLIGHT_CLAWS`
+/// (2d4 — heavier dice on the medium frame) and the
+/// `VINE_BLIGHT_CONSTRICT` grapple-rider entry at CR ½.
+pub static TWIG_BLIGHT_CLAWS: SimpleWeapon = SimpleWeapon::melee(
+    "twig blight claws",
+    &["tbc", "twig-claws"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 4),
+    DamageType::Piercing,
+);
+
+// ─── Needle Blight ──────────────────────────────────────────────────
+
+/// Needle Blight Claws — STR-based 2d4+STR piercing melee. RAW: "+3 to
+/// hit, reach 5 ft, one target. Hit: 6 (2d4+1) piercing damage." The
+/// CR-¼ thorn-blight's in-melee swing — pairs with the ranged
+/// `NEEDLE_BLIGHT_NEEDLES` shot as the "switch-hitter" plant lane.
+/// Heavier than the twig's 1d4 because the needle blight is a Medium
+/// upgrade tier, not a fragile sapling. Vanilla `SimpleWeapon`.
+pub static NEEDLE_BLIGHT_CLAWS: SimpleWeapon = SimpleWeapon::melee(
+    "needle blight claws",
+    &["nbc", "needle-claws"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 4),
+    DamageType::Piercing,
+);
+
+/// Needle Blight Needles — STR-based 2d6+STR piercing ranged (12 normal
+/// / 24 long in tile-gap units = 30/60ft). RAW: "+3 to hit, range
+/// 30/60 ft., one target. Hit: 8 (2d6+1) piercing damage." Heavier dice
+/// than the claws — the needle volley is the load-bearing ranged option
+/// that lets the needle blight pressure back-line targets where the
+/// twig blight can't follow. Vanilla `SimpleWeapon::ranged`.
+pub static NEEDLE_BLIGHT_NEEDLES: SimpleWeapon = SimpleWeapon::ranged(
+    "needle blight needles",
+    &["nbn", "needles", "needle-volley"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Piercing,
+    24,
+    12,
+);

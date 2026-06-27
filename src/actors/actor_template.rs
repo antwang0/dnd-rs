@@ -40,6 +40,18 @@ const TYPED_IMMUNITY_CONDITIONS: &[(Condition, &[DamageType])] = &[
     // 5e Silence: any creature entirely inside the silence sphere is
     // immune to thunder damage (the magical hush absorbs sonic effects).
     (Condition::Silenced, &[DamageType::Thunder]),
+    // 5e Petrified: "The creature is immune to poison and disease,
+    // although a poison or disease already in its system is suspended,
+    // not neutralized." The Petrified condition is on
+    // `BLANKET_RESISTANCE_CONDITIONS` for the blanket "resistance to
+    // all damage" half of the RAW envelope; the typed-immunity row
+    // here promotes the poison lane from resistance → immunity, which
+    // the damage pipeline checks first (immunity short-circuits before
+    // any halving). Companion to the dynamic-condition-immunity entry
+    // in `dynamic_immunity_to(Poisoned)` so a creature turned to
+    // stone is also immune to a fresh `Poisoned` condition install
+    // RAW.
+    (Condition::Petrified, &[DamageType::Poison]),
 ];
 
 /// Conditions whose resistance only applies to a curated damage-type
@@ -1784,6 +1796,13 @@ impl ActorInstance {
             Condition::Poisoned => {
                 self.has_condition(Condition::Purified)
                     || self.has_condition(Condition::OtherworldlyGuised)
+                    // 5e Petrified RAW: "The creature is immune to
+                    // poison and disease..." The damage-type half lives
+                    // on `TYPED_IMMUNITY_CONDITIONS`; the condition
+                    // half lives here so an attempt to install a
+                    // fresh `Poisoned` condition on a stone creature
+                    // no-ops at the `add_condition` chokepoint.
+                    || self.has_condition(Condition::Petrified)
             }
             // 5e Freedom of Movement: holders are immune to magical
             // movement restraint. Mirrors the Ring of Free Action item
@@ -3120,6 +3139,61 @@ mod tests {
             s.effective_damage(20, DamageType::Slashing),
             10,
             "petrified creature should take half slashing damage"
+        );
+    }
+
+    #[test]
+    fn petrified_is_immune_to_poison_damage() {
+        // 5e RAW: "The creature is immune to poison and disease..."
+        // The blanket-resistance row only halves poison; the typed
+        // immunity row in TYPED_IMMUNITY_CONDITIONS zeros it. Pin the
+        // immunity-wins-over-resistance precedence so a future refactor
+        // that quietly demotes Petrified back to "all-damage resistance
+        // only" surfaces as a failure here.
+        //
+        // Uses the Bandit template — a vanilla humanoid with no
+        // template-level poison modifier, so a baseline hit lands at
+        // full damage and the Petrified install is the load-bearing
+        // change. Skeleton / Zombie already have template-level poison
+        // immunity so couldn't tell the two paths apart.
+        use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
+        let mut s = make(&BANDIT_TEMPLATE);
+        assert_eq!(s.effective_damage(20, DamageType::Poison), 20);
+        s.add_condition(Condition::Petrified, ConditionTimer::Permanent);
+        assert_eq!(
+            s.effective_damage(20, DamageType::Poison),
+            0,
+            "petrified creature should be immune to poison damage RAW"
+        );
+    }
+
+    #[test]
+    fn petrified_blocks_poisoned_condition_install() {
+        // 5e RAW companion to the poison-damage immunity: a Petrified
+        // creature is also immune to the Poisoned condition. Routes
+        // through `dynamic_immunity_to` so the `add_condition` chokepoint
+        // no-ops the install. Pin the gate so a future refactor that
+        // quietly drops Petrified from the dynamic immunity table
+        // surfaces here.
+        //
+        // Uses the Bandit template — a vanilla humanoid with no
+        // template-level Poisoned-condition immunity, so the Petrified
+        // gate is the only thing that can block the install.
+        use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
+        let mut s = make(&BANDIT_TEMPLATE);
+        s.add_condition(Condition::Petrified, ConditionTimer::Permanent);
+        assert!(
+            s.effectively_immune_to_condition(Condition::Poisoned),
+            "petrified creature should be immune to Poisoned RAW"
+        );
+        let installed = s.add_condition(Condition::Poisoned, ConditionTimer::Rounds(5));
+        assert!(
+            !installed,
+            "Poisoned install should be blocked by Petrified immunity"
+        );
+        assert!(
+            !s.has_condition(Condition::Poisoned),
+            "Poisoned should not have landed on a Petrified target"
         );
     }
 
