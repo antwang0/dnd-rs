@@ -79,7 +79,13 @@ pub fn add_flat_damage_rider(
 ///
 /// 1. `weapon_swing_with_damage` — resolves the d20 swing, returns the
 ///    damage actually dealt (post-mitigation) and the side-effects list.
-/// 2. Early-return on miss (`damage == 0`) — no rider on a no-hit swing.
+/// 2. Early-return on miss (`effects.is_empty()`) — `resolve_attack_outcome`
+///    returns `(Vec::new(), 0)` on miss / Sanctuary block / Mirror Image
+///    deflect, so an empty effects list is the cleanest hit/miss signal.
+///    (Using `damage == 0` as the gate would incorrectly suppress the
+///    rider on the rare "hit but Uncanny Dodge / Deflect Missiles zeroed
+///    the post-mitigation damage" case — RAW the swing landed and the
+///    rider should fire.)
 /// 3. `add_flat_damage_rider` — rolls and pushes the typed-damage rider.
 ///
 /// Used by every "weapon hit + one typed-damage rider, no save, no chain"
@@ -113,7 +119,7 @@ pub fn weapon_swing_with_flat_rider(
     rider_type: DamageType,
     rider_name: &'static str,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
-    let (mut effects, damage) = weapon_swing_with_damage(
+    let (mut effects, _damage) = weapon_swing_with_damage(
         encounter,
         caster_id,
         target_id,
@@ -124,7 +130,14 @@ pub fn weapon_swing_with_flat_rider(
         is_melee,
         None,
     );
-    if damage == 0 {
+    // Hit/miss gate: an empty effects list means the d20 didn't connect
+    // (`resolve_attack_outcome` returns `(Vec::new(), 0)` on miss /
+    // Sanctuary-block / Mirror-Image-deflect). Checking the post-mitigation
+    // `damage` value as the gate would skip the rider on the rare "hit but
+    // Uncanny Dodge / Deflect Missiles reduced damage to 0" case — RAW the
+    // swing landed and the rider should fire. Same chassis-wide
+    // convention as the other weapon-rider helpers.
+    if effects.is_empty() {
         return effects;
     }
     add_flat_damage_rider(
@@ -869,7 +882,7 @@ impl Action for WeaponWithSaveCondition {
         // rider lands on every successful hit in the chain (RAW: Extra
         // Attack is a second swing, not a second action).
         let swing = |e: &mut EncounterInstance| {
-            let (mut effects, dealt) = weapon_swing_with_damage(
+            let (mut effects, _dealt) = weapon_swing_with_damage(
                 e,
                 caster_id,
                 target_id,
@@ -880,7 +893,14 @@ impl Action for WeaponWithSaveCondition {
                 self.is_melee,
                 None,
             );
-            if dealt == 0 {
+            // Hit/miss gate via the effects vec — see
+            // `weapon_swing_with_flat_rider` for the same chassis-wide
+            // rationale. Skipping on `dealt == 0` would incorrectly
+            // suppress the save-or-condition install on the rare
+            // "hit but Uncanny Dodge / Deflect Missiles zeroed damage"
+            // case (RAW: a trip-prone save fires on hit, not on
+            // damage > 0).
+            if effects.is_empty() {
                 return effects;
             }
             save_or_condition_rider(
@@ -1152,7 +1172,7 @@ impl Action for WeaponWithSaveDamage {
         // the rider lands on every successful hit in the chain (RAW:
         // Extra Attack is a second swing, not a second action).
         let swing = |e: &mut EncounterInstance| {
-            let (mut effects, dealt) = weapon_swing_with_damage(
+            let (mut effects, _dealt) = weapon_swing_with_damage(
                 e,
                 caster_id,
                 target_id,
@@ -1163,7 +1183,11 @@ impl Action for WeaponWithSaveDamage {
                 self.is_melee,
                 None,
             );
-            if dealt == 0 {
+            // Hit/miss gate via the effects vec — see
+            // `weapon_swing_with_flat_rider` for the same chassis-wide
+            // rationale. RAW: the save-or-damage rider fires on a hit,
+            // not on damage > 0.
+            if effects.is_empty() {
                 return effects;
             }
             let save = save_or_damage_rider(
@@ -1340,7 +1364,7 @@ impl Action for WeaponWithCondition {
         // the chain (RAW: Extra Attack is a second swing, not a second
         // action).
         let swing = |e: &mut EncounterInstance| {
-            let (mut effects, dealt) = weapon_swing_with_damage(
+            let (mut effects, _dealt) = weapon_swing_with_damage(
                 e,
                 caster_id,
                 target_id,
@@ -1351,9 +1375,12 @@ impl Action for WeaponWithCondition {
                 self.is_melee,
                 None,
             );
-            // No hit, no install — matches the "rider only fires on hits"
-            // contract on every sibling chassis.
-            if dealt == 0 {
+            // Hit/miss gate via the effects vec — empty on miss /
+            // Sanctuary / Mirror Image, non-empty on hit (the DealDamage
+            // payload is present even when post-mitigation damage is 0).
+            // RAW: an auto-install rider fires on hit, not on damage > 0,
+            // so a 1-damage swing zeroed by Uncanny Dodge still grapples.
+            if effects.is_empty() {
                 return effects;
             }
             e.log(format!("  {}: target is now {}", self.rider_name, self.condition));
@@ -2178,10 +2205,6 @@ pub static SCOUT_RANGED_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiatt
     count: 2,
 });
 
-/// Imp's poisoned sting — finesse melee, 1d4+DEX piercing on hit plus
-/// a CON save (DC 11) for 2d10 poison rider damage. Showcases the
-/// "weapon attack + ability save rider" pattern using the SimpleWeapon
-/// + custom side-effect blend.
 /// Imp Sting — DEX-based 1d4+DEX piercing melee with a CON DC 11
 /// save-or-2d10-poison rider. Routes through the shared
 /// `WeaponWithSaveDamage` chassis alongside Quasit Claws / Purple Worm
@@ -14161,4 +14184,107 @@ pub static WARHORSE_HOOVES: SimpleWeapon = SimpleWeapon::melee(
     AbilityScoreType::Strength,
     Dice::new(2, 6),
     DamageType::Bludgeoning,
+);
+
+// ─── Giant Vulture ──────────────────────────────────────────────────
+
+/// Giant Vulture Beak — STR-based 1d4+STR piercing melee. RAW: "Hit:
+/// 4 (1d4 + 2) piercing damage." Light single swing — the carrion bird's
+/// damage profile lives in the compound multi with the talons, not the
+/// beak alone. Vanilla `SimpleWeapon`.
+pub static GIANT_VULTURE_BEAK: SimpleWeapon = SimpleWeapon::melee(
+    "giant vulture beak",
+    &["gvb", "vulture-beak", "beak"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 4),
+    DamageType::Piercing,
+);
+
+/// Giant Vulture Talons — STR-based 2d4+STR slashing melee. RAW: "Hit:
+/// 7 (2d4 + 2) slashing damage." Heavier sister swing to the beak —
+/// pairs with it in the per-Action compound. Vanilla `SimpleWeapon`.
+pub static GIANT_VULTURE_TALONS: SimpleWeapon = SimpleWeapon::melee(
+    "giant vulture talons",
+    &["gvt", "vulture-talons", "rake"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 4),
+    DamageType::Slashing,
+);
+
+/// Giant Vulture's beak + talons compound — same one-Action multi
+/// shape as the Owlbear / Werewolf compounds. Routes through the
+/// shared `CompoundAttack` chassis so the heterogeneous two-limb
+/// pattern lives at one chokepoint.
+pub static GIANT_VULTURE_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "giant vulture multiattack",
+    parts: vec![(&GIANT_VULTURE_BEAK, 1), (&GIANT_VULTURE_TALONS, 1)],
+});
+
+// ─── Giant Bat ──────────────────────────────────────────────────────
+
+/// Giant Bat Bite — STR-based 1d6+STR piercing melee. RAW: "Hit: 5
+/// (1d6 + 2) piercing damage." Single swing per Action — the bat's
+/// threat profile lives in its mobility (fly 60) and blindsight, not
+/// the bite. Vanilla `SimpleWeapon`.
+pub static GIANT_BAT_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "giant bat bite",
+    &["gbb", "bat-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+);
+
+// ─── Giant Centipede ────────────────────────────────────────────────
+
+/// Giant Centipede Bite — DEX-based 1d4+DEX piercing melee with a
+/// DC 11 CON save-or-3d6-poison rider via `WeaponWithSaveDamage`. RAW:
+/// "Hit: 4 (1d4 + 2) piercing damage, and the target must succeed on
+/// a DC 11 Constitution saving throw or take 10 (3d6) poison damage."
+/// The "if poison reduces target to 0 HP, the target is stable but
+/// poisoned for 1 hour, and paralyzed while poisoned" RAW rider is
+/// omitted as a scope cut — the engine's death-save flow handles 0-HP
+/// stabilization separately and the conditional Paralyzed install on
+/// stable-and-poisoned is hard to model cleanly through the shared
+/// chassis. The pure save-or-damage envelope still captures the
+/// load-bearing threat (a failed CON 11 against the venom can drop a
+/// wounded low-level target in one swing).
+pub static GIANT_CENTIPEDE_BITE: WeaponWithSaveDamage = WeaponWithSaveDamage::melee(
+    "giant centipede bite",
+    &["gcb", "centipede-bite"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 4),
+    DamageType::Piercing,
+    AbilityScoreType::Constitution,
+    11,
+    Dice::new(3, 6),
+    DamageType::Poison,
+    "centipede venom",
+);
+
+// ─── Vine Blight ────────────────────────────────────────────────────
+
+/// Vine Blight Constrict — STR-based 2d6+STR bludgeoning melee with a
+/// DC 12 STR save-or-Grappled+Restrained rider via the shared
+/// `WeaponWithSaveCondition` chassis (we model RAW's "grappled and
+/// restrained" envelope as the single `Restrained` install — the
+/// stronger of the two, since Restrained already zeros movement +
+/// gives attackers advantage + DEX-save disadvantage, fully covering
+/// the Grappled clause). RAW: "Hit: 9 (2d6 + 2) bludgeoning damage,
+/// and a Large or smaller target is grappled (escape DC 12). Until
+/// this grapple ends, the target is restrained, and the blight can't
+/// constrict another target." The "single-grapple-only" restriction
+/// is omitted as a scope cut — the engine's grapple chokepoint doesn't
+/// track per-grappler ownership; the install on hit still pins targets
+/// for the rest of the pack.
+pub static VINE_BLIGHT_CONSTRICT: WeaponWithSaveCondition = WeaponWithSaveCondition::melee(
+    "vine blight constrict",
+    &["vbc", "constrict", "vines"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Bludgeoning,
+    AbilityScoreType::Strength,
+    12,
+    Condition::Restrained,
+    ConditionTimer::Rounds(10),
+    "vine constrict",
 );

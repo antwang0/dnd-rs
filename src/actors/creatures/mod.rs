@@ -230,3 +230,7 @@ pub mod reef_sharks;
 pub mod hunter_sharks;
 pub mod giant_sharks;
 pub mod warhorses;
+pub mod giant_vultures;
+pub mod giant_bats;
+pub mod giant_centipedes;
+pub mod vine_blights;

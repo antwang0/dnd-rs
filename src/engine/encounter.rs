@@ -207,6 +207,10 @@ use crate::actors::creatures::giant_sharks::GIANT_SHARK_TEMPLATE;
 use crate::actors::creatures::warhorses::WARHORSE_TEMPLATE;
 use crate::actors::creatures::allips::ALLIP_TEMPLATE;
 use crate::actors::creatures::quaggoths::QUAGGOTH_TEMPLATE;
+use crate::actors::creatures::giant_vultures::GIANT_VULTURE_TEMPLATE;
+use crate::actors::creatures::giant_bats::GIANT_BAT_TEMPLATE;
+use crate::actors::creatures::giant_centipedes::GIANT_CENTIPEDE_TEMPLATE;
+use crate::actors::creatures::vine_blights::VINE_BLIGHT_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -3413,6 +3417,33 @@ impl EncounterInstance {
             //     only as a target for the Animate Objects spell.)
             &ALLIP_TEMPLATE,
             &QUAGGOTH_TEMPLATE,
+            // Newest additions filling the CR-¼ to CR-1 ambient-vermin,
+            // flying-scavenger, cave-flier, and plant-grappler lanes:
+            //   - Giant Vulture (CR 1 large beast): heterogeneous
+            //     beak (1d4+STR) + talons (2d4+STR) compound multi with
+            //     Pack Tactics — the swarming scavenger sibling of the
+            //     solo Giant Eagle at the same CR. Pack Tactics is the
+            //     load-bearing tactical multiplier.
+            //   - Giant Bat (CR ¼ large beast): single 1d6+STR bite on
+            //     a fast (fly 60) frame plus Blindsight 60 — the cave-
+            //     dweller anti-stealth flier. Distinct from Hawk /
+            //     Pteranodon by its echolocation cone.
+            //   - Giant Centipede (CR ¼ small beast): DEX-based 1d4
+            //     bite plus a DC 11 CON save-or-3d6-poison rider via
+            //     `WeaponWithSaveDamage`. Heavier venom dice than the
+            //     Giant Wolf Spider on a fragile 4-HP frame — fills
+            //     the venom-glass-cannon niche at CR ¼.
+            //   - Vine Blight (CR ½ medium plant): STR-based 2d6
+            //     Constrict with a DC 12 STR save-or-Restrained rider
+            //     via `WeaponWithSaveCondition`. Fire-vulnerable,
+            //     lightning-resistant, Blinded/Deafened-immune. The
+            //     low-CR entry on the plant ladder beside Awakened
+            //     Tree / Shambling Mound — covers the vegetative
+            //     ambusher / grapple-restrain identity at CR ½.
+            &GIANT_VULTURE_TEMPLATE,
+            &GIANT_BAT_TEMPLATE,
+            &GIANT_CENTIPEDE_TEMPLATE,
+            &VINE_BLIGHT_TEMPLATE,
         ]
     }
 

@@ -21,7 +21,10 @@ pub fn get_tiles_from_size(size: Size) -> usize {
 pub fn get_colored_span(glyph: char, team: usize) -> (String, Color, Color) {
     let team_u8: u8 = (team % 16) as u8;
     let color = Color::Indexed(team_u8);
-    let bg = if team_u8 < 1 {
+    // Team 0 (the player's side by convention) gets a contrasting bg so
+    // the PC silhouette stands out from the rest of the board. Every
+    // other team falls through to the default Black bg.
+    let bg = if team_u8 == 0 {
         Color::LightCyan
     } else {
         Color::Black
