@@ -1026,6 +1026,51 @@ impl WeaponWithSaveDamage {
         }
     }
 
+    /// Const constructor for the "STR-or-DEX based melee swing with a
+    /// save-or-extra-damage-AND-condition install" shape (the spider's
+    /// venom Poisons on the same failed save the rider damage rides
+    /// on, the ettercap's bite Poisons on the same save, etc.). Pins
+    /// `reach = MELEE_REACH`, `is_melee = true`, and threads the
+    /// caller-supplied `(condition, timer)` straight into
+    /// `also_install`. Replaces the hand-rolled 14-field struct
+    /// literals at the three current save-damage-plus-condition call
+    /// sites (Spider / Ettercap / Drow Poisoned Crossbow uses a ranged
+    /// sibling) — same chokepoint benefit as the existing
+    /// `melee` / `reach_melee` / `ranged` family. The docstring on
+    /// `melee` referenced this constructor by name but it was missing
+    /// from the impl; this entry restores the documented surface.
+    #[allow(clippy::too_many_arguments)]
+    pub const fn melee_with_condition(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        attack_ability: AbilityScoreType,
+        damage_dice: Dice,
+        damage_type: DamageType,
+        save_ability: AbilityScoreType,
+        save_dc: i32,
+        rider_dice: Dice,
+        rider_type: DamageType,
+        rider_name: &'static str,
+        condition: Condition,
+        timer: ConditionTimer,
+    ) -> Self {
+        Self {
+            display_name,
+            aliases,
+            attack_ability,
+            damage_dice,
+            damage_type,
+            reach: MELEE_REACH,
+            is_melee: true,
+            save_ability,
+            save_dc,
+            rider_dice,
+            rider_type,
+            rider_name,
+            also_install: Some((condition, timer)),
+        }
+    }
+
     /// Ranged variant — takes an explicit `reach` in tiles and pins
     /// `is_melee = false` so the LOS gate fires. `also_install = None`.
     /// Used for save-or-damage ranged shots like the Drow Poisoned
@@ -1131,14 +1176,14 @@ impl Action for WeaponWithSaveDamage {
                 self.rider_name,
                 &mut effects,
             );
-            if let Some((condition, timer)) = self.also_install {
-                if !save.passed() {
-                    effects.push(Box::new(ApplyCondition {
-                        actor_id: target_id,
-                        condition,
-                        timer,
-                    }));
-                }
+            if let Some((condition, timer)) = self.also_install
+                && !save.passed()
+            {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: target_id,
+                    condition,
+                    timer,
+                }));
             }
             effects
         };
@@ -1702,21 +1747,20 @@ pub static ACID_SPIT: LazyLock<AcidSpit> = LazyLock::new(|| AcidSpit {});
 /// install only when the save fails. Routes through the shared
 /// `WeaponWithSaveDamage` chassis alongside Ettercap Bite / Drow
 /// Poisoned Crossbow.
-pub static SPIDER_BITE: WeaponWithSaveDamage = WeaponWithSaveDamage {
-    display_name: "spider bite",
-    aliases: &["sbite"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_dice: Dice::new(1, 10),
-    damage_type: DamageType::Piercing,
-    reach: MELEE_REACH,
-    is_melee: true,
-    save_ability: AbilityScoreType::Constitution,
-    save_dc: 11,
-    rider_dice: Dice::new(2, 4),
-    rider_type: DamageType::Poison,
-    rider_name: "spider venom",
-    also_install: Some((Condition::Poisoned, ConditionTimer::Rounds(2))),
-};
+pub static SPIDER_BITE: WeaponWithSaveDamage = WeaponWithSaveDamage::melee_with_condition(
+    "spider bite",
+    &["sbite"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 10),
+    DamageType::Piercing,
+    AbilityScoreType::Constitution,
+    11,
+    Dice::new(2, 4),
+    DamageType::Poison,
+    "spider venom",
+    Condition::Poisoned,
+    ConditionTimer::Rounds(2),
+);
 
 
 /// Greataxe — Orc-flavored heavy two-hander. STR-based 1d12 slashing,
@@ -11616,21 +11660,20 @@ pub static WERETIGER_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Compound
 /// fail. Same "extra damage + condition both ride one save" shape as
 /// Spider Bite — routes through the shared `WeaponWithSaveDamage`
 /// chassis with `also_install = Some((Poisoned, Rounds(2)))`.
-pub static ETTERCAP_BITE: WeaponWithSaveDamage = WeaponWithSaveDamage {
-    display_name: "ettercap bite",
-    aliases: &["ebite", "ettercap-bite"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_dice: Dice::new(1, 8),
-    damage_type: DamageType::Piercing,
-    reach: MELEE_REACH,
-    is_melee: true,
-    save_ability: AbilityScoreType::Constitution,
-    save_dc: 11,
-    rider_dice: Dice::new(2, 4),
-    rider_type: DamageType::Poison,
-    rider_name: "ettercap venom",
-    also_install: Some((Condition::Poisoned, ConditionTimer::Rounds(2))),
-};
+pub static ETTERCAP_BITE: WeaponWithSaveDamage = WeaponWithSaveDamage::melee_with_condition(
+    "ettercap bite",
+    &["ebite", "ettercap-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 8),
+    DamageType::Piercing,
+    AbilityScoreType::Constitution,
+    11,
+    Dice::new(2, 4),
+    DamageType::Poison,
+    "ettercap venom",
+    Condition::Poisoned,
+    ConditionTimer::Rounds(2),
+);
 
 
 /// Ettercap Claws — STR-based 2d4+STR slashing melee. The chitin-tipped
@@ -13986,3 +14029,136 @@ pub static GIANT_FROG_BITE: WeaponWithCondition = WeaponWithCondition::melee(
     "tongue grab",
 );
 
+// ─── Hawk ───────────────────────────────────────────────────────────
+
+/// Hawk Talons — DEX-based 1d1 slashing melee. RAW: "Hit: 1 slashing
+/// damage." We model the flat 1 via a `Dice::new(1, 1)` so a confirmed
+/// crit doubles cleanly to 2 through the engine's uniform crit-
+/// doubling chassis instead of needing a flat-1 special case. The
+/// load-bearing threat is the hawk's mobility (fly 60, the highest
+/// non-dragon flight in the low-CR pool), not the swing — even a
+/// crit-doubled talon barely scratches a soft target.
+pub static HAWK_TALONS: SimpleWeapon = SimpleWeapon::melee(
+    "hawk talons",
+    &["talons", "hawk", "rake"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 1),
+    DamageType::Slashing,
+);
+
+// ─── Giant Lizard ───────────────────────────────────────────────────
+
+/// Giant Lizard Bite — STR-based 1d8+STR piercing melee. RAW: "Melee
+/// Weapon Attack: +4 to hit, reach 5 ft, one target. Hit: 6 (1d8 + 2)
+/// piercing damage." Vanilla `SimpleWeapon` — the CR-¼ large reptile's
+/// only swing. The threat profile lives on the 19-HP large frame,
+/// not the bite; the lizard is a meat-shield, not a damage dealer.
+pub static GIANT_LIZARD_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "giant lizard bite",
+    &["glb", "lizard-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 8),
+    DamageType::Piercing,
+);
+
+// ─── Giant Wolf Spider ──────────────────────────────────────────────
+
+/// Giant Wolf Spider Bite — STR-based 1d6+STR piercing melee with a
+/// DC 11 CON save-or-2d6-poison rider. Routes through the shared
+/// `WeaponWithSaveDamage` chassis alongside Spider Bite / Ettercap
+/// Bite — same "single save gates both damage and condition" RAW
+/// envelope. RAW: "Hit: 4 (1d6 + 1) piercing damage, and the target
+/// must make a DC 11 Constitution saving throw, taking 7 (2d6)
+/// poison damage on a failed save, or half as much damage on a
+/// successful one." We omit the RAW's "if the poison damage reduces
+/// the target to 0 hit points, the target is stable but poisoned for
+/// 1 hour" rider — the engine's death-save flow handles 0-HP
+/// stabilization separately and the conditional Poisoned install is
+/// hard to model through the shared chassis cleanly. The pure
+/// save-or-damage envelope captures the load-bearing threat (a
+/// failed CON 11 against the venom can drop a wounded target).
+pub static GIANT_WOLF_SPIDER_BITE: WeaponWithSaveDamage = WeaponWithSaveDamage {
+    display_name: "giant wolf spider bite",
+    aliases: &["gwsb", "wolf-spider-bite"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_dice: Dice::new(1, 6),
+    damage_type: DamageType::Piercing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    save_ability: AbilityScoreType::Constitution,
+    save_dc: 11,
+    rider_dice: Dice::new(2, 6),
+    rider_type: DamageType::Poison,
+    rider_name: "wolf spider venom",
+    also_install: None,
+};
+
+// ─── Reef Shark ─────────────────────────────────────────────────────
+
+/// Reef Shark Bite — STR-based 1d8+STR piercing melee. RAW: "Hit: 6
+/// (1d8 + 2) piercing damage." Vanilla `SimpleWeapon` — the
+/// pack-tactics swarmer's only swing. The threat multiplier rides on
+/// the template-level `has_pack_tactics: true` flag (advantage when
+/// an ally shark is adjacent to the target), not the bite itself,
+/// so the dice line matches the CR-½ baseline (sahuagin bite / wolf
+/// bite cohort) and three sharks ganging up on the same target roll
+/// every bite at advantage.
+pub static REEF_SHARK_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "reef shark bite",
+    &["rsb", "reef-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 8),
+    DamageType::Piercing,
+);
+
+// ─── Hunter Shark ───────────────────────────────────────────────────
+
+/// Hunter Shark Bite — STR-based 2d8+STR piercing melee. RAW: "Hit:
+/// 13 (2d8 + 4) piercing damage." Vanilla `SimpleWeapon` — the solo
+/// hunter's only swing. The snowball multiplier rides on the
+/// template-level `BLOOD_FRENZY_TAG` passive (advantage on melee vs
+/// wounded targets), not the bite itself. Heavier dice than the
+/// reef shark's 1d8 — the hunter shark hits hard alone, the reef
+/// shark hits hard in numbers.
+pub static HUNTER_SHARK_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "hunter shark bite",
+    &["hsb", "hunter-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Piercing,
+);
+
+// ─── Giant Shark ────────────────────────────────────────────────────
+
+/// Giant Shark Bite — STR-based 3d10+STR piercing melee. RAW: "Hit:
+/// 22 (3d10 + 6) piercing damage." Vanilla `SimpleWeapon` — the apex
+/// shark's only swing. The snowball multiplier rides on the
+/// template-level `BLOOD_FRENZY_TAG` passive shared with the Hunter
+/// Shark / Sahuagin cohort. The 3d10 base die is the heaviest non-
+/// reach single-swing in the CR-5 monster pool; combined with Blood
+/// Frenzy on a wounded target a giant shark can delete a back-line
+/// PC in one Action.
+pub static GIANT_SHARK_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "giant shark bite",
+    &["gsb", "giant-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 10),
+    DamageType::Piercing,
+);
+
+// ─── Warhorse ───────────────────────────────────────────────────────
+
+/// Warhorse Hooves — STR-based 2d6+STR bludgeoning melee. RAW: "Hit:
+/// 11 (2d6 + 4) bludgeoning damage." Vanilla `SimpleWeapon` — the
+/// chunky 2d6 dice carry the warhorse's damage profile alone. No
+/// rider on the standalone hooves swing (the RAW Trampling Charge
+/// recharge is intentionally omitted as a scope cut at CR ½; the
+/// Mammoth at CR 6 already carries the trample-then-stomp two-attack
+/// chassis on the heavy huge-beast tier).
+pub static WARHORSE_HOOVES: SimpleWeapon = SimpleWeapon::melee(
+    "warhorse hooves",
+    &["wh", "hooves", "stomp"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Bludgeoning,
+);

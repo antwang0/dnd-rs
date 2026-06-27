@@ -198,6 +198,15 @@ use crate::actors::creatures::mastiffs::MASTIFF_TEMPLATE;
 use crate::actors::creatures::guards::GUARD_TEMPLATE;
 use crate::actors::creatures::grimlocks::GRIMLOCK_TEMPLATE;
 use crate::actors::creatures::giant_frogs::GIANT_FROG_TEMPLATE;
+use crate::actors::creatures::hawks::HAWK_TEMPLATE;
+use crate::actors::creatures::giant_lizards::GIANT_LIZARD_TEMPLATE;
+use crate::actors::creatures::giant_wolf_spiders::GIANT_WOLF_SPIDER_TEMPLATE;
+use crate::actors::creatures::reef_sharks::REEF_SHARK_TEMPLATE;
+use crate::actors::creatures::hunter_sharks::HUNTER_SHARK_TEMPLATE;
+use crate::actors::creatures::giant_sharks::GIANT_SHARK_TEMPLATE;
+use crate::actors::creatures::warhorses::WARHORSE_TEMPLATE;
+use crate::actors::creatures::allips::ALLIP_TEMPLATE;
+use crate::actors::creatures::quaggoths::QUAGGOTH_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -3349,6 +3358,61 @@ impl EncounterInstance {
             &GUARD_TEMPLATE,
             &GRIMLOCK_TEMPLATE,
             &GIANT_FROG_TEMPLATE,
+            // Newest additions filling the tiny-flier / large-reptile /
+            // small-arachnid-ambusher / coastal-shark / cavalry-mount
+            // lanes:
+            //   - Hawk (CR 0 tiny beast): tiny scout with fly 60 and a
+            //     flat 1-damage talons swing. Mobility-as-threat at the
+            //     very bottom of the CR ladder; slots beside Stirge /
+            //     Giant Crab on the CR-0 ambient bench.
+            //   - Giant Lizard (CR ¼ large beast): vanilla 1d8 bite on
+            //     a 19-HP large frame. The "dungeon-mount" filler beside
+            //     Giant Frog / Mastiff on the CR-¼ bench; commonly
+            //     ridden by goblins / kobolds in the published modules.
+            //   - Giant Wolf Spider (CR ¼ medium beast): lighter-die
+            //     sibling of the Spider (CR 1) — 1d6 bite + DC 11 CON
+            //     save-or-2d6-poison rider via WeaponWithSaveDamage.
+            //     The fragile, fast lone hunter to the regular spider's
+            //     web-spinner ambusher.
+            //   - Reef Shark (CR ½ medium beast): Pack Tactics shark —
+            //     1d8 bite that goes to advantage when an ally shark
+            //     is adjacent. The "swarm in the surf" entry on the
+            //     shark ladder.
+            //   - Hunter Shark (CR 2 large beast): Blood Frenzy heavy
+            //     biter — 2d8 bite that goes to advantage on wounded
+            //     targets. Shares the BLOOD_FRENZY_TAG chokepoint with
+            //     Sahuagin. Solo hunter middle of the shark ladder.
+            //   - Giant Shark (CR 5 huge beast): apex Blood Frenzy
+            //     biter — 3d10 bite on a 126-HP huge frame with
+            //     Blindsight 60. Top of the shark ladder.
+            //   - Warhorse (CR ½ large beast): the "trained cavalry
+            //     mount" — vanilla 2d6 hooves on a fast (speed 60)
+            //     large frame. Pairs with the Knight / Veteran for
+            //     the canonical mounted-soldier encounter shape.
+            &HAWK_TEMPLATE,
+            &GIANT_LIZARD_TEMPLATE,
+            &GIANT_WOLF_SPIDER_TEMPLATE,
+            &REEF_SHARK_TEMPLATE,
+            &HUNTER_SHARK_TEMPLATE,
+            &GIANT_SHARK_TEMPLATE,
+            &WARHORSE_TEMPLATE,
+            // Pre-existing templates that were defined but never added
+            // to the random-encounter pool — the generator at any CR
+            // target couldn't roll them. Adding them here restores the
+            // "every defined creature is reachable" invariant:
+            //   - Allip (CR 5 medium undead): the soul-shard ghost
+            //     with a 4d6 psychic Maddening Touch swing. Pairs
+            //     with the Wraith / Specter / Banshee cohort on the
+            //     incorporeal-undead bench at the CR-5 tier.
+            //   - Quaggoth (CR 2 medium humanoid): underdark slasher
+            //     with claws + Wounded Fury. Fits next to the
+            //     Bugbear / Hobgoblin family on the CR-2 humanoid
+            //     melee bench. (Aboleth / Solar / Marilith are
+            //     intentionally kept out as set-piece bosses used
+            //     by scripted AI tests; Tiny Animated Object exists
+            //     only as a target for the Animate Objects spell.)
+            &ALLIP_TEMPLATE,
+            &QUAGGOTH_TEMPLATE,
         ]
     }
 

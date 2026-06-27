@@ -858,7 +858,18 @@ impl ActorInstance {
         roller: &mut impl Roller,
         instance_n: usize,
     ) -> Result<ActorInstance, Box<dyn Error>> {
-        let hp_roll_val: u32 = ct.hitpoints.eval(roller).max(0) as u32;
+        // Floor the HP roll at 1 — a fresh spawn must be alive. The
+        // hit-die expression on tiny CR-0 creatures (e.g. the Hawk's
+        // RAW `1d4 - 1`) can roll to 0 on an unlucky d4, which would
+        // park the actor in `is_combat_active == false` at
+        // instantiation (HpState::Active && hitpoints > 0 fails on
+        // hitpoints == 0). The floor matches `max_hitpoints()`'s
+        // existing `.max(1)` guard, so the round-trip through
+        // `max_hitpoints()` stays self-consistent — a creature whose
+        // template's hit expression evaluates to 0 still spawns with
+        // 1 HP, the way RAW intends ("a hawk's hit point maximum
+        // can't be less than 1").
+        let hp_roll_val: u32 = ct.hitpoints.eval(roller).max(1) as u32;
         let name: String = format!("{} {}", ct.name, instance_n);
         Ok(ActorInstance {
             name,
@@ -3561,6 +3572,53 @@ mod tests {
             f.total_item_bonuses().save,
             base_save + 1,
             "scarab should add a +1 save bonus"
+        );
+    }
+
+    #[test]
+    fn hp_roll_floors_at_one_so_fresh_spawns_are_alive() {
+        // Regression: a template whose hit-die expression evaluates
+        // to 0 (or below) must still spawn the actor at 1 HP, so it
+        // enters combat in the `HpState::Active` lane with `hitpoints
+        // > 0`. The canonical case is the Hawk's RAW `1d4 - 1` (and
+        // any future CR-0 tiny beast with a similarly minimal hit
+        // pool) — an unlucky d4 = 1 would otherwise floor the roll
+        // to 0 and silently park the spawn outside `is_combat_active`.
+        use crate::actions::default_actions::DEFAULT_ACTIONS;
+        let ct = CreatureTemplate {
+            // `0` evaluates to a flat 0 via `DiceExpr::constant(0)`;
+            // mirrors the worst-case d4 = 1 → `1 - 1 = 0` for the
+            // hawk's hit expression but pins the input deterministically
+            // so the test doesn't ride on RNG quirks.
+            hitpoints: "0".parse().unwrap(),
+            actions: DEFAULT_ACTIONS.clone(),
+            ..CreatureTemplate::defaults()
+        };
+        // Leak a `'static` borrow so `from_creature_template`'s
+        // `&'static CreatureTemplate` bound is satisfied. The test
+        // is single-shot — the leak is bounded to one allocation.
+        let leaked: &'static CreatureTemplate = Box::leak(Box::new(ct));
+        let actor = ActorInstance::from_creature_template(
+            leaked,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        assert_eq!(
+            actor.hitpoints(),
+            1,
+            "HP roll must floor at 1 so the spawn is combat-active"
+        );
+        assert!(
+            actor.is_combat_active(),
+            "actor with hit expression evaluating to 0 must still be combat-active"
+        );
+        assert_eq!(
+            actor.max_hitpoints(),
+            1,
+            "max_hitpoints must reflect the floored base, not the raw 0"
         );
     }
 
