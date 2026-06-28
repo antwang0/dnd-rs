@@ -85,9 +85,22 @@ pub fn footprint_chebyshev(
 }
 
 static RE_ABS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d+),(\d+)$").unwrap());
-static RE_REL: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(r|l)(\d+),?(u|d)(\d+)$").unwrap());
 
+/// Parse a coordinate from `input`, interpreted relative to `base_coord`
+/// when the form is relative. Supported syntaxes:
+///
+/// - **Absolute** — `x,y` (e.g. `3,5`) maps to `Coordinate { x, y }`.
+/// - **Relative single-axis** — `r3`, `l4`, `u2`, `d1` shift only one
+///   axis from `base_coord` (the other stays put). Lets the user type
+///   `r3` to nudge their picker one tile east of the previous pick
+///   without having to specify the vertical at 0.
+/// - **Relative both-axis** — `r3u2`, `l4d1`, `u2r3`, `d1l4` shift both
+///   axes from `base_coord`. The horizontal-first and vertical-first
+///   orderings are both accepted, and an optional comma may separate
+///   the two segments (`r3,u2` reads the same as `r3u2`).
+///
+/// Case-insensitive: `R3U2` matches as `r3u2`. Repeating the same axis
+/// (e.g. `r3r2`) is rejected — the user almost certainly meant `r5`.
 pub fn parse_coord(input: &str, base_coord: Coordinate) -> Option<Coordinate> {
     if let Some(caps) = RE_ABS.captures(input) {
         let x = caps[1].parse::<isize>().ok()?;
@@ -95,15 +108,80 @@ pub fn parse_coord(input: &str, base_coord: Coordinate) -> Option<Coordinate> {
         return Some(Coordinate::new(x, y));
     }
 
-    if let Some(caps) = RE_REL.captures(input) {
-        let pos_x: bool = &caps[1] == "r";
-        let pos_y: bool = &caps[3] == "u";
-        let x_off = caps[2].parse::<isize>().ok()? * if pos_x { 1 } else { -1 };
-        let y_off = caps[4].parse::<isize>().ok()? * if pos_y { 1 } else { -1 };
-        return Some(base_coord + Coordinate::new(x_off, y_off));
+    // Lowercase once so `R3U2` and `r3u2` parse identically; the
+    // segment regex is lowercase-only to keep its branch count small.
+    let lowered = input.to_ascii_lowercase();
+    if lowered.is_empty() {
+        return None;
     }
-
-    None
+    // Walk the input looking for `<dir><N>[<dir><N>]` with an optional
+    // comma between segments. We require exactly one or two segments,
+    // each on a distinct axis (one horizontal + one vertical); repeats
+    // like `r3l2` are rejected as ambiguous.
+    let mut bytes = lowered.as_bytes();
+    let (mut dx, mut dy) = (0isize, 0isize);
+    let (mut saw_x, mut saw_y) = (false, false);
+    let mut segments = 0;
+    while !bytes.is_empty() {
+        let dir = bytes[0];
+        if !matches!(dir, b'r' | b'l' | b'u' | b'd') {
+            return None;
+        }
+        // Consume the magnitude digits.
+        let mag_start = 1;
+        let mut mag_end = mag_start;
+        while mag_end < bytes.len() && bytes[mag_end].is_ascii_digit() {
+            mag_end += 1;
+        }
+        if mag_end == mag_start {
+            return None;
+        }
+        let mag: isize = std::str::from_utf8(&bytes[mag_start..mag_end])
+            .ok()?
+            .parse()
+            .ok()?;
+        match dir {
+            b'r' if !saw_x => {
+                dx = mag;
+                saw_x = true;
+            }
+            b'l' if !saw_x => {
+                dx = -mag;
+                saw_x = true;
+            }
+            b'u' if !saw_y => {
+                dy = mag;
+                saw_y = true;
+            }
+            b'd' if !saw_y => {
+                dy = -mag;
+                saw_y = true;
+            }
+            // Repeat axis — `r3r2` / `u1u2` etc. are ambiguous; bail.
+            _ => return None,
+        }
+        segments += 1;
+        if segments > 2 {
+            return None;
+        }
+        bytes = &bytes[mag_end..];
+        // Optional comma between segments. Trailing comma (or two
+        // commas) is a syntax error — bail back to the outer loop
+        // which will reject on empty / non-direction bytes.
+        if bytes.first() == Some(&b',') {
+            bytes = &bytes[1..];
+            if bytes.is_empty() {
+                return None;
+            }
+        }
+    }
+    // Guard against `0`-magnitude no-op forms slipping through as a
+    // valid relative coordinate when they didn't actually parse — at
+    // least one segment must have been consumed.
+    if !saw_x && !saw_y {
+        return None;
+    }
+    Some(base_coord + Coordinate::new(dx, dy))
 }
 
 #[cfg(test)]
@@ -124,9 +202,70 @@ mod tests {
     }
 
     #[test]
+    fn parse_coord_relative_single_axis() {
+        // Pin the load-bearing single-axis lane: a user can type just
+        // `r3` to nudge the picker east without spelling out a vertical
+        // offset of 0. Previously the parser required both axes and
+        // `r3` returned None.
+        let base = Coordinate::new(5, 5);
+        assert_eq!(parse_coord("r3", base), Some(Coordinate::new(8, 5)));
+        assert_eq!(parse_coord("l2", base), Some(Coordinate::new(3, 5)));
+        assert_eq!(parse_coord("u4", base), Some(Coordinate::new(5, 9)));
+        assert_eq!(parse_coord("d1", base), Some(Coordinate::new(5, 4)));
+    }
+
+    #[test]
+    fn parse_coord_relative_vertical_first_order() {
+        // Either ordering (horizontal-first or vertical-first) parses.
+        let base = Coordinate::new(10, 10);
+        assert_eq!(parse_coord("u3r2", base), Some(Coordinate::new(12, 13)));
+        assert_eq!(parse_coord("d1l4", base), Some(Coordinate::new(6, 9)));
+    }
+
+    #[test]
+    fn parse_coord_relative_case_insensitive() {
+        let base = Coordinate::new(0, 0);
+        assert_eq!(parse_coord("R3U2", base), Some(Coordinate::new(3, 2)));
+        assert_eq!(parse_coord("r3U2", base), Some(Coordinate::new(3, 2)));
+    }
+
+    #[test]
+    fn parse_coord_relative_comma_separator() {
+        let base = Coordinate::new(0, 0);
+        assert_eq!(parse_coord("r3,u2", base), Some(Coordinate::new(3, 2)));
+        assert_eq!(parse_coord("u2,l4", base), Some(Coordinate::new(-4, 2)));
+    }
+
+    #[test]
     fn parse_coord_invalid() {
         assert_eq!(parse_coord("garbage", Coordinate::new(0, 0)), None);
         assert_eq!(parse_coord("1,", Coordinate::new(0, 0)), None);
+    }
+
+    #[test]
+    fn parse_coord_rejects_repeated_axis() {
+        // Repeated axis (`r3r2`, `u1u2`) is ambiguous — the user
+        // almost certainly meant `r5` / `u3`. Pin the rejection so a
+        // typo doesn't silently parse as just the *second* segment
+        // (which a naive walker would let through).
+        let base = Coordinate::new(0, 0);
+        assert_eq!(parse_coord("r3r2", base), None);
+        assert_eq!(parse_coord("u1u2", base), None);
+        assert_eq!(parse_coord("l1r1", base), None);
+    }
+
+    #[test]
+    fn parse_coord_rejects_trailing_comma() {
+        let base = Coordinate::new(0, 0);
+        assert_eq!(parse_coord("r3,", base), None);
+        assert_eq!(parse_coord(",r3", base), None);
+    }
+
+    #[test]
+    fn parse_coord_rejects_missing_magnitude() {
+        let base = Coordinate::new(0, 0);
+        assert_eq!(parse_coord("r", base), None);
+        assert_eq!(parse_coord("ru3", base), None);
     }
 
     #[test]

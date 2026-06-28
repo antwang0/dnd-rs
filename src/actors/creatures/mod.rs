@@ -250,3 +250,7 @@ pub mod camels;
 pub mod giant_badgers;
 pub mod giant_wasps;
 pub mod rats;
+pub mod cats;
+pub mod frogs;
+pub mod lizards;
+pub mod weasels;

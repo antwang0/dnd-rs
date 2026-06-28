@@ -224,9 +224,13 @@ use crate::actors::creatures::draft_horses::DRAFT_HORSE_TEMPLATE;
 use crate::actors::creatures::awakened_shrubs::AWAKENED_SHRUB_TEMPLATE;
 use crate::actors::creatures::bats::BAT_TEMPLATE;
 use crate::actors::creatures::camels::CAMEL_TEMPLATE;
+use crate::actors::creatures::cats::CAT_TEMPLATE;
+use crate::actors::creatures::frogs::FROG_TEMPLATE;
 use crate::actors::creatures::giant_badgers::GIANT_BADGER_TEMPLATE;
 use crate::actors::creatures::giant_wasps::GIANT_WASP_TEMPLATE;
+use crate::actors::creatures::lizards::LIZARD_TEMPLATE;
 use crate::actors::creatures::rats::RAT_TEMPLATE;
+use crate::actors::creatures::weasels::WEASEL_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -3554,6 +3558,19 @@ impl EncounterInstance {
             &CAMEL_TEMPLATE,
             &GIANT_BADGER_TEMPLATE,
             &GIANT_WASP_TEMPLATE,
+            // CR-0 ambient-beast bench: Cat / Frog / Lizard / Weasel
+            // round out the tiny-beast cohort beside the Bat / Rat /
+            // Hawk trio. Each slots into the random encounter pool so
+            // a low-`cr_target` generation can land a hearth cat, a
+            // pond frog, a cave lizard, or a darting weasel as
+            // ambient flavor without hand-placing one. The Frog
+            // alone has *no* native attack (see `frogs.rs`); the
+            // others carry a flat-1 swing matching the bat / rat /
+            // hawk envelope at this CR tier.
+            &CAT_TEMPLATE,
+            &FROG_TEMPLATE,
+            &LIZARD_TEMPLATE,
+            &WEASEL_TEMPLATE,
         ]
     }
 
@@ -7120,6 +7137,81 @@ mod tests {
         assert!(
             !aei.validate(&e),
             "stand should fail when movement budget is too low"
+        );
+    }
+
+    #[test]
+    fn drop_prone_installs_prone_with_zero_cost() {
+        use crate::actions::default_actions::DROP_PRONE;
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::Resource;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let speed_before = e.actors[&id].speed();
+
+        // Drop-prone should validate while not prone.
+        let aei = ActionExecutionInfo::new(&*DROP_PRONE, id, None, None, None);
+        assert!(aei.validate(&e), "drop prone should validate when standing");
+        // Zero-cost: no resources spent.
+        assert!(aei.cost(&e).is_empty());
+
+        e.pop_prompt();
+        e.push_action(aei);
+        e.process_stack();
+
+        // Prone is installed; movement budget untouched (drop-prone is free).
+        let after = &e.actors[&id];
+        assert!(after.has_condition(Condition::Prone));
+        assert!(
+            after.can_consume_resource(Resource::Movement(speed_before - 0.01)),
+            "drop prone shouldn't have spent any movement budget"
+        );
+    }
+
+    #[test]
+    fn drop_prone_invalid_when_already_prone() {
+        use crate::actions::default_actions::DROP_PRONE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Prone, crate::conditions::ConditionTimer::Permanent);
+        let aei = ActionExecutionInfo::new(&*DROP_PRONE, id, None, None, None);
+        assert!(
+            !aei.validate(&e),
+            "drop prone should not validate when already prone"
+        );
+    }
+
+    #[test]
+    fn drop_prone_invalid_when_unconscious() {
+        // Auto-prone conditions (Unconscious / Paralyzed / Petrified /
+        // Asleep) already install Prone via their own state machinery;
+        // the picker shouldn't surface a redundant lay line. Pin the
+        // gate so future engine tweaks don't quietly reopen it.
+        use crate::actions::default_actions::DROP_PRONE;
+        use crate::conditions::Condition;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&id).unwrap().add_condition(
+            Condition::Unconscious,
+            crate::conditions::ConditionTimer::Permanent,
+        );
+        let aei = ActionExecutionInfo::new(&*DROP_PRONE, id, None, None, None);
+        assert!(
+            !aei.validate(&e),
+            "drop prone should not validate while Unconscious"
         );
     }
 

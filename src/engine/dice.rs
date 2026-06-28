@@ -61,6 +61,15 @@ pub trait Roller {
     /// Sum of `dice.count` independent rolls of a 1..=`dice.faces` die.
     /// `count == 0` or `faces == 0` returns 0 (treat as a no-op).
     fn roll(&mut self, dice: &Dice) -> u32;
+
+    /// Convenience for the canonical 5e check / attack / save / ability
+    /// roll. Equivalent to `self.roll(&Dice::new(1, 20))`, but lets call
+    /// sites read as `roller.roll_d20()` instead of carrying the
+    /// `Dice::new(1, 20)` literal — the most common single-die shape in
+    /// the engine. Returns 1..=20.
+    fn roll_d20(&mut self) -> u32 {
+        self.roll(&Dice::new(1, 20))
+    }
 }
 
 /// `fastrand`-backed roller. Use [`FastRandRoller::with_seed`] for repeatable
@@ -302,6 +311,34 @@ mod tests {
         let mut b = FastRandRoller::with_seed(42);
         let dice = Dice::new(5, 20);
         assert_eq!(a.roll(&dice), b.roll(&dice));
+    }
+
+    #[test]
+    fn roll_d20_delegates_to_d20() {
+        // The convenience method is byte-identical to the explicit
+        // `Dice::new(1, 20)` form; pin the equivalence so a future
+        // refactor that nudges one without the other doesn't
+        // silently change the d20 cadence.
+        let mut a = FastRandRoller::with_seed(7);
+        let mut b = FastRandRoller::with_seed(7);
+        assert_eq!(a.roll_d20(), b.roll(&Dice::new(1, 20)));
+    }
+
+    #[test]
+    fn roll_d20_is_in_range() {
+        let mut r = FastRandRoller::with_seed(1);
+        for _ in 0..100 {
+            let n = r.roll_d20();
+            assert!((1..=20).contains(&n), "d20 out of range: {}", n);
+        }
+    }
+
+    #[test]
+    fn scripted_roller_supports_d20_shortcut() {
+        // The shortcut is on the trait, not the impl — verify a
+        // deterministic stub picks it up via the default body.
+        let mut r = ScriptedRoller::new(&[7]);
+        assert_eq!(r.roll_d20(), 7);
     }
 
     #[test]

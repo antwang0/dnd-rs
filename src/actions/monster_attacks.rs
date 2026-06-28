@@ -14509,6 +14509,58 @@ pub static RAT_BITE: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Piercing,
 );
 
+// ─── Cat ────────────────────────────────────────────────────────────
+
+/// Cat Claws — DEX-based 1d1-shape (flat 1) slashing melee. RAW: "Hit:
+/// 1 slashing damage." The CR-0 tiny climber's only swing — a hearth-
+/// cat whose threat profile is mobility + climb 30, not damage. The
+/// 1d1 lets a confirmed crit double cleanly to 2 through the engine's
+/// uniform crit-doubling chassis, mirroring the Hawk Talons / Bat Bite
+/// / Rat Bite shape at this CR tier. Sister to `HAWK_TALONS`
+/// (DEX-based slashing) on the CR-0 ladder — same DEX-driven envelope
+/// since the cat's load-bearing stat is its Dexterity 15.
+pub static CAT_CLAWS: SimpleWeapon = SimpleWeapon::melee(
+    "cat claws",
+    &["cc", "cat", "swipe"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 1),
+    DamageType::Slashing,
+);
+
+// ─── Lizard ─────────────────────────────────────────────────────────
+
+/// Lizard Bite — STR-based 1d1-shape (flat 1) piercing melee. RAW:
+/// "Hit: 1 piercing damage." The CR-0 tiny reptile's only swing —
+/// the mundane gecko / skink whose threat profile is "ambient
+/// dungeon-fauna." Same flat-1 shape as Rat Bite / Bat Bite at this
+/// CR tier; sister to `GIANT_LIZARD_BITE` (1d8, CR ¼) on the lizard
+/// ladder. Lacks Spider Climb (RAW: 30 climb) — climb speed is
+/// flavor-only since the engine collapses ground + climb into a
+/// single per-creature speed.
+pub static LIZARD_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "lizard bite",
+    &["lb", "lizard", "nip"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 1),
+    DamageType::Piercing,
+);
+
+// ─── Weasel ─────────────────────────────────────────────────────────
+
+/// Weasel Bite — DEX-based 1d1-shape (flat 1) piercing melee. RAW:
+/// "+5 to hit, reach 5 ft, one creature. Hit: 1 piercing damage."
+/// The CR-0 tiny mustelid's only swing. DEX-based (DEX 16 is the
+/// load-bearing stat — the weasel is a nimble snake-killer rather
+/// than a heavy hitter). Same flat-1 shape as Rat/Bat Bite at this
+/// CR tier, but DEX-keyed like the cat's claws / hawk's talons.
+pub static WEASEL_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "weasel bite",
+    &["wb", "weasel", "snap"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 1),
+    DamageType::Piercing,
+);
+
 // ─── Awakened Shrub ─────────────────────────────────────────────────
 
 /// Awakened Shrub Rake — STR-based 1d4-1 slashing melee. RAW: "+1 to

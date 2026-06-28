@@ -258,6 +258,108 @@ impl Action for StandUp {
 
 pub static STAND_UP: LazyLock<StandUp> = LazyLock::new(|| StandUp {});
 
+/// Drop Prone — voluntarily lie down. 5e RAW: dropping prone costs no
+/// movement and isn't an action — it's a free "part of movement." We
+/// model it as a free no-cost action (empty `cost` vec) so the picker
+/// can surface it without nudging the action economy. The reverse
+/// move (standing back up) routes through `StandUp` and costs half
+/// the actor's speed in movement per RAW.
+///
+/// Tactical use cases:
+/// - Soak a ranged volley: prone grants ranged attackers disadvantage
+///   (engine's `compute_attack_mode` reads the Prone condition).
+/// - Pre-position for an Uncanny Dodge / Shield reaction trade.
+/// - Bait melee attackers into closing (melee attacks against prone
+///   targets have advantage RAW — symmetric trade with the ranged
+///   disadvantage).
+///
+/// Validates: caster exists, is not already prone, is not unconscious
+/// / petrified / paralyzed (those install Prone via their own state
+/// machinery — dropping prone on top of an auto-prone condition is
+/// a no-op refresh that the engine's `add_condition` would collapse,
+/// but rejecting early keeps the picker UI clean).
+pub struct DropProne {}
+
+impl Action for DropProne {
+    fn name(&self) -> &str {
+        "drop prone"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dp", "lay", "prone"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // RAW: dropping prone is free — no Action / Movement spend.
+        Vec::new()
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        use crate::conditions::Condition;
+        let Some(a) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        if a.has_condition(Condition::Prone) {
+            return false;
+        }
+        // Auto-prone conditions already install Prone; the picker
+        // shouldn't surface a redundant "lay" line. `add_condition`
+        // would no-op via the timer-longer collapse, but rejecting at
+        // the validate gate keeps the action picker tidy.
+        if a.has_condition(Condition::Unconscious)
+            || a.has_condition(Condition::Petrified)
+            || a.has_condition(Condition::Paralyzed)
+            || a.has_condition(Condition::Asleep)
+        {
+            return false;
+        }
+        true
+    }
+
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        vec![Box::new(crate::engine::side_effects::ApplyCondition {
+            actor_id: caster_id,
+            condition: crate::conditions::Condition::Prone,
+            timer: crate::conditions::ConditionTimer::Permanent,
+        })]
+    }
+}
+
+pub static DROP_PRONE: LazyLock<DropProne> = LazyLock::new(|| DropProne {});
+
 /// Dodge action — attacks against you have disadvantage and you have
 /// advantage on DEX saves until the start of your next turn (5e). Costs
 /// an Action; harmless flag-flip side effect.
@@ -1028,6 +1130,7 @@ pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> =
             &*DASH,
             &*SKIP,
             &*STAND_UP,
+            &*DROP_PRONE,
             &*DODGE,
             &*DISENGAGE,
             &*HELP,
