@@ -221,6 +221,12 @@ use crate::actors::creatures::killer_whales::KILLER_WHALE_TEMPLATE;
 use crate::actors::creatures::crawling_claws::CRAWLING_CLAW_TEMPLATE;
 use crate::actors::creatures::riding_horses::RIDING_HORSE_TEMPLATE;
 use crate::actors::creatures::draft_horses::DRAFT_HORSE_TEMPLATE;
+use crate::actors::creatures::awakened_shrubs::AWAKENED_SHRUB_TEMPLATE;
+use crate::actors::creatures::bats::BAT_TEMPLATE;
+use crate::actors::creatures::camels::CAMEL_TEMPLATE;
+use crate::actors::creatures::giant_badgers::GIANT_BADGER_TEMPLATE;
+use crate::actors::creatures::giant_wasps::GIANT_WASP_TEMPLATE;
+use crate::actors::creatures::rats::RAT_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -3514,6 +3520,40 @@ impl EncounterInstance {
             &CRAWLING_CLAW_TEMPLATE,
             &RIDING_HORSE_TEMPLATE,
             &DRAFT_HORSE_TEMPLATE,
+            // Newest additions filling the CR-0 ambient / CR-⅛ pack-animal
+            // / CR-¼ burrower / CR-½ flying-venom-rider / CR-0 sapling-
+            // plant gaps in the encounter ladder:
+            //   - Awakened Shrub (CR 0 small plant): the sapling cousin of
+            //     the Awakened Tree — fire-vulnerable / piercing-resistant
+            //     1d4-1 rake. Floors the plant ladder beneath Twig Blight
+            //     (CR ⅛) and Awakened Tree (CR 2).
+            //   - Bat (CR 0 tiny beast): flying tiny ambient with
+            //     Blindsight 60 + flat-1 piercing bite. Sister to the
+            //     Giant Bat (CR ¼) one tier up. The lowest-CR Blindsight
+            //     holder in the pool.
+            //   - Rat (CR 0 tiny beast): lone-rodent sibling of the Giant
+            //     Rat — flat-1 piercing bite, *no* Pack Tactics, anchors
+            //     the "ambient vermin" bench floor.
+            //   - Camel (CR ⅛ large beast): desert-caravan pack animal —
+            //     flat 1d4 bite (no STR-to-damage per RAW). Slots beside
+            //     Mastiff / Guard / Bandit on the CR-⅛ civilian bench.
+            //   - Giant Badger (CR ¼ medium beast): bite + claws
+            //     heterogeneous compound multi (~10 avg/Action) on a
+            //     darkvision-30 burrower frame. Fills the CR-¼ mustelid
+            //     niche beside Giant Frog / Giant Lizard / Giant Wolf
+            //     Spider.
+            //   - Giant Wasp (CR ½ medium beast): flying venom drone —
+            //     1d6 DEX sting + DC-11 CON save-or-3d6-poison-AND-
+            //     Poisoned rider via `WeaponWithSaveDamage::
+            //     melee_with_condition`. Sits one CR tier above the
+            //     Giant Centipede / Giant Wolf Spider venom-crawler
+            //     bench on a fly-50 frame.
+            &AWAKENED_SHRUB_TEMPLATE,
+            &BAT_TEMPLATE,
+            &RAT_TEMPLATE,
+            &CAMEL_TEMPLATE,
+            &GIANT_BADGER_TEMPLATE,
+            &GIANT_WASP_TEMPLATE,
         ]
     }
 

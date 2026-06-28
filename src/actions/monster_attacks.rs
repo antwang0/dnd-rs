@@ -287,6 +287,59 @@ pub fn save_or_charmed_by_caster(
     ]
 }
 
+/// On an Action-cost weapon swing, conditionally run a second swing if
+/// the caster has Extra Attack and this invocation isn't already inside
+/// a `Multiattack` / `CompoundAttack` expansion. Logs `"  Extra Attack:"`
+/// before the chained swing and extends `effects` with whatever it
+/// returns. No-op when either gate fails.
+///
+/// Centralizes the recurring 7-line tail block on every WeaponWith*
+/// chassis's `side_effects` impl (`SimpleWeapon`, `WeaponWithRider`,
+/// `WeaponWithSaveCondition`, `WeaponWithSaveDamage`,
+/// `WeaponWithCondition`). Before extraction, the same
+/// `!in_multiattack() && actor.has_extra_attack()` gate and the same
+/// `effects.extend(swing(encounter))` chain were re-stamped at five
+/// chassis sites — a future tweak to chain semantics (e.g. a third
+/// swing for a hypothetical "Extra Attack (Improved)" feat, gating on
+/// a per-swing resource other than `has_extra_attack`, or a different
+/// log prefix on the chained line) now lands in one place instead of
+/// being scattered across the chassis impls. The
+/// `Multiattack` / `CompoundAttack` chassis themselves still gate the
+/// chain off via the `in_multiattack()` depth counter so a 3-claw
+/// Compound on a creature that also has Extra Attack doesn't silently
+/// promote to 6 swings.
+///
+/// The closure form (`FnMut(&mut EncounterInstance) -> Vec<...>`) lets
+/// each chassis package its swing-and-rider chain — including the
+/// hit/miss gate via `effects.is_empty()` and the save / install riders
+/// — into a single closure that the helper re-invokes verbatim, so the
+/// rider lands on each Extra Attack hit too (RAW: Extra Attack is a
+/// second swing, not a second action — every rider rides every hit).
+pub fn maybe_chain_extra_attack(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    mut swing: impl FnMut(&mut EncounterInstance) -> Vec<Box<dyn ApplicableSideEffect>>,
+) {
+    // Suppress Extra Attack when this swing was invoked from inside a
+    // Multiattack / CompoundAttack expansion — the wrapper already
+    // encodes the per-Action swing count, and double-counting it (e.g.
+    // Ancient Blue Dragon's 3-claw Multi) silently doubles a boss
+    // creature's per-turn damage budget.
+    if encounter.in_multiattack() {
+        return;
+    }
+    if !encounter
+        .actors
+        .get(&caster_id)
+        .is_some_and(|a| a.has_extra_attack())
+    {
+        return;
+    }
+    encounter.log("  Extra Attack:");
+    effects.extend(swing(encounter));
+}
+
 /// Resolve a single weapon swing whose attack and damage modifiers both
 /// derive from the same ability (the standard "STR-to-hit STR-to-damage"
 /// shape), at an arbitrary reach. Returns `(effects, damage_dealt)` so the
@@ -471,6 +524,44 @@ impl SimpleWeapon {
         }
     }
 
+    /// Const constructor for the "flat-dice melee swing" shape —
+    /// `damage_ability = None` so the damage roll *omits* the to-hit
+    /// ability's modifier. Matches RAW's small handful of natural
+    /// attacks where the stat block lists `Hit: N (XdY)` instead of
+    /// the standard `Hit: N (XdY + STR)`: Dretch Bite / Dretch Claws
+    /// (RAW 3 (1d6) / 5 (2d4) — STR 11 = +0 so the distinction is
+    /// moot but the data shape is preserved), Lemure Fist (RAW 2 (1d4)
+    /// — STR 10 = +0), Pseudodragon Bite (RAW 1 piercing flat — DEX 15
+    /// would have added +2), and Camel Bite (RAW 2 (1d4) — STR 16
+    /// would have added +3). Pins `is_melee = true`,
+    /// `reach = MELEE_REACH`, `damage_ability = None`, and the rest of
+    /// the boilerplate (LOS / Action-cost / no long range) so a flat-
+    /// damage natural attack collapses from a 12-field struct literal
+    /// to a 5-argument call. Callers who need a custom reach can fall
+    /// back to the struct form; the engine-side gate `damage_ability:
+    /// None` is what matters.
+    pub const fn flat_melee(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        attack_ability: AbilityScoreType,
+        damage_dice: Dice,
+        damage_type: DamageType,
+    ) -> Self {
+        Self {
+            display_name,
+            aliases,
+            attack_ability,
+            damage_ability: None,
+            damage_dice,
+            damage_type,
+            reach: MELEE_REACH,
+            is_melee: true,
+            requires_los: false,
+            cost_resource: Resource::Action,
+            normal_range: None,
+        }
+    }
+
     /// Const constructor for the standard "Action-cost ranged weapon
     /// attack" shape — longbow / heavy crossbow / hill giant boulder /
     /// frost giant rock. Pins the boilerplate fields (`is_melee = false`,
@@ -564,20 +655,13 @@ impl Action for SimpleWeapon {
             )
         };
         let mut effects = swing(encounter);
-        // Suppress Extra Attack when this swing was invoked from inside
-        // a Multiattack / CompoundAttack expansion — the wrapper already
-        // encodes the per-Action swing count, and double-counting it
-        // (e.g. Ancient Blue Dragon's 3-claw Multi) silently doubles a
-        // boss creature's per-turn damage budget.
-        if self.cost_resource == Resource::Action
-            && !encounter.in_multiattack()
-            && encounter
-                .actors
-                .get(&caster_id)
-                .is_some_and(|a| a.has_extra_attack())
-        {
-            encounter.log("  Extra Attack:");
-            effects.extend(swing(encounter));
+        // Extra Attack chain — only on Action-cost swings (bonus-action
+        // bow shots and reaction strikes don't get the second hit per
+        // RAW). The helper handles the `!in_multiattack()` and
+        // `has_extra_attack()` gates uniformly across every WeaponWith*
+        // chassis.
+        if self.cost_resource == Resource::Action {
+            maybe_chain_extra_attack(encounter, caster_id, &mut effects, swing);
         }
         effects
     }
@@ -728,15 +812,7 @@ impl Action for WeaponWithRider {
             )
         };
         let mut effects = swing(encounter);
-        if !encounter.in_multiattack()
-            && encounter
-                .actors
-                .get(&caster_id)
-                .is_some_and(|a| a.has_extra_attack())
-        {
-            encounter.log("  Extra Attack:");
-            effects.extend(swing(encounter));
-        }
+        maybe_chain_extra_attack(encounter, caster_id, &mut effects, swing);
         effects
     }
 }
@@ -916,15 +992,7 @@ impl Action for WeaponWithSaveCondition {
             effects
         };
         let mut effects = swing(encounter);
-        if !encounter.in_multiattack()
-            && encounter
-                .actors
-                .get(&caster_id)
-                .is_some_and(|a| a.has_extra_attack())
-        {
-            encounter.log("  Extra Attack:");
-            effects.extend(swing(encounter));
-        }
+        maybe_chain_extra_attack(encounter, caster_id, &mut effects, swing);
         effects
     }
 }
@@ -1212,15 +1280,7 @@ impl Action for WeaponWithSaveDamage {
             effects
         };
         let mut effects = swing(encounter);
-        if !encounter.in_multiattack()
-            && encounter
-                .actors
-                .get(&caster_id)
-                .is_some_and(|a| a.has_extra_attack())
-        {
-            encounter.log("  Extra Attack:");
-            effects.extend(swing(encounter));
-        }
+        maybe_chain_extra_attack(encounter, caster_id, &mut effects, swing);
         effects
     }
 }
@@ -1392,15 +1452,7 @@ impl Action for WeaponWithCondition {
             effects
         };
         let mut effects = swing(encounter);
-        if !encounter.in_multiattack()
-            && encounter
-                .actors
-                .get(&caster_id)
-                .is_some_and(|a| a.has_extra_attack())
-        {
-            encounter.log("  Extra Attack:");
-            effects.extend(swing(encounter));
-        }
+        maybe_chain_extra_attack(encounter, caster_id, &mut effects, swing);
         effects
     }
 }
@@ -7931,20 +7983,17 @@ pub static PSEUDODRAGON_STING: LazyLock<PseudodragonSting> =
 
 /// Pseudodragon bite — DEX-based 1d4+0 piercing. Lightweight follow-up
 /// to the sting; the dragonling's tiny jaws don't add the DEX modifier
-/// to damage (RAW: 1 piercing flat for a CR-1/4 stat block).
-pub static PSEUDODRAGON_BITE: SimpleWeapon = SimpleWeapon {
-    display_name: "bite",
-    aliases: &["b", "nip"],
-    attack_ability: AbilityScoreType::Dexterity,
-    damage_ability: None,
-    damage_dice: Dice::new(1, 4),
-    damage_type: DamageType::Piercing,
-    reach: MELEE_REACH,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+/// to damage (RAW: 1 piercing flat for a CR-1/4 stat block). Routes
+/// through the shared `SimpleWeapon::flat_melee` constructor — the
+/// `damage_ability: None` chokepoint that keeps a damage roll free of
+/// the to-hit ability's modifier.
+pub static PSEUDODRAGON_BITE: SimpleWeapon = SimpleWeapon::flat_melee(
+    "bite",
+    &["b", "nip"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 4),
+    DamageType::Piercing,
+);
 
 /// Behir bite — STR 3d10+6 piercing. The lightning serpent's signature
 /// melee chomp; pairs with the constrict in the multi.
@@ -11820,41 +11869,30 @@ pub static AWAKENED_TREE_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiat
 /// Dretch Bite — STR-based 1d6 piercing melee, no STR mod to damage
 /// (the dretch is STR 11 / +0 so the distinction is moot, but we leave
 /// damage_ability off to keep the manes-tier weakness legible — RAW
-/// dretch deals a flat 3 (1d6) bite, not 1d6+STR). Vanilla
-/// `SimpleWeapon` — the per-hit pressure is the claws multi and the
-/// Fetid Cloud burst, not the bite.
-pub static DRETCH_BITE: SimpleWeapon = SimpleWeapon {
-    display_name: "dretch bite",
-    aliases: &["d-bite", "dretch-bite"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: None,
-    damage_dice: Dice::new(1, 6),
-    damage_type: DamageType::Piercing,
-    reach: MELEE_REACH,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+/// dretch deals a flat 3 (1d6) bite, not 1d6+STR). Routes through the
+/// shared `SimpleWeapon::flat_melee` chokepoint — the per-hit pressure
+/// is the claws multi and the Fetid Cloud burst, not the bite.
+pub static DRETCH_BITE: SimpleWeapon = SimpleWeapon::flat_melee(
+    "dretch bite",
+    &["d-bite", "dretch-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+);
 
 /// Dretch Claws — STR-based 2d4 slashing melee, no STR mod. RAW: "Hit:
 /// 5 (2d4) slashing damage." The dretch's bite + claws multi runs at
 /// CR 1/4 budget — the average 5 slashing per Action lane plus the 3
 /// piercing bite gives a 7–8 expected per-turn damage envelope before
-/// the once-per-day Fetid Cloud lands its Poisoned rider.
-pub static DRETCH_CLAWS: SimpleWeapon = SimpleWeapon {
-    display_name: "dretch claws",
-    aliases: &["d-claws", "dretch-claws"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: None,
-    damage_dice: Dice::new(2, 4),
-    damage_type: DamageType::Slashing,
-    reach: MELEE_REACH,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+/// the once-per-day Fetid Cloud lands its Poisoned rider. Same flat-
+/// dice constructor as `DRETCH_BITE`.
+pub static DRETCH_CLAWS: SimpleWeapon = SimpleWeapon::flat_melee(
+    "dretch claws",
+    &["d-claws", "dretch-claws"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 4),
+    DamageType::Slashing,
+);
 
 /// Dretch Multiattack — 1 bite + 1 claws per Action via `CompoundAttack`.
 /// Heterogeneous compound (piercing + slashing) — both swings carry no
@@ -11958,20 +11996,16 @@ pub static DRETCH_FETID_CLOUD: LazyLock<DretchFetidCloud> =
 
 /// Lemure Fist — STR-based 1d4 bludgeoning melee, no STR mod (the lemure
 /// has STR 10 / +0). The lowest-tier devil's only attack — a flat
-/// 2 (1d4) bludgeoning slap. Vanilla `SimpleWeapon` — no rider.
-pub static LEMURE_FIST: SimpleWeapon = SimpleWeapon {
-    display_name: "lemure fist",
-    aliases: &["l-fist", "lemure-fist"],
-    attack_ability: AbilityScoreType::Strength,
-    damage_ability: None,
-    damage_dice: Dice::new(1, 4),
-    damage_type: DamageType::Bludgeoning,
-    reach: MELEE_REACH,
-    is_melee: true,
-    requires_los: false,
-    cost_resource: Resource::Action,
-    normal_range: None,
-};
+/// 2 (1d4) bludgeoning slap. Routes through the shared
+/// `SimpleWeapon::flat_melee` chokepoint (no STR mod to damage — RAW's
+/// flat 2 (1d4) shape rather than 1d4+STR).
+pub static LEMURE_FIST: SimpleWeapon = SimpleWeapon::flat_melee(
+    "lemure fist",
+    &["l-fist", "lemure-fist"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 4),
+    DamageType::Bludgeoning,
+);
 
 // ─── Bearded Devil (Barbazu) ─────────────────────────────────────────
 
@@ -14437,5 +14471,155 @@ pub static RIDING_HORSE_HOOVES: SimpleWeapon = SimpleWeapon::melee(
     &["hh", "hooves", "kick"],
     AbilityScoreType::Strength,
     Dice::new(2, 4),
+    DamageType::Bludgeoning,
+);
+
+// ─── Bat ────────────────────────────────────────────────────────────
+
+/// Bat Bite — STR-based 1d1-shape (i.e. flat 1) piercing melee. RAW:
+/// "+0 to hit, reach 5 ft, one creature. Hit: 1 piercing damage." The
+/// regular Bat's only swing — a CR-0 tiny flier whose threat profile
+/// is mobility + echolocation, not damage. 1d1 lets a confirmed crit
+/// double cleanly to 2 through the engine's uniform crit-doubling
+/// chassis instead of needing a flat-1 special case — same trick the
+/// Hawk uses. Sister to `GIANT_BAT_BITE` (1d6, CR ¼) on the bat
+/// ladder.
+pub static BAT_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "bat bite",
+    &["bb", "bat", "nip"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 1),
+    DamageType::Piercing,
+);
+
+// ─── Rat ────────────────────────────────────────────────────────────
+
+/// Rat Bite — STR-based 1d1-shape (flat 1) piercing melee. RAW: "+0
+/// to hit, reach 5 ft, one creature. Hit: 1 piercing damage." The
+/// CR-0 vermin's only swing — a sewer-rat whose threat profile is
+/// "annoying nibble, dies to a stiff breeze." Sister to
+/// `GIANT_RAT_BITE` (1d4 + Pack Tactics, CR ⅛) on the rat ladder;
+/// the regular rat lacks Pack Tactics because RAW doesn't grant it
+/// — flavor "lonely rodent" vs the giant rat's "swarm vermin."
+pub static RAT_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "rat bite",
+    &["rb", "nibble"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 1),
+    DamageType::Piercing,
+);
+
+// ─── Awakened Shrub ─────────────────────────────────────────────────
+
+/// Awakened Shrub Rake — STR-based 1d4-1 slashing melee. RAW: "+1 to
+/// hit, reach 5 ft, one target. Hit: 1 (1d4 - 1) slashing damage." The
+/// CR-0 small-plant variant of `AWAKENED_TREE_SLAM` — the sapling
+/// cousin of the awakened tree. The RAW 1d4-1 die expression makes
+/// the floored-at-1 (engine's `max(1)` damage gate) the typical
+/// per-swing yield on this CR-0 tier; a confirmed crit doubles the
+/// underlying 1d4-1 cleanly through the engine's uniform crit chassis.
+/// Vanilla `SimpleWeapon` — no rider; the awakened shrub's threat
+/// profile is mobility + plant-resistance envelope, not the swing.
+pub static AWAKENED_SHRUB_RAKE: SimpleWeapon = SimpleWeapon::melee(
+    "shrub rake",
+    &["asr", "rake", "scratch"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 4),
+    DamageType::Slashing,
+);
+
+// ─── Giant Wasp ─────────────────────────────────────────────────────
+
+/// Giant Wasp Sting — DEX-based 1d6+DEX piercing melee with a DC 11
+/// CON save-or-3d6-poison-AND-Poisoned rider via the shared
+/// `WeaponWithSaveDamage::melee_with_condition` chassis. RAW: "+5 to
+/// hit, reach 5 ft, one creature. Hit: 5 (1d6 + 2) piercing damage,
+/// and the target must make a DC 11 Constitution saving throw, taking
+/// 10 (3d6) poison damage on a failed save, or half as much damage on
+/// a successful one. If the poison damage reduces the target to 0
+/// hit points, the target is stable but poisoned for 1 hour." We
+/// model the conditional 1-hour Poisoned envelope as an unconditional
+/// 10-round Poisoned install on a failed save — close enough to the
+/// RAW "hit by the venom, attack/ability rolls at disadvantage"
+/// envelope, and cheaper than wiring a 0-HP-gated install through the
+/// shared chassis. Routes through the same chokepoint as Spider /
+/// Ettercap / Drow Poisoned Crossbow on the save-damage-plus-Poisoned
+/// chassis lane. The flying-stinger insectoid sibling on the venom
+/// bench beside the Giant Centipede / Giant Wolf Spider.
+pub static GIANT_WASP_STING: WeaponWithSaveDamage = WeaponWithSaveDamage::melee_with_condition(
+    "giant wasp sting",
+    &["gws", "wasp-sting", "sting"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+    AbilityScoreType::Constitution,
+    11,
+    Dice::new(3, 6),
+    DamageType::Poison,
+    "wasp venom",
+    Condition::Poisoned,
+    ConditionTimer::Rounds(10),
+);
+
+// ─── Giant Badger ───────────────────────────────────────────────────
+
+/// Giant Badger Bite — STR-based 1d6+STR piercing melee. RAW: "+3 to
+/// hit, reach 5 ft, one target. Hit: 4 (1d6 + 1) piercing damage." The
+/// single-die half of the badger's bite + 2-claws compound. Vanilla
+/// `SimpleWeapon`. Sister to `GIANT_BADGER_CLAWS` (2d4+STR slashing,
+/// the heavier rake half) on the same Action.
+pub static GIANT_BADGER_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "giant badger bite",
+    &["gbb-bite", "badger-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+);
+
+/// Giant Badger Claws — STR-based 2d4+STR slashing melee. RAW: "+3 to
+/// hit, reach 5 ft, one target. Hit: 6 (2d4 + 1) slashing damage." The
+/// chunkier rake half of the bite + 2-claws compound. Vanilla
+/// `SimpleWeapon`. The 2d4 dice slot the claws as the load-bearing
+/// per-swing dice in the badger's compound multi — two claws + a
+/// lighter bite per Action averages to ~16 damage at the CR ¼ tier.
+pub static GIANT_BADGER_CLAWS: SimpleWeapon = SimpleWeapon::melee(
+    "giant badger claws",
+    &["gbc-claws", "badger-claws"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 4),
+    DamageType::Slashing,
+);
+
+/// Giant Badger Multiattack — 1 bite + 2 claws per Action via
+/// `CompoundAttack`. RAW: "Multiattack. The badger makes two attacks:
+/// one with its bite and one with its claws." We follow the SRD
+/// 5.2.1 wording (1 bite + 1 claws) — earlier MM editions varied to
+/// "1 bite + 2 claws," but the current SRD is the cleaner shape and
+/// avoids overstating the CR-¼ envelope. Heterogeneous compound
+/// (piercing + slashing) — both swings carry no rider; the threat
+/// profile is the dual-typed damage spread (a piercing-resistant
+/// target still eats the slashing claws at full value, and vice
+/// versa).
+pub static GIANT_BADGER_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "giant badger multiattack",
+    parts: vec![(&GIANT_BADGER_BITE, 1), (&GIANT_BADGER_CLAWS, 1)],
+});
+
+// ─── Camel ──────────────────────────────────────────────────────────
+
+/// Camel Bite — STR-based 1d4 bludgeoning melee, no STR mod to damage.
+/// RAW: "+5 to hit, reach 5 ft, one creature. Hit: 2 (1d4) bludgeoning
+/// damage" — the SRD entry lists 1d4 flat even though the camel sports
+/// STR 16 (+3). Routes through the shared `SimpleWeapon::flat_melee`
+/// chokepoint (no damage modifier) — same chassis as Dretch / Lemure /
+/// Pseudodragon natural attacks where the RAW damage line is flat dice.
+/// Slots beside the Mule / Riding Horse on the docile-pack-animal bench
+/// at CR ⅛ — the camel exists as a desert-transport beast, not a
+/// combat threat.
+pub static CAMEL_BITE: SimpleWeapon = SimpleWeapon::flat_melee(
+    "camel bite",
+    &["cb", "camel"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 4),
     DamageType::Bludgeoning,
 );
