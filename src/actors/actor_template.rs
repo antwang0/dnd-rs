@@ -2616,6 +2616,15 @@ impl ActorInstance {
         8 + self.proficiency_bonus() + self.ability_modifier(ability)
     }
 
+    /// Standard d20 attack-roll modifier — proficiency bonus + the
+    /// ability mod. Named `spell_attack_modifier` for the historical
+    /// caster-cantrip call sites, but the math is identical for any
+    /// proficient attack (RAW: monsters are universally proficient
+    /// with their natural weapons). The Horned Devil / Efreeti hurled
+    /// flame attacks reuse this helper for their CHA-based spell-
+    /// attack shots; any future weapon impl that needs the raw
+    /// `prof + ability` sum should call this rather than re-inlining
+    /// the addition.
     pub fn spell_attack_modifier(&self, ability: AbilityScoreType) -> i32 {
         self.proficiency_bonus() + self.ability_modifier(ability)
     }
@@ -2955,14 +2964,6 @@ impl ActorInstance {
     /// (skip dispelling targets without the buff) and UI tagging.
     pub fn has_death_ward(&self) -> bool {
         self.has_condition(Condition::DeathWarded)
-    }
-
-    /// Ability-mod + proficiency bonus for `ability` (the standard 5e
-    /// "ability attack bonus" used by spells). `attack_bonus()` is
-    /// STR-locked for melee weapons; this lets callers pick the right
-    /// stat for spell attacks (INT for wizard, WIS for cleric, etc.).
-    pub fn ability_attack_bonus(&self, ability: AbilityScoreType) -> i32 {
-        self.ability_modifier(ability) + self.proficiency_bonus()
     }
 
     /// Record that `helper_id` Helped this actor against `target_id`.

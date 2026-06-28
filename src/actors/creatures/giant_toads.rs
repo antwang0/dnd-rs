@@ -15,7 +15,7 @@ use std::sync::LazyLock;
 /// encounters.
 pub static GIANT_TOAD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&*GIANT_TOAD_BITE);
+    actions.push(&GIANT_TOAD_BITE);
     CreatureTemplate {
         name: "Giant Toad",
         // 't' for toad — lowercase even though Large, since the

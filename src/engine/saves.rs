@@ -59,12 +59,58 @@ impl SaveDamagePolicy {
     /// for full — so the table reduces to the non-evasion shape.
     /// Caller is responsible for confirming evasion is in play (DEX
     /// save AND the target has the feature).
+    ///
+    /// Mechanically equivalent to invoking `apply` against a policy
+    /// shifted one notch better: HalfOnSave → NoneOnSave-on-pass,
+    /// HalfOnSave-on-fail → half (fresh half lane). NoneOnSave already
+    /// zeros on pass and full-on-fail, so evasion is a no-op — that
+    /// half of the table just delegates to `apply` directly.
     pub fn apply_with_evasion(self, raw: u32, passed: bool) -> u32 {
-        match (self, passed) {
-            (SaveDamagePolicy::HalfOnSave, true) => 0,
-            (SaveDamagePolicy::HalfOnSave, false) => raw / 2,
-            (SaveDamagePolicy::NoneOnSave, true) => 0,
-            (SaveDamagePolicy::NoneOnSave, false) => raw,
+        match self {
+            // Evasion shifts the HalfOnSave table one notch better:
+            // pass → 0 (was raw/2), fail → raw/2 (was raw).
+            SaveDamagePolicy::HalfOnSave => {
+                if passed {
+                    0
+                } else {
+                    raw / 2
+                }
+            }
+            // NoneOnSave: pass already zeros, fail already full —
+            // evasion has nothing to improve. Delegate to `apply`.
+            SaveDamagePolicy::NoneOnSave => self.apply(raw, passed),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn half_on_save_halves_pass_full_on_fail() {
+        assert_eq!(SaveDamagePolicy::HalfOnSave.apply(10, true), 5);
+        assert_eq!(SaveDamagePolicy::HalfOnSave.apply(10, false), 10);
+    }
+
+    #[test]
+    fn none_on_save_zeroes_pass_full_on_fail() {
+        assert_eq!(SaveDamagePolicy::NoneOnSave.apply(10, true), 0);
+        assert_eq!(SaveDamagePolicy::NoneOnSave.apply(10, false), 10);
+    }
+
+    #[test]
+    fn evasion_shifts_half_on_save_one_notch_better() {
+        // Pass → 0 (was 5), fail → 5 (was 10).
+        assert_eq!(SaveDamagePolicy::HalfOnSave.apply_with_evasion(10, true), 0);
+        assert_eq!(SaveDamagePolicy::HalfOnSave.apply_with_evasion(10, false), 5);
+    }
+
+    #[test]
+    fn evasion_is_a_noop_for_none_on_save() {
+        // Cantrip-style: evasion can't improve on already-zero pass /
+        // already-full fail.
+        assert_eq!(SaveDamagePolicy::NoneOnSave.apply_with_evasion(10, true), 0);
+        assert_eq!(SaveDamagePolicy::NoneOnSave.apply_with_evasion(10, false), 10);
     }
 }

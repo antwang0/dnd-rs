@@ -213,6 +213,14 @@ use crate::actors::creatures::giant_centipedes::GIANT_CENTIPEDE_TEMPLATE;
 use crate::actors::creatures::vine_blights::VINE_BLIGHT_TEMPLATE;
 use crate::actors::creatures::twig_blights::TWIG_BLIGHT_TEMPLATE;
 use crate::actors::creatures::needle_blights::NEEDLE_BLIGHT_TEMPLATE;
+use crate::actors::creatures::giant_boars::GIANT_BOAR_TEMPLATE;
+use crate::actors::creatures::giant_goats::GIANT_GOAT_TEMPLATE;
+use crate::actors::creatures::giant_owls::GIANT_OWL_TEMPLATE;
+use crate::actors::creatures::giant_poisonous_snakes::GIANT_POISONOUS_SNAKE_TEMPLATE;
+use crate::actors::creatures::killer_whales::KILLER_WHALE_TEMPLATE;
+use crate::actors::creatures::crawling_claws::CRAWLING_CLAW_TEMPLATE;
+use crate::actors::creatures::riding_horses::RIDING_HORSE_TEMPLATE;
+use crate::actors::creatures::draft_horses::DRAFT_HORSE_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -3462,6 +3470,50 @@ impl EncounterInstance {
             //     twig / grapple-only vine cohort.
             &TWIG_BLIGHT_TEMPLATE,
             &NEEDLE_BLIGHT_TEMPLATE,
+            // Newest additions: filling the porcine / caprid / equine /
+            // serpent / cetacean / minor-undead gaps on the encounter
+            // ladder so the random generator at CR ¼–3 has a richer
+            // mundane-beast / civilian-NPC bench.
+            //   - Giant Boar (CR 2 large beast): 2d6 tusks on a chunky
+            //     42-HP frame. The mid-CR forest-ambusher upgrade tier
+            //     of the regular Boar (1d6 tusks, CR ¼). Fills the
+            //     CR-2 single-die heavy-melee niche beside the
+            //     Quaggoth / Plesiosaurus cohort.
+            //   - Giant Goat (CR ½ large beast): 2d4 ram on a fast
+            //     19-HP frame. Slots beside the Warhorse / Vine Blight
+            //     on the CR-½ herbivore-megafauna bench — the
+            //     headbutting mountain ungulate niche.
+            //   - Giant Owl (CR ¼ large beast): 2d6 talons on a fast
+            //     (fly 60) frame with Darkvision 120. The nocturnal
+            //     aerial scout sibling of the Giant Eagle / Hawk /
+            //     Pteranodon cohort at the low-CR end.
+            //   - Giant Poisonous Snake (CR ¼ medium beast): DEX-based
+            //     1d4 bite with a DC 11 CON save-or-3d6-poison rider
+            //     via `WeaponWithSaveDamage` at reach 10. The "coiled
+            //     viper" sibling of the Constrictor Snake on the snake
+            //     bench — venom-rider vs grappler.
+            //   - Killer Whale (CR 3 huge beast): 5d6 single-die apex
+            //     bite with Blindsight 60 on a 90-HP huge frame. The
+            //     echolocating cetacean predator slot beside the
+            //     Plesiosaurus / Giant Shark on the marine-megafauna
+            //     bench.
+            //   - Crawling Claw (CR 0 tiny undead): 1d4 slashing swing
+            //     on a fragile 2-HP frame. The "summoner's minor
+            //     cantrip" undead minion useful as wave-spawn filler
+            //     beside the Commoner on the CR-0 baseline tier.
+            //   - Riding Horse / Draft Horse (CR ¼ large beasts): 2d4
+            //     hooves chassis shared with the Warhorse. Faster /
+            //     lighter (Riding) and slower / stronger (Draft)
+            //     civilian-mount tiers beneath the trained Warhorse
+            //     on the equine ladder. Travel-encounter staples.
+            &GIANT_BOAR_TEMPLATE,
+            &GIANT_GOAT_TEMPLATE,
+            &GIANT_OWL_TEMPLATE,
+            &GIANT_POISONOUS_SNAKE_TEMPLATE,
+            &KILLER_WHALE_TEMPLATE,
+            &CRAWLING_CLAW_TEMPLATE,
+            &RIDING_HORSE_TEMPLATE,
+            &DRAFT_HORSE_TEMPLATE,
         ]
     }
 
@@ -4539,24 +4591,14 @@ impl EncounterInstance {
     /// True if any combat-active actor on a different team is footprint-
     /// adjacent (Chebyshev gap 0) to `actor_id`. Used to gate the 5e
     /// "ranged attacks at disadvantage in melee" clause.
+    ///
+    /// Thin wrapper over `combat_active_enemy_ids_adjacent` — the public
+    /// helper already encodes the same "different team, combat-active,
+    /// footprint-adjacent" filter. Calling it here keeps both gates in
+    /// sync at one chokepoint and saves re-inlining the geometry +
+    /// liveness checks.
     fn has_adjacent_enemy(&self, actor_id: usize) -> bool {
-        let Some(me) = self.actors.get(&actor_id) else {
-            return false;
-        };
-        let my_team = me.team();
-        let my_loc = me.location();
-        let my_size = get_tiles_from_size(me.size());
-        self.actors.iter().any(|(id, other)| {
-            *id != actor_id
-                && other.team() != my_team
-                && other.is_combat_active()
-                && footprint_chebyshev(
-                    other.location(),
-                    get_tiles_from_size(other.size()),
-                    my_loc,
-                    my_size,
-                ) == 0
-        })
+        !self.combat_active_enemy_ids_adjacent(actor_id).is_empty()
     }
 
     /// True if `actor_id` exists AND is not currently concentrating on a

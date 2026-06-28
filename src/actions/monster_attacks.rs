@@ -324,7 +324,7 @@ pub fn weapon_swing_with_damage(
     let Some(caster) = encounter.actors.get(&caster_id) else {
         return (Vec::new(), 0);
     };
-    let attack_mod = caster.ability_modifier(ability) + caster.proficiency_bonus();
+    let attack_mod = caster.spell_attack_modifier(ability);
     let damage_mod = caster.ability_modifier(ability);
     crate::engine::attack::resolve_attack_outcome(
         encounter,
@@ -362,7 +362,7 @@ pub fn simple_weapon_attack_ranged(
     let Some(caster) = encounter.actors.get(&caster_id) else {
         return Vec::new();
     };
-    let attack_mod = caster.ability_modifier(attack_ability) + caster.proficiency_bonus();
+    let attack_mod = caster.spell_attack_modifier(attack_ability);
     let damage_mod = damage_ability
         .map(|a| caster.ability_modifier(a))
         .unwrap_or(0);
@@ -1686,7 +1686,7 @@ impl Action for AcidSpit {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let attack_bonus = caster.ability_attack_bonus(AbilityScoreType::Dexterity);
+        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Dexterity);
         if !encounter.actors.contains_key(&target_id) {
             return Vec::new();
         }
@@ -7839,63 +7839,26 @@ pub static BOAR_TUSKS: SimpleWeapon = SimpleWeapon::melee(
 /// the poison" wrinkle and just lands the rider; the toad is a CR-1
 /// monster and the rider is the iconic flavor). RAW also grapples
 /// Medium-or-smaller targets on hit — that grapple half isn't modeled.
-pub struct GiantToadBite {}
-
-impl Action for GiantToadBite {
-    fn name(&self) -> &str {
-        "bite"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["b", "chomp"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Piercing, DamageType::Poison]
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let target_id = first_target_id(target_ids);
-        let mut effects = simple_weapon_attack(
-            encounter,
-            caster_id,
-            target_ids,
-            self.name(),
-            AbilityScoreType::Strength,
-            Some(AbilityScoreType::Strength),
-            Dice::new(1, 10),
-            DamageType::Piercing,
-            true,
-        );
-        if effects.is_empty() {
-            return effects;
-        }
-        let Some(target_id) = target_id else {
-            return effects;
-        };
-        add_flat_damage_rider(
-            encounter,
-            target_id,
-            Dice::new(1, 10),
-            DamageType::Poison,
-            "bite poison",
-            &mut effects,
-        );
-        effects
-    }
-}
-
-pub static GIANT_TOAD_BITE: LazyLock<GiantToadBite> = LazyLock::new(|| GiantToadBite {});
+/// Giant Toad bite — STR-based 1d10+STR piercing + flat 1d10 poison
+/// rider on hit via the shared `WeaponWithRider` chassis. Same rider
+/// chassis as Yuan-Ti Bite / Death Knight Longsword / Wereboar Tusks /
+/// Magmin Touch / Djinni Scimitar / Efreeti Scimitar — replaces the
+/// previous bespoke `GiantToadBite` Action impl whose `side_effects`
+/// was just `weapon_swing_with_flat_rider` plumbing the chassis
+/// already centralizes. RAW's grapple-on-hit (Medium-or-smaller) and
+/// half-poison-on-CON-pass clauses are deliberately skipped — neither
+/// is modeled cleanly here, and the pure piercing-plus-flat-poison
+/// envelope captures the load-bearing flavor.
+pub static GIANT_TOAD_BITE: WeaponWithRider = WeaponWithRider::melee(
+    "bite",
+    &["b", "chomp"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 10),
+    DamageType::Piercing,
+    Dice::new(1, 10),
+    DamageType::Poison,
+    "bite poison",
+);
 
 /// Pseudodragon sting — DEX 1d4+2 piercing + a DC-11 CON save against
 /// magical sleep. On fail: target falls Unconscious for 1 hour OR until
@@ -12611,8 +12574,7 @@ impl Action for HornedDevilHurledFlame {
         // CHA-based spell-attack: +CHA mod + proficiency to hit, then 4d6
         // fire on connect. No damage modifier add — the devil's CHA-attack
         // typing doesn't pile a flat CHA mod onto the damage roll (RAW).
-        let attack_mod =
-            caster.ability_modifier(AbilityScoreType::Charisma) + caster.proficiency_bonus();
+        let attack_mod = caster.spell_attack_modifier(AbilityScoreType::Charisma);
         crate::engine::attack::resolve_attack(
             encounter,
             crate::engine::attack::AttackParams {
@@ -12848,8 +12810,7 @@ impl Action for EfreetiHurlFlame {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let attack_mod =
-            caster.ability_modifier(AbilityScoreType::Charisma) + caster.proficiency_bonus();
+        let attack_mod = caster.spell_attack_modifier(AbilityScoreType::Charisma);
         crate::engine::attack::resolve_attack(
             encounter,
             crate::engine::attack::AttackParams {
@@ -14337,4 +14298,144 @@ pub static NEEDLE_BLIGHT_NEEDLES: SimpleWeapon = SimpleWeapon::ranged(
     DamageType::Piercing,
     24,
     12,
+);
+
+// ─── Giant Boar ─────────────────────────────────────────────────────
+
+/// Giant Boar Tusks — STR-based 2d6+STR slashing melee. RAW: "+6 to
+/// hit, reach 5 ft, one target. Hit: 10 (2d6+3) slashing damage." The
+/// CR-2 boar's only swing — chunkier dice than the CR-¼ Boar's 1d6
+/// shared `BOAR_TUSKS`, on a Large frame with 42 HP. As with the
+/// regular Boar, RAW's Charge rider (extra 2d6 + DC-13 STR save vs
+/// Prone after a 20 ft straight-line dash) and Relentless trait (drops
+/// to 1 HP once per short rest from a lethal hit) are omitted as
+/// engine scope cuts — the giant boar still pressures the front line
+/// with the chunky 2d6 tusks alone.
+pub static GIANT_BOAR_TUSKS: SimpleWeapon = SimpleWeapon::melee(
+    "giant boar tusks",
+    &["gbt", "giant-tusks"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Slashing,
+);
+
+// ─── Giant Goat ─────────────────────────────────────────────────────
+
+/// Giant Goat Ram — STR-based 2d4+STR bludgeoning melee. RAW: "+5 to
+/// hit, reach 5 ft, one target. Hit: 8 (2d4+3) bludgeoning damage."
+/// The CR-½ mountain goat's headbutt. RAW's Charge rider (extra 2d4 +
+/// DC-13 STR save vs Prone after a 20 ft straight-line dash) and
+/// Sure-Footed trait (advantage on STR/DEX saves vs prone) are omitted
+/// for the same straight-line scope reasons that hollow out the Boar's
+/// Charge — the engine doesn't model "this turn's move was straight"
+/// at attack time. The plain ram swing keeps the goat anchored at the
+/// "fast hooved chunky-die melee" silhouette.
+pub static GIANT_GOAT_RAM: SimpleWeapon = SimpleWeapon::melee(
+    "giant goat ram",
+    &["ggr", "ram", "headbutt"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 4),
+    DamageType::Bludgeoning,
+);
+
+// ─── Giant Owl ──────────────────────────────────────────────────────
+
+/// Giant Owl Talons — STR-based 2d6+STR slashing melee. RAW: "+3 to
+/// hit, reach 5 ft, one creature. Hit: 8 (2d6+1) slashing damage." The
+/// CR-¼ aerial scout's only swing — chunky dice on a fragile 19-HP
+/// large frame. RAW's Flyby trait (don't provoke OAs when leaving an
+/// enemy's reach) and Keen Hearing and Sight (advantage on hearing /
+/// sight Perception) are flavor-only at the engine scale: the engine
+/// doesn't surface OAs on Disengage-equivalent moves and skill checks
+/// don't route through combat. The plain talons swing pinned to the
+/// fly-60 speed keeps the giant owl at the "fast aerial harasser"
+/// silhouette.
+pub static GIANT_OWL_TALONS: SimpleWeapon = SimpleWeapon::melee(
+    "giant owl talons",
+    &["got", "owl-talons"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Slashing,
+);
+
+// ─── Giant Poisonous Snake ─────────────────────────────────────────
+
+/// Giant Poisonous Snake Bite — DEX-based 1d4+DEX piercing melee with
+/// a DC 11 CON save-or-3d6-poison rider via `WeaponWithSaveDamage`.
+/// RAW: "+6 to hit, reach 10 ft, one target. Hit: 6 (1d4+4) piercing
+/// damage, and the target must make a DC 11 Constitution saving throw,
+/// taking 10 (3d6) poison damage on a failed save, or half as much
+/// damage on a successful one." We collapse the half-on-pass to the
+/// engine's standard SaveDamagePolicy::HalfOnPass shape implicit in
+/// the chassis. Reach 10 ft = 2 tile-gap units — the snake strikes
+/// from a coil one tile away (RAW: medium serpent on a 10-ft reach).
+pub static GIANT_POISONOUS_SNAKE_BITE: WeaponWithSaveDamage = WeaponWithSaveDamage::reach_melee(
+    "giant poisonous snake bite",
+    &["gpsb", "snake-bite", "venom-bite"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 4),
+    DamageType::Piercing,
+    AbilityScoreType::Constitution,
+    11,
+    Dice::new(3, 6),
+    DamageType::Poison,
+    "serpent venom",
+    2,
+);
+
+// ─── Killer Whale ───────────────────────────────────────────────────
+
+/// Killer Whale Bite — STR-based 5d6+STR piercing melee. RAW: "+6 to
+/// hit, reach 5 ft, one target. Hit: 21 (5d6+4) piercing damage." The
+/// CR-3 orca's one-swing apex-bite — the heaviest single-dice die in
+/// the CR-3 bench. RAW's Echolocation / Hold Breath (30 min) traits
+/// are flavor-only at the encounter scale: the engine doesn't track
+/// breath rounds and the Blindsight 60 (echolocation while underwater)
+/// reduces to standard Blindsight on the template since most encounters
+/// don't gate "underwater". The plain massive bite carries the threat
+/// profile alone.
+pub static KILLER_WHALE_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "killer whale bite",
+    &["kwb", "orca-bite"],
+    AbilityScoreType::Strength,
+    Dice::new(5, 6),
+    DamageType::Piercing,
+);
+
+// ─── Crawling Claw ──────────────────────────────────────────────────
+
+/// Crawling Claw — STR-based 1d4+STR slashing melee. RAW: "+4 to hit,
+/// reach 5 ft, one target. Hit: 4 (1d4+2) slashing damage; or 4 (1d4+2)
+/// bludgeoning or piercing damage (claw's choice)." The CR-0 undead
+/// minion's only swing — a severed hand scuttling and clawing. We pin
+/// the damage type to slashing as the default; the RAW "choose
+/// bludgeoning / piercing / slashing per swing" is a minor flavor
+/// option the engine doesn't surface. The Turn Immunity trait routes
+/// through the template — the Crawling Claw is RAW immune to Turn
+/// Undead because it's mindless animated body parts, not a coherent
+/// undead spirit. Vanilla `SimpleWeapon`.
+pub static CRAWLING_CLAW_SLAM: SimpleWeapon = SimpleWeapon::melee(
+    "crawling claw",
+    &["cc", "claw-slam"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 4),
+    DamageType::Slashing,
+);
+
+// ─── Riding Horse / Draft Horse ─────────────────────────────────────
+
+/// Riding Horse Hooves — STR-based 2d4+STR bludgeoning melee. RAW: "+4
+/// to hit, reach 5 ft, one target. Hit: 8 (2d4+3) bludgeoning damage."
+/// The CR-¼ civilian riding-horse's one swing — lighter than the
+/// `WARHORSE_HOOVES` 2d6 since the riding horse is bred for transport,
+/// not battle. Shared with the Draft Horse template since both ride
+/// the same 2d4+STR dice (the draft horse's higher STR mod is the
+/// per-template difference). Sister to `WARHORSE_HOOVES` (2d6, CR ½)
+/// on the equine ladder.
+pub static RIDING_HORSE_HOOVES: SimpleWeapon = SimpleWeapon::melee(
+    "horse hooves",
+    &["hh", "hooves", "kick"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 4),
+    DamageType::Bludgeoning,
 );
