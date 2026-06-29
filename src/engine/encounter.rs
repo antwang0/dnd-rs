@@ -22730,6 +22730,176 @@ mod tests {
         assert_eq!(e.actors[&bid].effective_damage(10, DamageType::Fire), 10);
     }
 
+    /// Berserker Frenzy: while raging, bonus-action Frenzy grants a fresh
+    /// Action token. Gated on `FRENZY_TAG` passive feature + active
+    /// `Raging` condition; fails closed otherwise (the validator returns
+    /// false so the Action::execute pipeline skips it).
+    #[test]
+    fn berserker_frenzy_grants_action_when_raging() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{FRENZY, RAGE};
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let bid = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&bid).unwrap().reset_for_new_round();
+        // Frenzy is invalid before rage is up — gates on Raging.
+        assert!(!FRENZY.validate_input(&e, bid, None, None, None));
+        // Enter rage so the Frenzy gate opens.
+        let rage_effects = RAGE.side_effects(&mut e, bid, None, None, None);
+        for ef in rage_effects {
+            ef.apply(&mut e);
+        }
+        // Snapshot pre-frenzy action pool.
+        let before = e.actors[&bid].action_slots();
+        assert!(FRENZY.validate_input(&e, bid, None, None, None));
+        let effects = FRENZY.side_effects(&mut e, bid, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        // Action pool grew by one — the granted Action waits for the
+        // barbarian's follow-up melee swing this turn.
+        let after = e.actors[&bid].action_slots();
+        assert_eq!(after, before + 1);
+        // Frenzy cost is a bonus action only — no slot consumption here
+        // (consume happens through `Action::execute`, not direct side_effects).
+        let cost = FRENZY.cost(&e, bid, None, None, None);
+        assert_eq!(cost, vec![Resource::BonusAction]);
+    }
+
+    /// Frenzy is gated to barbarians who actually have the FRENZY_TAG
+    /// passive feature. A non-Berserker barbarian (e.g. Totem Warrior)
+    /// holds Rage but lacks Frenzy — the gate should bounce the action.
+    #[test]
+    fn frenzy_invalid_without_passive_feature() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{FRENZY, RAGE};
+        use crate::actors::creatures::barbarians::TOTEM_BARBARIAN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let bid = e
+            .instantiate_creature(&TOTEM_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&bid).unwrap().reset_for_new_round();
+        // Enter rage so the Raging gate is satisfied — the only gate
+        // left to fail is the passive feature lookup.
+        let rage_effects = RAGE.side_effects(&mut e, bid, None, None, None);
+        for ef in rage_effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !FRENZY.validate_input(&e, bid, None, None, None),
+            "frenzy should bounce on a Totem barbarian who lacks FRENZY_TAG"
+        );
+    }
+
+    /// Bear Totem Spirit: while raging, the holder resists every damage
+    /// type EXCEPT psychic. Verifies the passive-feature gate composes
+    /// cleanly with the Raging condition and short-circuits cleanly when
+    /// either side is absent.
+    #[test]
+    fn bear_totem_raging_resists_all_damage_except_psychic() {
+        use crate::actions::class_features::RAGE;
+        use crate::actors::creatures::barbarians::TOTEM_BARBARIAN_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let bid = e
+            .instantiate_creature(&TOTEM_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&bid).unwrap().reset_for_new_round();
+        // Pre-rage: only template resistances apply (none on Totem
+        // Barbarian by default) — fire damage is unmitigated.
+        assert_eq!(e.actors[&bid].effective_damage(10, DamageType::Fire), 10);
+        let rage_effects = RAGE.side_effects(&mut e, bid, None, None, None);
+        for ef in rage_effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&bid].has_condition(Condition::Raging));
+        // Raging + Bear Totem: physical damage halved (composes with
+        // baseline Rage BPS resistance, same one-halving rule), and
+        // every non-psychic typed damage is also halved.
+        assert_eq!(e.actors[&bid].effective_damage(10, DamageType::Slashing), 5);
+        assert_eq!(e.actors[&bid].effective_damage(10, DamageType::Fire), 5);
+        assert_eq!(e.actors[&bid].effective_damage(10, DamageType::Cold), 5);
+        assert_eq!(e.actors[&bid].effective_damage(10, DamageType::Lightning), 5);
+        assert_eq!(e.actors[&bid].effective_damage(10, DamageType::Radiant), 5);
+        assert_eq!(e.actors[&bid].effective_damage(10, DamageType::Necrotic), 5);
+        // Psychic is the carve-out — Bear Totem explicitly excludes it.
+        assert_eq!(e.actors[&bid].effective_damage(10, DamageType::Psychic), 10);
+    }
+
+    /// Improved Divine Smite (Paladin level 11+): every melee weapon hit
+    /// fires the +1d8 radiant rider. We probe with a seed loop (mirrors
+    /// the existing `divine_smite_primes_and_consumes_on_hit` test) so
+    /// we exercise a real attack-roll resolution; on each connect we
+    /// confirm an `improved divine smite` log line appears in the
+    /// rider's expected slot.
+    #[test]
+    fn improved_divine_smite_logs_on_melee_hit() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::GREATSWORD;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        let mut saw_rider = false;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let pal = e
+                .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let log_before = e.messages().len();
+            let tv = vec![g];
+            let _ = GREATSWORD.side_effects(&mut e, pal, Some(&tv), None, None);
+            let log_lines: Vec<&String> = e.messages()[log_before..].iter().collect();
+            if log_lines.iter().any(|s| s.contains("improved divine smite")) {
+                saw_rider = true;
+                break;
+            }
+        }
+        assert!(
+            saw_rider,
+            "expected an 'improved divine smite' log line on at least one connecting swing"
+        );
+    }
+
+    /// Improved Divine Smite is melee-only — the rider must not fire
+    /// from a ranged spell-attack swing. Verifies the gate on
+    /// `p.is_melee` short-circuits the rider for ranged casts.
+    #[test]
+    fn improved_divine_smite_does_not_fire_on_ranged_attack() {
+        use crate::actions::action_template::Action;
+        use crate::actions::spells::GUIDING_BOLT;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let pal = e
+                .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+                .unwrap();
+            let log_before = e.messages().len();
+            let tv = vec![g];
+            let _ = GUIDING_BOLT.side_effects(&mut e, pal, Some(&tv), None, None);
+            let log_lines: Vec<&String> = e.messages()[log_before..].iter().collect();
+            assert!(
+                !log_lines.iter().any(|s| s.contains("improved divine smite")),
+                "improved divine smite should NOT fire on a ranged spell attack"
+            );
+        }
+    }
+
     /// Rogue Cunning Hide: bonus-action Hide that drops the Hidden flag.
     #[test]
     fn cunning_hide_applies_hidden() {

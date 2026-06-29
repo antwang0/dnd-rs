@@ -1,6 +1,6 @@
 use crate::actions::class_features::{
-    CLEANSING_TOUCH, CLEANSING_TOUCH_TAG, DIVINE_SMITE, LAY_ON_HANDS, LAY_ON_HANDS_TAG,
-    SACRED_WEAPON, SACRED_WEAPON_TAG,
+    CLEANSING_TOUCH, CLEANSING_TOUCH_TAG, DIVINE_SMITE, IMPROVED_DIVINE_SMITE_TAG, LAY_ON_HANDS,
+    LAY_ON_HANDS_TAG, SACRED_WEAPON, SACRED_WEAPON_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GREATSWORD;
@@ -145,6 +145,15 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             LAY_ON_HANDS_TAG,
             SACRED_WEAPON_TAG,
             CLEANSING_TOUCH_TAG,
+            // Improved Divine Smite (level 11+): passive +1d8 radiant
+            // on every melee weapon hit. The rider fires in
+            // `engine::attack::resolve_attack_outcome` right after the
+            // ON_HIT_RIDERS loop — gated on `has_passive_feature`. The
+            // CR 1.5 template lists this above its strict RAW level
+            // gate for the same reason every other class template runs
+            // above strict RAW level (templates target a balanced
+            // playable level, not lockstep PHB progression).
+            IMPROVED_DIVINE_SMITE_TAG,
         ]),
         has_extra_attack: true,
         // Aura of Protection (level 6+): allies within 10ft add the

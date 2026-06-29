@@ -1622,6 +1622,19 @@ impl ActorInstance {
         {
             return true;
         }
+        // 5e Barbarian Path of the Totem Warrior — Bear Totem Spirit
+        // (level 3). While raging, resistance to every damage type except
+        // psychic. Folded into the condition-resistance lane so the
+        // standard "one halving per damage instance" rule still holds
+        // (Bear Totem doesn't stack with a separate template resistance,
+        // and is short-circuited by the BLANKET cohort above so Stoneskin
+        // / Globe / Petrified still win at the gate above).
+        if dt != DamageType::Psychic
+            && self.has_condition(Condition::Raging)
+            && self.has_passive_feature(crate::actions::class_features::BEAR_TOTEM_TAG)
+        {
+            return true;
+        }
         TYPED_RESISTANCE_CONDITIONS.iter().any(|(c, types)| {
             self.has_condition(*c) && types.contains(&dt)
         })

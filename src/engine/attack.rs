@@ -440,6 +440,31 @@ pub fn resolve_attack_outcome(
             );
         }
     }
+    // 5e Paladin Improved Divine Smite (level 11+) — passive feature.
+    // Every melee weapon hit lays +1d8 radiant on the target, independent
+    // of any Smite-prime burn. Lives outside the ON_HIT_RIDERS table
+    // because it's keyed off a passive feature flag rather than a
+    // transient condition, and we don't want a sentinel "always-on"
+    // condition cluttering the conditions enum just to gate this one
+    // rider. Crits double the die per `roll_rider` RAW.
+    if p.is_melee
+        && encounter
+            .actors
+            .get(&p.caster_id)
+            .is_some_and(|a| {
+                a.has_passive_feature(
+                    crate::actions::class_features::IMPROVED_DIVINE_SMITE_TAG,
+                )
+            })
+    {
+        let extra = roll_rider(encounter, Dice::new(1, 8), is_crit);
+        encounter.log(format!("  improved divine smite: +{} Radiant", extra));
+        effects.push(Box::new(DealDamage {
+            actor_id: p.target_id,
+            amount: extra,
+            damage_type: DamageType::Radiant,
+        }));
+    }
     // Melee-only retaliation table: any condition the *target* holds that
     // bounces damage back at a melee attacker (Fire Shield 2d8 fire,
     // Armor of Agathys 5 cold, Investiture of Flame 1d10 fire). Each

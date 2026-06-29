@@ -236,10 +236,7 @@ impl Action for ActionSurge {
             actor.spend_feature(ACTION_SURGE_TAG);
         }
         encounter.log("  action surge: extra Action gained.".to_string());
-        vec![Box::new(GiveResource {
-            actor_id: caster_id,
-            resource: Resource::Action,
-        })]
+        grant_extra_action(caster_id)
     }
 }
 
@@ -947,6 +944,114 @@ impl Action for Rage {
 }
 
 pub static RAGE: LazyLock<Rage> = LazyLock::new(|| Rage {});
+
+/// 5e Barbarian Path of the Berserker — **Frenzy** (level 3). While raging,
+/// the barbarian can use a bonus action on each of their turns to make
+/// one additional melee weapon attack. Passive subclass tag (no per-rest
+/// charge — the rate limit is the once-per-turn bonus action lane plus the
+/// Rage duration ceiling). Held in `features_max` so the `Frenzy` action's
+/// `custom_validate_input` can gate on `has_passive_feature(FRENZY_TAG)`
+/// without re-checking the per-rest pool.
+///
+/// RAW: after the rage ends, the barbarian suffers one level of exhaustion.
+/// We skip the exhaustion rider for now — modeling the post-rage hook
+/// requires a timer-expiry callback that doesn't exist yet. The 10-round
+/// Rage cap (and the once-per-long-rest gate on Rage itself) keeps the
+/// Frenzy uses bounded per encounter regardless.
+pub const FRENZY_TAG: &str = "barbarian.frenzy";
+
+/// Berserker Frenzy bonus action: spend a bonus action to gain a fresh
+/// Action this turn, used for one extra melee weapon swing. Mirrors the
+/// `FlurryOfBlows` shape (BA → +Action token) so the barbarian's existing
+/// Greataxe / weapon action consumes the granted Action. Gated on:
+///   - holder has the `FRENZY_TAG` passive subclass feature
+///   - holder currently has the `Raging` condition (Frenzy is rage-only)
+///   - combat-active (no firing during a downed state)
+pub struct Frenzy {}
+
+impl Action for Frenzy {
+    fn name(&self) -> &str {
+        "frenzy"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fr", "frenzied"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.is_combat_active()
+                && a.has_passive_feature(FRENZY_TAG)
+                && a.has_condition(Condition::Raging)
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        encounter.log("  frenzy: barbarian gains an extra Action for a follow-up strike.".to_string());
+        grant_extra_action(caster_id)
+    }
+}
+
+pub static FRENZY: LazyLock<Frenzy> = LazyLock::new(|| Frenzy {});
+
+/// 5e Barbarian Path of the Totem Warrior — **Bear Totem Spirit** (level 3).
+/// Passive subclass feature: while raging, the holder has resistance to all
+/// damage except psychic. Replaces the default Rage's "BPS resistance only"
+/// envelope for the lucky few Bear Totem barbarians.
+///
+/// Stored as a `has_passive_feature` flag rather than a fresh condition so
+/// it composes naturally with the existing `Raging` condition gate (only
+/// fires *while* Raging). Read at the damage-pipeline chokepoint
+/// `has_condition_resistance` next to the `TYPED_RESISTANCE_CONDITIONS`
+/// table so the standard 5e "one halving per damage instance" rule still
+/// holds — Bear Totem doesn't stack with a separate template resistance
+/// (e.g. a dwarven barbarian still only gets the single /2 on poison).
+pub const BEAR_TOTEM_TAG: &str = "barbarian.bear_totem";
+
+/// 5e Paladin **Improved Divine Smite** (level 11). Passive feature: every
+/// melee weapon hit lays +1d8 radiant damage on the target — the paladin's
+/// signature mid-tier damage spike, independent of the Divine Smite slot
+/// burn. Stored as a `has_passive_feature` flag (no per-rest charge — it's
+/// always-on). Read at the attack-resolution chokepoint in `engine::attack`
+/// right after the `ON_HIT_RIDERS` loop so the rider stacks cleanly with
+/// any active Smite prime (Divine Smite / Searing / Wrathful etc.) on the
+/// same swing — the 1d8 fires whether or not a Smite is up.
+///
+/// Crits double the rider die per 5e RAW; shared `roll_rider` helper
+/// handles the doubling so the rule lives in one place. Melee-only — RAW
+/// Improved Divine Smite gates on "melee weapon attack" so a ranged shot
+/// from a paladin without a thrown weapon doesn't pick up the rider.
+pub const IMPROVED_DIVINE_SMITE_TAG: &str = "paladin.improved_divine_smite";
 
 /// Class-feature tag for Paladin's Lay on Hands — once per long rest.
 /// We collapse 5e's "pool of HP equal to 5 × level" healing well into a
@@ -1921,10 +2026,7 @@ impl Action for FlurryOfBlows {
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         encounter.log("  flurry of blows: monk gains an extra Action for a follow-up strike.".to_string());
-        vec![Box::new(GiveResource {
-            actor_id: caster_id,
-            resource: Resource::Action,
-        })]
+        grant_extra_action(caster_id)
     }
 }
 
@@ -2085,6 +2187,32 @@ impl Action for TripAttack {
 }
 
 pub static TRIP_ATTACK: LazyLock<TripAttack> = LazyLock::new(|| TripAttack {});
+
+/// Build the "+1 Action token" side-effect vector for bonus-action
+/// economy-trade actions: `Action Surge`, `Flurry of Blows`, `Frenzy`,
+/// and `Quickened Spell` all spend a bonus action (or feature charge,
+/// or SP pool) and hand the caster a fresh Action to spend on a
+/// follow-up attack / spell this turn. The literal
+///
+/// ```ignore
+/// vec![Box::new(GiveResource {
+///     actor_id: caster_id,
+///     resource: Resource::Action,
+/// })]
+/// ```
+///
+/// fires from four different action sites; folding it behind one
+/// helper keeps the per-action `side_effects` block shorter and gives
+/// us a single chokepoint if the action-token grant ever needs an
+/// engine-side hook (e.g. a future "extra Action provokes opportunity
+/// attacks" rule). Public so the `metamagic` module can share the same
+/// helper from outside this file.
+pub fn grant_extra_action(caster_id: usize) -> Vec<Box<dyn ApplicableSideEffect>> {
+    vec![Box::new(GiveResource {
+        actor_id: caster_id,
+        resource: Resource::Action,
+    })]
+}
 
 /// Spend a once-per-rest feature charge and install a self-applied prime
 /// condition on the caster. The classic "bonus-action prime" shape:

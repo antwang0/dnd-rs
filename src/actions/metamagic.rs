@@ -1,12 +1,15 @@
 use std::collections::HashSet;
 
 use crate::{
-    actions::action_template::{Action, TargetingSchema, bonus_action_only},
+    actions::{
+        action_template::{Action, TargetingSchema, bonus_action_only},
+        class_features::grant_extra_action,
+    },
     conditions::{Condition, ConditionTimer},
     engine::{
         action_overrides::ActionOverride,
         encounter::EncounterInstance,
-        side_effects::{ApplicableSideEffect, ApplyCondition, GiveResource, Resource},
+        side_effects::{ApplicableSideEffect, ApplyCondition, Resource},
         types::Coordinate,
     },
 };
@@ -349,10 +352,7 @@ impl Action for QuickenedSpell {
         // Burn 2 SP up front so a duplicate queued use can't slip past
         // the validator. Mirrors the install-prime eager-debit pattern.
         spend_and_log(encounter, caster_id, 2, "quickens the next spell with metamagic");
-        vec![Box::new(GiveResource {
-            actor_id: caster_id,
-            resource: Resource::Action,
-        })]
+        grant_extra_action(caster_id)
     }
 }
 

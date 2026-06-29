@@ -111,6 +111,17 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3c''. Frenzy — Berserker barbarian bonus action while raging.
+        //       Grants a fresh Action token for one extra melee swing
+        //       this turn. The action's validator gates on the passive
+        //       `FRENZY_TAG` feature AND the active `Raging` condition,
+        //       so non-Berserker subclasses naturally bounce out. Slots
+        //       after Reckless Attack so the granted Action benefits
+        //       from the advantage rider on the follow-up swing.
+        if let Some(aei) = try_frenzy(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3c''. Lunging Attack — Fighter Battle Master bonus-action
         //       prime. Extends melee reach by one tile for the next
         //       swing. Fires only when an enemy sits at the precise
@@ -2757,6 +2768,35 @@ fn try_reckless_attack(
         return None;
     }
     try_self_action(encounter, actor_id, "reckless attack")
+}
+
+/// 5e Berserker **Frenzy** trigger: while raging, the barbarian spends
+/// a bonus action to gain a fresh Action token for an extra melee swing.
+/// Gates fire only when:
+///   - the barbarian is Raging (the action's own validator double-checks
+///     the passive `FRENZY_TAG` flag — no need to re-test here),
+///   - an enemy is footprint-adjacent so the granted Action will be
+///     consumed by a melee swing this turn rather than wasted on Move.
+///
+/// Slots between Reckless Attack and Lunging Attack on the bonus-action
+/// lane — once Reckless Attack runs (advantage-on-melee buff) the barbarian
+/// will want a second swing to spend it on. The granted Action has no
+/// reach gate of its own, so the AI's normal attack picker handles
+/// weapon / target selection on the follow-up.
+fn try_frenzy(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if !actor.has_condition(Condition::Raging) {
+        return None;
+    }
+    // Only fire when an enemy is footprint-adjacent so the granted
+    // Action gets spent on a melee swing this turn.
+    if !any_enemy_within(encounter, actor_id, 0) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "frenzy")
 }
 
 /// Battle Master Lunging Attack — bonus-action prime that extends the
