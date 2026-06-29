@@ -1,3 +1,4 @@
+use crate::actions::class_features::COLOSSUS_SLAYER_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGBOW, SCIMITAR};
 use crate::actions::spells::{
@@ -110,6 +111,49 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Dexterity,
         ]),
         has_extra_attack: true,
+        ..CreatureTemplate::defaults()
+    }
+});
+
+/// Hunter Ranger — Conclave subclass build. Identical envelope to the
+/// baseline `RANGER_TEMPLATE` (level-9 half-caster, longbow + scimitar,
+/// 4/3/3/1/1 slot ladder, same kiter spell list) with one subclass
+/// feature layered on: **Colossus Slayer** (level 3) — once per turn,
+/// a weapon hit on a wounded target lays +1d8 of the weapon's damage
+/// type. Pairs naturally with the ranger's longbow kite — the first
+/// arrow of the round usually has a clean shot at full HP, but every
+/// subsequent shot through Extra Attack / Hunter's Mark loops connects
+/// against a wounded target and stacks the Colossus Slayer rider on
+/// top of the Mark's +1d6 necrotic.
+///
+/// Distinct from `RANGER_TEMPLATE` (Conclave-less baseline) so a
+/// Hunter-vs-Hunter or Hunter-vs-baseline encounter renders
+/// unambiguously by name and the subclass feature doesn't accidentally
+/// stack RAW-illegally on a single PC build. Glyph 'H' so the Hunter
+/// shows up distinctly on the map next to the baseline 'R'.
+pub static HUNTER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    let base = &*RANGER_TEMPLATE;
+    CreatureTemplate {
+        name: "Hunter Ranger",
+        glyph: 'H',
+        ac: base.ac,
+        hitpoints: base.hitpoints,
+        strength: base.strength,
+        dexterity: base.dexterity,
+        constitution: base.constitution,
+        intelligence: base.intelligence,
+        wisdom: base.wisdom,
+        charisma: base.charisma,
+        languages: base.languages.clone(),
+        cr: base.cr,
+        size: base.size,
+        creature_type: base.creature_type,
+        actions: base.actions.clone(),
+        spell_slots_by_level: base.spell_slots_by_level.clone(),
+        rolls_death_saves: base.rolls_death_saves,
+        proficient_saves: base.proficient_saves.clone(),
+        features: HashSet::from([COLOSSUS_SLAYER_TAG]),
+        has_extra_attack: base.has_extra_attack,
         ..CreatureTemplate::defaults()
     }
 });

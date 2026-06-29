@@ -735,6 +735,16 @@ pub struct ActorInstance {
     /// Sneak Attack guard — true if the rogue has spent their once-per-turn
     /// sneak this turn. Cleared at turn-start by `reset_for_new_round`.
     sneak_attack_used: bool,
+    /// Colossus Slayer guard — symmetric with `sneak_attack_used`. True
+    /// if a Hunter ranger has spent their once-per-turn Colossus Slayer
+    /// rider this turn. Cleared at turn-start by `reset_for_new_round`.
+    colossus_slayer_used: bool,
+    /// 5e Barbarian Relentless Rage DC. Starts at 10, climbs by 5 each
+    /// time the feature successfully pins the holder at 1 HP, resets to
+    /// 10 on short / long rest. Stored alongside the feature flag rather
+    /// than a separate per-rest counter so the DC progression keeps
+    /// matching the once-per-rest pattern the other features use.
+    relentless_rage_dc: u32,
     /// Help-action grants. Map of helper_id → target_id where the helper
     /// is providing advantage on the helped actor's next attack vs the
     /// listed target. Consumed when the helped actor attacks the target.
@@ -939,6 +949,8 @@ impl ActorInstance {
             save_bonus_buff: 0,
             damage_bonus_buff: 0,
             sneak_attack_used: false,
+            colossus_slayer_used: false,
+            relentless_rage_dc: 10,
             help_grants: HashMap::new(),
             regen_per_round: ct.regen_per_round,
             regen_suppressors: ct.regen_suppressors.clone(),
@@ -1467,6 +1479,10 @@ impl ActorInstance {
         self.damage_bonus_buff = 0;
         self.features_remaining = self.features_max.clone();
         self.indomitable_pending = false;
+        // 5e Relentless Rage RAW: "When you finish a short or long rest,
+        // the DC resets to 10." Long-rest path also calls this reset; the
+        // short-rest path below tops up the same field.
+        self.relentless_rage_dc = 10;
         self.legendary_resistance_remaining = self.legendary_resistance_max;
         for entry in &mut self.recharge_abilities {
             entry.2 = true;
@@ -1498,6 +1514,11 @@ impl ActorInstance {
                 self.features_remaining.insert(tag);
             }
         }
+
+        // 5e Relentless Rage RAW: DC resets to 10 on short / long rest.
+        // Same reset as the long-rest path above; the field is the only
+        // bit of per-rest Relentless Rage state.
+        self.relentless_rage_dc = 10;
 
         // 5e Sorcerer **Sorcerous Restoration** (lv20 capstone): regain 4
         // expended sorcery points on short rest. We collapse the RAW
@@ -2517,9 +2538,12 @@ impl ActorInstance {
             self.action_slots = 0;
         }
         // Once-per-turn flags reset at start of turn. Sneak Attack:
-        // available again. Help grants from this actor live with the
-        // helped actor, so we don't clear them here.
+        // available again. Colossus Slayer: same once-per-turn cadence —
+        // the Hunter ranger gets a fresh +1d8 rider window each turn.
+        // Help grants from this actor live with the helped actor, so we
+        // don't clear them here.
         self.sneak_attack_used = false;
+        self.colossus_slayer_used = false;
         let mut expired = self.clear_until_next_turn_conditions();
         // 5e: Dodge / Disengage / Helped end at the start of the holder's
         // next turn regardless of whatever timer was used to install
@@ -2907,6 +2931,49 @@ impl ActorInstance {
 
     pub fn mark_sneak_attack_used(&mut self) {
         self.sneak_attack_used = true;
+    }
+
+    /// Has the Hunter ranger spent their once-per-turn Colossus Slayer
+    /// rider already this turn? Symmetric with `sneak_attack_used` — set
+    /// at the swing site when the rider fires, cleared at the holder's
+    /// turn-start by `reset_for_new_round`.
+    pub fn colossus_slayer_used(&self) -> bool {
+        self.colossus_slayer_used
+    }
+
+    pub fn mark_colossus_slayer_used(&mut self) {
+        self.colossus_slayer_used = true;
+    }
+
+    /// 5e Barbarian Relentless Rage — current DC for the CON save that
+    /// pins the barbarian at 1 HP when a killing blow would otherwise
+    /// drop them. Starts at 10, climbs by 5 each successful save, resets
+    /// to 10 on short / long rest. Read by the take-damage intercept
+    /// in `DealDamage::apply`.
+    pub fn relentless_rage_dc(&self) -> u32 {
+        self.relentless_rage_dc
+    }
+
+    /// Bump the Relentless Rage DC by 5 (RAW: "Each time you use this
+    /// feature after the first, the DC increases by 5"). Called by the
+    /// encounter-side intercept after a save succeeds.
+    pub fn bump_relentless_rage_dc(&mut self) {
+        self.relentless_rage_dc = self.relentless_rage_dc.saturating_add(5);
+    }
+
+    /// Snap the actor back to 1 HP from a downed state — used by the
+    /// Relentless Rage save-intercept after a successful CON roll.
+    /// Clears the Unconscious / Prone install that `take_damage` queued
+    /// and flips the HP-state machine back to Active so subsequent
+    /// damage in the same round routes through the normal pipeline. The
+    /// dying-tick lane (death saves, stabilize) sits below this guard,
+    /// so a failed Relentless Rage roll falls through to the standard
+    /// PC-down chain naturally.
+    pub fn revive_at_one_hp(&mut self) {
+        self.hitpoints = 1;
+        self.hp_state = HpState::Active;
+        self.remove_condition(Condition::Unconscious);
+        self.remove_condition(Condition::Prone);
     }
 
     /// True if this actor has an Indomitable reroll pending — set by

@@ -1038,6 +1038,43 @@ pub static FRENZY: LazyLock<Frenzy> = LazyLock::new(|| Frenzy {});
 /// (e.g. a dwarven barbarian still only gets the single /2 on poison).
 pub const BEAR_TOTEM_TAG: &str = "barbarian.bear_totem";
 
+/// 5e Barbarian **Relentless Rage** (level 11) feature tag. Passive
+/// rest-charged save-intercept: when a killing blow would otherwise
+/// drop the barbarian to 0 HP *while raging*, they make a Constitution
+/// save vs DC 10 (climbs by 5 each subsequent successful use, resets to
+/// 10 on short / long rest). On a pass, HP pins at 1 instead. Distinct
+/// from Half-Orc Relentless Endurance (RELENTLESS_ENDURANCE_TAG) in
+/// three ways:
+///   1. **Gated on Raging** — non-raging hits fall through to the
+///      normal Downed transition.
+///   2. **Save-based, not auto-pass** — a failed save burns nothing
+///      (the feature has no charge to spend; it just doesn't fire).
+///   3. **DC climbs** — each successful save makes the next attempt
+///      harder, so a barbarian can't lean on this indefinitely.
+///
+/// Tied to the `relentless_rage_dc` field on `ActorInstance` for the
+/// per-rest DC progression; the save is rolled in the encounter-side
+/// intercept `EncounterInstance::try_relentless_rage`, which the
+/// `DealDamage::apply` path calls before the Downed transition lands.
+pub const RELENTLESS_RAGE_TAG: &str = "barbarian.relentless_rage";
+
+/// 5e **Colossus Slayer** — Hunter Ranger subclass feature (level 3).
+/// Passive once-per-turn rider: on a weapon hit, if the target's
+/// current HP is less than its maximum, the attack deals +1d8 of the
+/// weapon's damage type. Stored as a `has_passive_feature` flag (no
+/// per-rest charge — it's always-on but rate-limited to one trigger
+/// per turn) and read at the attack-resolution chokepoint in
+/// `engine::attack::resolve_attack_outcome` right after the
+/// Improved Divine Smite block. The "once per turn" gate is the
+/// `colossus_slayer_used` flag on the actor, cleared at turn-start
+/// by `reset_for_new_round` (mirrors the rogue Sneak Attack guard).
+///
+/// Crits double the rider die per 5e RAW; shared `roll_rider` helper
+/// handles the doubling so the rule lives in one place. The rider
+/// fires on melee AND ranged weapon hits (RAW: "When you hit a
+/// creature with a weapon attack") — no melee-only gate.
+pub const COLOSSUS_SLAYER_TAG: &str = "ranger.colossus_slayer";
+
 /// 5e Paladin **Improved Divine Smite** (level 11). Passive feature: every
 /// melee weapon hit lays +1d8 radiant damage on the target — the paladin's
 /// signature mid-tier damage spike, independent of the Divine Smite slot

@@ -1675,6 +1675,60 @@ impl EncounterInstance {
         self.roll_save_with_extra_mode(actor_id, AbilityScoreType::Constitution, dc, extra_mode)
     }
 
+    /// 5e Barbarian **Relentless Rage** intercept. Called from
+    /// `DealDamage::apply` when a barbarian's damage outcome is `Downed`
+    /// and the holder is still raging. Rolls a CON save against the
+    /// actor's per-rest DC (starts at 10, climbs by 5 each successful
+    /// use, resets on short / long rest); on a pass, snaps the holder
+    /// back to 1 HP and bumps the DC for the next attempt. Returns
+    /// `true` if the actor was revived (caller skips the unconscious
+    /// log / concentration drop), `false` otherwise (fall through to
+    /// the normal Downed handling).
+    ///
+    /// Gated on Raging + RELENTLESS_RAGE_TAG so a non-raging barbarian
+    /// — or any non-barbarian — short-circuits to `false` without
+    /// rolling. Distinct from Death Ward / Relentless Endurance (which
+    /// fire automatically and never roll): Relentless Rage genuinely
+    /// rolls the save, and a failed roll lets the barbarian go down
+    /// without burning anything.
+    pub fn try_relentless_rage(&mut self, actor_id: usize) -> bool {
+        use crate::actions::class_features::RELENTLESS_RAGE_TAG;
+        use crate::conditions::Condition;
+        use crate::engine::types::AbilityScoreType;
+
+        let (eligible, dc) = match self.actors.get(&actor_id) {
+            Some(a) => (
+                a.has_passive_feature(RELENTLESS_RAGE_TAG) && a.has_condition(Condition::Raging),
+                a.relentless_rage_dc() as i32,
+            ),
+            None => (false, 0),
+        };
+        if !eligible {
+            return false;
+        }
+        let name = self.actor_name(actor_id);
+        self.log(format!(
+            "  {} fights against the brink — relentless rage CON save vs DC {}",
+            name, dc
+        ));
+        let save = self.roll_save(actor_id, AbilityScoreType::Constitution, dc);
+        if !save.passed() {
+            return false;
+        }
+        let new_dc = if let Some(actor) = self.actors.get_mut(&actor_id) {
+            actor.revive_at_one_hp();
+            actor.bump_relentless_rage_dc();
+            actor.relentless_rage_dc()
+        } else {
+            return false;
+        };
+        self.log(format!(
+            "  {} refuses to fall — relentless rage pins HP at 1 (next DC {})",
+            name, new_dc
+        ));
+        true
+    }
+
     /// Roll a saving throw attributed to `caster_id`'s spell. Identical to
     /// `roll_save` except it honors the 5e Sorcerer **Heightened Spell**
     /// metamagic: if the caster has the `HeightenedSpelling` prime up,
@@ -22898,6 +22952,314 @@ mod tests {
                 "improved divine smite should NOT fire on a ranged spell attack"
             );
         }
+    }
+
+    /// Colossus Slayer (Hunter Ranger lv3): on a weapon hit against a
+    /// wounded target, lay +1d8 of the weapon's damage type. We probe
+    /// across a seed loop (mirrors the divine-smite tests) so the
+    /// rider's "wounded + hit" gate exercises a real attack-roll
+    /// resolution; on the first connect we verify a `colossus slayer`
+    /// log line appears and that the once-per-turn flag flips.
+    #[test]
+    fn colossus_slayer_fires_on_wounded_target() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::LONGBOW;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rangers::HUNTER_RANGER_TEMPLATE;
+        let mut saw_rider = false;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let r = e
+                .instantiate_creature(&HUNTER_RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            // Wound the goblin so the rider's HP-below-max gate is open.
+            e.actors.get_mut(&g).unwrap().take_typed_damage(
+                1,
+                crate::engine::types::DamageType::Slashing,
+            );
+            let log_before = e.messages().len();
+            let tv = vec![g];
+            let _ = LONGBOW.side_effects(&mut e, r, Some(&tv), None, None);
+            let log_lines: Vec<&String> = e.messages()[log_before..].iter().collect();
+            if log_lines.iter().any(|s| s.contains("colossus slayer")) {
+                saw_rider = true;
+                assert!(
+                    e.actors[&r].colossus_slayer_used(),
+                    "once-per-turn flag should flip after the rider fires"
+                );
+                break;
+            }
+        }
+        assert!(
+            saw_rider,
+            "expected a 'colossus slayer' log line on at least one connecting swing"
+        );
+    }
+
+    /// Colossus Slayer never fires on a target at full HP — the
+    /// `is_wounded()` gate must short-circuit the rider. Verifies the
+    /// flag stays unset and no log line is produced across a swarm of
+    /// swings.
+    #[test]
+    fn colossus_slayer_does_not_fire_on_full_hp_target() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::LONGBOW;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rangers::HUNTER_RANGER_TEMPLATE;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let r = e
+                .instantiate_creature(&HUNTER_RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            // Heal back to full each swing so the wounded gate never
+            // opens. The rider must NEVER fire across the seed sweep.
+            let max = e.actors[&g].max_hitpoints();
+            e.actors.get_mut(&g).unwrap().heal(max);
+            let log_before = e.messages().len();
+            let tv = vec![g];
+            let _ = LONGBOW.side_effects(&mut e, r, Some(&tv), None, None);
+            let log_lines: Vec<&String> = e.messages()[log_before..].iter().collect();
+            assert!(
+                !log_lines.iter().any(|s| s.contains("colossus slayer")),
+                "colossus slayer should NOT fire against a full-HP target (seed={})",
+                seed
+            );
+        }
+    }
+
+    /// Colossus Slayer is once-per-turn. Once the `colossus_slayer_used`
+    /// flag is set, subsequent swings on the same turn must not fire
+    /// the rider even against a wounded target.
+    #[test]
+    fn colossus_slayer_fires_only_once_per_turn() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::LONGBOW;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rangers::HUNTER_RANGER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let r = e
+            .instantiate_creature(&HUNTER_RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+            .unwrap();
+        // Mark used; subsequent swings on a wounded target must NOT
+        // log a colossus-slayer line.
+        e.actors.get_mut(&r).unwrap().mark_colossus_slayer_used();
+        let log_before = e.messages().len();
+        for _ in 0..50 {
+            let max = e.actors[&g].max_hitpoints();
+            e.actors.get_mut(&g).unwrap().heal(max);
+            e.actors
+                .get_mut(&g)
+                .unwrap()
+                .take_typed_damage(1, crate::engine::types::DamageType::Slashing);
+            let tv = vec![g];
+            let _ = LONGBOW.side_effects(&mut e, r, Some(&tv), None, None);
+        }
+        let any_rider = e.messages()[log_before..]
+            .iter()
+            .any(|s| s.contains("colossus slayer"));
+        assert!(
+            !any_rider,
+            "colossus slayer must not fire while the once-per-turn flag is set"
+        );
+    }
+
+    /// Relentless Rage (Barbarian lv11): a killing blow against a
+    /// raging barbarian rolls a CON save vs DC 10; on a pass HP pins
+    /// at 1, the DC bumps to 15, and the barbarian stays Active
+    /// instead of falling to Dying. We deterministically seed the CON
+    /// save with a strong actor (CON 18 → +4 mod, prof +3 = +7 vs DC
+    /// 10) so the save reliably passes on a connecting test seed.
+    #[test]
+    fn relentless_rage_pins_raging_barbarian_at_one_hp_on_pass() {
+        use crate::actions::class_features::{RAGE, RELENTLESS_RAGE_TAG};
+        use crate::actors::actor_template::HpState;
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::DealDamage;
+        use crate::engine::types::DamageType;
+
+        // Seed sweep until a connecting save passes (high mod + low DC
+        // makes this almost certain across a small handful of seeds).
+        let mut observed_pass = false;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let bid = e
+                .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            assert!(
+                e.actors[&bid].has_passive_feature(RELENTLESS_RAGE_TAG),
+                "BARBARIAN_TEMPLATE should ship with Relentless Rage"
+            );
+            // Enter rage so the gate is open.
+            let rage_effects = RAGE.side_effects(&mut e, bid, None, None, None);
+            for ef in rage_effects {
+                ef.apply(&mut e);
+            }
+            assert!(e.actors[&bid].has_condition(Condition::Raging));
+            let dc_before = e.actors[&bid].relentless_rage_dc();
+            assert_eq!(dc_before, 10, "DC starts at 10");
+            let max = e.actors[&bid].max_hitpoints();
+            // Killing-blow damage but NOT massive-damage instant kill
+            // (overflow under max_hitpoints, so the Dying transition
+            // is the one we want to intercept). Fire damage so Rage's
+            // BPS resistance doesn't soak the hit down to a survivable
+            // amount.
+            DealDamage {
+                actor_id: bid,
+                amount: max,
+                damage_type: DamageType::Fire,
+            }
+            .apply(&mut e);
+            // Either passed (HP pinned at 1, DC bumped) or failed (Dying).
+            let actor = e.actors.get(&bid).unwrap();
+            if matches!(actor.hp_state(), HpState::Active) {
+                assert_eq!(actor.hitpoints(), 1, "RR pins HP at 1 on pass");
+                assert_eq!(
+                    actor.relentless_rage_dc(),
+                    15,
+                    "DC bumps by 5 after a successful pin"
+                );
+                observed_pass = true;
+                break;
+            }
+        }
+        assert!(
+            observed_pass,
+            "expected a Relentless Rage CON save to pass across 40 seeds"
+        );
+    }
+
+    /// Relentless Rage requires the holder to actually BE raging. A
+    /// barbarian with the tag who hasn't entered Rage gets no save
+    /// intercept — the killing blow drops them normally.
+    #[test]
+    fn relentless_rage_does_not_fire_without_raging() {
+        use crate::actors::actor_template::HpState;
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::DealDamage;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let bid = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Explicitly NOT raging.
+        assert!(!e.actors[&bid].has_condition(Condition::Raging));
+        let max = e.actors[&bid].max_hitpoints();
+        // Use Fire so no template resistance soaks the killing blow.
+        DealDamage {
+            actor_id: bid,
+            amount: max,
+            damage_type: DamageType::Fire,
+        }
+        .apply(&mut e);
+        // Without Raging, the intercept short-circuits → Dying.
+        assert!(matches!(
+            e.actors[&bid].hp_state(),
+            HpState::Dying { .. }
+        ));
+    }
+
+    /// Death Ward takes priority over Relentless Rage. Both intercepts
+    /// can catch the 0-HP transition; Death Ward is an active spell the
+    /// barbarian chose to maintain, so burning the racial / class
+    /// feature first would waste the slot. Verifies the priority order
+    /// inside `take_damage` (Death Ward bites in `take_damage` itself,
+    /// returning DamageOutcome::Reduced, so Relentless Rage's
+    /// post-take_damage hook never sees a Downed outcome to intercept).
+    #[test]
+    fn relentless_rage_does_not_fire_when_death_ward_intercepts_first() {
+        use crate::actions::class_features::RAGE;
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::DealDamage;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let bid = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Enter rage so Relentless Rage *could* fire if reached.
+        let rage_effects = RAGE.side_effects(&mut e, bid, None, None, None);
+        for ef in rage_effects {
+            ef.apply(&mut e);
+        }
+        // Layer Death Ward on top. RR's DC should stay pristine since
+        // Death Ward intercepts first.
+        e.actors
+            .get_mut(&bid)
+            .unwrap()
+            .add_condition(Condition::DeathWarded, ConditionTimer::Rounds(100));
+        let dc_before = e.actors[&bid].relentless_rage_dc();
+        let max = e.actors[&bid].max_hitpoints();
+        // Fire damage — Rage's BPS resistance doesn't soak it, so the
+        // intercept gates actually open.
+        DealDamage {
+            actor_id: bid,
+            amount: max,
+            damage_type: DamageType::Fire,
+        }
+        .apply(&mut e);
+        // Death Ward fired (cleared) → HP at 1, RR untouched.
+        let actor = e.actors.get(&bid).unwrap();
+        assert!(!actor.has_condition(Condition::DeathWarded));
+        assert_eq!(actor.hitpoints(), 1);
+        assert_eq!(
+            actor.relentless_rage_dc(),
+            dc_before,
+            "RR DC should not bump when Death Ward intercepts first"
+        );
+    }
+
+    /// Short rest resets the Relentless Rage DC back to 10 (RAW:
+    /// "When you finish a short or long rest, the DC resets to 10").
+    /// Verifies both the short-rest and long-rest reset lanes.
+    #[test]
+    fn relentless_rage_dc_resets_on_rest() {
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let bid = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&bid).unwrap();
+        // Simulate three successful uses.
+        actor.bump_relentless_rage_dc();
+        actor.bump_relentless_rage_dc();
+        actor.bump_relentless_rage_dc();
+        assert_eq!(actor.relentless_rage_dc(), 25);
+        actor.short_rest(&mut crate::engine::dice::FastRandRoller::with_seed(1));
+        assert_eq!(
+            actor.relentless_rage_dc(),
+            10,
+            "short rest resets DC to 10"
+        );
+        actor.bump_relentless_rage_dc();
+        actor.long_rest();
+        assert_eq!(
+            actor.relentless_rage_dc(),
+            10,
+            "long rest resets DC to 10"
+        );
     }
 
     /// Rogue Cunning Hide: bonus-action Hide that drops the Hidden flag.

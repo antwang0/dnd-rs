@@ -368,13 +368,15 @@ pub fn resolve_attack_outcome(
         damage_type: p.damage_type,
     })];
     if encounter.is_hex_target(p.caster_id, p.target_id) {
-        let hex_total = roll_rider(encounter, Dice::new(1, 6), is_crit);
-        encounter.log(format!("  hex: +{} extra Necrotic", hex_total));
-        effects.push(Box::new(DealDamage {
-            actor_id: p.target_id,
-            amount: hex_total,
-            damage_type: DamageType::Necrotic,
-        }));
+        push_die_rider(
+            encounter,
+            &mut effects,
+            p.target_id,
+            Dice::new(1, 6),
+            is_crit,
+            DamageType::Necrotic,
+            "hex",
+        );
     }
     // Caster-side per-hit damage riders. Generalized so any condition
     // that grants "+Xdy damage of type T on hit" plugs in here without
@@ -457,13 +459,54 @@ pub fn resolve_attack_outcome(
                 )
             })
     {
-        let extra = roll_rider(encounter, Dice::new(1, 8), is_crit);
-        encounter.log(format!("  improved divine smite: +{} Radiant", extra));
-        effects.push(Box::new(DealDamage {
-            actor_id: p.target_id,
-            amount: extra,
-            damage_type: DamageType::Radiant,
-        }));
+        push_die_rider(
+            encounter,
+            &mut effects,
+            p.target_id,
+            Dice::new(1, 8),
+            is_crit,
+            DamageType::Radiant,
+            "improved divine smite",
+        );
+    }
+    // 5e Hunter Ranger **Colossus Slayer** (level 3) — passive once-per-
+    // turn rider. On a weapon hit against a wounded target, lay an extra
+    // 1d8 of the weapon's damage type. Three gates:
+    //   1. Caster has the COLOSSUS_SLAYER_TAG passive feature flag.
+    //   2. Caster hasn't already fired Colossus Slayer this turn
+    //      (`colossus_slayer_used` — cleared at turn-start by
+    //      `reset_for_new_round`).
+    //   3. Target is wounded (`is_wounded()` — current HP below max).
+    // No melee gate (RAW: "When you hit a creature with a weapon attack"
+    // — covers ranger longbow shots too). Crit doubles the die via
+    // `roll_rider`. Damage type matches the weapon so a fire-imbued bow
+    // shot still reads as fire on the Colossus Slayer line.
+    if !p.is_spell
+        && encounter
+            .actors
+            .get(&p.caster_id)
+            .is_some_and(|a| {
+                a.has_passive_feature(
+                    crate::actions::class_features::COLOSSUS_SLAYER_TAG,
+                ) && !a.colossus_slayer_used()
+            })
+        && encounter
+            .actors
+            .get(&p.target_id)
+            .is_some_and(|t| t.is_wounded())
+    {
+        push_die_rider(
+            encounter,
+            &mut effects,
+            p.target_id,
+            Dice::new(1, 8),
+            is_crit,
+            p.damage_type,
+            "colossus slayer",
+        );
+        if let Some(caster) = encounter.actors.get_mut(&p.caster_id) {
+            caster.mark_colossus_slayer_used();
+        }
     }
     // Melee-only retaliation table: any condition the *target* holds that
     // bounces damage back at a melee attacker (Fire Shield 2d8 fire,
@@ -646,6 +689,35 @@ pub fn roll_rider(encounter: &mut EncounterInstance, dice: Dice, is_crit: bool) 
     let base = encounter.roll(&dice);
     let crit_extra = if is_crit { encounter.roll(&dice) } else { 0 };
     base + crit_extra
+}
+
+/// Roll a single-die on-hit rider (e.g. Improved Divine Smite, Colossus
+/// Slayer, Hex), log it, and queue the resulting `DealDamage` payload
+/// against `target_id`. Returns the rolled amount so callers needing the
+/// raw value (Hex composes the post-damage total into its `damage`
+/// running tally) can read it off the same chokepoint.
+///
+/// Collapses the recurring `roll_rider → log → push DealDamage` triple
+/// that several on-hit features open-coded. Keeps the log shape uniform
+/// across rider sources so a future grep / log-scanning test reads from
+/// one shape.
+pub fn push_die_rider(
+    encounter: &mut EncounterInstance,
+    effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    target_id: usize,
+    dice: Dice,
+    is_crit: bool,
+    damage_type: DamageType,
+    label: &str,
+) -> u32 {
+    let extra = roll_rider(encounter, dice, is_crit);
+    encounter.log(format!("  {}: +{} {:?}", label, extra, damage_type));
+    effects.push(Box::new(DealDamage {
+        actor_id: target_id,
+        amount: extra,
+        damage_type,
+    }));
+    extra
 }
 
 /// A "+Xdy damage on hit" rider sourced from one of the caster's active

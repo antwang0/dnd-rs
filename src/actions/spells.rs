@@ -261,14 +261,15 @@ fn spell_attack_outcome(
     // an attack" — both weapon and spell attacks trigger the rider.
     // Hunter's Mark RAW is weapon-only, so it's not duplicated here.
     if encounter.is_hex_target(caster_id, target_id) {
-        let hex_total =
-            crate::engine::attack::roll_rider(encounter, Dice::new(1, 6), is_crit);
-        encounter.log(format!("  hex: +{} extra Necrotic", hex_total));
-        effects.push(Box::new(DealDamage {
-            actor_id: target_id,
-            amount: hex_total,
-            damage_type: DamageType::Necrotic,
-        }));
+        crate::engine::attack::push_die_rider(
+            encounter,
+            &mut effects,
+            target_id,
+            Dice::new(1, 6),
+            is_crit,
+            DamageType::Necrotic,
+            "hex",
+        );
     }
     (effects, total_dmg)
 }

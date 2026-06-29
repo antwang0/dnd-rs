@@ -1,4 +1,6 @@
-use crate::actions::class_features::{BEAR_TOTEM_TAG, FRENZY, FRENZY_TAG, RAGE, RAGE_TAG};
+use crate::actions::class_features::{
+    BEAR_TOTEM_TAG, FRENZY, FRENZY_TAG, RAGE, RAGE_TAG, RELENTLESS_RAGE_TAG,
+};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GREATAXE, RECKLESS_ATTACK};
 use crate::actors::actor_template::CreatureTemplate;
@@ -57,10 +59,19 @@ pub static BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Subclass features layered onto the baseline Rage:
         //   - `FRENZY_TAG`: Path of the Berserker (level 3) — enables the
         //     bonus-action Frenzy strike while Raging.
+        //   - `RELENTLESS_RAGE_TAG`: Barbarian level 11 passive — a
+        //     killing blow against a raging barbarian rolls a CON save
+        //     (DC 10, +5 each successful use, resets on rest); on a
+        //     pass HP pins at 1 instead of dropping the barbarian. The
+        //     CR-4 (level-9) template lists this above its strict RAW
+        //     level gate for the same reason Improved Divine Smite
+        //     ships on the CR-1.5 paladin template — class templates
+        //     target a balanced playable level, not lockstep PHB
+        //     progression.
         // Bear Totem (Path of the Totem Warrior) lives on the separate
         // `TOTEM_BARBARIAN_TEMPLATE` below so subclass features don't
         // stack RAW-illegally on a single PC build.
-        features: HashSet::from([RAGE_TAG, FRENZY_TAG]),
+        features: HashSet::from([RAGE_TAG, FRENZY_TAG, RELENTLESS_RAGE_TAG]),
         has_danger_sense: true,
         has_extra_attack: true,
         // Level 9 Brutal Critical: +1 weapon die on melee crits.
@@ -111,7 +122,13 @@ pub static TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         actions,
         rolls_death_saves: true,
         proficient_saves: HashSet::from([AbilityScoreType::Strength, AbilityScoreType::Constitution]),
-        features: HashSet::from([RAGE_TAG, BEAR_TOTEM_TAG]),
+        // Totem barbarian shares the level-11 Relentless Rage gate with
+        // the baseline Barbarian template — both are level-9 builds in
+        // template-space, and the feature reads off `has_passive_feature`
+        // so Bear Totem's damage resistance stacks naturally with the
+        // save-intercept (a Bear Totem barbarian halves the incoming hit
+        // *and* gets a chance to pin at 1 HP if it still kills).
+        features: HashSet::from([RAGE_TAG, BEAR_TOTEM_TAG, RELENTLESS_RAGE_TAG]),
         has_danger_sense: true,
         has_extra_attack: true,
         brutal_critical_dice: 1,

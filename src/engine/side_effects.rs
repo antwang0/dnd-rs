@@ -453,8 +453,15 @@ impl ApplicableSideEffect for DealDamage {
 
         match outcome {
             DamageOutcome::Downed => {
-                ei.log(format!("{} falls unconscious.", name));
-                ei.drop_concentration(self.actor_id);
+                // 5e Barbarian Relentless Rage intercept: a raging
+                // barbarian with the feature gets a CON save to pin HP
+                // at 1 instead of falling. The helper rolls the save,
+                // logs the outcome, and reverts the Dying transition
+                // on a pass. Skipped silently for non-barbarians.
+                if !ei.try_relentless_rage(self.actor_id) {
+                    ei.log(format!("{} falls unconscious.", name));
+                    ei.drop_concentration(self.actor_id);
+                }
             }
             DamageOutcome::Killed => {
                 // cleanup_dead_actors logs "X dies." when it removes
