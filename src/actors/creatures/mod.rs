@@ -254,3 +254,7 @@ pub mod cats;
 pub mod frogs;
 pub mod lizards;
 pub mod weasels;
+pub mod goats;
+pub mod mules;
+pub mod ponies;
+pub mod elks;

@@ -1161,9 +1161,10 @@ impl WeaponWithSaveDamage {
 
     /// Ranged variant — takes an explicit `reach` in tiles and pins
     /// `is_melee = false` so the LOS gate fires. `also_install = None`.
-    /// Used for save-or-damage ranged shots like the Drow Poisoned
-    /// Hand Crossbow (the `also_install` field can still be flipped via
-    /// struct-literal init for the save-damage-plus-condition variant).
+    /// Used for save-or-damage ranged shots without a piggybacked
+    /// condition install; for the save-damage-AND-condition ranged
+    /// variant (Drow Poisoned Hand Crossbow) use `ranged_with_condition`
+    /// instead.
     #[allow(clippy::too_many_arguments)]
     pub const fn ranged(
         display_name: &'static str,
@@ -1192,6 +1193,50 @@ impl WeaponWithSaveDamage {
             rider_type,
             rider_name,
             also_install: None,
+        }
+    }
+
+    /// Ranged save-damage-AND-condition variant — mirrors
+    /// `melee_with_condition` on the `is_melee = false` lane.
+    /// Threads the caller-supplied `(condition, timer)` into
+    /// `also_install` so the failed-save site lands both the rider
+    /// damage AND the condition install on the same target.
+    /// Replaces the hand-rolled 14-field struct literal at the
+    /// single current ranged-save-damage-plus-condition call site
+    /// (Drow Poisoned Hand Crossbow) — same chokepoint benefit as
+    /// `melee_with_condition` on the melee lane. A new ranged-
+    /// venom shot lands as a single constructor call instead of
+    /// repeating the full struct expression.
+    #[allow(clippy::too_many_arguments)]
+    pub const fn ranged_with_condition(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        attack_ability: AbilityScoreType,
+        damage_dice: Dice,
+        damage_type: DamageType,
+        save_ability: AbilityScoreType,
+        save_dc: i32,
+        rider_dice: Dice,
+        rider_type: DamageType,
+        rider_name: &'static str,
+        reach: isize,
+        condition: Condition,
+        timer: ConditionTimer,
+    ) -> Self {
+        Self {
+            display_name,
+            aliases,
+            attack_ability,
+            damage_dice,
+            damage_type,
+            reach,
+            is_melee: false,
+            save_ability,
+            save_dc,
+            rider_dice,
+            rider_type,
+            rider_name,
+            also_install: Some((condition, timer)),
         }
     }
 }
@@ -4622,27 +4667,27 @@ pub static DRAGON_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
 /// Drow Poisoned Hand Crossbow — DEX-based 1d6+DEX piercing ranged
 /// shot at reach 12 tiles (30 ft) with a CON DC 13 save-or-2d4-poison-
 /// AND-Poisoned-2-rounds rider. Routes through the shared
-/// `WeaponWithSaveDamage` chassis (ranged variant) with
-/// `also_install = Some((Poisoned, Rounds(2)))`, mirroring the Spider
-/// Bite / Ettercap Bite shape. The 2-round Poisoned timer is a tighter
-/// proxy for RAW's 1-hour "magically poisoned by drow knock-out venom"
+/// `WeaponWithSaveDamage::ranged_with_condition` chassis, mirroring
+/// the Spider Bite / Ettercap Bite / Giant Wasp Sting shape on the
+/// melee side. The 2-round Poisoned timer is a tighter proxy for
+/// RAW's 1-hour "magically poisoned by drow knock-out venom"
 /// duration; the engine compresses to keep the rider relevant without
 /// permanently disabling the target across an encounter.
-pub static DROW_POISONED_CROSSBOW: WeaponWithSaveDamage = WeaponWithSaveDamage {
-    display_name: "poisoned hand crossbow",
-    aliases: &["phcb", "drowbow"],
-    attack_ability: AbilityScoreType::Dexterity,
-    damage_dice: Dice::new(1, 6),
-    damage_type: DamageType::Piercing,
-    reach: 12,
-    is_melee: false,
-    save_ability: AbilityScoreType::Constitution,
-    save_dc: 13,
-    rider_dice: Dice::new(2, 4),
-    rider_type: DamageType::Poison,
-    rider_name: "drow poison",
-    also_install: Some((Condition::Poisoned, ConditionTimer::Rounds(2))),
-};
+pub static DROW_POISONED_CROSSBOW: WeaponWithSaveDamage = WeaponWithSaveDamage::ranged_with_condition(
+    "poisoned hand crossbow",
+    &["phcb", "drowbow"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+    AbilityScoreType::Constitution,
+    13,
+    Dice::new(2, 4),
+    DamageType::Poison,
+    "drow poison",
+    12,
+    Condition::Poisoned,
+    ConditionTimer::Rounds(2),
+);
 
 /// Frost Giant Greataxe — STR-based 3d12 slashing melee, reach 2 (10 ft).
 /// One of the heaviest single-swing weapons in the bestiary: dice on par
@@ -14673,5 +14718,114 @@ pub static CAMEL_BITE: SimpleWeapon = SimpleWeapon::flat_melee(
     &["cb", "camel"],
     AbilityScoreType::Strength,
     Dice::new(1, 4),
+    DamageType::Bludgeoning,
+);
+
+// ─── Goat ───────────────────────────────────────────────────────────
+
+/// Goat Ram — STR-based 1d4+STR bludgeoning melee. RAW: "+3 to hit,
+/// reach 5 ft, one target. Hit: 3 (1d4 + 1) bludgeoning damage." The
+/// CR-0 mundane goat's only swing — a barnyard headbutt that just
+/// barely registers on the damage envelope. Sister to
+/// `GIANT_GOAT_RAM` (2d4 + chunkier STR mod, CR ½) on the caprid
+/// ladder — the regular goat is the lighter-dice / smaller-frame
+/// sibling at the floor of the CR ladder. Vanilla `SimpleWeapon` —
+/// no Charge rider (same straight-line gap that hollows the Boar /
+/// Giant Goat / Warhorse charge ramps).
+pub static GOAT_RAM: SimpleWeapon = SimpleWeapon::melee(
+    "goat ram",
+    // `gr` is already claimed by `greater restoration` (cleric
+    // spell) and a horn-charge alias — skip it to keep the alias
+    // space unambiguous when a future encounter mixes herbivores
+    // and casters.
+    &["gtr", "goat", "butt"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 4),
+    DamageType::Bludgeoning,
+);
+
+// ─── Mule ───────────────────────────────────────────────────────────
+
+/// Mule Hooves — STR-based 1d4+STR bludgeoning melee. RAW: "+2 to hit,
+/// reach 5 ft, one target. Hit: 4 (1d4 + 2) bludgeoning damage." The
+/// CR-⅛ pack mule's only swing — a defensive kick. Lighter dice than
+/// the Pony's 2d4 hooves and the Horse cohort's 2d4-with-STR-mod
+/// envelope; the mule is bred for hauling cargo, not combat. Vanilla
+/// `SimpleWeapon` — RAW's Beast of Burden (counts as Large for carry
+/// capacity) and Sure-Footed (advantage on STR/DEX saves vs prone)
+/// traits are out-of-scope: the engine doesn't model carry weight and
+/// the per-condition save-advantage hook isn't surfaced. Sister to
+/// `PONY_HOOVES` (2d4, CR ⅛) and `RIDING_HORSE_HOOVES` (2d4, CR ¼)
+/// on the equine / asinine pack-animal ladder.
+pub static MULE_HOOVES: SimpleWeapon = SimpleWeapon::melee(
+    "mule hooves",
+    // Skip the would-be "mh" alias — `mh` is already claimed by the
+    // `mass heal` spell. The two never sit on the same actor's
+    // action list (a mule doesn't cast cleric spells; a cleric
+    // doesn't carry mule hooves), but reusing the same short alias
+    // across distinct actions is a footgun for the player who maps
+    // it to muscle memory across creatures.
+    &["mule", "mule-kick", "mhv"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 4),
+    DamageType::Bludgeoning,
+);
+
+// ─── Pony ───────────────────────────────────────────────────────────
+
+/// Pony Hooves — STR-based 2d4+STR bludgeoning melee. RAW: "+2 to hit,
+/// reach 5 ft, one target. Hit: 7 (2d4 + 2) bludgeoning damage." The
+/// CR-⅛ small mount's only swing. Same 2d4 dice as the Riding Horse
+/// chassis, just on a smaller STR mod (+2 vs +3) and a smaller frame.
+/// Vanilla `SimpleWeapon`. Sister to `RIDING_HORSE_HOOVES` (2d4, CR ¼)
+/// on the equine ladder — the pony is the halfling / gnome-sized
+/// civilian mount tier beneath the medium-rider's horse.
+pub static PONY_HOOVES: SimpleWeapon = SimpleWeapon::melee(
+    "pony hooves",
+    &["ph", "pony", "pony-kick"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 4),
+    DamageType::Bludgeoning,
+);
+
+// ─── Elk ────────────────────────────────────────────────────────────
+
+/// Elk Ram — STR-based 1d6+STR bludgeoning melee. RAW: "+5 to hit,
+/// reach 5 ft, one target. Hit: 6 (1d6 + 3) bludgeoning damage." Half
+/// of the CR-¼ elk's two-action lane (Ram or Hooves, not both per
+/// Action — the elk lacks Multiattack). The lower-dice / harder-hit
+/// option vs `ELK_HOOVES` (2d4 — higher average) — the elk tends to
+/// pick Hooves when adjacent and Ram when first connecting from a
+/// charge. RAW's Charge rider (extra 2d6 + DC-13 STR vs Prone after
+/// 20 ft straight-line dash) is omitted as a scope cut alongside the
+/// Boar / Giant Boar / Warhorse charge ramps.
+pub static ELK_RAM: SimpleWeapon = SimpleWeapon::melee(
+    "elk ram",
+    // `er` is already claimed by `enlarge` / `expeditious retreat` /
+    // beholder `eye ray` — skip the bare short alias and prefix
+    // with `elk-` instead so the same actor's action list stays
+    // unambiguous when a polymorphed PC or a buffed elk somehow
+    // ends up with an `er`-aliased spell too.
+    &["elk-ram", "elkr"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Bludgeoning,
+);
+
+/// Elk Hooves — STR-based 2d4+STR bludgeoning melee. RAW: "+5 to hit,
+/// reach 5 ft, one target. Hit: 8 (2d4 + 3) bludgeoning damage. The
+/// elk can use this attack only against a prone creature." We drop
+/// the prone-only RAW restriction — it would silently take Hooves out
+/// of the elk's tool-bag whenever the target isn't already prone, and
+/// without the Charge → Ram knock-prone chain the elk has no way to
+/// engineer prone targets itself. Promoting Hooves to unconditional
+/// keeps the higher-average swing reachable; the engine collapses the
+/// Ram-vs-Hooves choice to "whichever the AI picks per turn." Sister
+/// to `ELK_RAM` (1d6, lower dice) on the same Action.
+pub static ELK_HOOVES: SimpleWeapon = SimpleWeapon::melee(
+    "elk hooves",
+    &["eh", "elk-hooves"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 4),
     DamageType::Bludgeoning,
 );

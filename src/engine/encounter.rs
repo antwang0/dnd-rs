@@ -231,6 +231,10 @@ use crate::actors::creatures::giant_wasps::GIANT_WASP_TEMPLATE;
 use crate::actors::creatures::lizards::LIZARD_TEMPLATE;
 use crate::actors::creatures::rats::RAT_TEMPLATE;
 use crate::actors::creatures::weasels::WEASEL_TEMPLATE;
+use crate::actors::creatures::goats::GOAT_TEMPLATE;
+use crate::actors::creatures::mules::MULE_TEMPLATE;
+use crate::actors::creatures::ponies::PONY_TEMPLATE;
+use crate::actors::creatures::elks::ELK_TEMPLATE;
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -3571,6 +3575,31 @@ impl EncounterInstance {
             &FROG_TEMPLATE,
             &LIZARD_TEMPLATE,
             &WEASEL_TEMPLATE,
+            // Mundane domestic herbivore / pack-animal cohort —
+            // rounds out the CR-0 → CR-¼ "farmyard / caravan" bench
+            // beside Camel / Mastiff / Riding Horse / Draft Horse
+            // already in the pool. Each entry is a stat-light
+            // ambient that exists for travel-encounter texture and
+            // ranch / barn scenery; none of them are credible
+            // combat threats in isolation.
+            //   - Goat (CR 0 medium beast): 1d4 ram, the CR-0 floor
+            //     of the caprid family beside the CR-½ Giant Goat.
+            //   - Mule (CR ⅛ medium beast): 1d4 hooves, the
+            //     stubborn pack-hauler sibling to the Camel /
+            //     Pony / Mastiff at the same CR tier.
+            //   - Pony (CR ⅛ medium beast): 2d4 hooves, the
+            //     small-rider mount tier — same hooves dice as
+            //     the Riding Horse on a medium frame and a +1
+            //     lighter STR mod.
+            //   - Elk (CR ¼ large beast): 1d6 ram + 2d4 hooves
+            //     dual-action lane (no Multiattack per RAW). The
+            //     fastest CR-¼ ambient (speed 50) on the
+            //     herbivore-megafauna bench beside Boar / Riding
+            //     Horse / Draft Horse / Giant Goat.
+            &GOAT_TEMPLATE,
+            &MULE_TEMPLATE,
+            &PONY_TEMPLATE,
+            &ELK_TEMPLATE,
         ]
     }
 
