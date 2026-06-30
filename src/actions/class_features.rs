@@ -99,6 +99,23 @@ pub fn feature_ready(
         .is_some_and(|a| a.is_combat_active() && a.feature_available(tag))
 }
 
+/// Gating shape for "while-raging" passive features whose action half
+/// fires only inside an active Rage condition: the holder must exist, be
+/// combat-active, carry the `tag` passive feature flag, AND have the
+/// `Raging` condition. The classic Berserker Frenzy / Totem Warrior
+/// secondary action shape — Frenzy and Eagle Dive (and any future
+/// rage-gated bonus action — Reckless Throw, etc.) both route through
+/// this one helper instead of re-inlining the three-clause chain.
+pub fn raging_feature_ready(
+    encounter: &EncounterInstance,
+    caster_id: usize,
+    tag: &'static str,
+) -> bool {
+    encounter.actors.get(&caster_id).is_some_and(|a| {
+        a.is_combat_active() && a.has_passive_feature(tag) && a.has_condition(Condition::Raging)
+    })
+}
+
 /// Fighter Second Wind — bonus action; restore 1d10 + level HP. Once per
 /// long rest. Self-targeted; only valid while combat-active (no reviving
 /// yourself out of dying via this).
@@ -1003,11 +1020,7 @@ impl Action for Frenzy {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter.actors.get(&caster_id).is_some_and(|a| {
-            a.is_combat_active()
-                && a.has_passive_feature(FRENZY_TAG)
-                && a.has_condition(Condition::Raging)
-        })
+        raging_feature_ready(encounter, caster_id, FRENZY_TAG)
     }
     fn side_effects(
         &self,
@@ -1037,6 +1050,118 @@ pub static FRENZY: LazyLock<Frenzy> = LazyLock::new(|| Frenzy {});
 /// holds — Bear Totem doesn't stack with a separate template resistance
 /// (e.g. a dwarven barbarian still only gets the single /2 on poison).
 pub const BEAR_TOTEM_TAG: &str = "barbarian.bear_totem";
+
+/// 5e Barbarian Path of the Totem Warrior — **Wolf Totem Spirit** (level 3).
+/// Passive subclass feature: while raging, the holder's allies have advantage
+/// on melee attack rolls against any creature footprint-adjacent to the
+/// barbarian. The pack-hunter flavor — the wolf totem barbarian becomes a
+/// melee anchor whose presence sharpens every teammate's swing on the same
+/// target. Stored as a `has_passive_feature` flag so it composes with the
+/// existing `Raging` gate and only fires while the rage is active.
+///
+/// Read at `EncounterInstance::compute_attack_mode` next to the Pack Tactics
+/// branch (same ally-side advantage shape, just gated on a passive-feature +
+/// raging cohort rather than a template trait). Mirrors Pack Tactics' "one
+/// halving per damage instance" parallel — multiple wolf totem allies don't
+/// double-stack advantage, since Advantage already collapses to the
+/// `RollMode::Advantage` lattice point.
+pub const WOLF_TOTEM_TAG: &str = "barbarian.wolf_totem";
+
+/// 5e Barbarian Path of the Totem Warrior — **Eagle Totem Spirit** (level 3).
+/// Passive subclass feature: while raging, the eagle barbarian can Dash as a
+/// bonus action (the kiter/skirmisher flavor — the eagle barbarian closes or
+/// re-positions twice in one turn while the wolf totem anchors and the bear
+/// totem tanks). Stored as a `has_passive_feature` flag so it composes
+/// naturally with the `Raging` condition gate without consuming a per-rest
+/// charge.
+///
+/// The Dash-as-bonus-action half is exposed via the `EAGLE_DIVE` action,
+/// which mirrors `CunningDash`'s shape (`GiveResource::Movement(speed)`)
+/// gated on raging + Eagle Totem rather than the rogue's Cunning Action.
+pub const EAGLE_TOTEM_TAG: &str = "barbarian.eagle_totem";
+
+/// Eagle Totem Spirit's Dash-as-bonus-action: spend a bonus action to gain
+/// a fresh chunk of movement equal to the holder's speed. Mirrors the
+/// rogue Cunning Dash shape, but gated on the Eagle Totem barbarian's
+/// `EAGLE_TOTEM_TAG` passive feature AND the `Raging` condition — outside
+/// of rage the eagle barbarian has no extra mobility.
+pub struct EagleDive {}
+
+impl Action for EagleDive {
+    fn name(&self) -> &str {
+        "eagle dive"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ed", "dive"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        raging_feature_ready(encounter, caster_id, EAGLE_TOTEM_TAG)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let speed = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.speed())
+            .unwrap_or(0.0);
+        encounter.log("  eagle dive: barbarian surges forward on totem wings.".to_string());
+        vec![Box::new(GiveResource {
+            actor_id: caster_id,
+            resource: Resource::Movement(speed),
+        })]
+    }
+}
+
+pub static EAGLE_DIVE: LazyLock<EagleDive> = LazyLock::new(|| EagleDive {});
+
+/// 5e Fighter Champion — **Survivor** (level 18) feature tag. Passive
+/// at-start-of-turn regen: while combat-active and above 0 HP but at or
+/// below half max HP, the holder regains `5 + CON modifier` HP at the
+/// start of each of their turns. The capstone "I will not die" envelope —
+/// composes with Second Wind (bonus-action big chunk) and Indomitable
+/// (failed-save reroll) so a level-18 Champion stabilizes themselves
+/// passively round-over-round without burning either per-rest charge.
+///
+/// Read at `ActorInstance::reset_for_new_round` next to the once-per-turn
+/// flag resets so the regen lands before any condition-based start-of-turn
+/// damage (Ongoing burn from Hellish Rebuke / Cloudkill) is rolled. Floor
+/// at 1 HP recovered when CON is negative — a -2 CON Champion still ticks
+/// up 3 HP (5 - 2). The gate routes through `is_combat_active` so a
+/// downed Champion doesn't auto-resurrect — Survivor is a stabilization
+/// tool, not a revival one.
+pub const SURVIVOR_TAG: &str = "fighter.survivor";
 
 /// 5e Barbarian **Relentless Rage** (level 11) feature tag. Passive
 /// rest-charged save-intercept: when a killing blow would otherwise

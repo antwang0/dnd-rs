@@ -1048,17 +1048,10 @@ impl EncounterInstance {
             // attack rolls when a non-incapacitated ally is adjacent to
             // the target. Checks the team-relative adjacency rather than
             // a condition flag — the trait is a template feature.
-            if attacker.has_pack_tactics() {
-                let attacker_team = attacker.team();
-                let has_ally_adj = self.actors.iter().any(|(id, a)| {
-                    *id != attacker_id
-                        && a.team() == attacker_team
-                        && a.is_combat_active()
-                        && self.footprint_distance(*id, target_id).is_some_and(|d| d == 0)
-                });
-                if has_ally_adj {
-                    mode = mode.combine(RollMode::Advantage);
-                }
+            if attacker.has_pack_tactics()
+                && self.has_ally_adjacent_to(attacker_id, target_id, |_| true)
+            {
+                mode = mode.combine(RollMode::Advantage);
             }
             // 5e Sahuagin Blood Frenzy: melee attacks against a wounded
             // target get advantage. Passive trait tagged via the features
@@ -1072,6 +1065,26 @@ impl EncounterInstance {
                     .actors
                     .get(&target_id)
                     .is_some_and(|t| t.is_wounded())
+            {
+                mode = mode.combine(RollMode::Advantage);
+            }
+            // 5e Barbarian Path of the Totem Warrior — Wolf Totem Spirit.
+            // While a teammate (not the attacker themselves) is raging
+            // AND has the WOLF_TOTEM_TAG passive feature AND is footprint-
+            // adjacent to the target, melee attackers on that team get
+            // advantage. Mirrors Pack Tactics' ally-side adjacency shape —
+            // same `has_ally_adjacent_to` scan — but gated on melee,
+            // raging, and the totem feature rather than the pack-tactics
+            // template trait. The attacker doesn't help themselves (RAW:
+            // "your friends") so a wolf totem barbarian attacking solo
+            // gets no benefit from their own aura — guaranteed by the
+            // `id != attacker_id` clause inside the helper.
+            use crate::actions::class_features::WOLF_TOTEM_TAG;
+            if is_melee
+                && self.has_ally_adjacent_to(attacker_id, target_id, |a| {
+                    a.has_passive_feature(WOLF_TOTEM_TAG)
+                        && a.has_condition(Condition::Raging)
+                })
             {
                 mode = mode.combine(RollMode::Advantage);
             }
@@ -2407,6 +2420,37 @@ impl EncounterInstance {
             .collect();
         ids.sort_unstable();
         ids
+    }
+
+    /// True iff `attacker_id` has at least one combat-active teammate
+    /// (excluding themselves) that is footprint-adjacent to `target_id`
+    /// AND passes the caller's predicate. The shared "ally anchors the
+    /// target" scan — Pack Tactics (no extra predicate), Wolf Totem
+    /// (predicate: raging + WOLF_TOTEM_TAG), and any future ally-aura
+    /// rider (Help-from-an-adjacent-ally, Mark of the Pack-style auras)
+    /// route through this single chokepoint. Returns false if either
+    /// id is unknown — defensive null-shielding mirrors the rest of
+    /// the compute-mode plumbing.
+    pub fn has_ally_adjacent_to<F>(
+        &self,
+        attacker_id: usize,
+        target_id: usize,
+        predicate: F,
+    ) -> bool
+    where
+        F: Fn(&ActorInstance) -> bool,
+    {
+        let Some(attacker) = self.actors.get(&attacker_id) else {
+            return false;
+        };
+        let team = attacker.team();
+        self.actors.iter().any(|(id, a)| {
+            *id != attacker_id
+                && a.team() == team
+                && a.is_combat_active()
+                && predicate(a)
+                && self.footprint_distance(*id, target_id).is_some_and(|d| d == 0)
+        })
     }
 
     /// Footprint-Chebyshev distance between two living actors, or `None` if
@@ -22882,6 +22926,169 @@ mod tests {
         assert_eq!(e.actors[&bid].effective_damage(10, DamageType::Necrotic), 5);
         // Psychic is the carve-out — Bear Totem explicitly excludes it.
         assert_eq!(e.actors[&bid].effective_damage(10, DamageType::Psychic), 10);
+    }
+
+    /// Wolf Totem Spirit (Barbarian Path of the Totem Warrior, alt-flavor):
+    /// while raging, allies have advantage on melee attacks against any
+    /// enemy footprint-adjacent to the wolf totem barbarian. Probes the
+    /// `compute_attack_mode` aura: an ally with no other advantage source
+    /// reads Normal on an unrelated target, Advantage on the target the
+    /// wolf totem barbarian is anchoring.
+    #[test]
+    fn wolf_totem_grants_ally_melee_advantage_against_adjacent_target() {
+        use crate::actions::class_features::RAGE;
+        use crate::actors::creatures::barbarians::WOLF_TOTEM_BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wolf = e
+            .instantiate_creature(&WOLF_TOTEM_BARBARIAN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Park the ally well away from any enemy so the "ranged-while-
+        // adjacent" disadvantage doesn't confound the aura check below.
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+            .unwrap();
+        // Anchored goblin: footprint-adjacent to the wolf totem barbarian.
+        let anchored = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        // Distant goblin: well outside the wolf totem's aura AND not
+        // adjacent to the ally either.
+        let distant = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(13, 13), 1, 0)
+            .unwrap();
+        // Pre-rage: the aura is dormant; both targets read Normal.
+        assert_eq!(e.compute_attack_mode(ally, anchored, true), RollMode::Normal);
+        assert_eq!(e.compute_attack_mode(ally, distant, true), RollMode::Normal);
+        let rage_effects = RAGE.side_effects(&mut e, wolf, None, None, None);
+        for ef in rage_effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&wolf].has_condition(Condition::Raging));
+        // Raging: the ally now reads Advantage on the anchored goblin
+        // (footprint-adjacent to the raging wolf totem) but still Normal
+        // on the distant goblin (outside the aura).
+        assert_eq!(
+            e.compute_attack_mode(ally, anchored, true),
+            RollMode::Advantage
+        );
+        assert_eq!(e.compute_attack_mode(ally, distant, true), RollMode::Normal);
+        // Ranged attacks against the distant target read Normal — Wolf
+        // Totem is melee-only RAW (the ranged check on `anchored` would
+        // be confounded by the adjacent-enemy ranged disadvantage on
+        // the fighter, so we sample the cleaner `distant` lane here).
+        assert_eq!(e.compute_attack_mode(ally, distant, false), RollMode::Normal);
+    }
+
+    /// Wolf Totem doesn't help the totem barbarian themselves — RAW reads
+    /// "your friends," so a wolf totem barbarian attacking solo into an
+    /// adjacent enemy gets no advantage from their own aura.
+    #[test]
+    fn wolf_totem_does_not_grant_self_advantage() {
+        use crate::actions::class_features::RAGE;
+        use crate::actors::creatures::barbarians::WOLF_TOTEM_BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wolf = e
+            .instantiate_creature(&WOLF_TOTEM_BARBARIAN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        let rage_effects = RAGE.side_effects(&mut e, wolf, None, None, None);
+        for ef in rage_effects {
+            ef.apply(&mut e);
+        }
+        // Self-targeted swing: aura must NOT fire — even though the wolf
+        // totem barbarian is adjacent to the goblin, they're not their
+        // own friend.
+        assert_eq!(e.compute_attack_mode(wolf, g, true), RollMode::Normal);
+    }
+
+    /// Eagle Totem Spirit's Dash-as-bonus-action: gated on raging + the
+    /// passive feature. Outside of rage the validator must reject;
+    /// inside rage it must pass and grant movement on side-effect.
+    #[test]
+    fn eagle_dive_requires_raging_and_grants_movement() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{EAGLE_DIVE, RAGE};
+        use crate::actors::creatures::barbarians::EAGLE_TOTEM_BARBARIAN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let eagle = e
+            .instantiate_creature(&EAGLE_TOTEM_BARBARIAN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&eagle).unwrap().reset_for_new_round();
+        // Pre-rage: Eagle Dive is gated off.
+        assert!(!EAGLE_DIVE.custom_validate_input(&e, eagle, None, None, None));
+        let rage_effects = RAGE.side_effects(&mut e, eagle, None, None, None);
+        for ef in rage_effects {
+            ef.apply(&mut e);
+        }
+        // Raging: Eagle Dive is now valid and grants a fresh movement chunk.
+        assert!(EAGLE_DIVE.custom_validate_input(&e, eagle, None, None, None));
+        // Drain movement so we can verify the grant.
+        e.actors.get_mut(&eagle).unwrap().zero_movement();
+        assert_eq!(e.actors[&eagle].remaining_movement(), 0.0);
+        let effects = EAGLE_DIVE.side_effects(&mut e, eagle, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let after = e.actors[&eagle].remaining_movement();
+        assert!(after > 0.0, "Eagle Dive should grant a fresh movement chunk");
+    }
+
+    /// Survivor (Champion lv18): at the start of the holder's turn, if
+    /// at or below half max HP, regain `5 + CON modifier` HP. Verifies
+    /// the regen lands at the turn-start hook, the half-HP gate
+    /// short-circuits when above half, and a downed Champion doesn't
+    /// auto-resurrect.
+    #[test]
+    fn champion_survivor_regens_at_turn_start_when_wounded() {
+        use crate::actors::creatures::fighters::CHAMPION_TEMPLATE;
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let champ = e
+            .instantiate_creature(&CHAMPION_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let max = e.actors[&champ].max_hitpoints();
+        // Above-half HP: turn-start regen must NOT fire. Take a single
+        // point of damage so we're below max but well above half.
+        let _ = e.actors.get_mut(&champ).unwrap().take_typed_damage(1, DamageType::Slashing);
+        let above_half = e.actors[&champ].hitpoints();
+        e.actors.get_mut(&champ).unwrap().reset_for_new_round();
+        assert_eq!(
+            e.actors[&champ].hitpoints(),
+            above_half,
+            "Survivor should not regen when above half max HP"
+        );
+        // At-half-HP: take damage to drop to half, then verify regen.
+        let current = e.actors[&champ].hitpoints();
+        let drop_to_half = current.saturating_sub(max / 2);
+        let _ = e.actors.get_mut(&champ).unwrap().take_typed_damage(drop_to_half, DamageType::Slashing);
+        let before = e.actors[&champ].hitpoints();
+        assert!(before <= max / 2 && before > 0);
+        e.actors.get_mut(&champ).unwrap().reset_for_new_round();
+        let after = e.actors[&champ].hitpoints();
+        assert!(
+            after > before,
+            "Survivor should regen at turn-start when at half HP (before={}, after={})",
+            before,
+            after
+        );
+        // Downed Champion: regen must NOT fire — Survivor is
+        // stabilization, not revival. Drop the Champion to 0 with a
+        // single big hit.
+        let now = e.actors[&champ].hitpoints();
+        let _ = e.actors.get_mut(&champ).unwrap().take_typed_damage(now + 100, DamageType::Slashing);
+        assert_eq!(e.actors[&champ].hitpoints(), 0);
+        e.actors.get_mut(&champ).unwrap().reset_for_new_round();
+        assert_eq!(
+            e.actors[&champ].hitpoints(),
+            0,
+            "Survivor should not auto-resurrect a downed Champion"
+        );
     }
 
     /// Improved Divine Smite (Paladin level 11+): every melee weapon hit

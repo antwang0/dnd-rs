@@ -1,5 +1,6 @@
 use crate::actions::class_features::{
-    BEAR_TOTEM_TAG, FRENZY, FRENZY_TAG, RAGE, RAGE_TAG, RELENTLESS_RAGE_TAG,
+    BEAR_TOTEM_TAG, EAGLE_DIVE, EAGLE_TOTEM_TAG, FRENZY, FRENZY_TAG, RAGE, RAGE_TAG,
+    RELENTLESS_RAGE_TAG, WOLF_TOTEM_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GREATAXE, RECKLESS_ATTACK};
@@ -129,6 +130,104 @@ pub static TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         // save-intercept (a Bear Totem barbarian halves the incoming hit
         // *and* gets a chance to pin at 1 HP if it still kills).
         features: HashSet::from([RAGE_TAG, BEAR_TOTEM_TAG, RELENTLESS_RAGE_TAG]),
+        has_danger_sense: true,
+        has_extra_attack: true,
+        brutal_critical_dice: 1,
+        ..CreatureTemplate::defaults()
+    }
+});
+
+/// Wolf Totem Barbarian — Path of the Totem Warrior, **Wolf Spirit** flavor
+/// (level 3). Third sibling of `BARBARIAN_TEMPLATE` (Berserker / Frenzy) and
+/// `TOTEM_BARBARIAN_TEMPLATE` (Bear Spirit) — same level-9 envelope with the
+/// subclass feature swapped to the pack-hunter aura.
+///
+/// Headline mechanic: **Wolf Totem Spirit** — while raging, allies have
+/// advantage on melee attacks against any creature footprint-adjacent to
+/// the wolf barbarian. The "team-anchor" role: the wolf barbarian doesn't
+/// gain personal damage resistance (Bear) or extra mobility (Eagle), but
+/// every teammate's melee swing into an adjacent enemy lands with
+/// advantage — a force multiplier on a party with multiple melee
+/// attackers. Read at `compute_attack_mode` next to the Pack Tactics
+/// branch (same ally-side adjacency loop, gated on raging + passive
+/// feature rather than the pack-tactics template trait).
+///
+/// Stat envelope mirrors the other two totem variants (CR 4 / level-9
+/// build / 76 HP / AC 15 / STR / CON 18 / Brutal Critical 1d / Reckless
+/// Attack). Glyph 'W' so wolf-vs-bear-vs-eagle renders unambiguously on
+/// the map next to baseline Barbarian 'B' / Totem 'T'.
+pub static WOLF_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&GREATAXE);
+    actions.push(&*RAGE);
+    actions.push(&*RECKLESS_ATTACK);
+    CreatureTemplate {
+        name: "Wolf Totem Barbarian",
+        glyph: 'W',
+        ac: 15,
+        hitpoints: "9d12+18".parse().unwrap(),
+        strength: 18,
+        dexterity: 12,
+        constitution: 18,
+        intelligence: 8,
+        wisdom: 12,
+        charisma: 10,
+        languages: HashSet::from([Language::Common]),
+        cr: 4.0,
+        size: Size::Medium,
+        creature_type: CreatureType::Humanoid,
+        actions,
+        rolls_death_saves: true,
+        proficient_saves: HashSet::from([AbilityScoreType::Strength, AbilityScoreType::Constitution]),
+        features: HashSet::from([RAGE_TAG, WOLF_TOTEM_TAG, RELENTLESS_RAGE_TAG]),
+        has_danger_sense: true,
+        has_extra_attack: true,
+        brutal_critical_dice: 1,
+        ..CreatureTemplate::defaults()
+    }
+});
+
+/// Eagle Totem Barbarian — Path of the Totem Warrior, **Eagle Spirit** flavor
+/// (level 3). Fourth sibling of the totem family — Berserker (Frenzy), Bear
+/// (damage envelope), Wolf (ally-aura), Eagle (mobility). Same level-9
+/// envelope with the subclass feature swapped to the skirmisher kit.
+///
+/// Headline mechanic: **Eagle Totem Spirit** — while raging, the eagle
+/// barbarian can Dash as a bonus action (the `EAGLE_DIVE` action grants
+/// a fresh chunk of movement equal to the holder's speed, gated on
+/// raging + passive feature). The kiter / repositioner role — combos
+/// naturally with Reckless Attack so the eagle barbarian charges in,
+/// strikes with advantage, and dives back out beyond easy-OA range
+/// before the next enemy turn lands.
+///
+/// Glyph 'A' (for Aquila / Avian) so eagle-vs-wolf-vs-bear renders
+/// unambiguously on the map next to baseline Barbarian 'B' / Totem 'T'
+/// / Wolf 'W'.
+pub static EAGLE_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&GREATAXE);
+    actions.push(&*RAGE);
+    actions.push(&*RECKLESS_ATTACK);
+    actions.push(&*EAGLE_DIVE);
+    CreatureTemplate {
+        name: "Eagle Totem Barbarian",
+        glyph: 'A',
+        ac: 15,
+        hitpoints: "9d12+18".parse().unwrap(),
+        strength: 18,
+        dexterity: 12,
+        constitution: 18,
+        intelligence: 8,
+        wisdom: 12,
+        charisma: 10,
+        languages: HashSet::from([Language::Common]),
+        cr: 4.0,
+        size: Size::Medium,
+        creature_type: CreatureType::Humanoid,
+        actions,
+        rolls_death_saves: true,
+        proficient_saves: HashSet::from([AbilityScoreType::Strength, AbilityScoreType::Constitution]),
+        features: HashSet::from([RAGE_TAG, EAGLE_TOTEM_TAG, RELENTLESS_RAGE_TAG]),
         has_danger_sense: true,
         has_extra_attack: true,
         brutal_critical_dice: 1,

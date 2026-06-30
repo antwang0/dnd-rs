@@ -122,6 +122,19 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3c'''. Eagle Dive — Eagle Totem barbarian bonus-action Dash
+        //        while raging. Grants a fresh movement chunk for closing
+        //        on a fleeing target. The action's validator gates on
+        //        the passive `EAGLE_TOTEM_TAG` feature AND the active
+        //        `Raging` condition, so non-Eagle Totem subclasses
+        //        naturally bounce out. Heuristic gates on "no enemy in
+        //        melee reach but at least one within chase range" so
+        //        the dive isn't burned when an adjacent target is
+        //        already available.
+        if let Some(aei) = try_eagle_dive(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3c''. Lunging Attack — Fighter Battle Master bonus-action
         //       prime. Extends melee reach by one tile for the next
         //       swing. Fires only when an enemy sits at the precise
@@ -2797,6 +2810,33 @@ fn try_frenzy(
         return None;
     }
     try_self_action(encounter, actor_id, "frenzy")
+}
+
+/// Eagle Totem Spirit's Dash-as-bonus-action — Eagle Totem barbarian
+/// bonus action while raging. Grants a fresh movement chunk for kiting
+/// or closing. Fires only when there's at least one enemy that needs
+/// closing (no enemy in melee reach AND at least one enemy on the map
+/// to chase) — burning the bonus action for extra movement with all
+/// enemies already adjacent wastes the eagle barbarian's bonus-action
+/// slot on a follow-up Reckless Attack window.
+fn try_eagle_dive(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if !actor.has_condition(Condition::Raging) {
+        return None;
+    }
+    // Adjacent enemy → no need to Dash; let Reckless / Frenzy take the
+    // bonus-action slot instead.
+    if any_enemy_within(encounter, actor_id, 0) {
+        return None;
+    }
+    // No enemies in chase distance at all → Dash buys nothing.
+    if !any_enemy_within(encounter, actor_id, 60) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "eagle dive")
 }
 
 /// Battle Master Lunging Attack — bonus-action prime that extends the

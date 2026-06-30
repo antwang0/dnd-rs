@@ -4,7 +4,8 @@ use crate::actions::class_features::{
     FEINTING_ATTACK_TAG, GOADING_ATTACK, GOADING_ATTACK_TAG, INDOMITABLE, INDOMITABLE_TAG,
     LUNGING_ATTACK, LUNGING_ATTACK_TAG, MENACING_ATTACK, MENACING_ATTACK_TAG, PRECISION_ATTACK,
     PRECISION_ATTACK_TAG, PUSHING_ATTACK, PUSHING_ATTACK_TAG, RALLY, RALLY_TAG, SECOND_WIND,
-    SECOND_WIND_TAG, SWEEPING_ATTACK, SWEEPING_ATTACK_TAG, TRIP_ATTACK, TRIP_ATTACK_TAG,
+    SECOND_WIND_TAG, SURVIVOR_TAG, SWEEPING_ATTACK, SWEEPING_ATTACK_TAG, TRIP_ATTACK,
+    TRIP_ATTACK_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGSWORD, SCIMITAR};
@@ -47,7 +48,18 @@ pub static CHAMPION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         rolls_death_saves: true,
         proficient_saves: HashSet::from([AbilityScoreType::Strength, AbilityScoreType::Constitution]),
-        features: HashSet::from([SECOND_WIND_TAG, ACTION_SURGE_TAG, INDOMITABLE_TAG]),
+        // Champion features layered onto the standard fighter rest pool:
+        //   - SECOND_WIND_TAG / ACTION_SURGE_TAG / INDOMITABLE_TAG: shared
+        //     fighter base.
+        //   - SURVIVOR_TAG (level 18): passive at-start-of-turn regen
+        //     while at or below half max HP — the capstone "I will not
+        //     die" envelope, read at `reset_for_new_round`. Ships on the
+        //     level-5 Champion template above its strict RAW gate for
+        //     the same reason Relentless Rage rides the level-9
+        //     Barbarian and Improved Divine Smite rides the level-3
+        //     Paladin: class templates target a balanced playable
+        //     level, not lockstep PHB progression.
+        features: HashSet::from([SECOND_WIND_TAG, ACTION_SURGE_TAG, INDOMITABLE_TAG, SURVIVOR_TAG]),
         has_extra_attack: true,
         // 5e Champion subclass level-3 feature: critical hits trigger on
         // 19 or 20 instead of just 20. Read at every attack-roll site

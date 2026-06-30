@@ -2544,6 +2544,24 @@ impl ActorInstance {
         // don't clear them here.
         self.sneak_attack_used = false;
         self.colossus_slayer_used = false;
+        // 5e Fighter Champion — Survivor (level 18): passive at-start-of-
+        // turn regen. While combat-active AND at or below half max HP,
+        // the holder regains `5 + CON modifier` HP (floor 1, so a -2 CON
+        // Champion still ticks up 3). Routes through `heal` so the
+        // standard at-max ceiling clips the regen — Survivor doesn't
+        // bump the cap. Gate on `is_combat_active` so a downed Champion
+        // doesn't auto-resurrect; Survivor is stabilization, not revival.
+        if matches!(self.hp_state, HpState::Active)
+            && self.hitpoints > 0
+            && self.hitpoints * 2 <= self.max_hitpoints()
+            && self
+                .features_max
+                .contains(crate::actions::class_features::SURVIVOR_TAG)
+        {
+            let con_mod = modifier_from_score(self.constitution);
+            let amount = (5 + con_mod).max(1) as u32;
+            self.heal(amount);
+        }
         let mut expired = self.clear_until_next_turn_conditions();
         // 5e: Dodge / Disengage / Helped end at the start of the holder's
         // next turn regardless of whatever timer was used to install
