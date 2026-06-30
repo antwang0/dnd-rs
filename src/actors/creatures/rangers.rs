@@ -132,28 +132,15 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 /// stack RAW-illegally on a single PC build. Glyph 'H' so the Hunter
 /// shows up distinctly on the map next to the baseline 'R'.
 pub static HUNTER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    let base = &*RANGER_TEMPLATE;
+    // Subclass-of pattern: clone the baseline Ranger envelope wholesale
+    // and overwrite only the per-subclass differences (name / glyph /
+    // features). The `..base.clone()` tail picks up every other field
+    // — actions, spell slots, extra-attack, save profs — without an
+    // N-line field-by-field copy.
     CreatureTemplate {
         name: "Hunter Ranger",
         glyph: 'H',
-        ac: base.ac,
-        hitpoints: base.hitpoints,
-        strength: base.strength,
-        dexterity: base.dexterity,
-        constitution: base.constitution,
-        intelligence: base.intelligence,
-        wisdom: base.wisdom,
-        charisma: base.charisma,
-        languages: base.languages.clone(),
-        cr: base.cr,
-        size: base.size,
-        creature_type: base.creature_type,
-        actions: base.actions.clone(),
-        spell_slots_by_level: base.spell_slots_by_level.clone(),
-        rolls_death_saves: base.rolls_death_saves,
-        proficient_saves: base.proficient_saves.clone(),
         features: HashSet::from([COLOSSUS_SLAYER_TAG]),
-        has_extra_attack: base.has_extra_attack,
-        ..CreatureTemplate::defaults()
+        ..RANGER_TEMPLATE.clone()
     }
 });

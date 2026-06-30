@@ -212,6 +212,7 @@ impl ConcentrationData {
     }
 }
 
+#[derive(Clone)]
 pub struct CreatureTemplate {
     pub name: &'static str,
     pub glyph: char,
@@ -739,6 +740,15 @@ pub struct ActorInstance {
     /// if a Hunter ranger has spent their once-per-turn Colossus Slayer
     /// rider this turn. Cleared at turn-start by `reset_for_new_round`.
     colossus_slayer_used: bool,
+    /// 5e Rogue Assassin **Assassinate** (level 3) tracker. Flipped to
+    /// `true` the first time this actor begins a turn in the encounter
+    /// — set by the engine's `start_turn_for` hook. Read at
+    /// `compute_attack_mode` next to the Pack Tactics / Wolf Totem
+    /// branches: an Assassin rogue rolls with advantage against any
+    /// target whose `has_taken_turn_in_combat` is still false. Latches
+    /// once-only and is never cleared mid-encounter (RAW: "any creature
+    /// that hasn't taken a turn in the combat yet").
+    has_taken_turn_in_combat: bool,
     /// 5e Barbarian Relentless Rage DC. Starts at 10, climbs by 5 each
     /// time the feature successfully pins the holder at 1 HP, resets to
     /// 10 on short / long rest. Stored alongside the feature flag rather
@@ -950,6 +960,7 @@ impl ActorInstance {
             damage_bonus_buff: 0,
             sneak_attack_used: false,
             colossus_slayer_used: false,
+            has_taken_turn_in_combat: false,
             relentless_rage_dc: 10,
             help_grants: HashMap::new(),
             regen_per_round: ct.regen_per_round,
@@ -1479,6 +1490,13 @@ impl ActorInstance {
         self.damage_bonus_buff = 0;
         self.features_remaining = self.features_max.clone();
         self.indomitable_pending = false;
+        // 5e Rogue Assassin **Assassinate** is a per-combat latch ("any
+        // creature that hasn't taken a turn in the combat yet"). A long
+        // rest separates encounters in the multi-encounter loop — clear
+        // the latch here so an Assassin in a fresh combat still gets the
+        // alpha-strike window against targets whose latch latched in the
+        // previous fight.
+        self.has_taken_turn_in_combat = false;
         // 5e Relentless Rage RAW: "When you finish a short or long rest,
         // the DC resets to 10." Long-rest path also calls this reset; the
         // short-rest path below tops up the same field.
@@ -2338,6 +2356,21 @@ impl ActorInstance {
         if self.has_condition(Condition::AshardalonStriding) {
             bonus += 20.0;
         }
+        // 5e Barbarian Path of the Totem Warrior — Tiger Totem Spirit
+        // (2024 PHB Path of the Wild Heart flavor). While raging, the
+        // tiger barbarian's speed increases by 10 ft. Lives next to the
+        // other condition-keyed speed bonuses so a future RAW-aware
+        // refinement (different speeds per movement mode, etc.) lands in
+        // one place. The gate combines a condition (Raging) and a passive
+        // feature flag (TIGER_TOTEM_TAG) — outside of rage the holder
+        // has no extra speed.
+        if self.has_condition(Condition::Raging)
+            && self
+                .features_max
+                .contains(crate::actions::class_features::TIGER_TOTEM_TAG)
+        {
+            bonus += 10.0;
+        }
         bonus
     }
 
@@ -2961,6 +2994,19 @@ impl ActorInstance {
 
     pub fn mark_colossus_slayer_used(&mut self) {
         self.colossus_slayer_used = true;
+    }
+
+    /// Has this actor begun a turn since combat started? Latched once-only
+    /// by the engine's `start_turn_for` hook the first time the actor's
+    /// turn comes up. Read by the Assassinate gate in `compute_attack_mode`
+    /// — Assassin rogues roll with advantage against targets whose flag is
+    /// still false.
+    pub fn has_taken_turn_in_combat(&self) -> bool {
+        self.has_taken_turn_in_combat
+    }
+
+    pub fn mark_taken_turn_in_combat(&mut self) {
+        self.has_taken_turn_in_combat = true;
     }
 
     /// 5e Barbarian Relentless Rage — current DC for the CON save that

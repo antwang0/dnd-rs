@@ -1,7 +1,7 @@
 use crate::actions::class_attacks::ROGUE_SHORTSWORD;
 use crate::actions::class_features::{
-    CUNNING_DASH, CUNNING_DISENGAGE, CUNNING_HIDE, CUNNING_STRIKE_DAZE, CUNNING_STRIKE_POISON,
-    CUNNING_STRIKE_TRIP, CUNNING_STRIKE_WITHDRAW, STEADY_AIM,
+    ASSASSINATE_TAG, CUNNING_DASH, CUNNING_DISENGAGE, CUNNING_HIDE, CUNNING_STRIKE_DAZE,
+    CUNNING_STRIKE_POISON, CUNNING_STRIKE_TRIP, CUNNING_STRIKE_WITHDRAW, STEADY_AIM,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actors::actor_template::CreatureTemplate;
@@ -59,5 +59,38 @@ pub static ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         has_evasion: true,
         has_uncanny_dodge: true,
         ..CreatureTemplate::defaults()
+    }
+});
+
+/// Assassin Rogue — subclass build. Identical envelope to the baseline
+/// `ROGUE_TEMPLATE` (level-7 build, shortsword + cunning suite, evasion,
+/// uncanny dodge) with one subclass feature layered on: **Assassinate**
+/// (level 3) — advantage on every attack roll against any creature that
+/// hasn't taken a turn in the combat yet.
+///
+/// The "alpha-strike" rogue: opens combat with a guaranteed-advantage
+/// shortsword swing (the once-per-turn Sneak Attack rider keys off
+/// advantage as one of its triggers, so the alpha hit lands the +Nd6
+/// without needing a flanking ally). RAW also lets a hit against a
+/// surprised target be a critical, but we don't model the Surprised
+/// state — the advantage half (the load-bearing piece) survives intact.
+///
+/// Distinct from `ROGUE_TEMPLATE` (Thief-equivalent baseline) so an
+/// Assassin-vs-Thief or Assassin-vs-baseline encounter renders
+/// unambiguously by name and the subclass feature doesn't accidentally
+/// stack RAW-illegally on a single PC build. Glyph 'A' so the Assassin
+/// shows up distinctly on the map next to the baseline 'R'.
+pub static ASSASSIN_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Rogue envelope wholesale
+    // and overwrite only the per-subclass differences (name / glyph /
+    // features). The `..base.clone()` tail picks up every other field
+    // — actions, save profs, evasion, uncanny dodge, HP dice — without
+    // an N-line field-by-field copy. Same shape as
+    // `HUNTER_RANGER_TEMPLATE`.
+    CreatureTemplate {
+        name: "Assassin Rogue",
+        glyph: 'A',
+        features: HashSet::from([ASSASSINATE_TAG]),
+        ..ROGUE_TEMPLATE.clone()
     }
 });

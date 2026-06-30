@@ -1088,6 +1088,25 @@ impl EncounterInstance {
             {
                 mode = mode.combine(RollMode::Advantage);
             }
+            // 5e Rogue Assassin **Assassinate** (level 3 subclass). The
+            // assassin rolls with advantage on every attack against any
+            // creature whose `has_taken_turn_in_combat` latch is still
+            // unset — RAW reads "any creature that hasn't taken a turn in
+            // the combat yet." The latch flips on the *start* of the
+            // target's first turn (see `start_turn_for`) rather than the
+            // end, so a slow-initiative target who hasn't acted yet but
+            // whose slot has come up doesn't qualify — matches RAW more
+            // closely than a "first round only" approximation. Fires on
+            // melee AND ranged attacks (no weapon-type gate).
+            use crate::actions::class_features::ASSASSINATE_TAG;
+            if attacker.has_passive_feature(ASSASSINATE_TAG)
+                && self
+                    .actors
+                    .get(&target_id)
+                    .is_some_and(|t| !t.has_taken_turn_in_combat())
+            {
+                mode = mode.combine(RollMode::Advantage);
+            }
             // 5e Compelled Duel (Dueled + dueled_by) and Battle Master
             // Goading Attack (Goaded + goaded_by) share the "locked onto
             // someone other than this target" pattern: a flag-plus-link
@@ -3818,6 +3837,16 @@ impl EncounterInstance {
             Some(a) => {
                 let restore = a.has_displacement()
                     && !a.has_condition(Condition::Displaced);
+                // 5e Rogue Assassin **Assassinate** (level 3) tracker. The
+                // first turn an actor takes in this encounter flips their
+                // once-only `has_taken_turn_in_combat` latch — the
+                // Assassinate gate in `compute_attack_mode` keys off the
+                // *target* still having the flag at false. Setting it
+                // here (rather than at the bottom of the turn) matches RAW
+                // "any creature that hasn't taken a turn in the combat
+                // yet" — once their slot is up, they're no longer eligible
+                // even before they actually act.
+                a.mark_taken_turn_in_combat();
                 (a.name().to_string(), a.reset_for_new_round(), restore)
             }
             None => return,
@@ -23037,6 +23066,156 @@ mod tests {
         }
         let after = e.actors[&eagle].remaining_movement();
         assert!(after > 0.0, "Eagle Dive should grant a fresh movement chunk");
+    }
+
+    /// Assassinate (Rogue Assassin level 3): the assassin rolls with
+    /// advantage on every attack against any creature that hasn't taken
+    /// a turn in this combat yet. Verifies the passive-feature gate
+    /// composes cleanly with the target-side `has_taken_turn_in_combat`
+    /// latch: pre-turn the assassin reads Advantage, post-turn the
+    /// target loses the eligibility and the assassin falls back to
+    /// Normal.
+    #[test]
+    fn assassinate_grants_advantage_against_pre_turn_targets() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rogues::ASSASSIN_ROGUE_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let assassin = e
+            .instantiate_creature(&ASSASSIN_ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Park the goblin out of melee reach so the ranged-while-adjacent
+        // disadvantage clause doesn't confound the ranged-lane sample.
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        // Fresh encounter: neither actor has taken a turn yet.
+        assert!(!e.actors[&goblin].has_taken_turn_in_combat());
+        // Assassinate fires on melee AND ranged — sample both lanes.
+        assert_eq!(
+            e.compute_attack_mode(assassin, goblin, true),
+            RollMode::Advantage
+        );
+        assert_eq!(
+            e.compute_attack_mode(assassin, goblin, false),
+            RollMode::Advantage
+        );
+        // Goblin takes their turn → latch flips → Assassinate no longer
+        // applies, mode falls back to Normal.
+        e.actors.get_mut(&goblin).unwrap().mark_taken_turn_in_combat();
+        assert_eq!(
+            e.compute_attack_mode(assassin, goblin, true),
+            RollMode::Normal
+        );
+        assert_eq!(
+            e.compute_attack_mode(assassin, goblin, false),
+            RollMode::Normal
+        );
+    }
+
+    /// Assassinate is gated by the ASSASSINATE_TAG passive — a baseline
+    /// rogue without the subclass feature reads Normal even against a
+    /// pre-turn target.
+    #[test]
+    fn assassinate_requires_passive_feature_tag() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        assert!(!e.actors[&goblin].has_taken_turn_in_combat());
+        // Baseline Rogue lacks the tag — no advantage from Assassinate.
+        assert_eq!(
+            e.compute_attack_mode(rogue, goblin, true),
+            RollMode::Normal
+        );
+    }
+
+    /// `start_turn_for` latches the active actor's `has_taken_turn_in_combat`
+    /// flag — verifies the Assassinate eligibility lattice updates the
+    /// moment the target's slot comes up.
+    #[test]
+    fn start_turn_for_latches_has_taken_turn_in_combat() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Fresh spawn: the latch is off.
+        assert!(!e.actors[&g].has_taken_turn_in_combat());
+        // First skip_turn advances the queue and starts the goblin's
+        // turn — the latch flips on.
+        e.skip_turn();
+        assert!(e.actors[&g].has_taken_turn_in_combat());
+    }
+
+    /// Long rest clears the `has_taken_turn_in_combat` latch — RAW
+    /// Assassinate is per-combat, and the engine treats a long rest as
+    /// the boundary between encounters. Without the reset an Assassin
+    /// would never re-arm the alpha-strike window in a second fight.
+    #[test]
+    fn long_rest_clears_has_taken_turn_in_combat() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&g).unwrap().mark_taken_turn_in_combat();
+        assert!(e.actors[&g].has_taken_turn_in_combat());
+        e.actors.get_mut(&g).unwrap().long_rest();
+        assert!(!e.actors[&g].has_taken_turn_in_combat());
+    }
+
+    /// Tiger Totem Spirit (Barbarian Path of the Totem Warrior, Tiger
+    /// flavor): while raging, the holder's walking speed increases by
+    /// 10 ft. Verifies the passive-feature + Raging gate composes cleanly:
+    /// pre-rage the bonus is dormant, raging adds the +10 ft, and the
+    /// bonus drops back off when the Raging condition lifts.
+    #[test]
+    fn tiger_totem_raging_adds_ten_feet_of_speed() {
+        use crate::actions::class_features::RAGE;
+        use crate::actors::creatures::barbarians::TIGER_TOTEM_BARBARIAN_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let tiger = e
+            .instantiate_creature(&TIGER_TOTEM_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base = e.actors[&tiger].speed();
+        // Pre-rage: no Tiger speed bonus.
+        assert_eq!(e.actors[&tiger].speed(), base);
+        let rage_effects = RAGE.side_effects(&mut e, tiger, None, None, None);
+        for ef in rage_effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&tiger].has_condition(Condition::Raging));
+        // Raging: +10 ft speed from Tiger Totem.
+        assert_eq!(e.actors[&tiger].speed(), base + 10.0);
+        // Drop the Rage condition: bonus must lift.
+        assert!(e.actors.get_mut(&tiger).unwrap().remove_condition(Condition::Raging));
+        assert_eq!(e.actors[&tiger].speed(), base);
+    }
+
+    /// Tiger Totem Spirit is gated to barbarians who actually hold the
+    /// TIGER_TOTEM_TAG passive — a Bear / Wolf / Eagle / baseline
+    /// barbarian Raging gets no speed bump from Tiger.
+    #[test]
+    fn tiger_totem_does_not_grant_speed_to_other_totems() {
+        use crate::actions::class_features::RAGE;
+        use crate::actors::creatures::barbarians::EAGLE_TOTEM_BARBARIAN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let eagle = e
+            .instantiate_creature(&EAGLE_TOTEM_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base = e.actors[&eagle].speed();
+        let rage_effects = RAGE.side_effects(&mut e, eagle, None, None, None);
+        for ef in rage_effects {
+            ef.apply(&mut e);
+        }
+        // Eagle barbarian Raging gets no Tiger Totem speed bonus.
+        assert_eq!(e.actors[&eagle].speed(), base);
     }
 
     /// Survivor (Champion lv18): at the start of the holder's turn, if

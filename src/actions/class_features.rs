@@ -265,6 +265,21 @@ pub static ACTION_SURGE: LazyLock<ActionSurge> = LazyLock::new(|| ActionSurge {}
 /// can declare it explicitly.
 pub const CUNNING_ACTION_TAG: &str = "rogue.cunning_action";
 
+/// 5e Rogue Assassin **Assassinate** (level 3 subclass) feature tag.
+/// Passive once-only rider: the assassin rolls with advantage on any
+/// attack against a creature that hasn't taken a turn yet in this
+/// combat. RAW also crits on a hit against a *surprised* target, but
+/// we don't model surprise as a discrete state — the engine starts
+/// every encounter in initiative order with all actors eligible.
+///
+/// Read at `EncounterInstance::compute_attack_mode` next to the Pack
+/// Tactics / Wolf Totem advantage clauses; the target's
+/// `has_taken_turn_in_combat` latch is set on the first turn-start
+/// (see `start_turn_for`). Stored as a `has_passive_feature` flag so
+/// it never consumes a per-rest charge — the gate is purely the
+/// target-side latch.
+pub const ASSASSINATE_TAG: &str = "rogue.assassinate";
+
 /// Rogue Cunning Action — bonus-action Dash. 5e gives the rogue a choice
 /// of Dash, Disengage, or Hide as a bonus action; we expose Dash here
 /// (the most universally useful) and leave a follow-up CunningDisengage
@@ -1145,6 +1160,22 @@ impl Action for EagleDive {
 }
 
 pub static EAGLE_DIVE: LazyLock<EagleDive> = LazyLock::new(|| EagleDive {});
+
+/// 5e Barbarian Path of the Totem Warrior — **Tiger Totem Spirit** (level 3,
+/// 2024 PHB Path of the Wild Heart flavor). Passive subclass feature: while
+/// raging, the holder's walking speed increases by 10 ft. Fourth sibling of
+/// Bear (damage envelope), Wolf (ally-aura), Eagle (bonus-action Dash) —
+/// the Tiger plays the pure-mobility skirmisher who doesn't need to burn
+/// their bonus action on the Dash, since the +10 ft speed is always on
+/// while the rage holds. Stored as a `has_passive_feature` flag so it
+/// composes with the existing `Raging` condition gate without a per-rest
+/// charge.
+///
+/// Read at the `condition_speed_bonus` chokepoint next to the Longstrider /
+/// Expeditious Retreat speed buffs, but gated on `has_condition(Raging) &&
+/// has_passive_feature(TIGER_TOTEM_TAG)` rather than a condition flag —
+/// outside of rage the tiger barbarian has no extra speed.
+pub const TIGER_TOTEM_TAG: &str = "barbarian.tiger_totem";
 
 /// 5e Fighter Champion — **Survivor** (level 18) feature tag. Passive
 /// at-start-of-turn regen: while combat-active and above 0 HP but at or

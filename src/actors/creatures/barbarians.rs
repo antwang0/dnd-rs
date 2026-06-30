@@ -1,6 +1,7 @@
+use crate::actions::action_template::Action;
 use crate::actions::class_features::{
     BEAR_TOTEM_TAG, EAGLE_DIVE, EAGLE_TOTEM_TAG, FRENZY, FRENZY_TAG, RAGE, RAGE_TAG,
-    RELENTLESS_RAGE_TAG, WOLF_TOTEM_TAG,
+    RELENTLESS_RAGE_TAG, TIGER_TOTEM_TAG, WOLF_TOTEM_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GREATAXE, RECKLESS_ATTACK};
@@ -8,6 +9,57 @@ use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
 use std::collections::HashSet;
 use std::sync::LazyLock;
+
+/// Shared totem-barbarian build. Every Path of the Totem Warrior sub
+/// (Bear / Wolf / Eagle / Tiger) lands on the same level-9 envelope —
+/// 76 HP (9d12+18), AC 15 (unarmored), STR/CON 18, Reckless Attack /
+/// Brutal Critical 1d / Relentless Rage. The only per-totem swaps are
+/// (a) display name + glyph, (b) the totem feature tag in `features`,
+/// and (c) an optional extra action (Eagle Dive on the Eagle variant).
+/// One helper collapses the four 30-line struct literals into a single
+/// call per LazyLock — adding a fifth sub (Wild Heart 2024 Elk / Wolverine
+/// / etc.) lands as a one-line entry.
+fn totem_barbarian_template(
+    name: &'static str,
+    glyph: char,
+    totem_tag: &'static str,
+    extra_actions: &[&'static (dyn Action + Send + Sync)],
+) -> CreatureTemplate {
+    let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&GREATAXE);
+    actions.push(&*RAGE);
+    actions.push(&*RECKLESS_ATTACK);
+    for &a in extra_actions {
+        actions.push(a);
+    }
+    CreatureTemplate {
+        name,
+        glyph,
+        ac: 15,
+        hitpoints: "9d12+18".parse().unwrap(),
+        strength: 18,
+        dexterity: 12,
+        constitution: 18,
+        intelligence: 8,
+        wisdom: 12,
+        charisma: 10,
+        languages: HashSet::from([Language::Common]),
+        cr: 4.0,
+        size: Size::Medium,
+        creature_type: CreatureType::Humanoid,
+        actions,
+        rolls_death_saves: true,
+        proficient_saves: HashSet::from([
+            AbilityScoreType::Strength,
+            AbilityScoreType::Constitution,
+        ]),
+        features: HashSet::from([RAGE_TAG, totem_tag, RELENTLESS_RAGE_TAG]),
+        has_danger_sense: true,
+        has_extra_attack: true,
+        brutal_critical_dice: 1,
+        ..CreatureTemplate::defaults()
+    }
+}
 
 /// Barbarian PC template. The classic STR-melee bruiser: heavy HP from
 /// the 1d12 hit die, modest AC (unarmored — relies on the rage damage
@@ -99,42 +151,13 @@ pub static BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 /// `FRENZY_TAG`, and the `FRENZY` action is omitted from the action
 /// pool since it gates on the (now-absent) `FRENZY_TAG` flag.
 pub static TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&GREATAXE);
-    actions.push(&*RAGE);
-    actions.push(&*RECKLESS_ATTACK);
-    CreatureTemplate {
-        name: "Totem Barbarian",
-        // 'T' — distinct from 'B' (baseline Barbarian) so a Berserker-
-        // vs-Totem encounter renders unambiguously on the map.
-        glyph: 'T',
-        ac: 15,
-        hitpoints: "9d12+18".parse().unwrap(),
-        strength: 18,
-        dexterity: 12,
-        constitution: 18,
-        intelligence: 8,
-        wisdom: 12,
-        charisma: 10,
-        languages: HashSet::from([Language::Common]),
-        cr: 4.0,
-        size: Size::Medium,
-        creature_type: CreatureType::Humanoid,
-        actions,
-        rolls_death_saves: true,
-        proficient_saves: HashSet::from([AbilityScoreType::Strength, AbilityScoreType::Constitution]),
-        // Totem barbarian shares the level-11 Relentless Rage gate with
-        // the baseline Barbarian template — both are level-9 builds in
-        // template-space, and the feature reads off `has_passive_feature`
-        // so Bear Totem's damage resistance stacks naturally with the
-        // save-intercept (a Bear Totem barbarian halves the incoming hit
-        // *and* gets a chance to pin at 1 HP if it still kills).
-        features: HashSet::from([RAGE_TAG, BEAR_TOTEM_TAG, RELENTLESS_RAGE_TAG]),
-        has_danger_sense: true,
-        has_extra_attack: true,
-        brutal_critical_dice: 1,
-        ..CreatureTemplate::defaults()
-    }
+    // Glyph 'T' — distinct from 'B' (baseline Barbarian) so a Berserker-
+    // vs-Totem encounter renders unambiguously on the map. The Bear Totem
+    // damage envelope reads off `has_passive_feature` at
+    // `has_condition_resistance` so Bear Totem composes with the level-11
+    // Relentless Rage save-intercept — a Bear Totem barbarian halves the
+    // incoming hit *and* gets a chance to pin at 1 HP if it still kills.
+    totem_barbarian_template("Totem Barbarian", 'T', BEAR_TOTEM_TAG, &[])
 });
 
 /// Wolf Totem Barbarian — Path of the Totem Warrior, **Wolf Spirit** flavor
@@ -157,34 +180,7 @@ pub static TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
 /// Attack). Glyph 'W' so wolf-vs-bear-vs-eagle renders unambiguously on
 /// the map next to baseline Barbarian 'B' / Totem 'T'.
 pub static WOLF_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&GREATAXE);
-    actions.push(&*RAGE);
-    actions.push(&*RECKLESS_ATTACK);
-    CreatureTemplate {
-        name: "Wolf Totem Barbarian",
-        glyph: 'W',
-        ac: 15,
-        hitpoints: "9d12+18".parse().unwrap(),
-        strength: 18,
-        dexterity: 12,
-        constitution: 18,
-        intelligence: 8,
-        wisdom: 12,
-        charisma: 10,
-        languages: HashSet::from([Language::Common]),
-        cr: 4.0,
-        size: Size::Medium,
-        creature_type: CreatureType::Humanoid,
-        actions,
-        rolls_death_saves: true,
-        proficient_saves: HashSet::from([AbilityScoreType::Strength, AbilityScoreType::Constitution]),
-        features: HashSet::from([RAGE_TAG, WOLF_TOTEM_TAG, RELENTLESS_RAGE_TAG]),
-        has_danger_sense: true,
-        has_extra_attack: true,
-        brutal_critical_dice: 1,
-        ..CreatureTemplate::defaults()
-    }
+    totem_barbarian_template("Wolf Totem Barbarian", 'W', WOLF_TOTEM_TAG, &[])
 });
 
 /// Eagle Totem Barbarian — Path of the Totem Warrior, **Eagle Spirit** flavor
@@ -204,33 +200,31 @@ pub static WOLF_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock:
 /// unambiguously on the map next to baseline Barbarian 'B' / Totem 'T'
 /// / Wolf 'W'.
 pub static EAGLE_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&GREATAXE);
-    actions.push(&*RAGE);
-    actions.push(&*RECKLESS_ATTACK);
-    actions.push(&*EAGLE_DIVE);
-    CreatureTemplate {
-        name: "Eagle Totem Barbarian",
-        glyph: 'A',
-        ac: 15,
-        hitpoints: "9d12+18".parse().unwrap(),
-        strength: 18,
-        dexterity: 12,
-        constitution: 18,
-        intelligence: 8,
-        wisdom: 12,
-        charisma: 10,
-        languages: HashSet::from([Language::Common]),
-        cr: 4.0,
-        size: Size::Medium,
-        creature_type: CreatureType::Humanoid,
-        actions,
-        rolls_death_saves: true,
-        proficient_saves: HashSet::from([AbilityScoreType::Strength, AbilityScoreType::Constitution]),
-        features: HashSet::from([RAGE_TAG, EAGLE_TOTEM_TAG, RELENTLESS_RAGE_TAG]),
-        has_danger_sense: true,
-        has_extra_attack: true,
-        brutal_critical_dice: 1,
-        ..CreatureTemplate::defaults()
-    }
+    totem_barbarian_template(
+        "Eagle Totem Barbarian",
+        'A',
+        EAGLE_TOTEM_TAG,
+        &[&*EAGLE_DIVE],
+    )
+});
+
+/// Tiger Totem Barbarian — Path of the Totem Warrior, **Tiger Spirit** flavor
+/// (level 3, 2024 PHB Path of the Wild Heart). Fifth and final sibling of
+/// the totem family — Berserker (Frenzy), Bear (damage envelope), Wolf
+/// (ally-aura), Eagle (bonus-action Dash), Tiger (always-on mobility).
+/// Same level-9 envelope with the subclass feature swapped to the
+/// always-on skirmisher kit.
+///
+/// Headline mechanic: **Tiger Totem Spirit** — while raging, the tiger
+/// barbarian's walking speed increases by 10 ft. Unlike Eagle (bonus-action
+/// Dash for one fresh movement chunk), the Tiger's speed bump is always on
+/// the moment Rage lands — the bonus action stays free for Reckless Attack
+/// / Frenzy / Cunning-Strike-style primes. Pairs naturally with the
+/// barbarian's existing reach-closer / chase patterns.
+///
+/// Glyph 'I' (for tIger — 'T' is taken by the baseline Totem template) so
+/// tiger-vs-eagle-vs-wolf-vs-bear-vs-baseline renders unambiguously on the
+/// map.
+pub static TIGER_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    totem_barbarian_template("Tiger Totem Barbarian", 'I', TIGER_TOTEM_TAG, &[])
 });
