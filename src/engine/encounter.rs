@@ -693,6 +693,37 @@ fn focus_link_mode(
     }
 }
 
+/// Positive-polarity sibling of `focus_link_mode`. Apply `mode_on_match`
+/// to `current` when `holder` carries `condition` AND the actor id its
+/// `link` field points at IS `counterparty`. Centralizes the "flag-plus-
+/// link locked onto THIS opponent" pattern in `compute_attack_mode`:
+/// * Sworn + `sworn_by` == attacker → target-side advantage for the
+///   swearing paladin only (Vengeance Paladin Vow of Enmity, lv3
+///   subclass: the paladin who swore the vow gets advantage on attack
+///   rolls against the sworn quarry; non-sworn allies get no benefit).
+///
+/// Returns the (possibly combined) mode so the call sites stay terse:
+/// `mode = matched_link_mode(mode, holder, counterparty, cond, link, m);`.
+/// Adding a future "buff against this specific foe" rider (Favored Foe
+/// damage rider, Mark of Vendetta, etc.) becomes a one-liner instead of a
+/// re-inlined `has_condition + link == Some(counterparty)` block.
+fn matched_link_mode(
+    current: RollMode,
+    holder: &ActorInstance,
+    counterparty: usize,
+    condition: Condition,
+    link: fn(&ActorInstance) -> Option<usize>,
+    mode_on_match: RollMode,
+) -> RollMode {
+    if holder.has_condition(condition)
+        && link(holder) == Some(counterparty)
+    {
+        current.combine(mode_on_match)
+    } else {
+        current
+    }
+}
+
 impl EncounterInstance {
     pub fn messages(&self) -> &Vec<String> {
         &self.messages
@@ -1207,6 +1238,24 @@ impl EncounterInstance {
                 attacker_id,
                 Condition::Distracted,
                 ActorInstance::distracted_by,
+                RollMode::Advantage,
+            );
+            // 5e Vengeance Paladin Vow of Enmity (lv3 subclass Channel
+            // Divinity). Positive-polarity sibling of Distracted: the
+            // paladin who swore the vow gets advantage on attack rolls
+            // against the sworn target (the buff is exclusive to the
+            // swearer — RAW: "you gain advantage on attack rolls").
+            // Same flag-plus-link shape as Distracted but matches ON
+            // the linked id rather than mismatches against it. Routes
+            // through `matched_link_mode` so any future "I marked you
+            // — I get the buff" rider (Hunter's Quarry single-target
+            // damage prime, etc.) lands as a one-liner.
+            mode = matched_link_mode(
+                mode,
+                target,
+                attacker_id,
+                Condition::Sworn,
+                ActorInstance::sworn_by,
                 RollMode::Advantage,
             );
         }
@@ -44482,6 +44531,165 @@ mod tests {
             "Immolated must take fire damage at round end (pre {} post {})",
             pre_hp,
             post_hp
+        );
+    }
+
+    /// Vow of Enmity (Vengeance Paladin lv3 subclass Channel Divinity):
+    /// when the paladin who swore the vow attacks the sworn target, the
+    /// roll mode is Advantage. A non-swearing ally on the same team gets
+    /// no benefit — the buff is exclusive to the swearer.
+    #[test]
+    fn vow_of_enmity_grants_advantage_to_swearer_only() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(3, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        // Install the Sworn condition + link directly so the test
+        // exercises the read path in `compute_attack_mode` without
+        // routing through the action (the action's own side_effects
+        // are covered by the install test below).
+        e.actors
+            .get_mut(&g)
+            .unwrap()
+            .add_condition(Condition::Sworn, ConditionTimer::Rounds(10));
+        e.actors.get_mut(&g).unwrap().set_sworn_by(Some(pal));
+        let mode_pal = e.compute_attack_mode(pal, g, true);
+        let mode_ally = e.compute_attack_mode(ally, g, true);
+        assert_eq!(mode_pal, RollMode::Advantage);
+        assert_eq!(
+            mode_ally,
+            RollMode::Normal,
+            "Vow of Enmity must NOT grant advantage to non-swearing allies"
+        );
+    }
+
+    /// Vow of Enmity timer expiry must clear the `sworn_by` link via the
+    /// shared `remove_condition` cleanup hook — same pattern as
+    /// `dueled_by` / `goaded_by` / `distracted_by`. After the timer hits
+    /// zero, the condition lifts AND the link clears, so a subsequent
+    /// attack rolls at Normal mode again.
+    #[test]
+    fn sworn_condition_clears_link_on_remove() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&g)
+            .unwrap()
+            .add_condition(Condition::Sworn, ConditionTimer::Rounds(2));
+        e.actors.get_mut(&g).unwrap().set_sworn_by(Some(pal));
+        assert_eq!(e.actors[&g].sworn_by(), Some(pal));
+        // Removing the condition explicitly mirrors the timer-expiry
+        // route through `tick_condition_timers -> remove_condition`.
+        e.actors.get_mut(&g).unwrap().remove_condition(Condition::Sworn);
+        assert_eq!(
+            e.actors[&g].sworn_by(),
+            None,
+            "remove_condition(Sworn) must clear sworn_by link"
+        );
+    }
+
+    /// Vow of Enmity action install path: the Vengeance Paladin spends
+    /// the once-per-rest feature, the target picks up the `Sworn`
+    /// condition, and the `sworn_by` link points at the paladin. A
+    /// re-cast against the same target is rejected by the custom-
+    /// validate gate so the charge isn't burned for nothing.
+    #[test]
+    fn vow_of_enmity_installs_sworn_and_link_then_blocks_recast() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::class_features::{VOW_OF_ENMITY, VOW_OF_ENMITY_TAG};
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::VENGEANCE_PALADIN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let pal = e
+            .instantiate_creature(&VENGEANCE_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        assert!(
+            e.actors[&pal].feature_available(VOW_OF_ENMITY_TAG),
+            "Vengeance Paladin must ship with Vow of Enmity available"
+        );
+        let aei = ActionExecutionInfo::new(&*VOW_OF_ENMITY, pal, Some(vec![g]), None, None);
+        assert!(aei.validate(&e), "vow of enmity should validate on first cast");
+        let effects = VOW_OF_ENMITY.side_effects(&mut e, pal, Some(&vec![g]), None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&g].has_condition(Condition::Sworn));
+        assert_eq!(e.actors[&g].sworn_by(), Some(pal));
+        assert!(
+            !e.actors[&pal].feature_available(VOW_OF_ENMITY_TAG),
+            "feature charge should be spent"
+        );
+        // Re-cast on the same target is now blocked (no charge AND
+        // already sworn-by-us). The custom-validate gate catches both.
+        let again = ActionExecutionInfo::new(&*VOW_OF_ENMITY, pal, Some(vec![g]), None, None);
+        assert!(
+            !again.validate(&e),
+            "re-vow on the same target must be rejected"
+        );
+    }
+
+    /// Wholeness of Body (Open Hand Monk lv6): action heals self for
+    /// `3 × level` HP, spends the once-per-long-rest feature, and the
+    /// monk is gated on the WHOLENESS_OF_BODY_TAG passive feature flag
+    /// — a baseline monk template with no tag gets no heal even if they
+    /// hit the validation envelope.
+    #[test]
+    fn wholeness_of_body_heals_open_hand_monk_and_spends_charge() {
+        use crate::actions::class_features::{WHOLENESS_OF_BODY, WHOLENESS_OF_BODY_TAG};
+        use crate::actors::creatures::monks::{MONK_TEMPLATE, OPEN_HAND_MONK_TEMPLATE};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let oh = e
+            .instantiate_creature(&OPEN_HAND_MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&oh].feature_available(WHOLENESS_OF_BODY_TAG),
+            "Open Hand Monk must ship with Wholeness of Body available"
+        );
+        // Wound the monk so the heal has somewhere to land.
+        let max = e.actors[&oh].max_hitpoints();
+        let _ = e
+            .actors
+            .get_mut(&oh)
+            .unwrap()
+            .take_typed_damage(max / 2, DamageType::Slashing);
+        let before = e.actors[&oh].hitpoints();
+        let effects = WHOLENESS_OF_BODY.side_effects(&mut e, oh, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let after = e.actors[&oh].hitpoints();
+        assert!(after > before, "wholeness of body must heal (before {} after {})", before, after);
+        assert!(
+            !e.actors[&oh].feature_available(WHOLENESS_OF_BODY_TAG),
+            "feature charge should be spent"
+        );
+        // Baseline monk doesn't carry the tag — validate must reject.
+        let baseline = e
+            .instantiate_creature(&MONK_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        assert!(
+            !e.actors[&baseline].feature_available(WHOLENESS_OF_BODY_TAG),
+            "baseline monk does not ship with Wholeness of Body"
         );
     }
 }

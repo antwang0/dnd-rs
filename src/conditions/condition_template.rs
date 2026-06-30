@@ -1014,6 +1014,24 @@ pub enum Condition {
     /// fighter's next turn; we use the target-side tick-down envelope
     /// shared with Mocked / Helped / Goaded.
     Distracted,
+    /// Sworn — 5e Paladin Oath of Vengeance Channel Divinity: Vow of
+    /// Enmity (lv3 subclass feature, once per long rest). The target is
+    /// marked as the paladin's chosen quarry: the swearing paladin (and
+    /// only the swearing paladin) gets advantage on attack rolls against
+    /// this target for up to 10 rounds (1 minute RAW). Engine reads the
+    /// `sworn_by` link on the holder to identify the paladin (mirrors
+    /// the `Dueled` + `dueled_by` / `Distracted` + `distracted_by` flag-
+    /// plus-link shape, but positive-polarity: a *match* on the link
+    /// grants advantage rather than a *mismatch* imposing disadvantage).
+    /// Distinct from Hunter's Mark in two ways:
+    ///   1. **No damage rider** — Vow of Enmity is purely an accuracy
+    ///      buff; the paladin's own smite primes carry the damage.
+    ///   2. **No concentration** — the paladin can hold a smite
+    ///      concentration spell (Searing / Wrathful / Branding) AND keep
+    ///      the vow active at the same time.
+    ///
+    /// Cleared when the timer expires or the paladin is downed.
+    Sworn,
     /// Purified — 5e Paladin Aura of Purity (lv4 abjuration, concentration).
     /// The holder is shielded by the paladin's protective aura: resistance
     /// to poison damage (folded into the condition_resistance lane in
@@ -1366,6 +1384,7 @@ impl Condition {
             Condition::CausticBrewed => "splashed with caustic brew",
             Condition::DistractingAttacking => "primed to distract",
             Condition::Distracted => "distracted",
+            Condition::Sworn => "sworn-quarry of a vengeance paladin",
             Condition::Purified => "purified",
             Condition::PhantasmalForced => "haunted by a phantasm",
             Condition::WaterSphered => "trapped in a watery sphere",

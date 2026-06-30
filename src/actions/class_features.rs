@@ -1668,6 +1668,223 @@ impl Action for SacredWeapon {
 
 pub static SACRED_WEAPON: LazyLock<SacredWeapon> = LazyLock::new(|| SacredWeapon {});
 
+/// Class-feature tag for the Vengeance Paladin's Channel Divinity: Vow
+/// of Enmity (RAW: lv3 subclass feature, once per short rest in RAW; we
+/// collapse to once per long rest so the gating stays uniform with the
+/// rest of the Channel Divinity envelope — Sacred Weapon / Turn Undead).
+/// The actual advantage rider fires in `compute_attack_mode` via the
+/// `matched_link_mode` helper reading the `Sworn` condition + `sworn_by`
+/// link on the target.
+pub const VOW_OF_ENMITY_TAG: &str = "paladin.vow_of_enmity";
+
+/// Vow of Enmity — Vengeance Paladin Channel Divinity, bonus action.
+/// Mark one creature within 10 ft (4 tiles) as the paladin's quarry;
+/// the paladin (and only the paladin) gets advantage on attack rolls
+/// against the marked target for up to 10 rounds (1 minute RAW). Once
+/// per long rest.
+///
+/// Engine wiring:
+///   - Installs `Condition::Sworn` on the target with a 10-round timer.
+///   - Sets the target's `sworn_by` link to the paladin's id via
+///     `SetSwornBy` (mirrors Compelled Duel's Dueled + dueled_by /
+///     Goading Attack's Goaded + goaded_by chain — same flag-plus-link
+///     install shape, distinct field).
+///   - `compute_attack_mode` reads the (Sworn, sworn_by == attacker)
+///     pair via `matched_link_mode` and combines advantage when the
+///     paladin attacks the sworn target.
+///
+/// Range gate (4 tiles = 10 ft RAW) matches the Compelled Duel envelope
+/// but is shorter than Hunter's Mark (90 ft); the vow is meant for a
+/// committed melee paladin marking the foe they're already closing on.
+pub struct VowOfEnmity {}
+
+impl Action for VowOfEnmity {
+    fn name(&self) -> &str {
+        "vow of enmity"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["voe", "vow", "enmity"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 10ft RAW = 4 tiles.
+        Some(4)
+    }
+    fn is_harmful(&self) -> bool {
+        // Vow of Enmity is *cast on* an enemy but has no harmful effect
+        // by itself (no damage, no save). Marking the AI's targeting
+        // pipeline as harmful keeps the helpful-action lane from
+        // accidentally picking the vow against an ally; the
+        // ally-vs-enemy gate in `custom_validate_input` enforces the
+        // hostile-target requirement either way.
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !feature_ready(encounter, caster_id, VOW_OF_ENMITY_TAG) {
+            return false;
+        }
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return false;
+        };
+        // Hostile-only target — vowing enmity against a teammate is
+        // nonsense and the AI shouldn't pick it. Also skip if the
+        // target is already sworn-by-us: re-applying the vow just
+        // refreshes the timer without granting a new mechanical
+        // benefit, and burns a once-per-rest charge for nothing.
+        target.team() != caster.team()
+            && target.is_combat_active()
+            && !(target.has_condition(Condition::Sworn)
+                && target.sworn_by() == Some(caster_id))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        if let Some(paladin) = encounter.actors.get_mut(&caster_id) {
+            paladin.spend_feature(VOW_OF_ENMITY_TAG);
+        }
+        encounter.log("  vow of enmity: paladin swears wrath against the foe.".to_string());
+        let mut out: Vec<Box<dyn ApplicableSideEffect>> = vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Sworn,
+                // 10 rounds = 1 minute RAW. Same envelope as Sacred
+                // Weapon — the vow's accuracy buff and the weapon
+                // glow both ride the same per-fight window.
+                timer: ConditionTimer::Rounds(10),
+            }),
+        ];
+        // Pull the SetSwornBy install from the central
+        // `condition_link_side_effect` dispatch — same source of truth
+        // the weapon on-hit rider chain and Compelled Duel use, so a
+        // single match arm there serves every flag-plus-link install.
+        if let Some(link) = crate::engine::side_effects::condition_link_side_effect(
+            Condition::Sworn,
+            target_id,
+            caster_id,
+        ) {
+            out.push(link);
+        }
+        out
+    }
+}
+
+pub static VOW_OF_ENMITY: LazyLock<VowOfEnmity> = LazyLock::new(|| VowOfEnmity {});
+
+/// Class-feature tag for the Open Hand Monk's **Wholeness of Body** (lv6
+/// subclass feature, once per long rest in our model — RAW: once per
+/// long rest at lv6 already). Action; self-heal for `3 × level` HP.
+/// Distinct from Second Wind (bonus action, fighter-only, 1d10 + level)
+/// and Lay on Hands (action, paladin-only, `5 × level + CHA`) on the
+/// once-per-rest self-heal lane — same gating envelope, distinct numbers
+/// and class lock.
+pub const WHOLENESS_OF_BODY_TAG: &str = "monk.wholeness_of_body";
+
+/// Wholeness of Body — Open Hand Monk action. Spend the once-per-rest
+/// feature to heal self for `3 × level` HP (no scaling ability mod —
+/// pure level scaling, mirroring the RAW). At level 6 (the strict RAW
+/// gate) this is 18 HP; on higher-level Open Hand templates the heal
+/// climbs linearly. Action cost (not bonus action) so the monk can't
+/// stack it with a Flurry of Blows — the heal is a tempo trade, not
+/// a free burst.
+pub struct WholenessOfBody {}
+
+impl Action for WholenessOfBody {
+    fn name(&self) -> &str {
+        "wholeness of body"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wob", "wholeness"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        feature_ready(encounter, caster_id, WHOLENESS_OF_BODY_TAG)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let level = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| a.level())
+            .unwrap_or(1);
+        // 3 HP per monk level — at level 6 that's 18, comparable to a
+        // mid-tier Lay on Hands but action-cost not bonus.
+        let amount = (3 * level).max(1);
+        if let Some(monk) = encounter.actors.get_mut(&caster_id) {
+            monk.spend_feature(WHOLENESS_OF_BODY_TAG);
+        }
+        encounter.log(format!(
+            "  wholeness of body: monk channels ki for {} HP.",
+            amount
+        ));
+        vec![Box::new(Heal {
+            actor_id: caster_id,
+            amount,
+        })]
+    }
+}
+
+pub static WHOLENESS_OF_BODY: LazyLock<WholenessOfBody> = LazyLock::new(|| WholenessOfBody {});
+
 /// Class-feature tag for the Monk's Stunning Strike (once per long
 /// rest, in our model — RAW is one per ki point, but we collapse the
 /// ki pool into a single big-burst prime to keep the once-per-rest

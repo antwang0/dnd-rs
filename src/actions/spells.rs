@@ -10651,24 +10651,32 @@ impl Action for CompelledDuel {
         if save.passed() {
             return Vec::new();
         }
-        vec![
+        let mut out: Vec<Box<dyn ApplicableSideEffect>> = vec![
             Box::new(ApplyCondition {
                 actor_id: target_id,
                 condition: Condition::Dueled,
                 timer: ConditionTimer::Rounds(10),
             }),
-            Box::new(crate::engine::side_effects::SetDueledBy {
-                target_id,
-                duelist: Some(caster_id),
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Compelled Duel",
-                    vec![(target_id, Condition::Dueled)],
-                ),
-            }),
-        ]
+        ];
+        // Pull the SetDueledBy install from the central
+        // `condition_link_side_effect` dispatch — same source of truth
+        // the weapon on-hit rider chain uses, so a single match arm
+        // there serves both spell-cast and rider-trigger code paths.
+        if let Some(link) = crate::engine::side_effects::condition_link_side_effect(
+            Condition::Dueled,
+            target_id,
+            caster_id,
+        ) {
+            out.push(link);
+        }
+        out.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions(
+                "Compelled Duel",
+                vec![(target_id, Condition::Dueled)],
+            ),
+        }));
+        out
     }
 }
 

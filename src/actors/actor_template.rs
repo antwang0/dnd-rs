@@ -804,6 +804,15 @@ pub struct ActorInstance {
     /// Distracted is a target-side advantage rider rather than an
     /// attacker-side disadvantage one.
     distracted_by: Option<usize>,
+    /// Identity of the paladin that has sworn Vow of Enmity against this
+    /// actor (5e Vengeance Paladin Channel Divinity, lv3 subclass).
+    /// Paired with the `Sworn` condition: attack rolls against this actor
+    /// by this paladin (and only this paladin) get advantage. Same flag-
+    /// plus-link shape as `dueled_by` / `goaded_by` / `distracted_by`,
+    /// but positive-polarity: a *match* on the link grants the swearer
+    /// advantage, rather than a *mismatch* imposing disadvantage on
+    /// non-counterparties. Cleared when the Sworn condition lifts.
+    sworn_by: Option<usize>,
     /// 5e Legendary Resistance — remaining auto-pass charges on failed
     /// saves this long rest. Refreshed to `legendary_resistance_max` on
     /// long rest. See `EncounterInstance::roll_save` for the trigger site.
@@ -972,6 +981,7 @@ impl ActorInstance {
             dueled_by: None,
             goaded_by: None,
             distracted_by: None,
+            sworn_by: None,
             legendary_resistance_remaining: ct.legendary_resistances,
             legendary_resistance_max: ct.legendary_resistances,
             warding_partner: None,
@@ -1098,6 +1108,20 @@ impl ActorInstance {
 
     pub fn set_distracted_by(&mut self, id: Option<usize>) {
         self.distracted_by = id;
+    }
+
+    /// Identity of the paladin that has sworn Vow of Enmity on this
+    /// actor (Vengeance Paladin Channel Divinity). Read by
+    /// `compute_attack_mode` to grant advantage on the swearer's attack
+    /// rolls against this target. Positive-polarity sibling of
+    /// `distracted_by` (which grants advantage to *every other*
+    /// attacker) — Vow of Enmity only buffs the paladin who swore it.
+    pub fn sworn_by(&self) -> Option<usize> {
+        self.sworn_by
+    }
+
+    pub fn set_sworn_by(&mut self, id: Option<usize>) {
+        self.sworn_by = id;
     }
 
     /// Caster id this actor is currently Warding-Bonded to (5e
@@ -1973,6 +1997,7 @@ impl ActorInstance {
                 Condition::Dueled => self.dueled_by = None,
                 Condition::Goaded => self.goaded_by = None,
                 Condition::Distracted => self.distracted_by = None,
+                Condition::Sworn => self.sworn_by = None,
                 Condition::WardingBonded => self.warding_partner = None,
                 _ => {}
             }

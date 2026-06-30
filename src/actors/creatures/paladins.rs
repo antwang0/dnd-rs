@@ -1,6 +1,6 @@
 use crate::actions::class_features::{
     CLEANSING_TOUCH, CLEANSING_TOUCH_TAG, DIVINE_SMITE, IMPROVED_DIVINE_SMITE_TAG, LAY_ON_HANDS,
-    LAY_ON_HANDS_TAG, SACRED_WEAPON, SACRED_WEAPON_TAG,
+    LAY_ON_HANDS_TAG, SACRED_WEAPON, SACRED_WEAPON_TAG, VOW_OF_ENMITY, VOW_OF_ENMITY_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GREATSWORD;
@@ -168,5 +168,44 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // off the aura bubble.
         has_aura_of_courage: true,
         ..CreatureTemplate::defaults()
+    }
+});
+
+/// Vengeance Paladin — Oath of Vengeance subclass build. Identical
+/// envelope to the baseline `PALADIN_TEMPLATE` (greatsword + smite suite,
+/// half-caster slot ladder, Lay on Hands / Sacred Weapon / Cleansing
+/// Touch, Improved Divine Smite passive, Aura of Protection /
+/// Aura of Courage) with one subclass feature layered on:
+/// **Vow of Enmity** (lv3 Channel Divinity) — bonus action, once per
+/// long rest. Mark a hostile creature within 10 ft; the paladin gets
+/// advantage on attack rolls against that target for up to 10 rounds.
+///
+/// Pairs naturally with the paladin's smite primes: vow first to lock
+/// in advantage on the target, then bonus-action a smite prime, then
+/// swing the greatsword for the guaranteed-advantage Smite hit (and
+/// trigger the once-per-turn Improved Divine Smite rider on top).
+///
+/// Distinct from `PALADIN_TEMPLATE` (Devotion-equivalent baseline) so a
+/// Vengeance-vs-Devotion or Vengeance-vs-baseline encounter renders
+/// unambiguously by name and the subclass feature doesn't accidentally
+/// stack RAW-illegally on a single PC build. Glyph 'V' so the Vengeance
+/// paladin shows up distinctly on the map next to the baseline 'P'.
+pub static VENGEANCE_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Paladin envelope wholesale
+    // and overwrite only the per-subclass differences (name / glyph /
+    // actions / features). The `..base.clone()` tail picks up every
+    // other field — stats, slots, save profs, auras, extra-attack —
+    // without an N-line field-by-field copy. Same shape as
+    // `HUNTER_RANGER_TEMPLATE` and `ASSASSIN_ROGUE_TEMPLATE`.
+    let mut actions = PALADIN_TEMPLATE.actions.clone();
+    actions.push(&*VOW_OF_ENMITY);
+    let mut features = PALADIN_TEMPLATE.features.clone();
+    features.insert(VOW_OF_ENMITY_TAG);
+    CreatureTemplate {
+        name: "Vengeance Paladin",
+        glyph: 'V',
+        actions,
+        features,
+        ..PALADIN_TEMPLATE.clone()
     }
 });

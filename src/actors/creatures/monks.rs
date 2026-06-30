@@ -1,6 +1,6 @@
 use crate::actions::class_features::{
     FLURRY_OF_BLOWS, PATIENT_DEFENSE, STEP_OF_THE_WIND, STILLNESS_OF_MIND, STUNNING_STRIKE,
-    STUNNING_STRIKE_TAG,
+    STUNNING_STRIKE_TAG, WHOLENESS_OF_BODY, WHOLENESS_OF_BODY_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::MONK_UNARMED_STRIKE;
@@ -63,5 +63,42 @@ pub static MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         has_deflect_missiles: true,
         has_extra_attack: true,
         ..CreatureTemplate::defaults()
+    }
+});
+
+/// Open Hand Monk — Way of the Open Hand subclass build. Identical
+/// envelope to the baseline `MONK_TEMPLATE` (unarmored AC 15, unarmed
+/// strike, Stunning Strike + Patient Defense + Flurry of Blows +
+/// Stillness of Mind + Step of the Wind, evasion + deflect missiles +
+/// extra attack) with one subclass feature layered on: **Wholeness of
+/// Body** (lv6 subclass action, once per long rest) — heal self for
+/// `3 × level` HP.
+///
+/// Pairs naturally with the monk's evasion / patient-defense kit: the
+/// open-hand monk plays the staying-power skirmisher — dodges incoming
+/// damage with Patient Defense, then refills the HP bar with Wholeness
+/// of Body once per fight without burning a teammate's slot. Distinct
+/// from `MONK_TEMPLATE` (Way of the Mercy / Shadow / Long Death-equivalent
+/// baseline) so an Open-Hand-vs-baseline encounter renders unambiguously
+/// by name. Glyph 'O' so the Open Hand monk shows up distinctly on the
+/// map next to the baseline 'M'.
+pub static OPEN_HAND_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Monk envelope wholesale
+    // and overwrite only the per-subclass differences (name / glyph /
+    // actions / features). The `..base.clone()` tail picks up every
+    // other field — stats, save profs, evasion / deflect missiles /
+    // extra-attack — without an N-line field-by-field copy. Same shape
+    // as `HUNTER_RANGER_TEMPLATE` / `ASSASSIN_ROGUE_TEMPLATE` /
+    // `VENGEANCE_PALADIN_TEMPLATE`.
+    let mut actions = MONK_TEMPLATE.actions.clone();
+    actions.push(&*WHOLENESS_OF_BODY);
+    let mut features = MONK_TEMPLATE.features.clone();
+    features.insert(WHOLENESS_OF_BODY_TAG);
+    CreatureTemplate {
+        name: "Open Hand Monk",
+        glyph: 'O',
+        actions,
+        features,
+        ..MONK_TEMPLATE.clone()
     }
 });

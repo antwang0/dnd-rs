@@ -1107,6 +1107,71 @@ impl ApplicableSideEffect for SetDistractedBy {
     }
 }
 
+/// Record which paladin has sworn Vow of Enmity against the target (5e
+/// Vengeance Paladin Channel Divinity, lv3 subclass). Pairs with
+/// ApplyCondition (Sworn): `compute_attack_mode` reads this to grant
+/// advantage on the swearing paladin's attack rolls against this target
+/// (positive-polarity sibling of `SetDistractedBy` — only the swearer
+/// gets the buff, not other allies). `set_sworn_by(None)` clears the
+/// link explicitly; the engine also clears it automatically when the
+/// Sworn condition is removed via `remove_condition`.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct SetSwornBy {
+    pub target_id: usize,
+    pub swearer: Option<usize>,
+}
+
+impl ApplicableSideEffect for SetSwornBy {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        if let Some(actor) = ei.get_actor(self.target_id) {
+            actor.set_sworn_by(self.swearer);
+        }
+    }
+}
+
+/// Single source of truth for "which conditions carry a back-link to
+/// the actor that applied them, and what `Set*By` side-effect installs
+/// that link." Returns `Some(boxed_side_effect)` for the four flag-plus-
+/// link conditions (Dueled / Goaded / Distracted / Sworn); returns
+/// `None` for conditions that stand alone with just `ApplyCondition`.
+///
+/// Used by:
+///   - `engine::attack::attacker_link_side_effect` (weapon on-hit rider
+///     chain for Goaded / Distracted),
+///   - direct-cast actions that install a flag-plus-link condition
+///     without going through the rider chain (Compelled Duel installs
+///     Dueled; Vow of Enmity installs Sworn).
+///
+/// Adding a future linked condition lands as one match arm here —
+/// both the rider chain AND the direct-cast action pipeline pick up
+/// the new link install for free, with no duplicate dispatch tables.
+pub fn condition_link_side_effect(
+    condition: crate::conditions::Condition,
+    target_id: usize,
+    caster_id: usize,
+) -> Option<Box<dyn ApplicableSideEffect>> {
+    use crate::conditions::Condition;
+    match condition {
+        Condition::Dueled => Some(Box::new(SetDueledBy {
+            target_id,
+            duelist: Some(caster_id),
+        })),
+        Condition::Goaded => Some(Box::new(SetGoadedBy {
+            target_id,
+            goader: Some(caster_id),
+        })),
+        Condition::Distracted => Some(Box::new(SetDistractedBy {
+            target_id,
+            distracter: Some(caster_id),
+        })),
+        Condition::Sworn => Some(Box::new(SetSwornBy {
+            target_id,
+            swearer: Some(caster_id),
+        })),
+        _ => None,
+    }
+}
+
 /// Record the partner of a Warding Bond (5e level-2 abjuration). Paired
 /// with ApplyCondition (WardingBonded) on the same target: the condition
 /// flag carries the AC / save / resistance buff, while the `warding_partner`

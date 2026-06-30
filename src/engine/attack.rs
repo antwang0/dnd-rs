@@ -2,7 +2,7 @@ use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::Dice;
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::side_effects::{
-    ApplicableSideEffect, ApplyCondition, DealDamage, PushActor, SetDistractedBy, SetGoadedBy,
+    ApplicableSideEffect, ApplyCondition, DealDamage, PushActor,
 };
 use crate::engine::types::{AbilityScoreType, DamageType};
 
@@ -1422,31 +1422,18 @@ const ON_HIT_RIDERS: &[OnHitRider] = &[
 ];
 
 /// Build the `SetXBy` side-effect that records the attacker for a
-/// linked condition. Conditions that carry a back-reference to the
-/// attacker — `Goaded` (`goaded_by`), `Distracted` (`distracted_by`) —
-/// need this companion emission so `compute_attack_mode` can read the
-/// link and apply the "attacker-specific" clause (Goaded forces
-/// disadvantage on attacks against anyone other than the goader;
-/// Distracted grants advantage to attackers other than the distracter).
-/// Returns `None` for conditions that don't carry a link — the caller
-/// just emits the bare `ApplyCondition`. Future linked conditions land
-/// in this match without touching the rider-dispatch loop.
+/// linked condition (`Goaded`/`goaded_by`, `Distracted`/`distracted_by`
+/// etc.). Thin wrapper over `condition_link_side_effect` —
+/// the central dispatch lives in side_effects.rs and serves both the
+/// weapon on-hit rider chain (here) AND the direct-cast actions
+/// (Compelled Duel, Vow of Enmity). Returns `None` for conditions that
+/// don't carry a link — the caller just emits the bare `ApplyCondition`.
 fn attacker_link_side_effect(
     condition: Condition,
     target_id: usize,
     caster_id: usize,
 ) -> Option<Box<dyn ApplicableSideEffect>> {
-    match condition {
-        Condition::Goaded => Some(Box::new(SetGoadedBy {
-            target_id,
-            goader: Some(caster_id),
-        })),
-        Condition::Distracted => Some(Box::new(SetDistractedBy {
-            target_id,
-            distracter: Some(caster_id),
-        })),
-        _ => None,
-    }
+    crate::engine::side_effects::condition_link_side_effect(condition, target_id, caster_id)
 }
 
 /// Process the optional secondary save-and-apply step that some Smite

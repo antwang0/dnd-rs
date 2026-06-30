@@ -145,6 +145,20 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3c''''. Vow of Enmity — Vengeance Paladin Channel Divinity,
+        //         bonus action, once per long rest. Marks one in-reach
+        //         (4 tiles = 10 ft) hostile so the paladin gets advantage
+        //         on attack rolls against the sworn quarry for 10
+        //         rounds. Slots before Divine Smite so the vow is up
+        //         first — the next swing chain benefits from the
+        //         advantage rider AND the smite prime simultaneously
+        //         (and Improved Divine Smite's +1d8 rider lands too).
+        //         The action's `feature_ready` gate covers once-per-
+        //         rest; the AI picker handles target selection.
+        if let Some(aei) = try_vow_of_enmity(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3d. Divine Smite — paladin bonus action that primes the next
         //     melee hit with +2d8 radiant. Fire when an enemy is in
         //     melee reach so the prime is consumed this turn (the
@@ -2882,6 +2896,63 @@ fn try_divine_smite(
     }
     try_self_action(encounter, actor_id, "divine smite")
 }
+
+/// Vengeance Paladin Vow of Enmity — bonus-action Channel Divinity,
+/// once per long rest. Marks one in-reach (4 tiles = 10 ft RAW) hostile
+/// creature so the paladin gets advantage on all subsequent attack rolls
+/// against that target for 10 rounds.
+///
+/// Target picker:
+///   - Hostile, combat-active, not already Sworn-by-us (the action's
+///     `custom_validate_input` rechecks this; gating here too keeps the
+///     AI from cycling through dead candidates).
+///   - Within 4 tiles (the action's own reach gate; we mirror it here
+///     so the loop early-exits when no enemy is close enough).
+///   - Highest current HP wins. Beefy targets benefit most from a
+///     guaranteed-advantage swing chain because the Smite primes get
+///     spent more reliably.
+fn try_vow_of_enmity(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let voe = actor.find_action("vow of enmity")?;
+    let my_team = actor.team();
+
+    let mut best: Option<(u32, ActionExecutionInfo)> = None;
+    for target_id in encounter.sorted_actor_ids() {
+        let Some(target) = encounter.actors.get(&target_id) else {
+            continue;
+        };
+        if target_id == actor_id || target.team() == my_team || !target.is_combat_active() {
+            continue;
+        }
+        // 4 tiles = 10 ft (RAW reach). Mirror the action's reach gate so
+        // the loop doesn't queue an out-of-range candidate just to have
+        // `validate` reject it later.
+        if encounter
+            .footprint_distance(actor_id, target_id)
+            .is_none_or(|d| d > 4)
+        {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(voe, actor_id, Some(vec![target_id]), None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        let hp = target.hitpoints();
+        if best.as_ref().is_none_or(|(best_hp, _)| hp > *best_hp) {
+            best = Some((hp, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
+}
+
+// Note: Wholeness of Body (Open Hand Monk lv6) is auto-picked by
+// `try_self_heal` above — it's `is_heal() && NoArgs`, so the standard
+// self-heal lane catches it at the half-HP gate without a dedicated
+// try_wholeness_of_body picker. Lay on Hands / Healing Hands / Cure
+// Wounds use the same pattern; no per-feature plumbing needed.
 
 /// Paladin Smite spells (Searing / Wrathful / Branding / Blinding).
 /// Same trigger as Divine Smite — fire when an enemy is footprint-
