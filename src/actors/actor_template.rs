@@ -381,6 +381,17 @@ pub struct CreatureTemplate {
     /// reads via `EncounterInstance::is_in_aura_of_courage` which the
     /// `Frightened` apply path consults to suppress installs.
     pub has_aura_of_courage: bool,
+    /// 5e Paladin **Oath of Devotion Aura of Devotion** (Devotion
+    /// subclass level 7): the paladin and every ally within 10 ft is
+    /// immune to the Charmed condition. Third sibling of the paladin
+    /// aura family alongside Aura of Protection (saves bonus) and Aura
+    /// of Courage (Frightened immunity) — same 10ft radius, same
+    /// paladin-emitter model. Engine reads via
+    /// `EncounterInstance::is_in_aura_of_devotion` which the `Charmed`
+    /// apply path consults to suppress installs. RAW-gated to the
+    /// Oath of Devotion subclass, so a plain paladin doesn't get it
+    /// even at high levels.
+    pub has_aura_of_devotion: bool,
     /// 5e Half-Orc Savage Attacks: on a critical melee weapon hit, roll
     /// one additional weapon damage die. Mechanically identical to
     /// `brutal_critical_dice = 1` but exposed as a separate flag so the
@@ -533,6 +544,7 @@ impl CreatureTemplate {
             has_fey_ancestry: false,
             has_aura_of_protection: false,
             has_aura_of_courage: false,
+            has_aura_of_devotion: false,
             has_savage_attacks: false,
             has_dwarven_resilience: false,
             has_gnome_cunning: false,
@@ -862,6 +874,8 @@ pub struct ActorInstance {
     has_aura_of_protection: bool,
     /// 5e Paladin Aura of Courage. See `CreatureTemplate` docs.
     has_aura_of_courage: bool,
+    /// 5e Devotion Paladin Aura of Devotion. See `CreatureTemplate` docs.
+    has_aura_of_devotion: bool,
     /// 5e Half-Orc Savage Attacks. See `CreatureTemplate` docs.
     has_savage_attacks: bool,
     /// 5e Dwarven Resilience. See `CreatureTemplate` docs.
@@ -1006,6 +1020,7 @@ impl ActorInstance {
             has_fey_ancestry: ct.has_fey_ancestry,
             has_aura_of_protection: ct.has_aura_of_protection,
             has_aura_of_courage: ct.has_aura_of_courage,
+            has_aura_of_devotion: ct.has_aura_of_devotion,
             has_savage_attacks: ct.has_savage_attacks,
             has_dwarven_resilience: ct.has_dwarven_resilience,
             has_gnome_cunning: ct.has_gnome_cunning,
@@ -1194,6 +1209,14 @@ impl ActorInstance {
     /// apply path can suppress installs on allies inside the bubble.
     pub fn has_aura_of_courage(&self) -> bool {
         self.has_aura_of_courage
+    }
+
+    /// True if this actor emits the Devotion Paladin's Aura of Devotion
+    /// (Devotion subclass level 7+). Read by
+    /// `EncounterInstance::is_in_aura_of_devotion` so the Charmed apply
+    /// path can suppress installs on allies inside the bubble.
+    pub fn has_aura_of_devotion(&self) -> bool {
+        self.has_aura_of_devotion
     }
 
     /// 5e Half-Orc Savage Attacks — adds one extra weapon damage die on a
@@ -1568,7 +1591,7 @@ impl ActorInstance {
         // — short rests are rare enough that the partial refill rarely
         // arrives at full pool, and the heuristic keeps the trigger
         // testable. Capped at `sorcery_points_max` via `give_sorcery_points`.
-        if self.features_max.contains(SORCEROUS_RESTORATION_TAG) {
+        if self.has_passive_feature(SORCEROUS_RESTORATION_TAG) {
             self.give_sorcery_points(4);
         }
     }
@@ -1619,6 +1642,19 @@ impl ActorInstance {
         // halving" stacking concern since immunity short-circuits the
         // pipeline before any resistance roll fires.
         if self.item_immunity_to_damage(dt) {
+            return 0;
+        }
+        // 5e Monk Purity of Body (level 10). Passive: immune to poison
+        // damage AND the Poisoned condition. The condition half lives at
+        // `dynamic_immunity_to(Poisoned)`; the damage half folds in here
+        // next to the item / condition immunity sources — same "immunity
+        // trumps everything" short-circuit. Only fires for the Poison
+        // type; the tag has no effect on non-poison damage.
+        if dt == DamageType::Poison
+            && self.has_passive_feature(
+                crate::actions::class_features::PURITY_OF_BODY_TAG,
+            )
+        {
             return 0;
         }
         // 5e Dwarven Resilience: resistance to poison damage. Folds into
@@ -1879,6 +1915,15 @@ impl ActorInstance {
                     // fresh `Poisoned` condition on a stone creature
                     // no-ops at the `add_condition` chokepoint.
                     || self.has_condition(Condition::Petrified)
+                    // 5e Monk Purity of Body (level 10). Passive: immune
+                    // to disease and poison. The Poisoned-condition half
+                    // lives here alongside Purified / Petrified; the
+                    // poison-damage half lives in `effective_damage`
+                    // next to the other passive-feature typed-immunity
+                    // gates.
+                    || self.has_passive_feature(
+                        crate::actions::class_features::PURITY_OF_BODY_TAG,
+                    )
             }
             // 5e Freedom of Movement: holders are immune to magical
             // movement restraint. Mirrors the Ring of Free Action item
@@ -2390,10 +2435,18 @@ impl ActorInstance {
         // feature flag (TIGER_TOTEM_TAG) — outside of rage the holder
         // has no extra speed.
         if self.has_condition(Condition::Raging)
-            && self
-                .features_max
-                .contains(crate::actions::class_features::TIGER_TOTEM_TAG)
+            && self.has_passive_feature(crate::actions::class_features::TIGER_TOTEM_TAG)
         {
+            bonus += 10.0;
+        }
+        // 5e Barbarian **Fast Movement** (level 5). Passive +10 ft speed
+        // for any barbarian holding the FAST_MOVEMENT_TAG. Distinct from
+        // Tiger Totem in that it is *always* on (RAW gates on "not wearing
+        // heavy armor" but our engine doesn't model armor tiers so the
+        // gate collapses to "always on"). Stacks additively on Tiger for
+        // a raging tiger barbarian (+20 total) — RAW allows both to
+        // apply since they come from different features.
+        if self.has_passive_feature(crate::actions::class_features::FAST_MOVEMENT_TAG) {
             bonus += 10.0;
         }
         bonus

@@ -1177,6 +1177,44 @@ pub static EAGLE_DIVE: LazyLock<EagleDive> = LazyLock::new(|| EagleDive {});
 /// outside of rage the tiger barbarian has no extra speed.
 pub const TIGER_TOTEM_TAG: &str = "barbarian.tiger_totem";
 
+/// 5e Barbarian **Fast Movement** (level 5) feature tag. Passive: while
+/// not wearing heavy armor, the barbarian's walking speed increases by
+/// 10 ft. Our engine doesn't model armor tiers so we collapse the
+/// "not-wearing-heavy-armor" gate to "always on for a barbarian holding
+/// the tag" — the same simplification we use for Monk Unarmored Movement
+/// (the monk's flat AC 15 folds in the Wisdom / Dex scaling instead of
+/// gating on armor). Read at the `condition_speed_bonus` chokepoint next
+/// to the Longstrider / Tiger Totem speed buffs.
+///
+/// Distinct from Tiger Totem Spirit (also +10 ft speed) in two ways:
+///   1. **Always-on** — Fast Movement fires the moment the barbarian is
+///      alive; Tiger Totem gates on the `Raging` condition being active.
+///   2. **Non-subclass** — Fast Movement is a class feature every
+///      barbarian picks up at level 5, so it stacks additively on Bear /
+///      Wolf / Eagle / Berserker barbarians. Tiger + Fast Movement while
+///      raging is +20 ft in total.
+pub const FAST_MOVEMENT_TAG: &str = "barbarian.fast_movement";
+
+/// 5e Monk **Purity of Body** (level 10) feature tag. Passive: the monk
+/// gains immunity to disease and poison (RAW: "your mastery of the ki
+/// flowing through you makes you immune to disease and poison"). Two
+/// mechanically visible effects in our engine:
+///   1. Immunity to the `Poisoned` condition — installs bounce at the
+///      `dynamic_immunity_to(Poisoned)` chokepoint next to the Purified
+///      / Petrified / Fey Ancestry checks.
+///   2. Immunity to poison damage — `effective_damage` short-circuits
+///      to 0 at the same "typed condition immunity" lane the Petrified
+///      poison-immunity rider already uses; here the gate is a passive
+///      feature flag rather than a condition. Disease has no mechanical
+///      surface in the combat engine, so the disease half of RAW is a
+///      no-op we don't need to wire up.
+///
+/// Sibling to Sahuagin Blood Frenzy (passive combat advantage) and
+/// Bear Totem Spirit (raging damage envelope) on the passive-feature-
+/// flag lane — no per-rest charge, no condition gate, just an
+/// always-on effect while the monk is alive.
+pub const PURITY_OF_BODY_TAG: &str = "monk.purity_of_body";
+
 /// 5e Fighter Champion — **Survivor** (level 18) feature tag. Passive
 /// at-start-of-turn regen: while combat-active and above 0 HP but at or
 /// below half max HP, the holder regains `5 + CON modifier` HP at the

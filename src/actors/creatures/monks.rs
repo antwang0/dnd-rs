@@ -1,6 +1,6 @@
 use crate::actions::class_features::{
-    FLURRY_OF_BLOWS, PATIENT_DEFENSE, STEP_OF_THE_WIND, STILLNESS_OF_MIND, STUNNING_STRIKE,
-    STUNNING_STRIKE_TAG, WHOLENESS_OF_BODY, WHOLENESS_OF_BODY_TAG,
+    FLURRY_OF_BLOWS, PATIENT_DEFENSE, PURITY_OF_BODY_TAG, STEP_OF_THE_WIND, STILLNESS_OF_MIND,
+    STUNNING_STRIKE, STUNNING_STRIKE_TAG, WHOLENESS_OF_BODY, WHOLENESS_OF_BODY_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::MONK_UNARMED_STRIKE;
@@ -58,7 +58,20 @@ pub static MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Strength,
             AbilityScoreType::Dexterity,
         ]),
-        features: HashSet::from([STUNNING_STRIKE_TAG]),
+        // Passive class features:
+        //   - `STUNNING_STRIKE_TAG`: once-per-rest bonus-action prime →
+        //     next melee hit lands a CON-save Stun rider.
+        //   - `PURITY_OF_BODY_TAG` (level 10): passive Poisoned-condition
+        //     AND poison-damage immunity. RAW "immune to disease and
+        //     poison" — the disease half has no combat surface in our
+        //     engine, but both poison halves fire (condition install
+        //     bounces at `dynamic_immunity_to`; damage zeroes at
+        //     `effective_damage`). Ships on the CR-1.5 monk template
+        //     above its strict RAW level gate for the same reason
+        //     Improved Divine Smite ships on the CR-1.5 paladin — class
+        //     templates target a balanced playable level, not lockstep
+        //     PHB progression.
+        features: HashSet::from([STUNNING_STRIKE_TAG, PURITY_OF_BODY_TAG]),
         has_evasion: true,
         has_deflect_missiles: true,
         has_extra_attack: true,

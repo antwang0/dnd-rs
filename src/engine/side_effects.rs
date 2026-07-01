@@ -661,6 +661,43 @@ impl ApplicableSideEffect for StartConcentration {
     }
 }
 
+/// Entry in the paladin-aura suppression table read by
+/// `ApplyCondition::apply`. Pairs a condition install with an
+/// encounter-aware aura predicate — if the predicate returns true for
+/// the install's target, the install bounces and `log_verb` fires
+/// instead of the standard "is now X" line. Adding a new aura-suppressed
+/// condition (e.g. a future Aura of Freedom → Paralyzed) is a one-line
+/// tuple entry.
+struct AuraConditionSuppressor {
+    condition: Condition,
+    aura_check: fn(&EncounterInstance, usize) -> bool,
+    log_verb: &'static str,
+}
+
+/// Central table of paladin auras that suppress conditions on allies
+/// inside them. Read by `ApplyCondition::apply`. Ordering doesn't matter
+/// — the first entry whose condition matches AND whose aura fires wins,
+/// but at most one aura can suppress a given install. RAW-shape auras
+/// all bounce the same way (silent no-op + a log line), so a table-
+/// driven pass is exactly the same shape as the old inlined `if / if`
+/// chain but scales linearly with new auras.
+const APPLY_CONDITION_AURA_SUPPRESSORS: &[AuraConditionSuppressor] = &[
+    // Aura of Courage (Paladin lv10+): allies inside the 10ft aura are
+    // immune to Frightened.
+    AuraConditionSuppressor {
+        condition: Condition::Frightened,
+        aura_check: EncounterInstance::is_in_aura_of_courage,
+        log_verb: "resists fear (aura of courage)",
+    },
+    // Aura of Devotion (Devotion Paladin lv7+): allies inside the 10ft
+    // aura are immune to Charmed.
+    AuraConditionSuppressor {
+        condition: Condition::Charmed,
+        aura_check: EncounterInstance::is_in_aura_of_devotion,
+        log_verb: "resists charm (aura of devotion)",
+    },
+];
+
 /// Add a status condition to an actor with a given timer. No-op if the
 /// actor is missing; if the condition was already present its timer is
 /// replaced (no stacking semantics yet — revisit when needed).
@@ -685,20 +722,26 @@ impl ApplicableSideEffect for ApplyCondition {
     }
 
     fn apply(&self, ei: &mut EncounterInstance) {
-        // 5e Paladin Aura of Courage (level 10+): allies inside the 10ft
-        // aura are immune to Frightened. The check lives here rather than
-        // in `ActorInstance::add_condition` because the helper needs
-        // encounter context (the location of every aura-bearer). Mirrors
-        // how the save-side Aura of Protection bonus is computed by the
-        // engine rather than the actor.
-        if self.condition == Condition::Frightened
-            && ei.is_in_aura_of_courage(self.actor_id)
-        {
-            if let Some(actor) = ei.get_actor(self.actor_id) {
-                let name = actor.name().to_string();
-                ei.log(format!("{} resists fear (aura of courage).", name));
+        // 5e Paladin aura suppression table — the encounter-aware immunity
+        // lane. Each entry pairs a condition install with an aura
+        // predicate: if the install's target is inside the aura, the
+        // install bounces and a log line fires instead. Lives here rather
+        // than in `ActorInstance::add_condition` because the aura needs
+        // encounter geometry (the location of every aura-bearer). Adding
+        // a new aura-suppressed condition (a future Charm of the Fae Aura
+        // pushing Beguiled, etc.) lands as a one-line tuple entry —
+        // mirrors how `TYPED_IMMUNITY_CONDITIONS` handles the
+        // actor-local damage-type immunity lane.
+        for entry in APPLY_CONDITION_AURA_SUPPRESSORS {
+            if self.condition == entry.condition
+                && (entry.aura_check)(ei, self.actor_id)
+            {
+                if let Some(actor) = ei.get_actor(self.actor_id) {
+                    let name = actor.name().to_string();
+                    ei.log(format!("{} {}.", name, entry.log_verb));
+                }
+                return;
             }
-            return;
         }
         let Some(actor) = ei.get_actor(self.actor_id) else {
             return;

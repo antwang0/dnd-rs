@@ -1,7 +1,7 @@
 use crate::actions::action_template::Action;
 use crate::actions::class_features::{
-    BEAR_TOTEM_TAG, EAGLE_DIVE, EAGLE_TOTEM_TAG, FRENZY, FRENZY_TAG, RAGE, RAGE_TAG,
-    RELENTLESS_RAGE_TAG, TIGER_TOTEM_TAG, WOLF_TOTEM_TAG,
+    BEAR_TOTEM_TAG, EAGLE_DIVE, EAGLE_TOTEM_TAG, FAST_MOVEMENT_TAG, FRENZY, FRENZY_TAG, RAGE,
+    RAGE_TAG, RELENTLESS_RAGE_TAG, TIGER_TOTEM_TAG, WOLF_TOTEM_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GREATAXE, RECKLESS_ATTACK};
@@ -53,7 +53,7 @@ fn totem_barbarian_template(
             AbilityScoreType::Strength,
             AbilityScoreType::Constitution,
         ]),
-        features: HashSet::from([RAGE_TAG, totem_tag, RELENTLESS_RAGE_TAG]),
+        features: HashSet::from([RAGE_TAG, totem_tag, RELENTLESS_RAGE_TAG, FAST_MOVEMENT_TAG]),
         has_danger_sense: true,
         has_extra_attack: true,
         brutal_critical_dice: 1,
@@ -124,7 +124,13 @@ pub static BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Bear Totem (Path of the Totem Warrior) lives on the separate
         // `TOTEM_BARBARIAN_TEMPLATE` below so subclass features don't
         // stack RAW-illegally on a single PC build.
-        features: HashSet::from([RAGE_TAG, FRENZY_TAG, RELENTLESS_RAGE_TAG]),
+        //
+        // `FAST_MOVEMENT_TAG` (level 5) is a base-class feature — every
+        // barbarian picks it up regardless of subclass, so it lives here
+        // AND on the shared totem helper below. +10 ft walking speed
+        // always-on (RAW gates on "not wearing heavy armor" but our
+        // engine doesn't model armor tiers).
+        features: HashSet::from([RAGE_TAG, FRENZY_TAG, RELENTLESS_RAGE_TAG, FAST_MOVEMENT_TAG]),
         has_danger_sense: true,
         has_extra_attack: true,
         // Level 9 Brutal Critical: +1 weapon die on melee crits.

@@ -171,6 +171,38 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     }
 });
 
+/// Devotion Paladin — Oath of Devotion subclass build. Identical
+/// envelope to the baseline `PALADIN_TEMPLATE` (greatsword + smite suite,
+/// half-caster slot ladder, Lay on Hands / Sacred Weapon / Cleansing
+/// Touch, Improved Divine Smite passive, Aura of Protection / Aura of
+/// Courage) with one subclass feature layered on: **Aura of Devotion**
+/// (Devotion subclass level 7) — passive 10ft ally-aura that suppresses
+/// Charmed installs.
+///
+/// Pairs naturally with the paladin's existing anti-social-debuff kit:
+/// the Devotion paladin's aura sits on top of Aura of Courage (Frightened
+/// suppression) and Aura of Protection (save bonus), forming a three-
+/// aura bubble that shuts down the classic charm-fear-save pressure
+/// spellcasters lean on. The RAW Charmed-suppression on Devotion is the
+/// signature "unshakeable defender" tell — Sacred Weapon (Channel
+/// Divinity: +CHA to attack rolls, already on the baseline) is the
+/// Devotion action-lane, the aura is the ambient-lane.
+///
+/// Distinct from `VENGEANCE_PALADIN_TEMPLATE` (Vow of Enmity flavor) and
+/// `PALADIN_TEMPLATE` (baseline). Glyph 'D' so the Devotion paladin
+/// shows up distinctly next to Vengeance 'V' and baseline 'P'.
+pub static DEVOTION_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    CreatureTemplate {
+        name: "Devotion Paladin",
+        glyph: 'D',
+        // Aura of Devotion is the entire subclass surface here — a
+        // passive template flag rather than an added action, so the
+        // subclass-of pattern collapses to name + glyph + the aura flag.
+        has_aura_of_devotion: true,
+        ..PALADIN_TEMPLATE.clone()
+    }
+});
+
 /// Vengeance Paladin — Oath of Vengeance subclass build. Identical
 /// envelope to the baseline `PALADIN_TEMPLATE` (greatsword + smite suite,
 /// half-caster slot ladder, Lay on Hands / Sacred Weapon / Cleansing

@@ -1548,6 +1548,18 @@ impl EncounterInstance {
             .is_some()
     }
 
+    /// True if `actor_id` is inside the 10 ft Aura of Devotion of any
+    /// allied Devotion Paladin (Devotion subclass level 7+). Read by
+    /// `ApplyCondition::apply` to suppress the Charmed install on
+    /// allies inside the bubble. Same emitter model as
+    /// `is_in_aura_of_courage` (combat-active + not incapacitated + in
+    /// range) — a downed / dominated paladin's aura goes dark.
+    pub fn is_in_aura_of_devotion(&self, actor_id: usize) -> bool {
+        self.paladin_aura_emitters(actor_id, ActorInstance::has_aura_of_devotion)
+            .next()
+            .is_some()
+    }
+
     /// Roll a saving throw for `actor_id` against `dc` using `ability`.
     /// Auto-applies advantage / disadvantage based on the actor's
     /// conditions (see `compute_save_mode`). Missing actor auto-fails.
@@ -44691,5 +44703,191 @@ mod tests {
             !e.actors[&baseline].feature_available(WHOLENESS_OF_BODY_TAG),
             "baseline monk does not ship with Wholeness of Body"
         );
+    }
+
+    /// Fast Movement (Barbarian lv5): passive +10 ft speed for any
+    /// barbarian holding the FAST_MOVEMENT_TAG. Always-on (RAW gates on
+    /// "not wearing heavy armor" but our engine doesn't model armor).
+    /// Stacks additively with Tiger Totem Spirit for a raging tiger
+    /// barbarian — the two feature flags come from different features
+    /// (base class vs subclass) so both fire per 5e RAW.
+    #[test]
+    fn fast_movement_grants_ten_feet_of_speed_to_barbarian() {
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let barb = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // BARBARIAN_TEMPLATE default speed is 30 ft; Fast Movement adds
+        // +10 unconditionally, so speed reads as 40 ft even outside of
+        // rage (Tiger Totem's rage-gated +10 is separate).
+        assert_eq!(e.actors[&barb].speed(), 40.0);
+    }
+
+    /// Fast Movement stacks additively with Tiger Totem Spirit — a
+    /// raging Tiger Totem barbarian gets both bonuses (+10 base +10
+    /// rage-gated = +20 total). RAW: both features come from different
+    /// sources (class + subclass) so they aren't mutually exclusive.
+    #[test]
+    fn fast_movement_stacks_with_tiger_totem_on_raging_barbarian() {
+        use crate::actions::class_features::RAGE;
+        use crate::actors::creatures::barbarians::TIGER_TOTEM_BARBARIAN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let tiger = e
+            .instantiate_creature(&TIGER_TOTEM_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base = 30.0_f32;
+        // Fast Movement is always on — pre-rage speed is base + 10.
+        assert_eq!(e.actors[&tiger].speed(), base + 10.0);
+        let rage_effects = RAGE.side_effects(&mut e, tiger, None, None, None);
+        for ef in rage_effects {
+            ef.apply(&mut e);
+        }
+        // Post-rage: Fast Movement (+10) AND Tiger Totem (+10) both
+        // fire — RAW-legal stack of class + subclass features.
+        assert_eq!(e.actors[&tiger].speed(), base + 20.0);
+    }
+
+    /// Purity of Body (Monk lv10): the tag suppresses the Poisoned
+    /// condition install AT the `add_condition` chokepoint (via the
+    /// `dynamic_immunity_to` gate). Non-monk creatures without the tag
+    /// still pick up the condition normally.
+    #[test]
+    fn purity_of_body_suppresses_poisoned_install_on_monk() {
+        use crate::actors::creatures::monks::MONK_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let m = e
+            .instantiate_creature(&MONK_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&m).unwrap();
+        assert!(
+            !actor.add_condition(Condition::Poisoned, crate::conditions::ConditionTimer::Rounds(1)),
+            "Purity of Body should bounce the Poisoned install"
+        );
+        assert!(!actor.has_condition(Condition::Poisoned));
+    }
+
+    /// Purity of Body (Monk lv10) zeros incoming poison damage at the
+    /// `effective_damage` chokepoint. Non-poison damage is unaffected —
+    /// the tag only fires on the Poison type, not blanket resistance.
+    #[test]
+    fn purity_of_body_zeros_poison_damage_on_monk() {
+        use crate::actors::creatures::monks::MONK_TEMPLATE;
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let m = e
+            .instantiate_creature(&MONK_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let actor = e.actors.get(&m).unwrap();
+        // Poison damage lands as 0 — RAW: "immune to disease and poison".
+        assert_eq!(actor.effective_damage(20, DamageType::Poison), 0);
+        // Non-poison damage is unaffected — the tag only fires on Poison.
+        assert_eq!(actor.effective_damage(20, DamageType::Fire), 20);
+        assert_eq!(actor.effective_damage(20, DamageType::Slashing), 20);
+    }
+
+    /// Aura of Devotion (Devotion Paladin lv7): Charmed installs bounce
+    /// on any ally standing inside the 10ft aura, mirroring how Aura of
+    /// Courage suppresses Frightened. The emitter (the paladin
+    /// themselves) also gets the immunity — the aura covers them too.
+    #[test]
+    fn aura_of_devotion_suppresses_charmed_install() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::DEVOTION_PALADIN_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::engine::side_effects::{ApplicableSideEffect, ApplyCondition};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let pal = e
+            .instantiate_creature(&DEVOTION_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        assert!(e.is_in_aura_of_devotion(pal));
+        assert!(e.is_in_aura_of_devotion(ally));
+        // Charmed install must bounce for both the paladin and their
+        // adjacent ally — the aura covers the emitter too.
+        ApplyCondition {
+            actor_id: ally,
+            condition: Condition::Charmed,
+            timer: ConditionTimer::Rounds(3),
+        }
+        .apply(&mut e);
+        assert!(!e.actors[&ally].has_condition(Condition::Charmed));
+        ApplyCondition {
+            actor_id: pal,
+            condition: Condition::Charmed,
+            timer: ConditionTimer::Rounds(3),
+        }
+        .apply(&mut e);
+        assert!(!e.actors[&pal].has_condition(Condition::Charmed));
+    }
+
+    /// Aura of Devotion only covers allies — an enemy standing next to
+    /// the paladin still picks up the Charmed condition, and an ally
+    /// far outside the 10ft radius doesn't benefit either.
+    #[test]
+    fn aura_of_devotion_does_not_cover_enemies_or_distant_allies() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::DEVOTION_PALADIN_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::engine::side_effects::{ApplicableSideEffect, ApplyCondition};
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let _pal = e
+            .instantiate_creature(&DEVOTION_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let enemy_close = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 3), 1, 0)
+            .unwrap();
+        let ally_far = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(25, 25), 0, 0)
+            .unwrap();
+        assert!(!e.is_in_aura_of_devotion(enemy_close));
+        assert!(!e.is_in_aura_of_devotion(ally_far));
+        // Adjacent enemy still picks up Charmed — the aura is ally-only.
+        ApplyCondition {
+            actor_id: enemy_close,
+            condition: Condition::Charmed,
+            timer: ConditionTimer::Rounds(3),
+        }
+        .apply(&mut e);
+        assert!(e.actors[&enemy_close].has_condition(Condition::Charmed));
+        // Distant ally is outside the 10ft radius — Charmed sticks.
+        ApplyCondition {
+            actor_id: ally_far,
+            condition: Condition::Charmed,
+            timer: ConditionTimer::Rounds(3),
+        }
+        .apply(&mut e);
+        assert!(e.actors[&ally_far].has_condition(Condition::Charmed));
+    }
+
+    /// A non-Devotion paladin (baseline PALADIN_TEMPLATE) does not emit
+    /// the Aura of Devotion — Charmed installs land normally on allies
+    /// standing next to a non-Devotion paladin.
+    #[test]
+    fn baseline_paladin_does_not_emit_aura_of_devotion() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::engine::side_effects::{ApplicableSideEffect, ApplyCondition};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        // Baseline paladin doesn't emit Aura of Devotion.
+        assert!(!e.is_in_aura_of_devotion(pal));
+        assert!(!e.is_in_aura_of_devotion(ally));
+        // Charmed install lands normally on the ally — no aura to bounce it.
+        ApplyCondition {
+            actor_id: ally,
+            condition: Condition::Charmed,
+            timer: ConditionTimer::Rounds(3),
+        }
+        .apply(&mut e);
+        assert!(e.actors[&ally].has_condition(Condition::Charmed));
     }
 }
