@@ -116,6 +116,36 @@ pub fn raging_feature_ready(
     })
 }
 
+/// Gating shape for once-per-rest bonus-action primes that install a
+/// self-targeted "next swing rider" condition (Trip Attack, Menacing
+/// Attack, Disarming Attack, Pushing Attack, Goading Attack, Distracting
+/// Attack, Precision Attack, Sweeping Attack, Lunging Attack, Stunning
+/// Strike, Divine Strike). Returns true when:
+///   - the caster is combat-active,
+///   - the once-per-rest `tag` charge is available,
+///   - the caster does NOT already carry `prime` (re-priming would
+///     just refresh the timer and waste the charge).
+///
+/// Centralizes the three-clause chain that every one of the ~10
+/// bonus-action primes above previously open-coded, and gives a single
+/// chokepoint if the prime-install gate ever needs a cross-cutting
+/// check (e.g. "no prime while Silenced" for the future Silence-shuts-
+/// down-verbal-effects half). Sibling to `feature_ready` (which lacks
+/// the prime-condition no-stack clause) — reach for this one whenever
+/// the action installs a caster-side condition and reach for
+/// `feature_ready` when the action's effect is one-shot damage / heal /
+/// resource grant without a lingering flag.
+pub fn feature_prime_ready(
+    encounter: &EncounterInstance,
+    caster_id: usize,
+    tag: &'static str,
+    prime: Condition,
+) -> bool {
+    encounter.actors.get(&caster_id).is_some_and(|a| {
+        a.is_combat_active() && a.feature_available(tag) && !a.has_condition(prime)
+    })
+}
+
 /// Fighter Second Wind — bonus action; restore 1d10 + level HP. Once per
 /// long rest. Self-targeted; only valid while combat-active (no reviving
 /// yourself out of dying via this).
@@ -1923,6 +1953,109 @@ impl Action for WholenessOfBody {
 
 pub static WHOLENESS_OF_BODY: LazyLock<WholenessOfBody> = LazyLock::new(|| WholenessOfBody {});
 
+/// Class-feature tag for the Monk's **Empty Body** (RAW: level 18 monk
+/// capstone-adjacent, once per long rest). Action; the monk spends 4 ki
+/// points to project their body as a semi-corporeal echo: **Invisible**
+/// for 10 rounds (1 minute RAW), plus **DamageResistant** for the
+/// duration (RAW: resistance to all damage except force — we collapse
+/// the "except force" carve-out into the general resistance since the
+/// engine's DamageResistant lane halves every type; the delta from RAW
+/// only shows on the rare Magic Missile / Disintegrate hit against a
+/// monk holding this buff up). Distinct from `WholenessOfBody`
+/// (self-heal): Empty Body is a defensive-invisibility burst, no HP
+/// restore.
+///
+/// Composes cleanly with Patient Defense (bonus-action Dodge) and Step
+/// of the Wind (bonus-action Dash+Disengage) on the same turn — the monk
+/// enters Empty Body via the Action lane, then dashes clear via a bonus
+/// action, leaving them a 30ft-away invisible + damage-halved threat
+/// that no attacker can plausibly close for the first round.
+pub const EMPTY_BODY_TAG: &str = "monk.empty_body";
+
+/// Empty Body — Monk action, once per long rest. Spends the feature
+/// charge to install both `Invisible` and `DamageResistant` on the monk
+/// for 10 rounds (1 minute RAW). Action cost (not bonus action) so the
+/// monk can't stack it with a Flurry — burning the Action lane is the
+/// tempo trade for the defensive envelope. The DamageResistant install
+/// covers every damage type in this engine (RAW carves out force damage
+/// — a minor delta since the only in-engine force damage sources are
+/// Magic Missile / Disintegrate / Bigby's Hand, all of which are rare
+/// against a lv18 monk anyway).
+///
+/// Both installs use `Rounds(10)` timers so a stray Dispel Magic or a
+/// long fight burn-off both drop naturally — no bespoke concentration
+/// wire-up needed.
+pub struct EmptyBody {}
+
+impl Action for EmptyBody {
+    fn name(&self) -> &str {
+        "empty body"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["eb", "empty"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !feature_ready(encounter, caster_id, EMPTY_BODY_TAG) {
+            return false;
+        }
+        // No-op if the monk is already invisible AND damage-resistant —
+        // re-priming would just refresh timers without granting a new
+        // mechanical benefit, and burns the once-per-rest charge for
+        // nothing.
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            !(a.has_condition(Condition::Invisible)
+                && a.has_condition(Condition::DamageResistant))
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if let Some(monk) = encounter.actors.get_mut(&caster_id) {
+            monk.spend_feature(EMPTY_BODY_TAG);
+        }
+        encounter.log(
+            "  empty body: monk projects a semi-corporeal echo, becoming invisible and resistant to damage.".to_string(),
+        );
+        // Two installs, both `Rounds(10)` — 1 minute RAW. Same timer
+        // envelope as Sacred Weapon / Rage / Vow of Enmity.
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::Invisible,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::DamageResistant,
+                timer: ConditionTimer::Rounds(10),
+            }),
+        ]
+    }
+}
+
+pub static EMPTY_BODY: LazyLock<EmptyBody> = LazyLock::new(|| EmptyBody {});
+
 /// Class-feature tag for the Monk's Stunning Strike (once per long
 /// rest, in our model — RAW is one per ki point, but we collapse the
 /// ki pool into a single big-burst prime to keep the once-per-rest
@@ -1973,14 +2106,7 @@ impl Action for StunningStrike {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| {
-                a.is_combat_active()
-                    && a.feature_available(STUNNING_STRIKE_TAG)
-                    && !a.has_condition(Condition::StunningStrike)
-            })
+        feature_prime_ready(encounter, caster_id, STUNNING_STRIKE_TAG, Condition::StunningStrike)
     }
     fn side_effects(
         &self,
@@ -2531,11 +2657,7 @@ impl Action for DivineStrike {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter.actors.get(&caster_id).is_some_and(|a| {
-            a.is_combat_active()
-                && a.feature_available(DIVINE_STRIKE_TAG)
-                && !a.has_condition(Condition::DivineStriking)
-        })
+        feature_prime_ready(encounter, caster_id, DIVINE_STRIKE_TAG, Condition::DivineStriking)
     }
     fn side_effects(
         &self,
@@ -2609,11 +2731,7 @@ impl Action for TripAttack {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter.actors.get(&caster_id).is_some_and(|a| {
-            a.is_combat_active()
-                && a.feature_available(TRIP_ATTACK_TAG)
-                && !a.has_condition(Condition::TripAttacking)
-        })
+        feature_prime_ready(encounter, caster_id, TRIP_ATTACK_TAG, Condition::TripAttacking)
     }
     fn side_effects(
         &self,
@@ -2741,11 +2859,12 @@ impl Action for MenacingAttack {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter.actors.get(&caster_id).is_some_and(|a| {
-            a.is_combat_active()
-                && a.feature_available(MENACING_ATTACK_TAG)
-                && !a.has_condition(Condition::MenacingAttacking)
-        })
+        feature_prime_ready(
+            encounter,
+            caster_id,
+            MENACING_ATTACK_TAG,
+            Condition::MenacingAttacking,
+        )
     }
     fn side_effects(
         &self,
@@ -2815,11 +2934,12 @@ impl Action for DisarmingAttack {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter.actors.get(&caster_id).is_some_and(|a| {
-            a.is_combat_active()
-                && a.feature_available(DISARMING_ATTACK_TAG)
-                && !a.has_condition(Condition::DisarmingAttacking)
-        })
+        feature_prime_ready(
+            encounter,
+            caster_id,
+            DISARMING_ATTACK_TAG,
+            Condition::DisarmingAttacking,
+        )
     }
     fn side_effects(
         &self,
@@ -2890,11 +3010,12 @@ impl Action for PushingAttack {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter.actors.get(&caster_id).is_some_and(|a| {
-            a.is_combat_active()
-                && a.feature_available(PUSHING_ATTACK_TAG)
-                && !a.has_condition(Condition::PushingAttacking)
-        })
+        feature_prime_ready(
+            encounter,
+            caster_id,
+            PUSHING_ATTACK_TAG,
+            Condition::PushingAttacking,
+        )
     }
     fn side_effects(
         &self,
@@ -2967,11 +3088,12 @@ impl Action for GoadingAttack {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter.actors.get(&caster_id).is_some_and(|a| {
-            a.is_combat_active()
-                && a.feature_available(GOADING_ATTACK_TAG)
-                && !a.has_condition(Condition::GoadingAttacking)
-        })
+        feature_prime_ready(
+            encounter,
+            caster_id,
+            GOADING_ATTACK_TAG,
+            Condition::GoadingAttacking,
+        )
     }
     fn side_effects(
         &self,
@@ -3046,11 +3168,12 @@ impl Action for DistractingAttack {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter.actors.get(&caster_id).is_some_and(|a| {
-            a.is_combat_active()
-                && a.feature_available(DISTRACTING_ATTACK_TAG)
-                && !a.has_condition(Condition::DistractingAttacking)
-        })
+        feature_prime_ready(
+            encounter,
+            caster_id,
+            DISTRACTING_ATTACK_TAG,
+            Condition::DistractingAttacking,
+        )
     }
     fn side_effects(
         &self,
@@ -3482,11 +3605,12 @@ impl Action for PrecisionAttack {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter.actors.get(&caster_id).is_some_and(|a| {
-            a.is_combat_active()
-                && a.feature_available(PRECISION_ATTACK_TAG)
-                && !a.has_condition(Condition::PrecisionAttacking)
-        })
+        feature_prime_ready(
+            encounter,
+            caster_id,
+            PRECISION_ATTACK_TAG,
+            Condition::PrecisionAttacking,
+        )
     }
     fn side_effects(
         &self,
@@ -3567,11 +3691,12 @@ impl Action for SweepingAttack {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter.actors.get(&caster_id).is_some_and(|a| {
-            a.is_combat_active()
-                && a.feature_available(SWEEPING_ATTACK_TAG)
-                && !a.has_condition(Condition::SweepingAttacking)
-        })
+        feature_prime_ready(
+            encounter,
+            caster_id,
+            SWEEPING_ATTACK_TAG,
+            Condition::SweepingAttacking,
+        )
     }
     fn side_effects(
         &self,
@@ -3760,11 +3885,12 @@ impl Action for LungingAttack {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        encounter.actors.get(&caster_id).is_some_and(|a| {
-            a.is_combat_active()
-                && a.feature_available(LUNGING_ATTACK_TAG)
-                && !a.has_condition(Condition::LungingAttacking)
-        })
+        feature_prime_ready(
+            encounter,
+            caster_id,
+            LUNGING_ATTACK_TAG,
+            Condition::LungingAttacking,
+        )
     }
     fn side_effects(
         &self,

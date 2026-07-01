@@ -70,6 +70,18 @@ pub static ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // land (Uncanny Dodge, once per round), and takes no damage on
         // successful DEX saves (Evasion).
         has_elusive: true,
+        // 5e Rogue Slippery Mind (level 15): proficient in Wisdom
+        // saves. The narrower sibling to the monk's Diamond Soul (all
+        // six saves) — Slippery Mind converts the rogue's WIS save
+        // from a "bad save" into a "good save" so Hold Person / Dominate
+        // Person / Compulsion / Fear no longer reliably lock the rogue
+        // down. Ships on the CR-1 rogue template above its strict RAW
+        // level gate alongside Elusive for the same reason (class
+        // templates target a balanced playable level, not lockstep PHB
+        // progression). Composes cleanly with the Paladin's Aura of
+        // Protection — the CHA-bonus save layer stacks on top of the
+        // slippery-mind proficiency floor.
+        has_slippery_mind: true,
         ..CreatureTemplate::defaults()
     }
 });

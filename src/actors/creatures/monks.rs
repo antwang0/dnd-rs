@@ -1,6 +1,7 @@
 use crate::actions::class_features::{
-    FLURRY_OF_BLOWS, PATIENT_DEFENSE, PURITY_OF_BODY_TAG, STEP_OF_THE_WIND, STILLNESS_OF_MIND,
-    STUNNING_STRIKE, STUNNING_STRIKE_TAG, WHOLENESS_OF_BODY, WHOLENESS_OF_BODY_TAG,
+    EMPTY_BODY, EMPTY_BODY_TAG, FLURRY_OF_BLOWS, PATIENT_DEFENSE, PURITY_OF_BODY_TAG,
+    STEP_OF_THE_WIND, STILLNESS_OF_MIND, STUNNING_STRIKE, STUNNING_STRIKE_TAG, WHOLENESS_OF_BODY,
+    WHOLENESS_OF_BODY_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::MONK_UNARMED_STRIKE;
@@ -35,6 +36,13 @@ pub static MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*FLURRY_OF_BLOWS);
     actions.push(&*STILLNESS_OF_MIND);
     actions.push(&*STEP_OF_THE_WIND);
+    // Empty Body — RAW level 18 monk capstone-adjacent, once per long
+    // rest. Ships on the CR-1.5 monk template above its strict RAW
+    // level gate for the same reason Diamond Soul / Purity of Body do
+    // (class templates target a balanced playable level, not lockstep
+    // PHB progression). Action; installs Invisible + DamageResistant
+    // on self for 10 rounds (1 minute RAW).
+    actions.push(&*EMPTY_BODY);
     CreatureTemplate {
         name: "Monk",
         glyph: 'M',
@@ -71,7 +79,7 @@ pub static MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         //     Improved Divine Smite ships on the CR-1.5 paladin — class
         //     templates target a balanced playable level, not lockstep
         //     PHB progression.
-        features: HashSet::from([STUNNING_STRIKE_TAG, PURITY_OF_BODY_TAG]),
+        features: HashSet::from([STUNNING_STRIKE_TAG, PURITY_OF_BODY_TAG, EMPTY_BODY_TAG]),
         has_evasion: true,
         has_deflect_missiles: true,
         has_extra_attack: true,

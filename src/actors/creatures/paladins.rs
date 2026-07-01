@@ -203,6 +203,44 @@ pub static DEVOTION_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
     }
 });
 
+/// Ancients Paladin — Oath of the Ancients subclass build. Identical
+/// envelope to the baseline `PALADIN_TEMPLATE` (greatsword + smite suite,
+/// half-caster slot ladder, Lay on Hands / Sacred Weapon / Cleansing
+/// Touch, Improved Divine Smite passive, Aura of Protection / Aura of
+/// Courage) with one subclass feature layered on: **Nature's Ward**
+/// (Ancients subclass level 15 capstone) — passive self-immunity to
+/// Charmed AND Frightened installs. RAW also grants immunity to disease
+/// and no aging; neither has a mechanical surface in the combat engine
+/// so both halves are RAW no-ops we don't wire up.
+///
+/// Pairs naturally with the paladin's aura family: the Ancients paladin
+/// covers themselves (via Nature's Ward) AND every 10ft-adjacent ally
+/// (via Aura of Courage — Frightened suppression). Distinct from Devotion
+/// Paladin (Aura of Devotion → ally Charmed suppression) — the Ancients
+/// paladin's Charmed-immunity is self-only, but the Frightened-immunity
+/// is redundant with Aura of Courage on themselves and extended to allies
+/// only through the aura. The CR-1.5 template ships this capstone above
+/// its strict RAW level gate for the same reason every other class
+/// template runs above strict RAW level (templates target a balanced
+/// playable level, not lockstep PHB progression).
+///
+/// Ships the CR-1.5 template above strict RAW level gate. Distinct from
+/// `PALADIN_TEMPLATE` (baseline), `DEVOTION_PALADIN_TEMPLATE` (Aura of
+/// Devotion), and `VENGEANCE_PALADIN_TEMPLATE` (Vow of Enmity). Glyph
+/// 'A' so the Ancients paladin shows up distinctly next to baseline 'P',
+/// Devotion 'D', and Vengeance 'V'.
+pub static ANCIENTS_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    CreatureTemplate {
+        name: "Ancients Paladin",
+        glyph: 'A',
+        // Nature's Ward is the entire subclass surface here — a passive
+        // template flag rather than an added action, so the subclass-of
+        // pattern collapses to name + glyph + the ward flag.
+        has_natures_ward: true,
+        ..PALADIN_TEMPLATE.clone()
+    }
+});
+
 /// Vengeance Paladin — Oath of Vengeance subclass build. Identical
 /// envelope to the baseline `PALADIN_TEMPLATE` (greatsword + smite suite,
 /// half-caster slot ladder, Lay on Hands / Sacred Weapon / Cleansing

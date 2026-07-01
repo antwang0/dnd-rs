@@ -45107,4 +45107,138 @@ mod tests {
         assert!(!goblin.is_save_proficient(AbilityScoreType::Wisdom));
         assert!(!goblin.is_save_proficient(AbilityScoreType::Charisma));
     }
+
+    /// 5e Rogue Slippery Mind (lv15): proficient in Wisdom saves only.
+    /// The narrower sibling of Diamond Soul — one ability, not all six.
+    /// Other saves fall back to the baseline `proficient_saves` set (DEX
+    /// and INT for the rogue).
+    #[test]
+    fn slippery_mind_grants_wisdom_save_proficiency() {
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+        let rogue = ActorInstance::from_creature_template(
+            &ROGUE_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(1),
+            0,
+        )
+        .unwrap();
+        assert!(rogue.has_slippery_mind(), "rogue should have slippery mind");
+        // WIS: Slippery Mind lane.
+        assert!(rogue.is_save_proficient(AbilityScoreType::Wisdom));
+        // DEX / INT: baseline rogue save profs.
+        assert!(rogue.is_save_proficient(AbilityScoreType::Dexterity));
+        assert!(rogue.is_save_proficient(AbilityScoreType::Intelligence));
+        // STR / CON / CHA: neither baseline nor Slippery Mind — should
+        // NOT be proficient. Distinct from Diamond Soul (all six saves).
+        assert!(!rogue.is_save_proficient(AbilityScoreType::Strength));
+        assert!(!rogue.is_save_proficient(AbilityScoreType::Constitution));
+        assert!(!rogue.is_save_proficient(AbilityScoreType::Charisma));
+    }
+
+    /// 5e Paladin Oath of the Ancients Nature's Ward (lv15): passive
+    /// self-immunity to Charmed AND Frightened installs. Baseline
+    /// paladin doesn't get it — a plain paladin still takes both.
+    #[test]
+    fn natures_ward_grants_charm_and_frighten_immunity() {
+        use crate::actors::creatures::paladins::{
+            ANCIENTS_PALADIN_TEMPLATE, PALADIN_TEMPLATE,
+        };
+        use crate::conditions::ConditionTimer;
+        use crate::engine::side_effects::{ApplicableSideEffect, ApplyCondition};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let ancients = e
+            .instantiate_creature(&ANCIENTS_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(12, 12), 1, 0)
+            .unwrap();
+        // Ancients Paladin: both Charmed and Frightened bounce.
+        ApplyCondition {
+            actor_id: ancients,
+            condition: Condition::Charmed,
+            timer: ConditionTimer::Rounds(3),
+        }
+        .apply(&mut e);
+        assert!(!e.actors[&ancients].has_condition(Condition::Charmed));
+        ApplyCondition {
+            actor_id: ancients,
+            condition: Condition::Frightened,
+            timer: ConditionTimer::Rounds(3),
+        }
+        .apply(&mut e);
+        assert!(!e.actors[&ancients].has_condition(Condition::Frightened));
+        // Baseline paladin has Aura of Courage (self-in-aura → Frightened
+        // suppressed), but NOT Nature's Ward — Charmed still lands (Aura
+        // of Devotion is Devotion-subclass-only, not on baseline).
+        ApplyCondition {
+            actor_id: baseline,
+            condition: Condition::Charmed,
+            timer: ConditionTimer::Rounds(3),
+        }
+        .apply(&mut e);
+        assert!(e.actors[&baseline].has_condition(Condition::Charmed));
+    }
+
+    /// Ancients Paladin's Nature's Ward is self-only — it does NOT
+    /// project to allies (unlike Aura of Devotion which extends Charmed
+    /// immunity to a 10ft ally bubble). An ally standing right next to
+    /// the Ancients Paladin still catches a Charmed install.
+    #[test]
+    fn natures_ward_does_not_cover_allies() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::ANCIENTS_PALADIN_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::engine::side_effects::{ApplicableSideEffect, ApplyCondition};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let _pal = e
+            .instantiate_creature(&ANCIENTS_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        // Adjacent ally still picks up Charmed — Nature's Ward is
+        // self-only, not aura-projected. The paladin's Aura of Courage
+        // WOULD block Frightened on this ally (baseline paladin auras
+        // still fire), so test with Charmed which the baseline paladin
+        // doesn't aura-suppress.
+        ApplyCondition {
+            actor_id: ally,
+            condition: Condition::Charmed,
+            timer: ConditionTimer::Rounds(3),
+        }
+        .apply(&mut e);
+        assert!(e.actors[&ally].has_condition(Condition::Charmed));
+    }
+
+    /// 5e Monk Empty Body (lv18): action, once per long rest. Installs
+    /// Invisible and DamageResistant on the monk for 10 rounds. Both
+    /// installs land in a single side-effect batch; the feature charge
+    /// is consumed the moment the effects fire.
+    #[test]
+    fn empty_body_installs_invisible_and_damage_resistant() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{EMPTY_BODY, EMPTY_BODY_TAG};
+        use crate::actors::creatures::monks::MONK_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let monk = e
+            .instantiate_creature(&MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&monk].feature_available(EMPTY_BODY_TAG));
+        // Validate the gate and drive the side effects manually — same
+        // shape the encounter loop uses for every other action.
+        let action: &dyn Action = &*EMPTY_BODY;
+        assert!(action.custom_validate_input(&e, monk, None, None, None));
+        let effects = action.side_effects(&mut e, monk, None, None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert!(e.actors[&monk].has_condition(Condition::Invisible));
+        assert!(e.actors[&monk].has_condition(Condition::DamageResistant));
+        // Feature charge consumed — the gate must now fail so a
+        // duplicate queued use doesn't slip through.
+        assert!(!e.actors[&monk].feature_available(EMPTY_BODY_TAG));
+        assert!(!action.custom_validate_input(&e, monk, None, None, None));
+    }
 }

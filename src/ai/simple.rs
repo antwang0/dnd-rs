@@ -196,11 +196,22 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 3f'. Monk Stillness of Mind — Action that clears Charmed /
-        //      Frightened on the holder. Fire when either condition is
-        //      up; cleansing those debuffs (especially Frightened, which
-        //      stacks disadvantage on every attack until cured) is worth
-        //      the action lane over a single attack.
+        // 3f'. Monk Empty Body — once-per-long-rest defensive burst
+        //      Action. Installs Invisible + DamageResistant on self for
+        //      10 rounds. Fire when the monk is below 40% HP AND has an
+        //      adjacent enemy — the burst dominates a single swing when
+        //      survival is at stake. Tighter HP threshold than the heal
+        //      picker so the once-per-rest charge doesn't burn on a
+        //      first-scratch alarm.
+        if let Some(aei) = try_empty_body(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3f''. Monk Stillness of Mind — Action that clears Charmed /
+        //       Frightened on the holder. Fire when either condition is
+        //       up; cleansing those debuffs (especially Frightened, which
+        //       stacks disadvantage on every attack until cured) is worth
+        //       the action lane over a single attack.
         if let Some(aei) = try_stillness_of_mind(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
@@ -3033,6 +3044,32 @@ fn try_stunning_strike(
         return None;
     }
     try_self_action(encounter, actor_id, "stunning strike")
+}
+
+/// Monk Empty Body — once-per-long-rest Action defensive burst.
+/// Installs Invisible + DamageResistant on self for 10 rounds. Fire when
+/// the monk is genuinely under pressure — below 40% HP AND has at least
+/// one adjacent enemy that would otherwise pound them. The 40% threshold
+/// is tighter than the standard 50% heal trigger since Empty Body is a
+/// full-Action burn on a resource that doesn't refill without a long
+/// rest: the AI should hold it until survival is at stake, not fire it
+/// on the first scratched-HP alarm.
+///
+/// Composes with the standard heal picker (Wholeness of Body, potions):
+/// this fires ahead of them at the Action lane since Empty Body is a
+/// survival burst rather than a topup, and re-priming it later burns a
+/// second charge that the monk doesn't have.
+fn try_empty_body(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    if !is_low_hp(encounter, actor_id, 0.4) {
+        return None;
+    }
+    if !any_enemy_within(encounter, actor_id, 0) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "empty body")
 }
 
 /// Monk Stillness of Mind — Action. Cleanses Charmed / Frightened off

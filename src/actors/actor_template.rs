@@ -136,6 +136,60 @@ const CONDITION_DRIVEN_IMMUNITIES: &[(Condition, &[Condition])] = &[
     ),
 ];
 
+/// Row of `FLAG_DRIVEN_IMMUNITIES`. `flag` reads a racial / subclass
+/// passive-feature accessor on `ActorInstance` (Halfling Brave, Fey
+/// Ancestry, Nature's Ward, Purity of Body); when it returns true the
+/// actor is treated as immune to every condition in `suppressed`. Held
+/// as a function-pointer rather than an enum tag so a new row can point
+/// to any predicate on the actor without expanding a central enum.
+struct FlagDrivenImmunity {
+    flag: fn(&ActorInstance) -> bool,
+    suppressed: &'static [Condition],
+}
+
+/// Broad flag-driven immunity table read by `dynamic_immunity_to`.
+/// Sibling to `CONDITION_DRIVEN_IMMUNITIES` but keyed off passive-feature
+/// flags rather than held conditions — these fire regardless of any
+/// timer-based source. Multiple rows can cover the same condition
+/// (Fey Ancestry, Nature's Ward, Aura of Devotion, and MindBlanked all
+/// suppress Charmed installs); any hit is sufficient. Adding a future
+/// racial / subclass capstone lands as one row here without touching
+/// the `dynamic_immunity_to` matcher body.
+const FLAG_DRIVEN_IMMUNITIES: &[FlagDrivenImmunity] = &[
+    // 5e Halfling Brave racial: RAW "advantage on saves vs Frightened"
+    // — approximated as immunity because the engine doesn't tag saves
+    // by what condition they defend against.
+    FlagDrivenImmunity {
+        flag: |a| a.has_brave,
+        suppressed: &[Condition::Frightened],
+    },
+    // 5e Elf / Half-Elf / Drow Fey Ancestry: advantage on Charmed saves
+    // (approximated as immunity, same reason as Brave), and RAW
+    // "magic can't put you to sleep" — since our engine only installs
+    // Asleep from magical sources, that half is RAW-exact.
+    FlagDrivenImmunity {
+        flag: |a| a.has_fey_ancestry,
+        suppressed: &[Condition::Charmed, Condition::Asleep],
+    },
+    // 5e Paladin Oath of the Ancients Nature's Ward (lv15 capstone):
+    // immunity to Charmed AND Frightened installs. The two-condition
+    // grant folds through one row; a single flag drives both bounces.
+    FlagDrivenImmunity {
+        flag: |a| a.has_natures_ward,
+        suppressed: &[Condition::Charmed, Condition::Frightened],
+    },
+    // 5e Monk Purity of Body (lv10 passive feature): immunity to poison
+    // (Poisoned-condition half). Poison-damage half lives in
+    // `effective_damage` next to the other passive-feature typed-
+    // immunity gates.
+    FlagDrivenImmunity {
+        flag: |a| a.has_passive_feature(
+            crate::actions::class_features::PURITY_OF_BODY_TAG,
+        ),
+        suppressed: &[Condition::Poisoned],
+    },
+];
+
 /// Lifecycle state of an actor's hit points. Replaces the previous
 /// `dying: bool` + `stable: bool` pair so the four meaningful states are
 /// type-checked, and the death-save counters are scoped to the only
@@ -451,6 +505,26 @@ pub struct CreatureTemplate {
     /// Incapacitated / Stunned / Paralyzed / Unconscious, downgrade
     /// Advantage to Normal (Disadvantage passes through untouched).
     pub has_elusive: bool,
+    /// 5e Paladin **Oath of the Ancients — Nature's Ward** (Ancients
+    /// subclass level 15): passive immunity to being Charmed AND
+    /// Frightened. RAW also grants immunity to disease and no aging;
+    /// disease has no mechanical surface in the combat engine and
+    /// aging is a non-combat concept, so both halves are RAW no-ops
+    /// we don't wire up. Read by `dynamic_immunity_to` next to the
+    /// Halfling Brave (Frightened) and Fey Ancestry (Charmed + Asleep)
+    /// gates — the flag drives both installs off in a single line.
+    ///
+    /// Distinct from Aura of Courage / Aura of Devotion in three ways:
+    ///   1. **Self-only** — the paladin doesn't project this to allies
+    ///      (unlike the paladin auras that grant the same immunity in
+    ///      a 10ft bubble); Nature's Ward is a personal capstone.
+    ///   2. **Always-on** — no combat-active / incapacitated gate; a
+    ///      down-and-dying Ancients paladin is still immune to both
+    ///      installs (RAW: "immune to being charmed" is unconditional).
+    ///   3. **Both conditions from one flag** — the paladin's other
+    ///      auras cover a single condition each; Nature's Ward is the
+    ///      only "two-condition immunity from one flag" template lane.
+    pub has_natures_ward: bool,
     /// 5e Barbarian **Feral Instinct** (level 7 passive): advantage on
     /// initiative rolls. Read by `ActorInstance::roll_initiative` — the
     /// d20 is rolled twice and the higher result is kept. The classic
@@ -469,6 +543,18 @@ pub struct CreatureTemplate {
     /// of Protection — the CHA-bonus save layer stacks on top of the
     /// diamond-soul proficiency floor.
     pub has_diamond_soul: bool,
+    /// 5e Rogue **Slippery Mind** (level 15 passive): proficiency in
+    /// Wisdom saving throws. Read by `ActorInstance::is_save_proficient`
+    /// next to `has_diamond_soul` — if the flag is set, WIS saves return
+    /// proficient regardless of the explicit `proficient_saves` set. The
+    /// classic anti-Hold Person / anti-Dominate Person defensive tell —
+    /// the level-15 rogue can no longer be reliably WIS-locked by casters,
+    /// mirroring the RAW envelope where Slippery Mind moves the rogue's
+    /// bad save into their strong-save cluster. Distinct from Diamond Soul
+    /// (all six saves) — Slippery Mind is a narrower, single-ability
+    /// grant; the rogue's DEX save proficiency comes from the base class,
+    /// and Evasion / Uncanny Dodge already cover the DEX-save damage lane.
+    pub has_slippery_mind: bool,
     /// 5e Half-Orc Savage Attacks: on a critical melee weapon hit, roll
     /// one additional weapon damage die. Mechanically identical to
     /// `brutal_critical_dice = 1` but exposed as a separate flag so the
@@ -623,8 +709,10 @@ impl CreatureTemplate {
             has_aura_of_courage: false,
             has_aura_of_devotion: false,
             has_elusive: false,
+            has_natures_ward: false,
             has_feral_instinct: false,
             has_diamond_soul: false,
+            has_slippery_mind: false,
             has_savage_attacks: false,
             has_dwarven_resilience: false,
             has_gnome_cunning: false,
@@ -958,10 +1046,15 @@ pub struct ActorInstance {
     has_aura_of_devotion: bool,
     /// 5e Rogue Elusive (level 18). See `CreatureTemplate` docs.
     has_elusive: bool,
+    /// 5e Paladin Nature's Ward (Ancients subclass level 15). See
+    /// `CreatureTemplate` docs.
+    has_natures_ward: bool,
     /// 5e Barbarian Feral Instinct (level 7). See `CreatureTemplate` docs.
     has_feral_instinct: bool,
     /// 5e Monk Diamond Soul (level 14). See `CreatureTemplate` docs.
     has_diamond_soul: bool,
+    /// 5e Rogue Slippery Mind (level 15). See `CreatureTemplate` docs.
+    has_slippery_mind: bool,
     /// 5e Half-Orc Savage Attacks. See `CreatureTemplate` docs.
     has_savage_attacks: bool,
     /// 5e Dwarven Resilience. See `CreatureTemplate` docs.
@@ -1108,8 +1201,10 @@ impl ActorInstance {
             has_aura_of_courage: ct.has_aura_of_courage,
             has_aura_of_devotion: ct.has_aura_of_devotion,
             has_elusive: ct.has_elusive,
+            has_natures_ward: ct.has_natures_ward,
             has_feral_instinct: ct.has_feral_instinct,
             has_diamond_soul: ct.has_diamond_soul,
+            has_slippery_mind: ct.has_slippery_mind,
             has_savage_attacks: ct.has_savage_attacks,
             has_dwarven_resilience: ct.has_dwarven_resilience,
             has_gnome_cunning: ct.has_gnome_cunning,
@@ -1315,6 +1410,13 @@ impl ActorInstance {
         self.has_elusive
     }
 
+    /// 5e Paladin Nature's Ward (Ancients subclass lv15): immunity to
+    /// Charmed AND Frightened installs. Read by `dynamic_immunity_to`
+    /// via the `FLAG_DRIVEN_IMMUNITIES` table.
+    pub fn has_natures_ward(&self) -> bool {
+        self.has_natures_ward
+    }
+
     /// 5e Barbarian Feral Instinct (level 7): advantage on initiative
     /// rolls. Read by `roll_initiative` — the d20 is rolled twice and
     /// the higher result is kept.
@@ -1327,6 +1429,13 @@ impl ActorInstance {
     /// `proficient_saves` lookup.
     pub fn has_diamond_soul(&self) -> bool {
         self.has_diamond_soul
+    }
+
+    /// 5e Rogue Slippery Mind (level 15): proficiency in Wisdom saves.
+    /// Read by `is_save_proficient` — a narrower version of Diamond Soul
+    /// (single ability, not all six).
+    pub fn has_slippery_mind(&self) -> bool {
+        self.has_slippery_mind
     }
 
     /// 5e Half-Orc Savage Attacks — adds one extra weapon damage die on a
@@ -1914,6 +2023,12 @@ impl ActorInstance {
         if self.has_diamond_soul {
             return true;
         }
+        // 5e Rogue Slippery Mind (level 15): proficient in Wisdom saves.
+        // Narrower than Diamond Soul (single ability, not all six) — the
+        // rogue's anti-Hold Person / anti-Dominate Person capstone.
+        if self.has_slippery_mind && ability == AbilityScoreType::Wisdom {
+            return true;
+        }
         self.proficient_saves.contains(&ability)
     }
 
@@ -2018,19 +2133,17 @@ impl ActorInstance {
         }) {
             return true;
         }
-        // Race / passive-feature cohort: flag-based, not condition-based.
-        // Halfling Brave → Frightened; Fey Ancestry → Charmed + Asleep
-        // (RAW "magic can't put you to sleep"); Monk Purity of Body
-        // → Poisoned (poison-damage half lives in `effective_damage`
-        // next to the other passive-feature typed-immunity gates).
-        match c {
-            Condition::Frightened => self.has_brave,
-            Condition::Charmed | Condition::Asleep => self.has_fey_ancestry,
-            Condition::Poisoned => self.has_passive_feature(
-                crate::actions::class_features::PURITY_OF_BODY_TAG,
-            ),
-            _ => false,
-        }
+        // Flag / passive-feature cohort: race + subclass immunities that
+        // fire regardless of any held condition. Table-driven for the
+        // same reason CONDITION_DRIVEN_IMMUNITIES is — adding a future
+        // racial / class capstone (e.g. Firbolg Hidden Step's Invisible
+        // grant, a Circle of the Land Nature's Sanctuary) lands as one
+        // row per flag. Each row lists the conditions the flag grants
+        // immunity to; multiple rows can cover the same condition (both
+        // Fey Ancestry AND Nature's Ward suppress Charmed).
+        FLAG_DRIVEN_IMMUNITIES
+            .iter()
+            .any(|entry| (entry.flag)(self) && entry.suppressed.contains(&c))
     }
 
     /// Add a condition with the given timer. If the actor is immune to
