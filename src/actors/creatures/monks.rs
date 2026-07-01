@@ -75,6 +75,16 @@ pub static MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         has_evasion: true,
         has_deflect_missiles: true,
         has_extra_attack: true,
+        // 5e Monk Diamond Soul (level 14 passive): proficient in every
+        // saving throw. Ships on the CR-1.5 monk template above its
+        // strict RAW level gate for the same reason Purity of Body
+        // (lv10) ships here — class templates target a balanced
+        // playable level, not lockstep PHB progression. Read by
+        // `is_save_proficient` — the monk now rolls prof + ability on
+        // every save, layering on top of Evasion (0 damage on passed
+        // DEX save) and the paladin's Aura of Protection (+CHA to
+        // every save when adjacent).
+        has_diamond_soul: true,
         ..CreatureTemplate::defaults()
     }
 });

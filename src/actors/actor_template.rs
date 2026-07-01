@@ -88,6 +88,54 @@ const TYPED_RESISTANCE_CONDITIONS: &[(Condition, &[DamageType])] = &[
     ),
 ];
 
+/// Broad condition-driven immunity table read by `dynamic_immunity_to`.
+/// Each row pairs a source condition with the set of downstream condition
+/// installs it suppresses. Purified / Otherworldly Guise both grant the
+/// same Frightened + Charmed + Poisoned trio; Heroic, MindBlanked,
+/// Petrified, and Footloose each map to a narrower cohort. Adding a
+/// future broad-immunity buff (a Purified-of-Fear cantrip, a Sanctuary-
+/// tier ward, etc.) lands as one row instead of an inlined `||` clause
+/// duplicated across every affected condition's arm.
+const CONDITION_DRIVEN_IMMUNITIES: &[(Condition, &[Condition])] = &[
+    // 5e Heroism: immune to Frightened for the duration.
+    (Condition::Heroic, &[Condition::Frightened]),
+    // 5e Mind Blank: immune to Charmed.
+    (Condition::MindBlanked, &[Condition::Charmed]),
+    // 5e Petrified: immune to poison / disease — the Poisoned-condition
+    // half. Damage-type half lives on `TYPED_IMMUNITY_CONDITIONS`.
+    (Condition::Petrified, &[Condition::Poisoned]),
+    // 5e Aura of Purity install rider: immune to Charmed, Frightened,
+    // and Poisoned for the duration.
+    (
+        Condition::Purified,
+        &[
+            Condition::Frightened,
+            Condition::Charmed,
+            Condition::Poisoned,
+        ],
+    ),
+    // 5e Tasha's Otherworldly Guise (celestial flavor): immune to the
+    // same trio as Purified for the duration.
+    (
+        Condition::OtherworldlyGuised,
+        &[
+            Condition::Frightened,
+            Condition::Charmed,
+            Condition::Poisoned,
+        ],
+    ),
+    // 5e Freedom of Movement (Footloose install): immune to magical
+    // movement restraint — Paralyzed / Restrained / Grappled.
+    (
+        Condition::Footloose,
+        &[
+            Condition::Paralyzed,
+            Condition::Restrained,
+            Condition::Grappled,
+        ],
+    ),
+];
+
 /// Lifecycle state of an actor's hit points. Replaces the previous
 /// `dying: bool` + `stable: bool` pair so the four meaningful states are
 /// type-checked, and the death-save counters are scoped to the only
@@ -392,6 +440,35 @@ pub struct CreatureTemplate {
     /// Oath of Devotion subclass, so a plain paladin doesn't get it
     /// even at high levels.
     pub has_aura_of_devotion: bool,
+    /// 5e Rogue **Elusive** (level 18 capstone): no attack roll has
+    /// advantage against the holder while they aren't Incapacitated. The
+    /// rogue's ultimate defensive tell — even Assassinate / Hidden /
+    /// Pack-Tactics / Vow of Enmity swings against the elusive rogue
+    /// resolve at Normal (or Disadvantage, if the attacker also has a
+    /// disadvantage source). Post-processing clause in
+    /// `compute_attack_mode`: after every attacker- and target-side
+    /// source is combined, if the target has this flag and isn't
+    /// Incapacitated / Stunned / Paralyzed / Unconscious, downgrade
+    /// Advantage to Normal (Disadvantage passes through untouched).
+    pub has_elusive: bool,
+    /// 5e Barbarian **Feral Instinct** (level 7 passive): advantage on
+    /// initiative rolls. Read by `ActorInstance::roll_initiative` — the
+    /// d20 is rolled twice and the higher result is kept. The classic
+    /// "barbarian goes first" tell: the raging bruiser opens the round
+    /// before the fireball lands. Read on top of the DEX modifier so a
+    /// barbarian with average DEX still opens the round competitively
+    /// against a rogue's DEX-primary initiative.
+    pub has_feral_instinct: bool,
+    /// 5e Monk **Diamond Soul** (level 14 passive): proficiency in all
+    /// saving throws. The monk's late-game defensive envelope: pairs
+    /// with Evasion and Deflect Missiles to make the monk one of the
+    /// hardest chassis to lock down. Read by
+    /// `ActorInstance::is_save_proficient` — if the flag is set, every
+    /// ability returns proficient regardless of the explicit
+    /// `proficient_saves` set. Composes cleanly with the paladin's Aura
+    /// of Protection — the CHA-bonus save layer stacks on top of the
+    /// diamond-soul proficiency floor.
+    pub has_diamond_soul: bool,
     /// 5e Half-Orc Savage Attacks: on a critical melee weapon hit, roll
     /// one additional weapon damage die. Mechanically identical to
     /// `brutal_critical_dice = 1` but exposed as a separate flag so the
@@ -545,6 +622,9 @@ impl CreatureTemplate {
             has_aura_of_protection: false,
             has_aura_of_courage: false,
             has_aura_of_devotion: false,
+            has_elusive: false,
+            has_feral_instinct: false,
+            has_diamond_soul: false,
             has_savage_attacks: false,
             has_dwarven_resilience: false,
             has_gnome_cunning: false,
@@ -876,6 +956,12 @@ pub struct ActorInstance {
     has_aura_of_courage: bool,
     /// 5e Devotion Paladin Aura of Devotion. See `CreatureTemplate` docs.
     has_aura_of_devotion: bool,
+    /// 5e Rogue Elusive (level 18). See `CreatureTemplate` docs.
+    has_elusive: bool,
+    /// 5e Barbarian Feral Instinct (level 7). See `CreatureTemplate` docs.
+    has_feral_instinct: bool,
+    /// 5e Monk Diamond Soul (level 14). See `CreatureTemplate` docs.
+    has_diamond_soul: bool,
     /// 5e Half-Orc Savage Attacks. See `CreatureTemplate` docs.
     has_savage_attacks: bool,
     /// 5e Dwarven Resilience. See `CreatureTemplate` docs.
@@ -1021,6 +1107,9 @@ impl ActorInstance {
             has_aura_of_protection: ct.has_aura_of_protection,
             has_aura_of_courage: ct.has_aura_of_courage,
             has_aura_of_devotion: ct.has_aura_of_devotion,
+            has_elusive: ct.has_elusive,
+            has_feral_instinct: ct.has_feral_instinct,
+            has_diamond_soul: ct.has_diamond_soul,
             has_savage_attacks: ct.has_savage_attacks,
             has_dwarven_resilience: ct.has_dwarven_resilience,
             has_gnome_cunning: ct.has_gnome_cunning,
@@ -1217,6 +1306,27 @@ impl ActorInstance {
     /// path can suppress installs on allies inside the bubble.
     pub fn has_aura_of_devotion(&self) -> bool {
         self.has_aura_of_devotion
+    }
+
+    /// 5e Rogue Elusive (level 18): no attack roll has advantage against
+    /// the holder while they aren't Incapacitated. Read by the
+    /// post-processing clause in `EncounterInstance::compute_attack_mode`.
+    pub fn has_elusive(&self) -> bool {
+        self.has_elusive
+    }
+
+    /// 5e Barbarian Feral Instinct (level 7): advantage on initiative
+    /// rolls. Read by `roll_initiative` — the d20 is rolled twice and
+    /// the higher result is kept.
+    pub fn has_feral_instinct(&self) -> bool {
+        self.has_feral_instinct
+    }
+
+    /// 5e Monk Diamond Soul (level 14): proficiency in every saving
+    /// throw. Read by `is_save_proficient` to short-circuit the explicit
+    /// `proficient_saves` lookup.
+    pub fn has_diamond_soul(&self) -> bool {
+        self.has_diamond_soul
     }
 
     /// 5e Half-Orc Savage Attacks — adds one extra weapon damage die on a
@@ -1797,6 +1907,13 @@ impl ActorInstance {
     }
 
     pub fn is_save_proficient(&self, ability: AbilityScoreType) -> bool {
+        // 5e Monk Diamond Soul (level 14): proficient in every saving
+        // throw. Short-circuits the explicit `proficient_saves` set so
+        // the monk's late-game envelope doesn't have to enumerate all
+        // six abilities in the template.
+        if self.has_diamond_soul {
+            return true;
+        }
         self.proficient_saves.contains(&ability)
     }
 
@@ -1891,47 +2008,27 @@ impl ActorInstance {
     /// effect that drops can drop its rider immunity along with it. Read
     /// by `add_condition` as part of the install gate.
     pub fn dynamic_immunity_to(&self, c: Condition) -> bool {
+        // Condition-driven cohort: any held source condition on the
+        // `CONDITION_DRIVEN_IMMUNITIES` table whose suppression set
+        // covers `c` grants immunity. Adding a new broad-immunity buff
+        // (a future Sanctuary-tier ward, etc.) lands as one row in the
+        // table without touching this method.
+        if CONDITION_DRIVEN_IMMUNITIES.iter().any(|(source, suppressed)| {
+            suppressed.contains(&c) && self.has_condition(*source)
+        }) {
+            return true;
+        }
+        // Race / passive-feature cohort: flag-based, not condition-based.
+        // Halfling Brave → Frightened; Fey Ancestry → Charmed + Asleep
+        // (RAW "magic can't put you to sleep"); Monk Purity of Body
+        // → Poisoned (poison-damage half lives in `effective_damage`
+        // next to the other passive-feature typed-immunity gates).
         match c {
-            Condition::Frightened => {
-                self.has_condition(Condition::Heroic)
-                    || self.has_condition(Condition::Purified)
-                    || self.has_condition(Condition::OtherworldlyGuised)
-                    || self.has_brave
-            }
-            Condition::Charmed => {
-                self.has_condition(Condition::MindBlanked)
-                    || self.has_condition(Condition::Purified)
-                    || self.has_condition(Condition::OtherworldlyGuised)
-                    || self.has_fey_ancestry
-            }
-            Condition::Asleep => self.has_fey_ancestry,
-            Condition::Poisoned => {
-                self.has_condition(Condition::Purified)
-                    || self.has_condition(Condition::OtherworldlyGuised)
-                    // 5e Petrified RAW: "The creature is immune to
-                    // poison and disease..." The damage-type half lives
-                    // on `TYPED_IMMUNITY_CONDITIONS`; the condition
-                    // half lives here so an attempt to install a
-                    // fresh `Poisoned` condition on a stone creature
-                    // no-ops at the `add_condition` chokepoint.
-                    || self.has_condition(Condition::Petrified)
-                    // 5e Monk Purity of Body (level 10). Passive: immune
-                    // to disease and poison. The Poisoned-condition half
-                    // lives here alongside Purified / Petrified; the
-                    // poison-damage half lives in `effective_damage`
-                    // next to the other passive-feature typed-immunity
-                    // gates.
-                    || self.has_passive_feature(
-                        crate::actions::class_features::PURITY_OF_BODY_TAG,
-                    )
-            }
-            // 5e Freedom of Movement: holders are immune to magical
-            // movement restraint. Mirrors the Ring of Free Action item
-            // immunity (which goes through `item_immunity_to` instead),
-            // but condition-driven so concentration / dispel can rip it.
-            Condition::Paralyzed | Condition::Restrained | Condition::Grappled => {
-                self.has_condition(Condition::Footloose)
-            }
+            Condition::Frightened => self.has_brave,
+            Condition::Charmed | Condition::Asleep => self.has_fey_ancestry,
+            Condition::Poisoned => self.has_passive_feature(
+                crate::actions::class_features::PURITY_OF_BODY_TAG,
+            ),
             _ => false,
         }
     }
@@ -2626,7 +2723,17 @@ impl ActorInstance {
     }
 
     pub fn roll_initiative(&mut self, roller: &mut impl Roller) {
-        let rolled = roller.roll(&Dice::new(1, 20)) as i32;
+        // 5e Barbarian Feral Instinct (level 7): advantage on initiative
+        // rolls. Roll the d20 twice and keep the higher — the classic
+        // "barbarian goes first" tell that lets the raging bruiser open
+        // the round before the enemy caster's fireball lands.
+        let rolled = if self.has_feral_instinct {
+            let a = roller.roll_d20() as i32;
+            let b = roller.roll_d20() as i32;
+            a.max(b)
+        } else {
+            roller.roll_d20() as i32
+        };
         self.initiative = Some(rolled + self.initiative_mod());
     }
 

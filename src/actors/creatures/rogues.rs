@@ -58,6 +58,18 @@ pub static ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ]),
         has_evasion: true,
         has_uncanny_dodge: true,
+        // 5e Rogue Elusive (level 18 capstone): no attack roll has
+        // advantage against the rogue while they aren't Incapacitated.
+        // Ships on the CR-1 rogue template above its strict RAW level
+        // gate for the same reason Improved Divine Smite ships on the
+        // CR-1.5 paladin and Purity of Body ships on the CR-1.5 monk —
+        // class templates target a balanced playable level, not
+        // lockstep PHB progression. Composes cleanly with Evasion
+        // (already on) and Uncanny Dodge (already on): the elusive
+        // rogue drops Advantage on incoming hits, halves whichever hits
+        // land (Uncanny Dodge, once per round), and takes no damage on
+        // successful DEX saves (Evasion).
+        has_elusive: true,
         ..CreatureTemplate::defaults()
     }
 });

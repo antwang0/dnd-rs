@@ -1258,6 +1258,27 @@ impl EncounterInstance {
                 ActorInstance::sworn_by,
                 RollMode::Advantage,
             );
+            // 5e Rogue **Elusive** (level 18 capstone): no attack roll
+            // has advantage against the holder while they aren't
+            // Incapacitated. Applied AFTER every attacker- and
+            // target-side source has combined so a Hidden / Vow of
+            // Enmity / Pack Tactics attacker still gets Normal instead
+            // of Advantage, but a Restrained / Prone / Poisoned
+            // attacker's Disadvantage passes through untouched. The
+            // "not Incapacitated" cohort matches RAW: Stunned /
+            // Paralyzed / Unconscious inherit Incapacitated, so a
+            // stun-locked rogue loses the perk (the swings go back to
+            // Advantage via the target-side condition sweep above,
+            // and Elusive stops suppressing).
+            if target.has_elusive()
+                && !target.has_condition(Condition::Incapacitated)
+                && !target.has_condition(Condition::Stunned)
+                && !target.has_condition(Condition::Paralyzed)
+                && !target.has_condition(Condition::Unconscious)
+                && matches!(mode, RollMode::Advantage)
+            {
+                mode = RollMode::Normal;
+            }
         }
         mode
     }
@@ -1279,28 +1300,43 @@ impl EncounterInstance {
         if actor.has_condition(Condition::Poisoned) {
             mode = mode.combine(RollMode::Disadvantage);
         }
-        // Restrained / Sphered envelope: disadvantage on DEX saves.
-        // Both conditions share the "physically pinned" flavor — RAW
-        // Restrained explicitly states the clause; Sphered (Resilient
-        // Sphere) is also an immobilization envelope by extension.
-        if matches!(ability, AbilityScoreType::Dexterity)
-            && (actor.has_condition(Condition::Restrained)
-                || actor.has_condition(Condition::Sphered))
-        {
-            mode = mode.combine(RollMode::Disadvantage);
-        }
-        // Dodge → advantage on DEX saves (5e).
-        if matches!(ability, AbilityScoreType::Dexterity) && actor.is_dodging() {
-            mode = mode.combine(RollMode::Advantage);
-        }
-        // Haste → advantage on DEX saves; Slow → disadvantage on DEX
-        // saves. Both clauses are DEX-specific per the 5e PHB.
+        // DEX-save cluster — every clause here gates on
+        // `AbilityScoreType::Dexterity` in RAW so we branch once and
+        // fold the individual condition / flag checks inside. Pre-cluster
+        // this shape open-coded the `matches!(ability, Dexterity)` gate
+        // four times over.
         if matches!(ability, AbilityScoreType::Dexterity) {
+            // Restrained / Sphered envelope: disadvantage on DEX saves.
+            // Both conditions share the "physically pinned" flavor — RAW
+            // Restrained explicitly states the clause; Sphered (Resilient
+            // Sphere) is also an immobilization envelope by extension.
+            if actor.has_condition(Condition::Restrained)
+                || actor.has_condition(Condition::Sphered)
+            {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+            // Dodge → advantage on DEX saves (5e).
+            if actor.is_dodging() {
+                mode = mode.combine(RollMode::Advantage);
+            }
+            // Haste → advantage on DEX saves; Slow → disadvantage on
+            // DEX saves. Both clauses are DEX-specific per the 5e PHB.
             if actor.has_condition(Condition::Hasted) {
                 mode = mode.combine(RollMode::Advantage);
             }
             if actor.has_condition(Condition::Slowed) {
                 mode = mode.combine(RollMode::Disadvantage);
+            }
+            // 5e Barbarian Danger Sense (level 2): advantage on DEX
+            // saves against effects you can see, while not blinded,
+            // deafened, or incapacitated.
+            if actor.has_danger_sense()
+                && !actor.has_condition(Condition::Blinded)
+                && !actor.has_condition(Condition::Deafened)
+                && !actor.has_condition(Condition::Incapacitated)
+                && !actor.has_condition(Condition::Stunned)
+            {
+                mode = mode.combine(RollMode::Advantage);
             }
         }
         // Frightened → disadvantage on ability checks while you can see
@@ -1330,18 +1366,6 @@ impl EncounterInstance {
         // 30ft burst; Foresight is single-target. Either flag suffices.
         if actor.has_condition(Condition::HolyAuraed)
             || actor.has_condition(Condition::Foreseen)
-        {
-            mode = mode.combine(RollMode::Advantage);
-        }
-        // 5e Barbarian Danger Sense (level 2): advantage on DEX saves
-        // against effects you can see, while not blinded, deafened, or
-        // incapacitated.
-        if matches!(ability, AbilityScoreType::Dexterity)
-            && actor.has_danger_sense()
-            && !actor.has_condition(Condition::Blinded)
-            && !actor.has_condition(Condition::Deafened)
-            && !actor.has_condition(Condition::Incapacitated)
-            && !actor.has_condition(Condition::Stunned)
         {
             mode = mode.combine(RollMode::Advantage);
         }
@@ -44889,5 +44913,198 @@ mod tests {
         }
         .apply(&mut e);
         assert!(e.actors[&ally].has_condition(Condition::Charmed));
+    }
+
+    /// 5e Rogue Elusive (lv18): no attack roll has advantage against
+    /// the rogue while they aren't Incapacitated. A Hidden attacker
+    /// (self-attack-advantage source) targeting the rogue should
+    /// resolve at Normal instead of Advantage.
+    #[test]
+    fn elusive_denies_advantage_to_hidden_attacker() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let attacker = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        assert!(e.actors[&rogue].has_elusive());
+        // Baseline (no advantage source): rogue's Elusive is a no-op.
+        assert_eq!(
+            e.compute_attack_mode(attacker, rogue, true),
+            RollMode::Normal
+        );
+        // Install a Hidden condition on the attacker — grants self
+        // attack advantage on the next swing.
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Hidden, ConditionTimer::Rounds(3));
+        // Elusive downgrades Advantage → Normal.
+        assert_eq!(
+            e.compute_attack_mode(attacker, rogue, true),
+            RollMode::Normal
+        );
+    }
+
+    /// 5e Rogue Elusive: Disadvantage still passes through — the
+    /// feature only cancels Advantage, not Disadvantage. A Blinded
+    /// attacker still eats disadvantage against the elusive rogue.
+    #[test]
+    fn elusive_preserves_disadvantage() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let attacker = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Rounds(3));
+        // Blinded attacker: Disadvantage on the swing; Elusive doesn't
+        // interfere.
+        assert_eq!(
+            e.compute_attack_mode(attacker, rogue, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    /// 5e Rogue Elusive: gated on "not Incapacitated." A Stunned rogue
+    /// (inherits Incapacitated) loses the perk — a Hidden attacker
+    /// against them goes back to Advantage.
+    #[test]
+    fn elusive_suppressed_while_stunned() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let attacker = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&rogue)
+            .unwrap()
+            .add_condition(Condition::Stunned, ConditionTimer::Rounds(3));
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Hidden, ConditionTimer::Rounds(3));
+        // Stunned rogue: Elusive suppressed; Hidden attacker AND Stunned
+        // grants-advantage-to-attackers stack to Advantage.
+        assert_eq!(
+            e.compute_attack_mode(attacker, rogue, true),
+            RollMode::Advantage
+        );
+    }
+
+    /// 5e Barbarian Feral Instinct (lv7): advantage on initiative rolls.
+    /// The barbarian rolls the d20 twice and keeps the higher — statistical
+    /// bias shows up after enough samples.
+    #[test]
+    fn feral_instinct_boosts_initiative() {
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut roller = FastRandRoller::with_seed(12345);
+        let mut barb_total = 0i64;
+        let mut goblin_total = 0i64;
+        let samples = 400;
+        for _ in 0..samples {
+            let mut barb = ActorInstance::from_creature_template(
+                &BARBARIAN_TEMPLATE,
+                Coordinate::new(0, 0),
+                0,
+                &mut roller,
+                0,
+            )
+            .unwrap();
+            let mut gob = ActorInstance::from_creature_template(
+                &GOBLIN_TEMPLATE,
+                Coordinate::new(0, 0),
+                0,
+                &mut roller,
+                0,
+            )
+            .unwrap();
+            barb.roll_initiative(&mut roller);
+            gob.roll_initiative(&mut roller);
+            barb_total +=
+                (barb.initiative().unwrap() - barb.initiative_mod()) as i64;
+            goblin_total +=
+                (gob.initiative().unwrap() - gob.initiative_mod()) as i64;
+        }
+        let barb_avg = barb_total as f64 / samples as f64;
+        let gob_avg = goblin_total as f64 / samples as f64;
+        // Advantage 2d20-kh1 mean ≈ 13.83; flat d20 mean ≈ 10.5. Give
+        // some sampling slack: barb should beat goblin by at least 1.5.
+        assert!(
+            barb_avg > gob_avg + 1.5,
+            "barb advantage init (avg {:.2}) should beat goblin flat (avg {:.2})",
+            barb_avg,
+            gob_avg
+        );
+    }
+
+    /// 5e Monk Diamond Soul (lv14): proficient in every saving throw.
+    /// A Purity-of-Body monk template already carries STR and DEX
+    /// prof; Diamond Soul should extend that to every ability.
+    #[test]
+    fn diamond_soul_grants_all_save_proficiency() {
+        use crate::actors::creatures::monks::MONK_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+        let monk = ActorInstance::from_creature_template(
+            &MONK_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(1),
+            0,
+        )
+        .unwrap();
+        assert!(monk.has_diamond_soul(), "monk should have diamond soul");
+        for ability in [
+            AbilityScoreType::Strength,
+            AbilityScoreType::Dexterity,
+            AbilityScoreType::Constitution,
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ] {
+            assert!(
+                monk.is_save_proficient(ability),
+                "Diamond Soul: monk should be proficient in {:?} saves",
+                ability
+            );
+        }
+    }
+
+    /// Without Diamond Soul, a non-monk chassis (goblin) is only save
+    /// proficient in the explicit `proficient_saves` set.
+    #[test]
+    fn diamond_soul_only_fires_for_monks() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::types::AbilityScoreType;
+        let goblin = ActorInstance::from_creature_template(
+            &GOBLIN_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(1),
+            0,
+        )
+        .unwrap();
+        assert!(!goblin.has_diamond_soul());
+        // Goblins have no baseline save proficiency — every ability
+        // should return false.
+        assert!(!goblin.is_save_proficient(AbilityScoreType::Wisdom));
+        assert!(!goblin.is_save_proficient(AbilityScoreType::Charisma));
     }
 }

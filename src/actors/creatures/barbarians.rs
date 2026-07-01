@@ -57,6 +57,13 @@ fn totem_barbarian_template(
         has_danger_sense: true,
         has_extra_attack: true,
         brutal_critical_dice: 1,
+        // 5e Barbarian Feral Instinct (level 7 passive): advantage on
+        // initiative rolls. Level-9 template picks this up per RAW.
+        // Read by `ActorInstance::roll_initiative` — the d20 is rolled
+        // twice and the higher is kept. Every totem subclass inherits
+        // through the shared helper so a Bear / Wolf / Eagle / Tiger
+        // totem barbarian all open the round competitively.
+        has_feral_instinct: true,
         ..CreatureTemplate::defaults()
     }
 }
@@ -135,6 +142,13 @@ pub static BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         has_extra_attack: true,
         // Level 9 Brutal Critical: +1 weapon die on melee crits.
         brutal_critical_dice: 1,
+        // 5e Barbarian Feral Instinct (level 7 passive): advantage on
+        // initiative rolls. Level-9 template picks this up per RAW.
+        // Read by `ActorInstance::roll_initiative` — the d20 is rolled
+        // twice and the higher is kept. Composes with Danger Sense's
+        // DEX-save advantage on the first round so the barbarian
+        // survives the enemy caster's opener even if they win init.
+        has_feral_instinct: true,
         ..CreatureTemplate::defaults()
     }
 });
