@@ -79,7 +79,16 @@ pub fn resolve_attack_outcome(
     // effective AC (+2 for half cover, +5 for three-quarters). Adjacent
     // melee swings are exempt (the cover routine returns 0 at gap ≤ 1).
     let cover_bonus = encounter.cover_ac_bonus(p.caster_id, p.target_id);
-    let target_ac = target_ac + cover_bonus;
+    // 5e Hunter Ranger Multiattack Defense (Defensive Tactics option,
+    // lv7): if the target holds `MULTIATTACK_DEFENSE_TAG` AND this
+    // attacker has already landed a connecting swing on the target
+    // this turn, add +4 to the target's effective AC. The +4 lasts
+    // for "the rest of the turn" per RAW — anchored to the attacker's
+    // own turn-start reset in `reset_for_new_round`. Shared read
+    // between weapon and spell attacks via the encounter helper.
+    let multiattack_defense_bonus =
+        encounter.multiattack_defense_ac_bonus(p.caster_id, p.target_id);
+    let target_ac = target_ac + cover_bonus + multiattack_defense_bonus;
 
     // 5e Sanctuary: if the target is sanctified, the attacker first makes
     // a WIS save vs the warding caster's DC. On fail, the attack silently
@@ -220,6 +229,20 @@ pub fn resolve_attack_outcome(
     // swings (RAW: "any attack roll against you").
     if encounter.mirror_image_deflect(p.target_id, is_crit) {
         return (Vec::new(), 0);
+    }
+    // 5e Hunter Ranger Multiattack Defense (Defensive Tactics, lv7):
+    // record that this attacker has now landed a connecting swing on
+    // the target's own body — RAW's trigger is "when a creature hits
+    // you" so a Mirror Image redirect (which lands on a decoy, not
+    // the target) doesn't count and the mark is written after the
+    // deflect check. Uncanny Dodge and Deflect Missiles run below;
+    // both are reactive damage-reducers that don't cancel the hit
+    // itself, so the mark IS written even if damage lands as zero.
+    // Written even if the target doesn't currently hold the tag; the
+    // tag is read on the penalty side (cheap set-insert vs. the
+    // passive-feature lookup makes this the simpler ordering).
+    if let Some(attacker) = encounter.actors.get_mut(&p.caster_id) {
+        attacker.mark_hit_target_this_turn(p.target_id);
     }
     let raw_damage = encounter.roll(&p.damage_dice) as i32;
     let crit_extra = if is_crit {

@@ -113,7 +113,14 @@ fn spell_attack_outcome(
     // same as for weapon swings. Spell attacks (Fire Bolt, Guiding Bolt,
     // Scorching Ray, etc.) honor the rule identically.
     let cover_bonus = encounter.cover_ac_bonus(caster_id, target_id);
-    let target_ac = target_ac + cover_bonus;
+    // 5e Hunter Ranger Multiattack Defense (Defensive Tactics, lv7):
+    // spell attacks honor the same +4 AC envelope as weapon swings —
+    // RAW says "when a creature hits you with an attack" without a
+    // weapon-only qualifier. Shared with the weapon-attack path via
+    // `EncounterInstance::multiattack_defense_ac_bonus`.
+    let multiattack_defense_bonus =
+        encounter.multiattack_defense_ac_bonus(caster_id, target_id);
+    let target_ac = target_ac + cover_bonus + multiattack_defense_bonus;
     // 5e Sanctuary: gate spell attacks the same way weapon attacks are
     // gated — attacker rolls a WIS save vs the ward's DC. On fail, the
     // spell silently fizzles against the warded target.
@@ -223,6 +230,15 @@ fn spell_attack_outcome(
     // via the engine's `mirror_image_deflect` helper.
     if encounter.mirror_image_deflect(target_id, is_crit) {
         return (Vec::new(), 0);
+    }
+    // 5e Hunter Ranger Multiattack Defense (Defensive Tactics, lv7):
+    // record the connecting spell hit so subsequent spell / weapon
+    // attacks from this caster against the same target this turn eat
+    // the +4 AC penalty above. Written after Mirror Image so a decoy
+    // redirect doesn't count as a "hit on you" per RAW. Shared with
+    // the weapon-attack path in `engine::attack::resolve_attack_outcome`.
+    if let Some(attacker) = encounter.actors.get_mut(&caster_id) {
+        attacker.mark_hit_target_this_turn(target_id);
     }
     let dmg = encounter.roll(&damage_dice) as i32;
     let crit_extra = if is_crit { encounter.roll(&damage_dice) as i32 } else { 0 };

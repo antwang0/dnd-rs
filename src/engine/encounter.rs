@@ -453,6 +453,40 @@ const CONSUMED_ON_ATTACK: &[Condition] = &[
     Condition::TidesOfChaos,
 ];
 
+/// Conditions whose presence combines a blanket **disadvantage** into
+/// the actor's save-roll mode regardless of which ability the save
+/// rolls off of. Read by `compute_save_mode`. Adding a new "condition
+/// X gives disadvantage on every save" install (a future Sickened /
+/// Cursed-tier debuff) lands as a one-line entry here instead of
+/// another `if actor.has_condition(...) { mode = mode.combine(...) }`
+/// clause in the save-mode body.
+const BLANKET_SAVE_DISADVANTAGE_CONDITIONS: &[Condition] = &[
+    // 5e Poisoned: disadvantage on ability checks and saves.
+    Condition::Poisoned,
+    // 5e Frightened: disadvantage on ability checks while you can see
+    // the source. Tests treat this as blanket save disadvantage too.
+    Condition::Frightened,
+    // 5e Exhaustion tier 3: disadvantage on saving throws.
+    Condition::Exhausted,
+];
+
+/// Conditions whose presence combines a blanket **advantage** into
+/// the actor's save-roll mode. Sibling to
+/// `BLANKET_SAVE_DISADVANTAGE_CONDITIONS`. Any future save-buff aura
+/// (Guardian Angel, Sanctuary-tier ward) lands here as a one-line
+/// entry.
+const BLANKET_SAVE_ADVANTAGE_CONDITIONS: &[Condition] = &[
+    // 5e Bless (as an active concentration): advantage on saves. The
+    // Bless die's +1d4 lives at the roll site in `roll_save`; the
+    // advantage source lives here.
+    Condition::Blessed,
+    // 5e Holy Aura: advantage on every save inside the 30ft bubble.
+    Condition::HolyAuraed,
+    // 5e Foresight: advantage on every save (single-target, 8-hour
+    // buff RAW; we model as the concentration-installed condition).
+    Condition::Foreseen,
+];
+
 pub enum StackElementEntry {
     SideEffect(Box<dyn ApplicableSideEffect>),
     Action(Box<ActionExecutionInfo>),
@@ -1297,8 +1331,20 @@ impl EncounterInstance {
         let Some(actor) = self.actors.get(&actor_id) else {
             return mode;
         };
-        if actor.has_condition(Condition::Poisoned) {
-            mode = mode.combine(RollMode::Disadvantage);
+        // Blanket save-mode cohorts — conditions that flip the mode
+        // regardless of which ability the save rolls off of. Each list
+        // is a one-line entry point for new conditions; the arm-by-arm
+        // shape used to inline the individual condition checks four
+        // times over.
+        for c in BLANKET_SAVE_DISADVANTAGE_CONDITIONS {
+            if actor.has_condition(*c) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+        }
+        for c in BLANKET_SAVE_ADVANTAGE_CONDITIONS {
+            if actor.has_condition(*c) {
+                mode = mode.combine(RollMode::Advantage);
+            }
         }
         // DEX-save cluster — every clause here gates on
         // `AbilityScoreType::Dexterity` in RAW so we branch once and
@@ -1339,33 +1385,10 @@ impl EncounterInstance {
                 mode = mode.combine(RollMode::Advantage);
             }
         }
-        // Frightened → disadvantage on ability checks while you can see
-        // the source of fear. Tests expect this to apply to saves too.
-        if actor.has_condition(Condition::Frightened) {
-            mode = mode.combine(RollMode::Disadvantage);
-        }
-        // 5e Exhaustion tier 3: disadvantage on all saving throws. We
-        // model the flat tier-3 envelope alongside the attack-side
-        // disadvantage from `compute_attack_mode`.
-        if actor.has_condition(Condition::Exhausted) {
-            mode = mode.combine(RollMode::Disadvantage);
-        }
-        // Bless: advantage on saving throws (matches the attack-side
-        // promotion above; tests gate on this).
-        if actor.has_condition(Condition::Blessed) {
-            mode = mode.combine(RollMode::Advantage);
-        }
         // 5e Barbarian Rage: advantage on STR checks / saves while raging.
+        // STR-specific so lives outside the blanket table above.
         if matches!(ability, AbilityScoreType::Strength)
             && actor.has_condition(Condition::Raging)
-        {
-            mode = mode.combine(RollMode::Advantage);
-        }
-        // 5e Holy Aura / Foresight: advantage on every save the holder
-        // rolls. Holy Aura is concentrated by the caster onto allies in a
-        // 30ft burst; Foresight is single-target. Either flag suffices.
-        if actor.has_condition(Condition::HolyAuraed)
-            || actor.has_condition(Condition::Foreseen)
         {
             mode = mode.combine(RollMode::Advantage);
         }
@@ -1582,6 +1605,48 @@ impl EncounterInstance {
         self.paladin_aura_emitters(actor_id, ActorInstance::has_aura_of_devotion)
             .next()
             .is_some()
+    }
+
+    /// 5e Hunter Ranger **Multiattack Defense** (Defensive Tactics
+    /// option, lv7) AC bonus for the target's effective AC. Returns 4
+    /// when the target holds `MULTIATTACK_DEFENSE_TAG` AND the
+    /// `attacker_id` has already landed a connecting hit on
+    /// `target_id` this turn; 0 otherwise. Read by both the weapon
+    /// (`resolve_attack_outcome`) and spell (`spell_attack_outcome`)
+    /// chokepoints so the +4 rider fires on any attack from a
+    /// repeat-attacker, RAW.
+    ///
+    /// The "already hit me this turn" state lives on the attacker's
+    /// `hit_targets_this_turn` set — cleared at the attacker's
+    /// turn-start by `reset_for_new_round`, mirroring the RAW "rest
+    /// of the turn" clause. Multiple attackers with hits into the
+    /// same target each independently trigger their own +4 penalty
+    /// (each attacker reads their own `hit_targets_this_turn`).
+    pub fn multiattack_defense_ac_bonus(
+        &self,
+        attacker_id: usize,
+        target_id: usize,
+    ) -> i32 {
+        let holds_tag = self
+            .actors
+            .get(&target_id)
+            .is_some_and(|t| {
+                t.has_passive_feature(
+                    crate::actions::class_features::MULTIATTACK_DEFENSE_TAG,
+                )
+            });
+        if !holds_tag {
+            return 0;
+        }
+        if self
+            .actors
+            .get(&attacker_id)
+            .is_some_and(|a| a.has_hit_target_this_turn(target_id))
+        {
+            4
+        } else {
+            0
+        }
     }
 
     /// Roll a saving throw for `actor_id` against `dc` using `ability`.
@@ -23547,6 +23612,175 @@ mod tests {
             !any_rider,
             "colossus slayer must not fire while the once-per-turn flag is set"
         );
+    }
+
+    /// Multiattack Defense (Hunter Ranger Defensive Tactics, lv7):
+    /// the +4 AC penalty only fires against an attacker who has
+    /// already landed a hit this turn. Verifies the three-part gate:
+    /// (a) tag on target, (b) hit-marked on attacker, (c) same
+    /// attacker-target pair.
+    #[test]
+    fn multiattack_defense_ac_bonus_matches_gate_shape() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rangers::{
+            HUNTER_RANGER_TEMPLATE, RANGER_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let hunter = e
+            .instantiate_creature(&HUNTER_RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline_ranger = e
+            .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+            .unwrap();
+        // No attacks yet — attacker hasn't hit anyone this turn.
+        assert_eq!(e.multiattack_defense_ac_bonus(g, hunter), 0);
+        // Mark that the goblin has hit the hunter this turn.
+        e.actors.get_mut(&g).unwrap().mark_hit_target_this_turn(hunter);
+        // Hunter has the tag AND the attacker has hit them → +4.
+        assert_eq!(e.multiattack_defense_ac_bonus(g, hunter), 4);
+        // Baseline ranger doesn't hold the tag — no bonus even if hit.
+        e.actors.get_mut(&g).unwrap().mark_hit_target_this_turn(baseline_ranger);
+        assert_eq!(e.multiattack_defense_ac_bonus(g, baseline_ranger), 0);
+        // Turn-start clears the ledger; +4 goes away.
+        e.actors.get_mut(&g).unwrap().reset_for_new_round();
+        assert_eq!(e.multiattack_defense_ac_bonus(g, hunter), 0);
+    }
+
+    /// Multiattack Defense: a different attacker doesn't share the
+    /// +4 penalty. Two goblins swinging at the same Hunter — only the
+    /// goblin who has already landed a hit eats the +4 on their next
+    /// swing; the fresh attacker's swing rolls against normal AC.
+    #[test]
+    fn multiattack_defense_bonus_is_per_attacker() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rangers::HUNTER_RANGER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let hunter = e
+            .instantiate_creature(&HUNTER_RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g1 = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+            .unwrap();
+        let g2 = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 3), 1, 0)
+            .unwrap();
+        e.actors.get_mut(&g1).unwrap().mark_hit_target_this_turn(hunter);
+        assert_eq!(e.multiattack_defense_ac_bonus(g1, hunter), 4);
+        // Second goblin hasn't hit the hunter — its swing rolls at normal AC.
+        assert_eq!(e.multiattack_defense_ac_bonus(g2, hunter), 0);
+    }
+
+    /// The hit-mark write actually fires from `resolve_attack_outcome`
+    /// on a connecting weapon swing. Seed-sweep until we see a
+    /// connecting shot, then assert the attacker's ledger now includes
+    /// the target — the mechanism the +4 AC read above depends on.
+    #[test]
+    fn attack_hit_marks_target_in_attacker_ledger() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::LONGBOW;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rangers::HUNTER_RANGER_TEMPLATE;
+        let mut saw_hit = false;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let r = e
+                .instantiate_creature(&HUNTER_RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            assert!(!e.actors[&r].has_hit_target_this_turn(g));
+            let tv = vec![g];
+            let _ = LONGBOW.side_effects(&mut e, r, Some(&tv), None, None);
+            if e.actors[&r].has_hit_target_this_turn(g) {
+                saw_hit = true;
+                break;
+            }
+        }
+        assert!(saw_hit, "expected the ranger to mark the goblin as hit at least once across the seed sweep");
+    }
+
+    /// A Mirror Image redirect must NOT mark the target as hit — RAW
+    /// says Multiattack Defense triggers "when a creature hits you",
+    /// and the decoy takes the swing, not the target's own body.
+    /// Verifies the ordering fix in `resolve_attack_outcome` /
+    /// `spell_attack_outcome`: hit-mark writes AFTER the deflect
+    /// check, not before.
+    #[test]
+    fn mirror_image_redirect_does_not_mark_hit_for_multiattack_defense() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::LONGBOW;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        // Seed-sweep for a "beat AC then get redirected" outcome; the
+        // wizard sits with 3 mirror images so the deflect roll is very
+        // likely to hit a decoy on any given seed.
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let wiz = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            e.actors.get_mut(&wiz).unwrap().set_mirror_images(3);
+            e.actors.get_mut(&wiz).unwrap().add_condition(
+                Condition::MirroredImages,
+                crate::conditions::ConditionTimer::Permanent,
+            );
+            let log_before = e.messages().len();
+            let tv = vec![wiz];
+            let _ = LONGBOW.side_effects(&mut e, g, Some(&tv), None, None);
+            // Look for a "strikes a duplicate" log line — that means
+            // Mirror Image intercepted. On such a swing the goblin
+            // must NOT have marked the wizard as hit.
+            let redirect = e.messages()[log_before..]
+                .iter()
+                .any(|s| s.contains("strikes a duplicate"));
+            if redirect {
+                assert!(
+                    !e.actors[&g].has_hit_target_this_turn(wiz),
+                    "Mirror Image redirect should NOT mark the target as hit \
+                     (seed={})",
+                    seed
+                );
+                return;
+            }
+        }
+        // If we never observed a redirect across 40 seeds the test is
+        // inconclusive; fail so we know the setup isn't exercising the
+        // path we care about.
+        panic!("expected at least one Mirror Image redirect across the seed sweep");
+    }
+
+    /// Superior Hunter's Defense (Evasion option, lv15) — the
+    /// HUNTER_RANGER_TEMPLATE ships above the strict RAW gate with
+    /// `has_evasion: true`, mirroring how the CR-1.5 monk template
+    /// ships Diamond Soul / Purity of Body / Empty Body above their
+    /// gates.
+    #[test]
+    fn hunter_ranger_ships_with_evasion() {
+        use crate::actors::creatures::rangers::{
+            HUNTER_RANGER_TEMPLATE, RANGER_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let hunter = e
+            .instantiate_creature(&HUNTER_RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        assert!(e.actors[&hunter].has_evasion(), "Hunter Ranger should ship with Evasion");
+        assert!(!e.actors[&baseline].has_evasion(), "baseline Ranger should NOT have Evasion");
     }
 
     /// Relentless Rage (Barbarian lv11): a killing blow against a

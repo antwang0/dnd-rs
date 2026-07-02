@@ -920,6 +920,21 @@ pub struct ActorInstance {
     /// if a Hunter ranger has spent their once-per-turn Colossus Slayer
     /// rider this turn. Cleared at turn-start by `reset_for_new_round`.
     colossus_slayer_used: bool,
+    /// 5e Hunter Ranger **Multiattack Defense** (Defensive Tactics
+    /// option, lv7) ledger. Every target this actor lands a connecting
+    /// attack on this turn is inserted here, keyed by target id; a
+    /// target with `MULTIATTACK_DEFENSE_TAG` reads this set to know
+    /// which of its attackers have already hit it (and thus eat the +4
+    /// AC penalty for the rest of the attacker's turn). Cleared at
+    /// turn-start by `reset_for_new_round`, so the +4 envelope resets
+    /// cleanly at the top of each attacker's next turn.
+    ///
+    /// Kept on the attacker side (rather than a per-target
+    /// "attackers-that-hit-me" set) because RAW's "rest of the turn"
+    /// clause is anchored to the attacker's turn — turn-start reset on
+    /// the attacker is the natural chokepoint, whereas a target-side
+    /// set would need per-attacker turn-tracking to know when to clear.
+    hit_targets_this_turn: HashSet<usize>,
     /// 5e Rogue Assassin **Assassinate** (level 3) tracker. Flipped to
     /// `true` the first time this actor begins a turn in the encounter
     /// — set by the engine's `start_turn_for` hook. Read at
@@ -1162,6 +1177,7 @@ impl ActorInstance {
             damage_bonus_buff: 0,
             sneak_attack_used: false,
             colossus_slayer_used: false,
+            hit_targets_this_turn: HashSet::new(),
             has_taken_turn_in_combat: false,
             relentless_rage_dc: 10,
             help_grants: HashMap::new(),
@@ -1793,8 +1809,13 @@ impl ActorInstance {
         let heal = (roll + con_mod * dice_count as i32).max(0) as u32;
         self.heal(heal);
 
-        for tag in SHORT_REST_FEATURES.iter().chain(BATTLE_MASTER_MANEUVERS.iter()) {
-            if self.features_max.contains(tag) {
+        for &tag in SHORT_REST_FEATURES.iter().chain(BATTLE_MASTER_MANEUVERS.iter()) {
+            // Read through the `has_passive_feature` accessor rather than
+            // the private `features_max` set directly — same lane the
+            // Sorcerous Restoration / Tiger Totem / Fast Movement sites
+            // already went through in a prior nudge. Keeps the passive-
+            // feature read shape uniform across the class-feature lane.
+            if self.has_passive_feature(tag) {
                 self.features_remaining.insert(tag);
             }
         }
@@ -2875,6 +2896,12 @@ impl ActorInstance {
         // don't clear them here.
         self.sneak_attack_used = false;
         self.colossus_slayer_used = false;
+        // 5e Hunter Ranger Multiattack Defense (Defensive Tactics, lv7):
+        // per-turn ledger of targets this actor has landed a connecting
+        // hit on. Cleared at turn-start so the +4 AC penalty against
+        // repeat-attackers only spans the attacker's own turn — the
+        // "rest of the turn" clause in RAW.
+        self.hit_targets_this_turn.clear();
         // 5e Fighter Champion — Survivor (level 18): passive at-start-of-
         // turn regen. While combat-active AND at or below half max HP,
         // the holder regains `5 + CON modifier` HP (floor 1, so a -2 CON
@@ -3292,6 +3319,25 @@ impl ActorInstance {
 
     pub fn mark_colossus_slayer_used(&mut self) {
         self.colossus_slayer_used = true;
+    }
+
+    /// 5e Hunter Ranger **Multiattack Defense** (Defensive Tactics
+    /// option, lv7): has this actor already landed a connecting attack
+    /// on `target_id` this turn? Read by the attack chokepoints so a
+    /// Multiattack-Defense target adds +4 to their AC against the
+    /// same attacker's subsequent swings this turn. Cleared at
+    /// turn-start by `reset_for_new_round`.
+    pub fn has_hit_target_this_turn(&self, target_id: usize) -> bool {
+        self.hit_targets_this_turn.contains(&target_id)
+    }
+
+    /// Mark `target_id` as having been hit by this actor this turn.
+    /// Called by the attack-resolution chokepoints after a successful
+    /// AC-beating swing; the Multiattack Defense +4 AC read below fires
+    /// on the *next* connecting attempt against the same target from
+    /// this attacker.
+    pub fn mark_hit_target_this_turn(&mut self, target_id: usize) {
+        self.hit_targets_this_turn.insert(target_id);
     }
 
     /// Has this actor begun a turn since combat started? Latched once-only

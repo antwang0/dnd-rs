@@ -1,4 +1,4 @@
-use crate::actions::class_features::COLOSSUS_SLAYER_TAG;
+use crate::actions::class_features::{COLOSSUS_SLAYER_TAG, MULTIATTACK_DEFENSE_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGBOW, SCIMITAR};
 use crate::actions::spells::{
@@ -140,7 +140,34 @@ pub static HUNTER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
     CreatureTemplate {
         name: "Hunter Ranger",
         glyph: 'H',
-        features: HashSet::from([COLOSSUS_SLAYER_TAG]),
+        // Hunter subclass features layered onto the baseline ranger
+        // envelope:
+        //   - `COLOSSUS_SLAYER_TAG`: Hunter's Prey (lv3, "Colossus
+        //     Slayer" option). Once-per-turn +1d8 weapon-typed rider
+        //     on any hit against a wounded target. Fires in
+        //     `resolve_attack_outcome`.
+        //   - `MULTIATTACK_DEFENSE_TAG`: Defensive Tactics (lv7,
+        //     "Multiattack Defense" option). Passive +4 AC vs any
+        //     attacker who has already landed a hit this turn — the
+        //     "shrug off the second swing" envelope that pairs
+        //     naturally with the ranger's kite pattern (drop the first
+        //     hit, walk out of range before the follow-up connects).
+        //     Ships on the CR-1 Hunter Ranger template above its
+        //     strict RAW level gate for the same reason Colossus
+        //     Slayer does — class templates target a balanced playable
+        //     level, not lockstep PHB progression.
+        features: HashSet::from([COLOSSUS_SLAYER_TAG, MULTIATTACK_DEFENSE_TAG]),
+        // 5e Hunter Ranger Superior Hunter's Defense (lv15, "Evasion"
+        // option): on DEX saves for half damage, take 0 on a pass and
+        // half on a fail instead of half / full. Ships on the CR-1
+        // template above its strict RAW level gate alongside Colossus
+        // Slayer and Multiattack Defense for the same reason — class
+        // templates target a balanced playable level. Composes cleanly
+        // with the ranger's DEX-primary stat spread: the DEX save is
+        // already the ranger's strong lane, and Evasion turns a
+        // passed save into 0 damage on Fireball / Lightning Bolt /
+        // Cone of Cold.
+        has_evasion: true,
         ..RANGER_TEMPLATE.clone()
     }
 });

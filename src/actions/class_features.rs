@@ -1299,6 +1299,29 @@ pub const RELENTLESS_RAGE_TAG: &str = "barbarian.relentless_rage";
 /// creature with a weapon attack") — no melee-only gate.
 pub const COLOSSUS_SLAYER_TAG: &str = "ranger.colossus_slayer";
 
+/// 5e **Multiattack Defense** — Hunter Ranger subclass feature (level
+/// 7 Defensive Tactics, "Multiattack Defense" option). Passive: when a
+/// creature hits the holder with an attack, the holder gains a +4
+/// bonus to AC against all subsequent attacks made by that same
+/// creature for the rest of the turn.
+///
+/// Stored as a `has_passive_feature` flag (no per-rest charge — it's
+/// always-on but rate-limited by "already hit me this turn" state on
+/// the attacker). Read at both attack chokepoints
+/// (`resolve_attack_outcome` for weapon swings and `spell_attack_outcome`
+/// for spell attacks) right after the initial AC read: if the
+/// attacker's `has_hit_target_this_turn(target_id)` returns true AND
+/// the target holds this tag, +4 is added to the target's effective
+/// AC. The hit-mark is written on the first connecting swing so the
+/// second swing of a multi-attack sequence (Extra Attack, Action
+/// Surge, Scorching Ray beam 2 / 3) is the earliest one to eat the
+/// penalty — exactly RAW.
+///
+/// Composes cleanly with cover (+2 / +5 from intervening creatures)
+/// and the target's own template AC — all three lanes sum into a
+/// single effective AC read once per attack.
+pub const MULTIATTACK_DEFENSE_TAG: &str = "ranger.multiattack_defense";
+
 /// 5e Paladin **Improved Divine Smite** (level 11). Passive feature: every
 /// melee weapon hit lays +1d8 radiant damage on the target — the paladin's
 /// signature mid-tier damage spike, independent of the Divine Smite slot
