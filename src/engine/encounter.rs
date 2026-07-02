@@ -23614,6 +23614,170 @@ mod tests {
         );
     }
 
+    /// Foe Slayer (Ranger lv20 capstone): passive once-per-turn +WIS-
+    /// mod flat damage rider on weapon hits. Since the RANGER_TEMPLATE
+    /// ships with WIS 14 (+2 modifier), a connecting weapon swing
+    /// should surface a "foe slayer: +2 ..." log line and flip the
+    /// once-per-turn `foe_slayer_used` flag on the attacker.
+    #[test]
+    fn foe_slayer_fires_on_weapon_hit_and_marks_used() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::LONGBOW;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rangers::RANGER_TEMPLATE;
+        let mut saw_rider = false;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let r = e
+                .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            let log_before = e.messages().len();
+            let tv = vec![g];
+            let _ = LONGBOW.side_effects(&mut e, r, Some(&tv), None, None);
+            let log_lines: Vec<&String> = e.messages()[log_before..].iter().collect();
+            if log_lines.iter().any(|s| s.contains("foe slayer")) {
+                saw_rider = true;
+                assert!(
+                    e.actors[&r].foe_slayer_used(),
+                    "once-per-turn flag should flip after the rider fires"
+                );
+                break;
+            }
+        }
+        assert!(
+            saw_rider,
+            "expected a 'foe slayer' log line on at least one connecting swing"
+        );
+    }
+
+    /// Foe Slayer is once-per-turn. Once the `foe_slayer_used` flag is
+    /// set, subsequent swings on the same turn must not fire the
+    /// rider — sibling to the Colossus Slayer once-per-turn assertion.
+    #[test]
+    fn foe_slayer_fires_only_once_per_turn() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::LONGBOW;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rangers::RANGER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let r = e
+            .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+            .unwrap();
+        e.actors.get_mut(&r).unwrap().mark_foe_slayer_used();
+        let log_before = e.messages().len();
+        for _ in 0..50 {
+            let max = e.actors[&g].max_hitpoints();
+            e.actors.get_mut(&g).unwrap().heal(max);
+            let tv = vec![g];
+            let _ = LONGBOW.side_effects(&mut e, r, Some(&tv), None, None);
+        }
+        let any_rider = e.messages()[log_before..]
+            .iter()
+            .any(|s| s.contains("foe slayer"));
+        assert!(
+            !any_rider,
+            "foe slayer must not fire while the once-per-turn flag is set"
+        );
+    }
+
+    /// A Hunter Ranger holds BOTH Colossus Slayer and Foe Slayer via
+    /// the subclass-of clone. The once-per-turn ledgers are
+    /// independent — one landing swing can stack both riders on a
+    /// wounded target. Verifies the two features don't cross-lock.
+    #[test]
+    fn hunter_ranger_stacks_colossus_slayer_and_foe_slayer_on_wounded_target() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{
+            COLOSSUS_SLAYER_TAG, FOE_SLAYER_TAG,
+        };
+        use crate::actions::monster_attacks::LONGBOW;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rangers::HUNTER_RANGER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let r = e
+            .instantiate_creature(&HUNTER_RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&r].has_passive_feature(COLOSSUS_SLAYER_TAG),
+            "Hunter Ranger should ship with Colossus Slayer"
+        );
+        assert!(
+            e.actors[&r].has_passive_feature(FOE_SLAYER_TAG),
+            "Hunter Ranger should inherit Foe Slayer from the baseline template"
+        );
+        let mut both_fired = false;
+        for seed in 0..80 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let r = e
+                .instantiate_creature(&HUNTER_RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+                .unwrap();
+            // Wound the goblin so the Colossus Slayer gate is open.
+            e.actors
+                .get_mut(&g)
+                .unwrap()
+                .take_typed_damage(1, crate::engine::types::DamageType::Slashing);
+            let log_before = e.messages().len();
+            let tv = vec![g];
+            let _ = LONGBOW.side_effects(&mut e, r, Some(&tv), None, None);
+            let log_lines: Vec<&String> = e.messages()[log_before..].iter().collect();
+            let saw_colossus =
+                log_lines.iter().any(|s| s.contains("colossus slayer"));
+            let saw_foe = log_lines.iter().any(|s| s.contains("foe slayer"));
+            if saw_colossus && saw_foe {
+                both_fired = true;
+                break;
+            }
+        }
+        assert!(
+            both_fired,
+            "expected a single hit to fire both Colossus Slayer AND Foe Slayer riders"
+        );
+    }
+
+    /// The baseline RANGER_TEMPLATE and HUNTER_RANGER_TEMPLATE both
+    /// ship the Foe Slayer capstone above the strict RAW level gate
+    /// (per the pattern established by Colossus Slayer / Multiattack
+    /// Defense / Superior Hunter's Defense). Verifies the tag
+    /// composition on both templates so a future refactor of the
+    /// subclass-of clone shape can't silently drop the capstone.
+    #[test]
+    fn ranger_templates_ship_with_foe_slayer() {
+        use crate::actions::class_features::FOE_SLAYER_TAG;
+        use crate::actors::creatures::rangers::{
+            HUNTER_RANGER_TEMPLATE, RANGER_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let baseline = e
+            .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let hunter = e
+            .instantiate_creature(&HUNTER_RANGER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&baseline].has_passive_feature(FOE_SLAYER_TAG),
+            "baseline Ranger should ship with Foe Slayer"
+        );
+        assert!(
+            e.actors[&hunter].has_passive_feature(FOE_SLAYER_TAG),
+            "Hunter Ranger should inherit Foe Slayer from baseline via ..RANGER_TEMPLATE.clone()"
+        );
+    }
+
     /// Multiattack Defense (Hunter Ranger Defensive Tactics, lv7):
     /// the +4 AC penalty only fires against an attacker who has
     /// already landed a hit this turn. Verifies the three-part gate:
@@ -25633,6 +25797,133 @@ mod tests {
         assert!(
             !ARCANE_RECOVERY.custom_validate_input(&e, w, None, None, None),
             "should refuse when no slot is spent",
+        );
+    }
+
+    /// Natural Recovery — Druid Circle of the Land lv2 feature.
+    /// Mirrors Arcane Recovery on the LAND_DRUID_TEMPLATE: spending
+    /// the feature restores a spent low-tier slot and consumes the
+    /// once-per-rest charge.
+    #[test]
+    fn natural_recovery_restores_low_tier_slot() {
+        use crate::actions::class_features::{NATURAL_RECOVERY, NATURAL_RECOVERY_TAG};
+        use crate::actors::creatures::druids::LAND_DRUID_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let d = e
+            .instantiate_creature(&LAND_DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Burn one level-1 slot so there's something to recover.
+        e.actors
+            .get_mut(&d)
+            .unwrap()
+            .spell_slot_manager
+            .consume_spell_slot(1);
+        let before = e.actors[&d].spell_slot_manager.spell_slots(1).spell_slots;
+        assert!(e.actors[&d].feature_available(NATURAL_RECOVERY_TAG));
+        let effects = NATURAL_RECOVERY.side_effects(&mut e, d, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&d].spell_slot_manager.spell_slots(1).spell_slots > before,
+            "natural recovery should restore the spent lv1 slot"
+        );
+        assert!(
+            !e.actors[&d].feature_available(NATURAL_RECOVERY_TAG),
+            "the feature should be spent after use"
+        );
+    }
+
+    /// Natural Recovery's `custom_validate_input` refuses to fire
+    /// when every slot is already full — no slot to recover, so the
+    /// gate short-circuits before burning the once-per-rest charge.
+    /// Mirrors the Arcane Recovery guard.
+    #[test]
+    fn natural_recovery_refuses_when_slots_full() {
+        use crate::actions::class_features::{NATURAL_RECOVERY, NATURAL_RECOVERY_TAG};
+        use crate::actors::creatures::druids::LAND_DRUID_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let d = e
+            .instantiate_creature(&LAND_DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&d].feature_available(NATURAL_RECOVERY_TAG));
+        assert!(
+            !NATURAL_RECOVERY.custom_validate_input(&e, d, None, None, None),
+            "should refuse when no slot is spent",
+        );
+    }
+
+    /// The baseline DRUID_TEMPLATE stays feature-tag-free — Natural
+    /// Recovery only fires on the LAND_DRUID_TEMPLATE (Circle of the
+    /// Land subclass). Verifies the subclass-only gate holds even
+    /// though the shared action list carries the recovery action.
+    #[test]
+    fn baseline_druid_lacks_natural_recovery_tag() {
+        use crate::actions::class_features::{NATURAL_RECOVERY, NATURAL_RECOVERY_TAG};
+        use crate::actors::creatures::druids::{DRUID_TEMPLATE, LAND_DRUID_TEMPLATE};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let baseline = e
+            .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let land = e
+            .instantiate_creature(&LAND_DRUID_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        assert!(
+            !e.actors[&baseline].feature_available(NATURAL_RECOVERY_TAG),
+            "baseline druid should NOT carry the Natural Recovery charge"
+        );
+        assert!(
+            e.actors[&land].feature_available(NATURAL_RECOVERY_TAG),
+            "Land Druid should ship with the Natural Recovery charge"
+        );
+        // Burn one slot on both so the "no slot to recover" gate
+        // isn't the reason the baseline refuses.
+        e.actors
+            .get_mut(&baseline)
+            .unwrap()
+            .spell_slot_manager
+            .consume_spell_slot(1);
+        e.actors
+            .get_mut(&land)
+            .unwrap()
+            .spell_slot_manager
+            .consume_spell_slot(1);
+        // Baseline druid refuses (no feature tag → gate closed).
+        assert!(
+            !NATURAL_RECOVERY.custom_validate_input(&e, baseline, None, None, None),
+            "baseline druid should refuse Natural Recovery (no tag)"
+        );
+        // Land druid accepts (has tag + spent slot).
+        assert!(
+            NATURAL_RECOVERY.custom_validate_input(&e, land, None, None, None),
+            "Land druid should accept Natural Recovery"
+        );
+    }
+
+    /// A short rest should refresh the Natural Recovery charge —
+    /// NATURAL_RECOVERY_TAG lives in `SHORT_REST_FEATURES` and the
+    /// per-actor refresh path picks it up alongside Arcane Recovery /
+    /// Preserve Life / Cutting Words. Catch any regression that drops
+    /// the tag from the short-rest registry.
+    #[test]
+    fn short_rest_restores_natural_recovery() {
+        use crate::actions::class_features::NATURAL_RECOVERY_TAG;
+        let mut roller = crate::engine::dice::FastRandRoller::with_seed(42);
+        let mut land = ActorInstance::from_creature_template(
+            &crate::actors::creatures::druids::LAND_DRUID_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut roller,
+            1,
+        )
+        .unwrap();
+        assert!(land.feature_available(NATURAL_RECOVERY_TAG));
+        land.spend_feature(NATURAL_RECOVERY_TAG);
+        assert!(!land.feature_available(NATURAL_RECOVERY_TAG));
+        land.short_rest(&mut roller);
+        assert!(
+            land.feature_available(NATURAL_RECOVERY_TAG),
+            "natural recovery should refresh on short rest"
         );
     }
 

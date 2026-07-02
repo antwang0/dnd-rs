@@ -531,6 +531,53 @@ pub fn resolve_attack_outcome(
             caster.mark_colossus_slayer_used();
         }
     }
+    // 5e Ranger **Foe Slayer** (level 20 capstone) — passive once-per-
+    // turn rider. On any weapon hit, add the ranger's Wisdom modifier
+    // as flat damage of the weapon's damage type. Two gates:
+    //   1. Caster has the FOE_SLAYER_TAG passive feature flag.
+    //   2. Caster hasn't already fired Foe Slayer this turn
+    //      (`foe_slayer_used` — cleared at turn-start by
+    //      `reset_for_new_round`).
+    // No melee gate (RAW: "an attack you make" — covers longbow shots).
+    // The rider is a flat modifier, not a die, so it doesn't double on
+    // a crit per RAW (crit-doubling applies to dice, not flat mods).
+    // Fires only when the WIS modifier is positive — a WIS-dump ranger
+    // (rare) reads no bonus rather than adding a penalty.
+    if !p.is_spell
+        && encounter
+            .actors
+            .get(&p.caster_id)
+            .is_some_and(|a| {
+                a.has_passive_feature(
+                    crate::actions::class_features::FOE_SLAYER_TAG,
+                ) && !a.foe_slayer_used()
+            })
+    {
+        let wis_mod = encounter
+            .actors
+            .get(&p.caster_id)
+            .map(|a| {
+                crate::engine::util::modifier_from_score(
+                    a.ability_score(AbilityScoreType::Wisdom),
+                )
+            })
+            .unwrap_or(0);
+        if wis_mod > 0 {
+            let extra = wis_mod as u32;
+            encounter.log(format!(
+                "  foe slayer: +{} {:?}",
+                extra, p.damage_type
+            ));
+            effects.push(Box::new(DealDamage {
+                actor_id: p.target_id,
+                amount: extra,
+                damage_type: p.damage_type,
+            }));
+            if let Some(caster) = encounter.actors.get_mut(&p.caster_id) {
+                caster.mark_foe_slayer_used();
+            }
+        }
+    }
     // Melee-only retaliation table: any condition the *target* holds that
     // bounces damage back at a melee attacker (Fire Shield 2d8 fire,
     // Armor of Agathys 5 cold, Investiture of Flame 1d10 fire). Each

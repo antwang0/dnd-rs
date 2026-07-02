@@ -920,6 +920,11 @@ pub struct ActorInstance {
     /// if a Hunter ranger has spent their once-per-turn Colossus Slayer
     /// rider this turn. Cleared at turn-start by `reset_for_new_round`.
     colossus_slayer_used: bool,
+    /// Foe Slayer guard — symmetric with `sneak_attack_used` and
+    /// `colossus_slayer_used`. True if a Ranger has spent their once-
+    /// per-turn Foe Slayer +WIS-mod damage rider this turn. Cleared at
+    /// turn-start by `reset_for_new_round`.
+    foe_slayer_used: bool,
     /// 5e Hunter Ranger **Multiattack Defense** (Defensive Tactics
     /// option, lv7) ledger. Every target this actor lands a connecting
     /// attack on this turn is inserted here, keyed by target id; a
@@ -1177,6 +1182,7 @@ impl ActorInstance {
             damage_bonus_buff: 0,
             sneak_attack_used: false,
             colossus_slayer_used: false,
+            foe_slayer_used: false,
             hit_targets_this_turn: HashSet::new(),
             has_taken_turn_in_combat: false,
             relentless_rage_dc: 10,
@@ -2896,6 +2902,11 @@ impl ActorInstance {
         // don't clear them here.
         self.sneak_attack_used = false;
         self.colossus_slayer_used = false;
+        // Foe Slayer: passive once-per-turn +WIS-mod damage rider on
+        // any weapon hit. Cleared at turn-start alongside the sibling
+        // once-per-turn ranger ledger (Colossus Slayer) so the next
+        // turn's opening swing re-arms the rider.
+        self.foe_slayer_used = false;
         // 5e Hunter Ranger Multiattack Defense (Defensive Tactics, lv7):
         // per-turn ledger of targets this actor has landed a connecting
         // hit on. Cleared at turn-start so the +4 AC penalty against
@@ -3319,6 +3330,19 @@ impl ActorInstance {
 
     pub fn mark_colossus_slayer_used(&mut self) {
         self.colossus_slayer_used = true;
+    }
+
+    /// Has the ranger spent their once-per-turn Foe Slayer +WIS-mod
+    /// damage rider already this turn? Symmetric with
+    /// `colossus_slayer_used` and `sneak_attack_used` — set at the
+    /// swing site when the rider fires, cleared at the holder's
+    /// turn-start by `reset_for_new_round`.
+    pub fn foe_slayer_used(&self) -> bool {
+        self.foe_slayer_used
+    }
+
+    pub fn mark_foe_slayer_used(&mut self) {
+        self.foe_slayer_used = true;
     }
 
     /// 5e Hunter Ranger **Multiattack Defense** (Defensive Tactics

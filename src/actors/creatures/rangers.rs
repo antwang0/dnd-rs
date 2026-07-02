@@ -1,4 +1,6 @@
-use crate::actions::class_features::{COLOSSUS_SLAYER_TAG, MULTIATTACK_DEFENSE_TAG};
+use crate::actions::class_features::{
+    COLOSSUS_SLAYER_TAG, FOE_SLAYER_TAG, MULTIATTACK_DEFENSE_TAG,
+};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGBOW, SCIMITAR};
 use crate::actions::spells::{
@@ -111,6 +113,16 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Dexterity,
         ]),
         has_extra_attack: true,
+        // 5e Ranger **Foe Slayer** (level 20 capstone). Passive once-
+        // per-turn +WIS-mod flat damage rider on any weapon hit. Ships
+        // on the CR-1 baseline template above its strict RAW level
+        // gate for the same reason Colossus Slayer / Multiattack
+        // Defense do on the Hunter template — class templates target
+        // a balanced playable level, not lockstep PHB progression. The
+        // capstone lives on the baseline template so the subclass
+        // (Hunter Ranger) picks it up via `..RANGER_TEMPLATE.clone()`
+        // alongside the Hunter's Prey / Defensive Tactics riders.
+        features: HashSet::from([FOE_SLAYER_TAG]),
         ..CreatureTemplate::defaults()
     }
 });
@@ -156,7 +168,17 @@ pub static HUNTER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         //     strict RAW level gate for the same reason Colossus
         //     Slayer does — class templates target a balanced playable
         //     level, not lockstep PHB progression.
-        features: HashSet::from([COLOSSUS_SLAYER_TAG, MULTIATTACK_DEFENSE_TAG]),
+        features: HashSet::from([
+            COLOSSUS_SLAYER_TAG,
+            MULTIATTACK_DEFENSE_TAG,
+            // Foe Slayer (lv20 ranger capstone) — inherited from the
+            // baseline `RANGER_TEMPLATE` on the subclass since we
+            // override the whole `features` set here rather than
+            // extending it. Kept aligned with baseline so a Hunter
+            // Ranger drops the +WIS-mod once-per-turn damage rider
+            // alongside the Hunter-specific Colossus Slayer.
+            FOE_SLAYER_TAG,
+        ]),
         // 5e Hunter Ranger Superior Hunter's Defense (lv15, "Evasion"
         // option): on DEX saves for half damage, take 0 on a pass and
         // half on a fail instead of half / full. Ships on the CR-1

@@ -289,6 +289,15 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // target lockdown for the wild-animal threats the druid encounters
     // most often (Brown Bear, Tiger, Wolf, Mammoth, Owlbear).
     actions.push(&*crate::actions::spells::DOMINATE_BEAST);
+    // Natural Recovery — Druid Circle of the Land lv2 feature. Ships
+    // on the LAND_DRUID_TEMPLATE below via a subclass-of clone; the
+    // action itself is pushed into the shared `actions` list here so
+    // both the baseline druid and the Land subclass can invoke it. The
+    // baseline druid template stays feature-tag-free (Natural Recovery
+    // only fires when the LAND_DRUID_TEMPLATE's `features` set carries
+    // the tag), so pushing the action here is harmless for the
+    // baseline — `custom_validate_input` gates on the feature flag.
+    actions.push(&*crate::actions::class_features::NATURAL_RECOVERY);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',
@@ -315,5 +324,43 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Wisdom,
         ]),
         ..CreatureTemplate::defaults()
+    }
+});
+
+/// Land Druid — Circle of the Land subclass template. Identical
+/// envelope to the baseline `DRUID_TEMPLATE` (level-9 full-caster,
+/// scimitar + full druid spell list, 4/3/3/2/2/1/1/1/1 slot ladder,
+/// INT + WIS save profs) with one subclass feature layered on:
+/// **Natural Recovery** (level 2) — once per short rest, recover
+/// spell slots totaling half caster level (rounded up), no slot
+/// above 5th. We collapse the RAW pool math to the same fixed shape
+/// as Arcane Recovery — one level-1 slot at any level plus one
+/// level-2 slot at level 3+ — so both features share the exact same
+/// action + validation + effects shape and the once-per-rest gate
+/// stays uniform across the class-feature lane.
+///
+/// Distinct from `DRUID_TEMPLATE` (subclass-less baseline) so a
+/// Land-vs-Land or Land-vs-baseline encounter renders unambiguously by
+/// name and the subclass feature doesn't accidentally stack RAW-
+/// illegally on a single PC build. Glyph 'L' so the Land druid shows
+/// up distinctly on the map next to the baseline 'D'.
+pub static LAND_DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Druid envelope wholesale
+    // and overwrite only the per-subclass differences (name / glyph /
+    // features). The `..base.clone()` tail picks up every other field
+    // — actions, spell slots, save profs — without an N-line
+    // field-by-field copy.
+    CreatureTemplate {
+        name: "Land Druid",
+        glyph: 'L',
+        // Circle of the Land subclass features layered onto the
+        // baseline druid envelope:
+        //   - `NATURAL_RECOVERY_TAG`: Natural Recovery (lv2). Once
+        //     per short rest, restore up to (level-1 + level-2)
+        //     spell slots — mirroring the Arcane Recovery shape.
+        //     Fires at will as a free-cost action; the once-per-rest
+        //     charge is the entire resource cost.
+        features: HashSet::from([crate::actions::class_features::NATURAL_RECOVERY_TAG]),
+        ..DRUID_TEMPLATE.clone()
     }
 });

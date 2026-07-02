@@ -263,6 +263,14 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3g''b. Druid Circle of the Land Natural Recovery — sibling
+        //        of Arcane Recovery on the Land Druid subclass. Same
+        //        engaged-plus-spent-slot gate via the shared
+        //        `try_engaged_self_recovery` helper.
+        if let Some(aei) = try_natural_recovery(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3g'''. Bard Cutting Words — bonus-action enemy debuff. Fire
         //        on the most threatening adjacent-to-an-ally enemy who
         //        isn't already Mocked, so the disadvantage lands before
@@ -2472,10 +2480,40 @@ fn try_arcane_recovery(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
+    try_engaged_self_recovery(encounter, actor_id, "arcane recovery")
+}
+
+/// Druid Circle of the Land Natural Recovery — free no-cost slot
+/// restore. Mirror of `try_arcane_recovery`: fires when the druid has
+/// spent a low-tier slot and is engaged in a fight (so the recovered
+/// slot pays back this encounter). Shared gate lives in
+/// `try_engaged_self_recovery` — a future short-rest slot-recovery
+/// feature (Sorcerer's Font of Magic recovery variants, etc.) drops
+/// in as a one-liner alongside these two.
+fn try_natural_recovery(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_engaged_self_recovery(encounter, actor_id, "natural recovery")
+}
+
+/// Shared "engaged in combat + fire a free-cost self-recovery action"
+/// gate. Both Arcane Recovery and Natural Recovery use the same shape:
+/// short-circuit if no enemy is within a plausible action-window
+/// distance (24 tiles ≈ 60 ft — the range at which any low-tier
+/// ranged / area spell can matter this encounter), then delegate to
+/// `try_self_action` with the recovery's canonical name. Factored so
+/// the gate lives in one place; new short-rest recovery features slot
+/// in with a one-line action-name change.
+fn try_engaged_self_recovery(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    action_name: &str,
+) -> Option<ActionExecutionInfo> {
     if !any_enemy_within(encounter, actor_id, 24) {
         return None;
     }
-    try_self_action(encounter, actor_id, "arcane recovery")
+    try_self_action(encounter, actor_id, action_name)
 }
 
 /// Bard Cutting Words — bonus-action enemy debuff. Fires Mocked on the
@@ -6151,6 +6189,37 @@ mod tests {
             .unwrap();
         assert!(
             try_arcane_recovery(&e, wiz).is_some(),
+            "spent slot + enemy → fire"
+        );
+    }
+
+    /// `try_natural_recovery` fires on the Land Druid subclass with
+    /// the same gate shape as Arcane Recovery — engaged in combat AND
+    /// a spent low-tier slot. Verifies both halves via the shared
+    /// `try_engaged_self_recovery` gate.
+    #[test]
+    fn ai_natural_recovery_fires_when_slots_spent_and_engaged() {
+        use crate::actors::creatures::druids::LAND_DRUID_TEMPLATE;
+        let mut e = empty_arena();
+        let druid = e
+            .instantiate_creature(&LAND_DRUID_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // No enemy → no fire even with spent slots.
+        e.actors
+            .get_mut(&druid)
+            .unwrap()
+            .spell_slot_manager
+            .consume_spell_slot(1);
+        assert!(
+            try_natural_recovery(&e, druid).is_none(),
+            "no enemy in range → skip"
+        );
+        // Add an enemy → fires.
+        let _enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(15, 5), 1, 0)
+            .unwrap();
+        assert!(
+            try_natural_recovery(&e, druid).is_some(),
             "spent slot + enemy → fire"
         );
     }

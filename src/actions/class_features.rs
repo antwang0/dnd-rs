@@ -31,6 +31,7 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     SECOND_WIND_TAG,
     ACTION_SURGE_TAG,
     ARCANE_RECOVERY_TAG,
+    NATURAL_RECOVERY_TAG,
     PRESERVE_LIFE_TAG,
     CUTTING_WORDS_TAG,
     BREATH_WEAPON_TAG,
@@ -1321,6 +1322,35 @@ pub const COLOSSUS_SLAYER_TAG: &str = "ranger.colossus_slayer";
 /// and the target's own template AC — all three lanes sum into a
 /// single effective AC read once per attack.
 pub const MULTIATTACK_DEFENSE_TAG: &str = "ranger.multiattack_defense";
+
+/// 5e Ranger **Foe Slayer** (level 20 capstone). Passive once-per-turn
+/// weapon-hit rider: on any connecting weapon attack, the ranger adds
+/// their Wisdom modifier as flat bonus damage of the weapon's damage
+/// type. RAW: "Once on each of your turns, you can add your Wisdom
+/// modifier to the attack roll or the damage roll of an attack you
+/// make." — we collapse to the damage-roll lane (the load-bearing
+/// pick; the attack-roll lane is already covered by Colossus Slayer's
+/// die-based rider plus advantage sources).
+///
+/// Stored as a `has_passive_feature` flag (no per-rest charge — it's
+/// always-on but rate-limited by the once-per-turn `foe_slayer_used`
+/// ledger on the actor, sibling to `sneak_attack_used` and
+/// `colossus_slayer_used`). Read at the attack-resolution chokepoint
+/// in `engine::attack::resolve_attack_outcome` right after the Colossus
+/// Slayer block so both riders can fire on the same hit (RAW: Foe
+/// Slayer is a separate feature, not a Hunter subclass rider — a
+/// Hunter ranger with both Colossus Slayer AND Foe Slayer stacks the
+/// two once-per-turn +damage lanes on the opening shot).
+///
+/// Ships on the CR-1 baseline RANGER_TEMPLATE and the CR-1 Hunter
+/// Ranger subclass template above their strict RAW level gate for the
+/// same reason Colossus Slayer / Multiattack Defense / Superior
+/// Hunter's Defense do — class templates target a balanced playable
+/// level, not lockstep PHB progression. Fires on melee AND ranged
+/// weapon hits (RAW: "an attack you make" — no melee-only gate);
+/// crits don't double the flat mod (RAW: the crit-doubling rule
+/// applies to damage dice, not flat modifiers).
+pub const FOE_SLAYER_TAG: &str = "ranger.foe_slayer";
 
 /// 5e Paladin **Improved Divine Smite** (level 11). Passive feature: every
 /// melee weapon hit lays +1d8 radiant damage on the target — the paladin's
@@ -3231,21 +3261,38 @@ pub static DISTRACTING_ATTACK: LazyLock<DistractingAttack> =
 /// feature; the long rest already enables it via the default refresh.
 pub const ARCANE_RECOVERY_TAG: &str = "wizard.arcane_recovery";
 
-/// Arcane Recovery — Wizard feature, action. Spend the once-per-rest
-/// feature to restore one level-1 spell slot (plus a level-2 slot if
-/// the wizard is at least level 3 and has a level-2 slot to restore).
-/// Centralizes the RAW "half-level pool, no slot above 5th" math into a
-/// flat per-tier shape; lets the wizard keep firing low-tier control
-/// spells (Magic Missile / Shield / Web) across encounters without a
-/// full long rest.
-pub struct ArcaneRecovery {}
+/// Shared once-per-rest spell-slot recovery shape. Both the Wizard's
+/// **Arcane Recovery** and the Druid Circle of the Land's **Natural
+/// Recovery** collapse RAW's "recover slots totaling ceil(level/2), no
+/// slot above 5th" pool into the same flat per-tier envelope: one
+/// level-1 slot at any caster level, plus one level-2 slot at level 3+.
+/// The two features are mechanically identical — only the tag, name,
+/// aliases, and log flavor differ — so both fold through this shared
+/// struct rather than duplicating the ~100-line validate + effects
+/// bodies. Adding a future "recover a level-N slot on short rest"
+/// feature (Sorcerer's Font of Magic recovery variants, etc.) lands as
+/// a fresh `SpellSlotRecovery` const with a new tag and no touching
+/// the Action impl body.
+pub struct SpellSlotRecovery {
+    /// Display name — surfaces in the action list, log lines, and the
+    /// prompt parser (`Action::name`).
+    pub name: &'static str,
+    /// Alias set for the prompt parser (`Action::aliases`). Kept as a
+    /// `&'static [&'static str]` so the struct stays a plain-data
+    /// literal at LazyLock init.
+    pub aliases: &'static [&'static str],
+    /// Feature tag whose once-per-rest charge gates this recovery.
+    /// Reads via `feature_available` in `custom_validate_input`;
+    /// spent via `spend_feature` when the recovery fires.
+    pub tag: &'static str,
+}
 
-impl Action for ArcaneRecovery {
+impl Action for SpellSlotRecovery {
     fn name(&self) -> &str {
-        "arcane recovery"
+        self.name
     }
     fn aliases(&self) -> Vec<&str> {
-        vec!["ar", "recover"]
+        self.aliases.to_vec()
     }
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::NoArgs
@@ -3276,12 +3323,12 @@ impl Action for ArcaneRecovery {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        // Gate on the feature flag, combat-active state, AND at least one
-        // missing spell slot in the level-1 or level-2 tier — recovering
-        // a slot you didn't spend is a no-op, and gating here keeps the
-        // AI from burning the feature on empty.
+        // Gate on the feature flag, combat-active state, AND at least
+        // one missing spell slot in the level-1 or level-2 tier —
+        // recovering a slot you didn't spend is a no-op, and gating
+        // here keeps the AI from burning the feature on empty.
         encounter.actors.get(&caster_id).is_some_and(|a| {
-            if !a.is_combat_active() || !a.feature_available(ARCANE_RECOVERY_TAG) {
+            if !a.is_combat_active() || !a.feature_available(self.tag) {
                 return false;
             }
             let l1 = a.spell_slot_manager.spell_slots(1);
@@ -3310,7 +3357,7 @@ impl Action for ArcaneRecovery {
             )
         };
         if let Some(actor) = encounter.actors.get_mut(&caster_id) {
-            actor.spend_feature(ARCANE_RECOVERY_TAG);
+            actor.spend_feature(self.tag);
         }
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         if want_l1 {
@@ -3319,9 +3366,10 @@ impl Action for ArcaneRecovery {
                 resource: Resource::SpellSlot(1),
             }));
         }
-        // RAW: pool of slot-levels equal to ceil(level/2), no slot above
-        // 5th. We hand out the level-2 slot only at level 3+ (where a
-        // ceil(3/2)=2 pool can afford it) and only if a slot was spent.
+        // RAW: pool of slot-levels equal to ceil(level/2), no slot
+        // above 5th. We hand out the level-2 slot only at level 3+
+        // (where a ceil(3/2)=2 pool can afford it) and only if a slot
+        // was spent.
         if want_l2 && level >= 3 {
             effects.push(Box::new(GiveResource {
                 actor_id: caster_id,
@@ -3329,7 +3377,8 @@ impl Action for ArcaneRecovery {
             }));
         }
         encounter.log(format!(
-            "  arcane recovery: {} restores {} spell slot{}.",
+            "  {}: {} restores {} spell slot{}.",
+            self.name,
             encounter.actor_name(caster_id),
             effects.len(),
             if effects.len() == 1 { "" } else { "s" },
@@ -3338,7 +3387,50 @@ impl Action for ArcaneRecovery {
     }
 }
 
-pub static ARCANE_RECOVERY: LazyLock<ArcaneRecovery> = LazyLock::new(|| ArcaneRecovery {});
+/// Arcane Recovery — Wizard feature. Spend the once-per-rest charge
+/// to restore one level-1 spell slot (plus a level-2 slot if the
+/// wizard is at least level 3 and has a level-2 slot to restore).
+/// Centralizes the RAW "half-level pool, no slot above 5th" math into
+/// a flat per-tier shape; lets the wizard keep firing low-tier control
+/// spells (Magic Missile / Shield / Web) across encounters without a
+/// full long rest. Backed by the shared `SpellSlotRecovery` shape.
+pub static ARCANE_RECOVERY: LazyLock<SpellSlotRecovery> = LazyLock::new(|| SpellSlotRecovery {
+    name: "arcane recovery",
+    aliases: &["ar", "recover"],
+    tag: ARCANE_RECOVERY_TAG,
+});
+
+/// Class-feature tag for the Druid Circle of the Land's **Natural
+/// Recovery** (level 2). RAW: once per day during a short rest, recover
+/// spell slots whose combined levels equal half the druid's level
+/// (rounded up), with no slot above 5th. We collapse that pool into a
+/// fixed-shape recovery — one level-1 slot at any level, plus one
+/// level-2 slot at level 3+ — mirroring the Arcane Recovery shape so
+/// the gate stays a single feature-flag check rather than a slot
+/// picker. Listed in `SHORT_REST_FEATURES` so a short rest re-enables
+/// the once-per-rest charge alongside Arcane Recovery.
+///
+/// Distinct from Arcane Recovery only in flavor and template placement:
+/// the recovery math is identical (RAW pool: ceil(level/2) slot-levels,
+/// no slot above 5th). Ships on a new LAND_DRUID_TEMPLATE — the
+/// baseline DRUID_TEMPLATE stays feature-free so the Circle of the
+/// Land subclass reads unambiguously.
+pub const NATURAL_RECOVERY_TAG: &str = "druid.natural_recovery";
+
+/// Natural Recovery — Druid Circle of the Land feature. Free-cost
+/// (no spell slot / no action-lane burn beyond the free-action tick),
+/// gated on the once-per-rest feature flag. Restores one level-1
+/// spell slot plus a level-2 slot at level 3+, matching the Arcane
+/// Recovery envelope for engine uniformity — both features fold
+/// through the shared `SpellSlotRecovery` shape. Fires the recovery
+/// even when the druid isn't in combat — the RAW gate is "during a
+/// short rest," which our engine collapses to the free-cost action
+/// lane (mirrors Arcane Recovery's out-of-combat usage pattern).
+pub static NATURAL_RECOVERY: LazyLock<SpellSlotRecovery> = LazyLock::new(|| SpellSlotRecovery {
+    name: "natural recovery",
+    aliases: &["nr", "natural"],
+    tag: NATURAL_RECOVERY_TAG,
+});
 
 /// Class-feature tag for Cleric Channel Divinity: Preserve Life — once
 /// per short or long rest. Shares the "Channel Divinity" RAW lane with
