@@ -591,6 +591,51 @@ pub struct CreatureTemplate {
     /// Paladin (both use two-handed weapons where Dueling doesn't apply
     /// RAW).
     pub has_dueling_style: bool,
+    /// 5e Fighting Style: **Great Weapon Fighting** (Fighter / Paladin
+    /// / Ranger lv1 pick): when the holder rolls a 1 or 2 on a damage
+    /// die for a melee weapon attack made while wielding a two-handed
+    /// or versatile-two-handed weapon, they may reroll the die once and
+    /// must use the new roll (even if it comes up 1 or 2 again). Read
+    /// at the damage-roll chokepoint in `engine::attack` — per-die
+    /// reroll routed through `EncounterInstance::roll_weapon_damage_dice`
+    /// so both the base swing and a crit's doubled dice pick up the
+    /// reroll. We don't track weapon-hand-usage so the RAW "two-handed /
+    /// versatile-two-handed" gate collapses to "melee weapon attack" —
+    /// same shape as Dueling's gate collapse. Templates that ship
+    /// two-handed workhorses (greatsword, greataxe, greatclub) carry
+    /// this flag; the Fighter chassis (scimitar 1H) does NOT so
+    /// Dueling and GWF stay mutually exclusive on the baseline lanes.
+    pub has_great_weapon_fighting: bool,
+    /// 5e Fighting Style: **Two-Weapon Fighting** (Fighter / Ranger lv1
+    /// pick): when the holder engages in two-weapon fighting, they add
+    /// their ability modifier to the damage of the second (off-hand)
+    /// attack. The engine doesn't distinguish the "off-hand" attack from
+    /// the main-hand swing at the action-list level, but every Extra
+    /// Attack chain past the first swing behaves like a bonus swing in
+    /// the RAW two-weapon fighting economy — so the flag adds a passive
+    /// per-swing +STR mod (min 0) to melee weapon damage on chassis
+    /// that stack this style. Distinct from Dueling: Dueling ships a
+    /// flat +2, TWF scales with the attacker's STR mod. Read at the
+    /// damage-roll chokepoint in `engine::attack`, gated on `p.is_melee`
+    /// so a ranged weapon (or spell) doesn't pick up the bonus. Not
+    /// shipped on any current template — the flag is defined so the
+    /// racial "off-hand mastery" tag surfaces as a template lane rather
+    /// than a scattered set of per-actor overrides.
+    pub has_two_weapon_fighting_style: bool,
+    /// 5e Fighting Style: **Protection** (Fighter / Paladin lv1 pick):
+    /// when a creature the holder can see attacks a target OTHER than
+    /// the holder within 5 ft, the holder can use their reaction to
+    /// impose disadvantage on the attack roll. RAW gates on "wielding a
+    /// shield" — we don't model shield-wielding as a template-visible
+    /// item slot, so the gate collapses to "flag holder, ally-adjacent,
+    /// reaction available". Read at `compute_attack_mode` — the ally
+    /// adjacency sweep is symmetric to Pack Tactics / Wolf Totem, but
+    /// gated on the protector holding the flag and paying a reaction
+    /// per swing. Not shipped on any current template by default; the
+    /// flag exists so templates that carry a shield (a future Battle
+    /// Master / Paladin sub-build) can opt in without inventing a new
+    /// item slot.
+    pub has_protection_style: bool,
     /// 5e Dwarven Resilience: advantage on saving throws against poison
     /// AND resistance to poison damage. Read by `compute_save_mode`
     /// (advantage clause) and `effective_damage` (resistance clause).
@@ -745,6 +790,9 @@ impl CreatureTemplate {
             has_archery_style: false,
             has_defense_style: false,
             has_dueling_style: false,
+            has_great_weapon_fighting: false,
+            has_two_weapon_fighting_style: false,
+            has_protection_style: false,
             has_dwarven_resilience: false,
             has_gnome_cunning: false,
             draconic_ancestry: None,
@@ -1116,6 +1164,15 @@ pub struct ActorInstance {
     /// 5e Fighting Style: Dueling (+2 melee weapon damage). See
     /// `CreatureTemplate` docs.
     has_dueling_style: bool,
+    /// 5e Fighting Style: Great Weapon Fighting (reroll 1s / 2s on melee
+    /// weapon damage dice). See `CreatureTemplate` docs.
+    has_great_weapon_fighting: bool,
+    /// 5e Fighting Style: Two-Weapon Fighting (+STR mod to melee weapon
+    /// damage). See `CreatureTemplate` docs.
+    has_two_weapon_fighting_style: bool,
+    /// 5e Fighting Style: Protection (reaction: impose disadvantage on
+    /// attack against ally). See `CreatureTemplate` docs.
+    has_protection_style: bool,
     /// 5e Dwarven Resilience. See `CreatureTemplate` docs.
     has_dwarven_resilience: bool,
     /// 5e Gnome Cunning. See `CreatureTemplate` docs.
@@ -1270,6 +1327,9 @@ impl ActorInstance {
             has_archery_style: ct.has_archery_style,
             has_defense_style: ct.has_defense_style,
             has_dueling_style: ct.has_dueling_style,
+            has_great_weapon_fighting: ct.has_great_weapon_fighting,
+            has_two_weapon_fighting_style: ct.has_two_weapon_fighting_style,
+            has_protection_style: ct.has_protection_style,
             has_dwarven_resilience: ct.has_dwarven_resilience,
             has_gnome_cunning: ct.has_gnome_cunning,
             draconic_ancestry: ct.draconic_ancestry,
@@ -1537,6 +1597,50 @@ impl ActorInstance {
     #[cfg(test)]
     pub fn set_dueling_style(&mut self, value: bool) {
         self.has_dueling_style = value;
+    }
+
+    /// 5e Fighting Style: Great Weapon Fighting — reroll 1 / 2 on a
+    /// melee weapon damage die once. Read at the damage-roll site in
+    /// `engine::attack` via `roll_weapon_damage_dice`.
+    pub fn has_great_weapon_fighting(&self) -> bool {
+        self.has_great_weapon_fighting
+    }
+
+    /// Test-only setter for the Great Weapon Fighting flag. Mirrors
+    /// `set_dueling_style` so the per-die reroll rider can be exercised
+    /// in isolation on any chassis.
+    #[cfg(test)]
+    pub fn set_great_weapon_fighting(&mut self, value: bool) {
+        self.has_great_weapon_fighting = value;
+    }
+
+    /// 5e Fighting Style: Two-Weapon Fighting — +STR mod (min 0) to
+    /// melee weapon damage rolls. Approximates the RAW "add ability
+    /// modifier to the off-hand attack" clause by folding it into
+    /// every melee swing (the engine doesn't distinguish off-hand
+    /// swings at the action-list level). Read at the damage-roll site
+    /// in `engine::attack`, gated on `p.is_melee`.
+    pub fn has_two_weapon_fighting_style(&self) -> bool {
+        self.has_two_weapon_fighting_style
+    }
+
+    /// Test-only setter for the Two-Weapon Fighting flag.
+    #[cfg(test)]
+    pub fn set_two_weapon_fighting_style(&mut self, value: bool) {
+        self.has_two_weapon_fighting_style = value;
+    }
+
+    /// 5e Fighting Style: Protection — reaction: impose disadvantage
+    /// on an attack roll against an ally adjacent to the holder. Read
+    /// at `compute_attack_mode`.
+    pub fn has_protection_style(&self) -> bool {
+        self.has_protection_style
+    }
+
+    /// Test-only setter for the Protection Fighting Style flag.
+    #[cfg(test)]
+    pub fn set_protection_style(&mut self, value: bool) {
+        self.has_protection_style = value;
     }
 
     /// 5e Dwarven Resilience — advantage on saves vs poison AND resistance
@@ -2549,8 +2653,18 @@ impl ActorInstance {
         }
     }
 
+    /// True iff this actor could actually SPEND a reaction right now.
+    /// Delegates to `can_consume_resource(Resource::Reaction)` so the
+    /// availability check and the actual consume path share ONE source
+    /// of truth — pre-refactor this shortcut skipped the
+    /// `blocks_action_economy` cohort (Stunned / Paralyzed / Incapacitated
+    /// / Unconscious / Asleep / Petrified / Mazed / Sphered), meaning a
+    /// stunned rogue's Uncanny Dodge would halve incoming damage while
+    /// the follow-up `consume_resource` silently no-op'd (reaction slot
+    /// wasn't taxed). Read at every reactive-defense gate:
+    /// Uncanny Dodge, Deflect Missiles, Protection style, etc.
     pub fn has_reaction(&self) -> bool {
-        self.reaction_slots >= 1 && !self.conditions.keys().any(|c| c.blocks_reactions())
+        self.can_consume_resource(Resource::Reaction)
     }
 
     pub fn consume_resource(&mut self, resource: Resource) -> bool {

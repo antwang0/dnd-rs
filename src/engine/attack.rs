@@ -104,6 +104,29 @@ pub fn resolve_attack_outcome(
     encounter.break_sanctuary_on_hostile(p.caster_id);
 
     let mut mode = encounter.compute_attack_mode(p.caster_id, p.target_id, p.is_melee);
+    // 5e Fighting Style: **Protection** — a target-adjacent ally (NOT
+    // the target itself) with the Protection flag and an unspent
+    // reaction may burn their reaction to impose disadvantage on THIS
+    // attack. RAW: "when a creature you can see attacks a target other
+    // than you that is within 5 feet of you". The eligibility scan
+    // lives on the encounter (`first_eligible_protector`) so the ally-
+    // sweep chokepoint stays shared with other ally-adjacency features.
+    // Resolved HERE (rather than inside `compute_attack_mode`) because
+    // the reaction spend needs `&mut encounter`, and `compute_attack_mode`
+    // is a `&self` read chokepoint. Ordering-wise: Protection fires
+    // before the help / bless one-shot rider consumption below, so a
+    // Protection-tax swing STILL burns the attacker's Help / Hidden /
+    // Inspired priming — RAW: those primes are consumed on the roll,
+    // regardless of disadvantage.
+    if let Some(protector_id) = encounter.first_eligible_protector(p.caster_id, p.target_id) {
+        mode = mode.combine(crate::engine::dice::RollMode::Disadvantage);
+        if let Some(protector) = encounter.actors.get_mut(&protector_id) {
+            protector.consume_resource(crate::engine::side_effects::Resource::Reaction);
+        }
+        encounter.log(
+            "  protection: attack against target imposed disadvantage (protector's reaction spent)",
+        );
+    }
     // 5e long-range disadvantage: ranged weapon attacks beyond normal
     // range but within max range impose disadvantage. The `long_range`
     // threshold (in tiles) is set by the weapon definition — melee
@@ -267,9 +290,25 @@ pub fn resolve_attack_outcome(
     if let Some(attacker) = encounter.actors.get_mut(&p.caster_id) {
         attacker.mark_hit_target_this_turn(p.target_id);
     }
-    let raw_damage = encounter.roll(&p.damage_dice) as i32;
+    // 5e Fighting Style: **Great Weapon Fighting** — reroll any 1 / 2 on
+    // a melee weapon damage die once, taking the new value even if it
+    // comes up 1 or 2 again per RAW. Gated on `p.is_melee` so a longbow
+    // shot (or a spell attack routed through this chokepoint) doesn't
+    // pick up the reroll — the RAW "two-handed melee weapon" gate
+    // collapses to "melee weapon attack" since the engine doesn't track
+    // weapon-hand-usage (same shape as Dueling's gate collapse). Applied
+    // to BOTH the base damage roll AND the crit's doubled dice so the
+    // per-die reroll fires uniformly across the swing's dice pool. The
+    // helper's non-GWF fast path is a single delegated `roll(&dice)` so
+    // the vast majority of swings pay no extra cost.
+    let apply_gwf = p.is_melee
+        && encounter
+            .actors
+            .get(&p.caster_id)
+            .is_some_and(|a| a.has_great_weapon_fighting());
+    let raw_damage = encounter.roll_weapon_damage_dice(p.damage_dice, apply_gwf) as i32;
     let crit_extra = if is_crit {
-        encounter.roll(&p.damage_dice) as i32
+        encounter.roll_weapon_damage_dice(p.damage_dice, apply_gwf) as i32
     } else {
         0
     };
@@ -367,6 +406,27 @@ pub fn resolve_attack_outcome(
         damage = damage.saturating_add(2);
         encounter.log("  dueling: +2 melee damage");
     }
+    // 5e Fighting Style: **Two-Weapon Fighting** — RAW: "when you engage
+    // in two-weapon fighting, you can add your ability modifier to the
+    // damage of the second attack". The engine doesn't distinguish the
+    // "off-hand" swing at the action-list level (extra attacks share
+    // the same weapon slot), so the flag folds the STR-mod bonus into
+    // every melee weapon swing on the holder. Gated on `p.is_melee` so
+    // ranged weapons / spell attacks don't pick up the bonus. Additive
+    // with Dueling (mutually exclusive per RAW but engine-neutral) and
+    // Rage — no template currently combines TWF with either.
+    if p.is_melee
+        && let Some(a) = encounter.actors.get(&p.caster_id)
+        && a.has_two_weapon_fighting_style()
+    {
+        let bonus = a
+            .ability_modifier(crate::engine::types::AbilityScoreType::Strength)
+            .max(0);
+        if bonus > 0 {
+            damage = damage.saturating_add(bonus as u32);
+            encounter.log(format!("  two-weapon fighting: +{} melee damage", bonus));
+        }
+    }
     // Hunter's Mark rider: attacker concentrating on Hunter's Mark with
     // this target marked deals +1d6 (weapon-typed). Crits double the
     // mark die per RAW — the rider folds into the weapon's damage type.
@@ -381,12 +441,13 @@ pub fn resolve_attack_outcome(
     // 5e Uncanny Dodge (Rogue 5): when hit by an attack, spend reaction
     // to halve the damage. Only fires if the target has the feature, a
     // reaction available, and can see the attacker (we approximate sight
-    // as "not Blinded").
+    // as "not Blinded"). `has_reaction()` covers Unconscious /
+    // Incapacitated / Stunned / Paralyzed / etc. via the shared
+    // `blocks_action_economy` cohort — no need to re-check them here.
     if let Some(target) = encounter.actors.get(&p.target_id)
         && target.has_uncanny_dodge()
         && target.has_reaction()
         && !target.has_condition(Condition::Blinded)
-        && !target.has_condition(Condition::Unconscious)
     {
         damage /= 2;
         encounter.log(format!("  uncanny dodge: damage halved to {}", damage));
@@ -404,13 +465,16 @@ pub fn resolve_attack_outcome(
     // monk eats the full damage instead. Layered AFTER Uncanny Dodge so
     // a rare rogue/monk multiclass benefits from both halves cleanly
     // (RAW order doesn't matter since both are independent reactions).
+    // `has_reaction()` handles the Unconscious / Incapacitated /
+    // Stunned / Paralyzed lockouts via the shared `blocks_action_economy`
+    // cohort — the sight approximation (`!Blinded`) is the only
+    // condition-side gate that stays explicit here.
     if !p.is_melee
         && damage > 0
         && let Some(target) = encounter.actors.get(&p.target_id)
         && target.has_deflect_missiles()
         && target.has_reaction()
         && !target.has_condition(Condition::Blinded)
-        && !target.has_condition(Condition::Unconscious)
     {
         let dex_mod = target.ability_modifier(crate::engine::types::AbilityScoreType::Dexterity);
         let level = target.level() as i32;

@@ -168,6 +168,21 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // RAW, but Defense is the natural pick for a shield-forward
         // (or plate-forward) paladin build.
         has_defense_style: true,
+        // 5e Paladin **Fighting Style: Great Weapon Fighting** (lv2 pick,
+        // second-style pickup at higher levels — same reasoning that
+        // ships Defense here alongside the class's smite kit): reroll
+        // any 1 / 2 on a melee weapon damage die once. RAW pairs with
+        // two-handed / versatile-two-handed weapons; the paladin's
+        // greatsword (`2d6` slashing) is the canonical fit, so the flag
+        // rides the greatsword-baseline paladin. Composes cleanly with
+        // Improved Divine Smite (+1d8 radiant on hit) and every smite
+        // spell prime (Searing / Wrathful / Thunderous / Branding /
+        // Blinding / Staggering / Banishing) — those riders roll fresh
+        // dice on hit and don't share the weapon damage bundle, so the
+        // GWF reroll doesn't double-tax them. The per-die reroll routes
+        // through `EncounterInstance::roll_weapon_damage_dice`, applied
+        // to both the base greatsword swing AND the crit's doubled dice.
+        has_great_weapon_fighting: true,
         // Aura of Protection (level 6+): allies within 10ft add the
         // paladin's CHA mod (min +1) to all saves. The headline late-
         // game paladin feature — turns the squishy wizard adjacent to
