@@ -1243,6 +1243,20 @@ pub enum Condition {
     /// concentration-anchored rather than timer-only, matching the lv5
     /// spell-slot cost.
     Immolated,
+    /// Guided Strike primed (5e War Domain Cleric Channel Divinity, lv2
+    /// subclass feature). The cleric has spent their once-per-short-rest
+    /// Channel Divinity charge to gain a flat +10 bonus to their next
+    /// attack roll — the largest single-swing accuracy buff in the game,
+    /// meant to turn a marginal near-miss into a guaranteed connect for a
+    /// smite / rider payoff. Read by `condition_attack_bonus` (+10) and
+    /// consumed by `CONSUMED_ON_ATTACK` on the first swing that fires
+    /// after the prime installs. Sits in the same one-shot-attack-buff
+    /// lane as `Inspired` / `PrecisionAttacking` / `TidesOfChaos` — all
+    /// self-installed primes that burn on the next attack roll. Tick-down
+    /// timer (`UntilStartOfNextTurn`) caps an unused prime so the buff
+    /// doesn't dangle across rounds when the swing whiffs the reach
+    /// window.
+    GuidedStriking,
 }
 
 impl Condition {
@@ -1402,6 +1416,7 @@ impl Condition {
             Condition::ElementallyWeaponed => "wielding an elemental weapon",
             Condition::TrueSighted => "true-sighted",
             Condition::Immolated => "immolated",
+            Condition::GuidedStriking => "primed with a guided strike",
         }
     }
 
@@ -1499,6 +1514,7 @@ impl Condition {
                 | Condition::MoilShrouded
                 | Condition::ElementallyWeaponed
                 | Condition::TrueSighted
+                | Condition::GuidedStriking
         )
     }
 

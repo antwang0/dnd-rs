@@ -35,6 +35,11 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     PRESERVE_LIFE_TAG,
     CUTTING_WORDS_TAG,
     BREATH_WEAPON_TAG,
+    // 5e War Domain Cleric features — both refresh on a short rest.
+    // WAR_PRIEST is the once-per-rest bonus-action extra swing; GUIDED
+    // STRIKE is the Channel Divinity +10 accuracy prime.
+    WAR_PRIEST_TAG,
+    GUIDED_STRIKE_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -280,11 +285,12 @@ impl Action for ActionSurge {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
-            actor.spend_feature(ACTION_SURGE_TAG);
-        }
-        encounter.log("  action surge: extra Action gained.".to_string());
-        grant_extra_action(caster_id)
+        spend_feature_and_grant_extra_action(
+            encounter,
+            caster_id,
+            ACTION_SURGE_TAG,
+            "  action surge: extra Action gained.",
+        )
     }
 }
 
@@ -2894,6 +2900,32 @@ pub fn grant_extra_action(caster_id: usize) -> Vec<Box<dyn ApplicableSideEffect>
     })]
 }
 
+/// Combined "spend a once-per-rest feature charge, log a flavor line,
+/// and grant an extra Action token" side-effect builder. Action Surge
+/// (Fighter) and War Priest (War Domain Cleric) share the same shape:
+/// burn the per-rest charge, log the flavor line, and hand back the
+/// single-entry `GiveResource(Action)` vector.
+///
+/// Sibling to `grant_extra_action` (the raw grant) — this wrapper adds
+/// the spend + log layer for per-rest gated variants. Distinct from
+/// Flurry of Blows / Frenzy (at-will / Rage-gated grants that don't
+/// spend a feature charge) — those still call `grant_extra_action`
+/// directly. Adding a future per-rest extra-Action feature drops in as
+/// a one-liner instead of the three-line `if let Some(actor) →
+/// spend_feature → encounter.log → grant_extra_action` boilerplate.
+fn spend_feature_and_grant_extra_action(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    tag: &'static str,
+    log_line: &'static str,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+        actor.spend_feature(tag);
+    }
+    encounter.log(log_line.to_string());
+    grant_extra_action(caster_id)
+}
+
 /// Spend a once-per-rest feature charge and install a self-applied prime
 /// condition on the caster. The classic "bonus-action prime" shape:
 /// `spend_feature(tag)` then `ApplyCondition` for `prime`. Centralizes
@@ -4539,3 +4571,170 @@ pub static CONVERT_SPELL_SLOT_3: ConvertSpellSlot = ConvertSpellSlot {
     aliases: &["convertslot3", "fontsp3"],
     slot_level: 3,
 };
+
+/// 5e War Domain Cleric **War Priest** feature tag (level 1 subclass).
+/// RAW: WIS-mod uses per long rest of a bonus-action extra weapon attack
+/// after taking the Attack action. We collapse the WIS-scaled charge
+/// pool to a single per-short-rest charge so the gating stays uniform
+/// with the other class-feature tags (Second Wind / Action Surge /
+/// Sacred Weapon) — the once-per-short-rest cadence sits between the
+/// once-per-long-rest floor and the WIS-mod / long-rest ceiling.
+/// Registered in `SHORT_REST_FEATURES` so short rests refresh it.
+pub const WAR_PRIEST_TAG: &str = "cleric.war_priest";
+
+/// War Priest — War Domain Cleric bonus action. Grants the cleric an
+/// extra Action token for a follow-up weapon swing this turn. Same
+/// action-economy trade as Flurry of Blows / Frenzy / Action Surge —
+/// spend a bonus action (plus a short-rest charge) to buy a fresh main
+/// Action. The AI's normal attack picker handles the weapon / target
+/// selection on the granted swing.
+///
+/// Once per short rest. Gated on the cleric holding the `WAR_PRIEST_TAG`
+/// feature flag AND being combat-active. Pairs naturally with the
+/// cleric's Divine Strike prime — bonus-action Divine Strike into
+/// bonus-action War Priest wouldn't work RAW (only one bonus action per
+/// turn), but Divine Strike prime one round → War Priest next round
+/// with the prime still up gets the follow-up swing riding the +1d8
+/// radiant rider.
+pub struct WarPriest {}
+
+impl Action for WarPriest {
+    fn name(&self) -> &str {
+        "war priest"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wp", "priest"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        feature_ready(encounter, caster_id, WAR_PRIEST_TAG)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        spend_feature_and_grant_extra_action(
+            encounter,
+            caster_id,
+            WAR_PRIEST_TAG,
+            "  war priest: cleric gains an extra Action for a follow-up strike.",
+        )
+    }
+}
+
+pub static WAR_PRIEST: LazyLock<WarPriest> = LazyLock::new(|| WarPriest {});
+
+/// 5e War Domain Cleric **Guided Strike** feature tag (Channel Divinity,
+/// level 2 subclass). Once per short rest, prime the cleric's next
+/// attack roll with a flat +10 accuracy buff — the largest single-swing
+/// accuracy buff in the game, meant to turn a marginal near-miss into a
+/// guaranteed connect. Registered in `SHORT_REST_FEATURES` so short
+/// rests refresh it.
+///
+/// Distinct from Sacred Weapon (Devotion Paladin Channel Divinity):
+/// Sacred Weapon lasts 10 rounds and adds +CHA (typically +2-4);
+/// Guided Strike is a one-shot flat +10, higher per-swing buff at the
+/// cost of the one-and-done lifecycle.
+pub const GUIDED_STRIKE_TAG: &str = "cleric.guided_strike";
+
+/// Channel Divinity: Guided Strike — War Domain Cleric bonus action.
+/// Installs the `GuidedStriking` prime on the cleric for their next
+/// attack roll: +10 flat bonus, consumed on the first swing that fires.
+/// Once per short rest.
+///
+/// Sibling to Sacred Weapon (Devotion Paladin Channel Divinity) on the
+/// attack-roll buff lane — Sacred Weapon spreads +CHA across a 10-round
+/// concentration window, Guided Strike concentrates a fatter +10 on a
+/// single-shot prime. Backed by the same `feature_prime_ready` gate
+/// and `prime_self_condition` install helper the other bonus-action
+/// primes route through.
+pub struct GuidedStrike {}
+
+impl Action for GuidedStrike {
+    fn name(&self) -> &str {
+        "guided strike"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["gs", "cd-guided", "guided"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        feature_prime_ready(encounter, caster_id, GUIDED_STRIKE_TAG, Condition::GuidedStriking)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        prime_self_condition(
+            encounter,
+            caster_id,
+            GUIDED_STRIKE_TAG,
+            Condition::GuidedStriking,
+            // Tick-down timer caps the prime to a single round so an
+            // idle cleric doesn't carry it across encounters. Consumed
+            // by `CONSUMED_ON_ATTACK` on the first swing that fires.
+            ConditionTimer::UntilStartOfNextTurn,
+            "  guided strike: cleric's next attack rides a +10 divine accuracy buff.",
+        )
+    }
+}
+
+pub static GUIDED_STRIKE: LazyLock<GuidedStrike> = LazyLock::new(|| GuidedStrike {});

@@ -451,6 +451,12 @@ const CONSUMED_ON_ATTACK: &[Condition] = &[
     // The ability-check / saving-throw lanes are out of scope — most of
     // the tactical leverage in our combat model is on the attack roll.
     Condition::TidesOfChaos,
+    // 5e War Domain Cleric **Guided Strike** — Channel Divinity prime
+    // (lv2 subclass): +10 to the next attack roll. Consumed here so a
+    // single swing burns the once-per-short-rest charge (matches
+    // Inspired / PrecisionAttacking / TidesOfChaos). The flat +10 lives
+    // in `condition_attack_bonus`; the one-shot lifecycle lives here.
+    Condition::GuidedStriking,
 ];
 
 /// Conditions whose presence combines a blanket **disadvantage** into
@@ -46485,5 +46491,159 @@ mod tests {
         // rather than compute_attack_mode, we check the eligibility
         // scan flow directly and trust the resolve wire path.
         let _ = RollMode::Disadvantage;
+    }
+
+    /// 5e War Domain Cleric **War Priest** (lv1 subclass): bonus-action
+    /// extra Action grant, once per short rest. The action's own
+    /// `feature_ready` gate covers the once-per-rest lifecycle; the
+    /// side-effect grants a fresh Action token (same shape as Frenzy /
+    /// Flurry of Blows / Action Surge).
+    #[test]
+    fn war_priest_grants_extra_action_and_consumes_feature() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{WAR_PRIEST, WAR_PRIEST_TAG};
+        use crate::actors::creatures::clerics::WAR_CLERIC_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&WAR_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&cleric].feature_available(WAR_PRIEST_TAG));
+        // Snapshot Action token count before firing.
+        let actions_before = e.actors[&cleric].action_slots();
+        let action: &dyn Action = &*WAR_PRIEST;
+        assert!(action.custom_validate_input(&e, cleric, None, None, None));
+        let effects = action.side_effects(&mut e, cleric, None, None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        // Extra Action granted via `grant_extra_action` — mirrors
+        // Action Surge / Flurry / Frenzy.
+        assert_eq!(
+            e.actors[&cleric].action_slots(),
+            actions_before + 1,
+            "war priest should grant an extra Action token"
+        );
+        // Feature charge consumed — duplicate use must bounce.
+        assert!(!e.actors[&cleric].feature_available(WAR_PRIEST_TAG));
+        assert!(!action.custom_validate_input(&e, cleric, None, None, None));
+        // Sanity: the action costs a bonus action (not free).
+        let cost = action.cost(&e, cleric, None, None, None);
+        assert!(
+            cost.iter().any(|r| matches!(r, Resource::BonusAction)),
+            "war priest must cost a bonus action"
+        );
+    }
+
+    /// War Priest refreshes on a short rest — the tag lives on
+    /// `SHORT_REST_FEATURES` alongside Second Wind / Action Surge /
+    /// Preserve Life so any cleric holding the flag re-arms the
+    /// charge when the encounter loop calls `short_rest`.
+    #[test]
+    fn war_priest_refreshes_on_short_rest() {
+        use crate::actions::class_features::WAR_PRIEST_TAG;
+        use crate::actors::creatures::clerics::WAR_CLERIC_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&WAR_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Spend the charge, verify it's gone.
+        assert!(e.actors[&cleric].feature_available(WAR_PRIEST_TAG));
+        e.actors.get_mut(&cleric).unwrap().spend_feature(WAR_PRIEST_TAG);
+        assert!(!e.actors[&cleric].feature_available(WAR_PRIEST_TAG));
+        // Short rest → charge back.
+        let mut r = FastRandRoller::with_seed(1);
+        e.actors.get_mut(&cleric).unwrap().short_rest(&mut r);
+        assert!(
+            e.actors[&cleric].feature_available(WAR_PRIEST_TAG),
+            "short rest should refresh war priest charge"
+        );
+    }
+
+    /// 5e War Domain Cleric **Guided Strike** Channel Divinity (lv2
+    /// subclass): bonus-action prime that installs `GuidedStriking`
+    /// on the cleric for +10 to their next attack roll. The prime
+    /// consumes the once-per-short-rest charge; the +10 flows through
+    /// the `condition_attack_bonus` lane.
+    #[test]
+    fn guided_strike_primes_caster_and_grants_plus_ten() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{GUIDED_STRIKE, GUIDED_STRIKE_TAG};
+        use crate::actors::creatures::clerics::WAR_CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&WAR_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&cleric].feature_available(GUIDED_STRIKE_TAG));
+        let before = e.actors[&cleric].condition_attack_bonus();
+        let action: &dyn Action = &*GUIDED_STRIKE;
+        assert!(action.custom_validate_input(&e, cleric, None, None, None));
+        let effects = action.side_effects(&mut e, cleric, None, None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert!(e.actors[&cleric].has_condition(Condition::GuidedStriking));
+        // Flat +10 bonus flows through the condition-only attack-bonus
+        // lane — sibling to Sacred Weapon (+CHA), Inspired (+3),
+        // PrecisionAttacking (+4).
+        assert_eq!(
+            e.actors[&cleric].condition_attack_bonus(),
+            before + 10,
+            "guided strike should add +10 to condition_attack_bonus"
+        );
+        // Feature charge consumed — a re-prime attempt bounces.
+        assert!(!e.actors[&cleric].feature_available(GUIDED_STRIKE_TAG));
+        assert!(!action.custom_validate_input(&e, cleric, None, None, None));
+    }
+
+    /// Guided Strike's +10 prime is one-shot: consumed on the first
+    /// attack via `clear_attack_advantage_riders` (through the
+    /// `CONSUMED_ON_ATTACK` cohort). Without the consume, the +10
+    /// would double-dip an Extra Attack chain.
+    #[test]
+    fn guided_strike_consumed_on_attack() {
+        use crate::actors::creatures::clerics::WAR_CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&WAR_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        e.actors.get_mut(&cleric).unwrap().add_condition(
+            Condition::GuidedStriking,
+            ConditionTimer::UntilStartOfNextTurn,
+        );
+        assert!(e.actors[&cleric].has_condition(Condition::GuidedStriking));
+        e.clear_attack_advantage_riders(cleric, g);
+        assert!(
+            !e.actors[&cleric].has_condition(Condition::GuidedStriking),
+            "guided strike prime should be consumed after an attack"
+        );
+    }
+
+    /// The baseline Cleric template does NOT ship War Priest or Guided
+    /// Strike — those two features are War Domain subclass-only. This
+    /// keeps the encounter-generator's random Cleric spawn free of the
+    /// subclass features (a plain Cleric encountered in a dungeon
+    /// remains subclass-agnostic per RAW).
+    #[test]
+    fn baseline_cleric_does_not_ship_war_domain_features() {
+        use crate::actions::class_features::{GUIDED_STRIKE_TAG, WAR_PRIEST_TAG};
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            !e.actors[&cleric].feature_available(WAR_PRIEST_TAG),
+            "baseline cleric must not ship war priest"
+        );
+        assert!(
+            !e.actors[&cleric].feature_available(GUIDED_STRIKE_TAG),
+            "baseline cleric must not ship guided strike"
+        );
     }
 }

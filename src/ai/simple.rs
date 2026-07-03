@@ -159,6 +159,35 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3c'''''. Guided Strike — War Domain Cleric Channel Divinity,
+        //          bonus action, once per short rest. Installs the
+        //          `GuidedStriking` prime (+10 to next attack roll) on
+        //          the cleric. Slots after Vow of Enmity (a straight
+        //          advantage buff) and before Divine Smite (a damage
+        //          prime) — the accuracy buff is highest-impact on
+        //          low-hit-chance swings, so having it up before any
+        //          follow-up smite / rider lands guarantees the smite
+        //          connects. The action's `feature_prime_ready` gate
+        //          covers once-per-short-rest + no-stack; the AI picker
+        //          handles the "enemy within attack window" heuristic.
+        if let Some(aei) = try_guided_strike(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3c''''''. War Priest — War Domain Cleric bonus-action extra
+        //           weapon swing, once per short rest. Grants a fresh
+        //           Action token for a follow-up strike this turn.
+        //           Slots after Guided Strike so the granted Action
+        //           benefits from the +10 accuracy prime if both
+        //           charges are up. Same action-economy trade as
+        //           Frenzy / Flurry of Blows / Action Surge — the
+        //           action's `feature_ready` gate covers once-per-
+        //           short-rest; the AI picker handles the "enemy
+        //           adjacent" gate so the granted swing lands.
+        if let Some(aei) = try_war_priest(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3d. Divine Smite — paladin bonus action that primes the next
         //     melee hit with +2d8 radiant. Fire when an enemy is in
         //     melee reach so the prime is consumed this turn (the
@@ -1444,10 +1473,7 @@ fn try_divine_strike(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    if !any_enemy_within(encounter, actor_id, 0) {
-        return None;
-    }
-    try_self_action(encounter, actor_id, "divine strike")
+    try_self_action_when_enemy_within(encounter, actor_id, 0, "divine strike")
 }
 
 /// Fighter Trip Attack — once-per-rest bonus-action maneuver. Fire when
@@ -1458,10 +1484,7 @@ fn try_trip_attack(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    if !any_enemy_within(encounter, actor_id, 0) {
-        return None;
-    }
-    try_self_action(encounter, actor_id, "trip attack")
+    try_self_action_when_enemy_within(encounter, actor_id, 0, "trip attack")
 }
 
 /// Fighter Battle Master Menacing Attack — bonus-action prime that lays a
@@ -1472,10 +1495,7 @@ fn try_menacing_attack(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    if !any_enemy_within(encounter, actor_id, 0) {
-        return None;
-    }
-    try_self_action(encounter, actor_id, "menacing attack")
+    try_self_action_when_enemy_within(encounter, actor_id, 0, "menacing attack")
 }
 
 /// Fighter Battle Master Disarming Attack — bonus-action prime that lays
@@ -1486,10 +1506,7 @@ fn try_disarming_attack(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    if !any_enemy_within(encounter, actor_id, 0) {
-        return None;
-    }
-    try_self_action(encounter, actor_id, "disarming attack")
+    try_self_action_when_enemy_within(encounter, actor_id, 0, "disarming attack")
 }
 
 /// Fighter Battle Master Pushing Attack — bonus-action prime that lays a
@@ -1500,10 +1517,7 @@ fn try_pushing_attack(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    if !any_enemy_within(encounter, actor_id, 0) {
-        return None;
-    }
-    try_self_action(encounter, actor_id, "pushing attack")
+    try_self_action_when_enemy_within(encounter, actor_id, 0, "pushing attack")
 }
 
 /// Fighter Battle Master Goading Attack — bonus-action prime that lays a
@@ -1518,10 +1532,7 @@ fn try_goading_attack(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    if !any_enemy_within(encounter, actor_id, 0) {
-        return None;
-    }
-    try_self_action(encounter, actor_id, "goading attack")
+    try_self_action_when_enemy_within(encounter, actor_id, 0, "goading attack")
 }
 
 /// Fighter Battle Master Precision Attack — bonus-action prime that
@@ -1531,10 +1542,7 @@ fn try_precision_attack(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    if !any_enemy_within(encounter, actor_id, 0) {
-        return None;
-    }
-    try_self_action(encounter, actor_id, "precision attack")
+    try_self_action_when_enemy_within(encounter, actor_id, 0, "precision attack")
 }
 
 /// Fighter Battle Master Distracting Strike — bonus-action prime that
@@ -2505,15 +2513,18 @@ fn try_natural_recovery(
 /// `try_self_action` with the recovery's canonical name. Factored so
 /// the gate lives in one place; new short-rest recovery features slot
 /// in with a one-line action-name change.
+///
+/// Now a thin gap-24 delegation on top of the general
+/// `try_self_action_when_enemy_within` helper — the recovery cohort
+/// (Arcane Recovery / Natural Recovery) still routes through this
+/// named alias to keep the domain semantics readable, but the general
+/// helper is the source of truth for the gate.
 fn try_engaged_self_recovery(
     encounter: &EncounterInstance,
     actor_id: usize,
     action_name: &str,
 ) -> Option<ActionExecutionInfo> {
-    if !any_enemy_within(encounter, actor_id, 24) {
-        return None;
-    }
-    try_self_action(encounter, actor_id, action_name)
+    try_self_action_when_enemy_within(encounter, actor_id, 24, action_name)
 }
 
 /// Bard Cutting Words — bonus-action enemy debuff. Fires Mocked on the
@@ -2742,6 +2753,37 @@ fn try_self_action(
     aei.validate(encounter).then_some(aei)
 }
 
+/// Sister to `try_self_action` gated on "at least one hostile within
+/// `max_gap` tiles of the actor's footprint". Short-circuits with
+/// `None` when the room is empty of eligible enemies — the common
+/// no-op case that every once-per-rest / prime-style self-target
+/// picker below open-coded as a two-line `any_enemy_within → return
+/// None` prelude followed by a `try_self_action` delegation.
+///
+/// The `max_gap` parameter distinguishes the two shipping cadences:
+///   - **gap 0** — footprint-adjacent: bonus-action primes whose next
+///     swing has to connect this turn (Trip / Menacing / Disarming /
+///     Pushing / Goading / Precision Attack; Divine Smite / Divine
+///     Strike; Frenzy / War Priest).
+///   - **gap 24** — spell-window: free-cost / prime actions whose
+///     payoff can be spent across the next few turns (Arcane Recovery,
+///     Natural Recovery, Guided Strike's +10 accuracy prime).
+///
+/// Adding a future once-per-rest self-target picker drops in as a
+/// one-line delegation instead of the three-line `any_enemy_within +
+/// return None + try_self_action` boilerplate.
+fn try_self_action_when_enemy_within(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    max_gap: isize,
+    action_name: &str,
+) -> Option<ActionExecutionInfo> {
+    if !any_enemy_within(encounter, actor_id, max_gap) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, action_name)
+}
+
 /// Same as `try_self_action`, but searches `available_actions()` —
 /// the template-action list plus one entry per carried consumable item —
 /// instead of just the template list. Used by self-buff heuristics that
@@ -2932,6 +2974,46 @@ fn try_lunging_attack(
     try_self_action(encounter, actor_id, "lunging attack")
 }
 
+/// War Domain Cleric War Priest — bonus-action extra weapon swing.
+/// Grants a fresh Action token to be spent on a follow-up strike this
+/// turn. Fires only when a hostile is footprint-adjacent so the granted
+/// Action lands a real swing rather than being wasted on a whiffed
+/// ranged spell. The action's own validator gates on the once-per-short-
+/// rest charge; we mirror the "enemy adjacent" gate here so the
+/// heuristic doesn't burn the charge when the follow-up would just be
+/// a Move.
+///
+/// Sibling to `try_frenzy` (Barbarian Berserker) — same bonus-action
+/// extra-Action shape gated on both a per-rest feature charge AND an
+/// adjacent enemy for the granted swing.
+fn try_war_priest(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_self_action_when_enemy_within(encounter, actor_id, 0, "war priest")
+}
+
+/// War Domain Cleric Guided Strike — bonus-action Channel Divinity
+/// prime that adds +10 to the cleric's next attack roll. Fires when an
+/// enemy sits within any plausible attack window (24 tiles ≈ 60 ft —
+/// covers Guiding Bolt at 120 ft compressed to the engine's read
+/// window; a Sacred Flame DEX save has no attack roll so Guided Strike
+/// on a save-only cleric fires when there's a viable melee / spell-
+/// attack target). The action's `custom_validate_input` gates on the
+/// once-per-short-rest charge AND the no-stack clause (skip re-prime
+/// while GuidedStriking is up).
+///
+/// Sibling to `try_precision_attack` (Battle Master Precision Attack)
+/// — same bonus-action attack-roll prime shape but with a fatter +10
+/// vs Precision's +4, gated on the same "enemy within attack window"
+/// heuristic.
+fn try_guided_strike(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_self_action_when_enemy_within(encounter, actor_id, 24, "guided strike")
+}
+
 /// Paladin Divine Smite — bonus-action prime that lays a +2d8 radiant
 /// rider on the next melee hit. Fires only when an enemy is footprint-
 /// adjacent so the prime doesn't tick out without a target to land on.
@@ -2940,10 +3022,7 @@ fn try_divine_smite(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    if !any_enemy_within(encounter, actor_id, 0) {
-        return None;
-    }
-    try_self_action(encounter, actor_id, "divine smite")
+    try_self_action_when_enemy_within(encounter, actor_id, 0, "divine smite")
 }
 
 /// Vengeance Paladin Vow of Enmity — bonus-action Channel Divinity,

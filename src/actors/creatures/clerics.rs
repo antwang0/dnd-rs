@@ -1,5 +1,6 @@
 use crate::actions::class_features::{
-    DIVINE_STRIKE, DIVINE_STRIKE_TAG, PRESERVE_LIFE, PRESERVE_LIFE_TAG, TURN_UNDEAD, TURN_UNDEAD_TAG,
+    DIVINE_STRIKE, DIVINE_STRIKE_TAG, GUIDED_STRIKE, GUIDED_STRIKE_TAG, PRESERVE_LIFE,
+    PRESERVE_LIFE_TAG, TURN_UNDEAD, TURN_UNDEAD_TAG, WAR_PRIEST, WAR_PRIEST_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
@@ -231,5 +232,52 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         proficient_saves: HashSet::from([AbilityScoreType::Wisdom, AbilityScoreType::Charisma]),
         features: HashSet::from([TURN_UNDEAD_TAG, DIVINE_STRIKE_TAG, PRESERVE_LIFE_TAG]),
         ..CreatureTemplate::defaults()
+    }
+});
+
+/// War Domain Cleric — subclass build. Identical envelope to the baseline
+/// `CLERIC_TEMPLATE` (WIS-primary caster, Sacred Flame / Guiding Bolt /
+/// Cure Wounds / Bless / Turn Undead / Preserve Life / Divine Strike,
+/// full cleric spell ladder) with two subclass features layered on:
+///
+/// - **War Priest** (lv1 subclass): bonus-action extra weapon swing after
+///   the Attack action. Once per short rest. Same action-economy trade
+///   as Flurry of Blows / Frenzy / Action Surge — spend a bonus action
+///   to buy a follow-up Action. Pairs naturally with the cleric's melee
+///   fallback (Thorn Whip cantrip / Spiritual Weapon primary swing) or
+///   any weapon added to the template (an added mace, spear, etc.).
+/// - **Guided Strike** (lv2 Channel Divinity): bonus-action prime that
+///   installs `GuidedStriking` on the cleric for +10 to their next
+///   attack roll. Once per short rest. The largest single-swing
+///   accuracy buff in the game — turns a marginal near-miss into a
+///   guaranteed connect. Pairs with the cleric's ranged offense
+///   (Sacred Flame DEX save has no attack roll — no benefit; but
+///   Guiding Bolt IS an attack roll — Guided Strike + Guiding Bolt
+///   guarantees the +4d6 radiant lands AND applies the Outlined
+///   condition for the follow-up attacker advantage rider).
+///
+/// Distinct from `CLERIC_TEMPLATE` (subclass-less baseline) so a
+/// War-vs-baseline encounter renders unambiguously by name. Glyph 'W'
+/// so the War Cleric shows up distinctly on the map next to the
+/// baseline 'C'.
+pub static WAR_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Cleric envelope wholesale
+    // and overwrite only the per-subclass differences (name / glyph /
+    // actions / features). Mirrors HUNTER_RANGER_TEMPLATE /
+    // ASSASSIN_ROGUE_TEMPLATE / VENGEANCE_PALADIN_TEMPLATE shape —
+    // the `..base.clone()` tail picks up every other field (stats,
+    // slots, save profs) without an N-line field-by-field copy.
+    let mut actions = CLERIC_TEMPLATE.actions.clone();
+    actions.push(&*WAR_PRIEST);
+    actions.push(&*GUIDED_STRIKE);
+    let mut features = CLERIC_TEMPLATE.features.clone();
+    features.insert(WAR_PRIEST_TAG);
+    features.insert(GUIDED_STRIKE_TAG);
+    CreatureTemplate {
+        name: "War Cleric",
+        glyph: 'W',
+        actions,
+        features,
+        ..CLERIC_TEMPLATE.clone()
     }
 });

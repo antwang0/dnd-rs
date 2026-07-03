@@ -2934,6 +2934,15 @@ impl ActorInstance {
         if self.has_condition(Condition::PrecisionAttacking) {
             bonus += 4;
         }
+        // 5e War Domain Cleric **Guided Strike** — flat +10 to the next
+        // attack roll (largest single-swing accuracy buff in the game).
+        // Sibling to PrecisionAttacking (+4) — same one-shot self-prime
+        // lane; consumed by `clear_attack_advantage_riders` via
+        // `CONSUMED_ON_ATTACK` so the bonus only fires on the first
+        // swing after the prime installs.
+        if self.has_condition(Condition::GuidedStriking) {
+            bonus += 10;
+        }
         bonus
     }
 
