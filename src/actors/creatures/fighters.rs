@@ -65,6 +65,24 @@ pub static CHAMPION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 19 or 20 instead of just 20. Read at every attack-roll site
         // via `actor.crit_threshold()`.
         crit_threshold: 19,
+        // 5e Fighter **Fighting Style: Defense** (lv1 pick): passive +1 AC
+        // while wearing armor. RAW "while wearing armor" gate collapses
+        // to "always on" since the engine doesn't model armor tiers —
+        // the Champion's plate baseline AC 18 becomes 19 with the style
+        // pick, folding into `armor_class` next to the item / condition
+        // AC lanes. Composes cleanly with the +1 template AC lane on
+        // the Champion's plate-wearing defensive profile.
+        has_defense_style: true,
+        // 5e Fighter **Fighting Style: Dueling** (lv1 pick, second-style
+        // pickup at fighter level 10): passive +2 to melee weapon damage.
+        // Inherited to keep the Champion's per-swing damage floor aligned
+        // with the baseline Fighter — the two templates should differ
+        // ONLY on the Champion-specific `crit_threshold: 19` capstone
+        // and the Survivor regen, not on background style picks. Same
+        // "class templates ship above their strict RAW gate" reasoning
+        // that ships Survivor (lv18) here — a level-5 build wouldn't
+        // RAW-legally hold two styles, but a level-10+ Champion would.
+        has_dueling_style: true,
         ..CreatureTemplate::defaults()
     }
 });
@@ -174,6 +192,18 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             DISTRACTING_ATTACK_TAG,
         ]),
         has_extra_attack: true,
+        // 5e Fighter **Fighting Style: Dueling** (lv1 pick): passive +2 to
+        // damage rolls on melee weapon attacks. RAW "while wielding a
+        // one-handed weapon and no other weapon" gate collapses to
+        // "melee weapon attack only" since the engine doesn't track
+        // weapon-hand-usage. The baseline Fighter ships this style since
+        // the scimitar is a one-handed simple melee weapon — dueling
+        // applies naturally without the two-handed / dual-wielding
+        // exclusions. Distinct from Champion (Defense: +1 AC) — the
+        // fighter's baseline lacks the Champion's plate baseline so the
+        // damage-side style buys more damage per swing than +1 AC would
+        // buy in AC on a chain-mail chassis.
+        has_dueling_style: true,
         ..CreatureTemplate::defaults()
     }
 });

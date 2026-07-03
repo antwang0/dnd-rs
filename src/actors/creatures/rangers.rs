@@ -113,6 +113,14 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Dexterity,
         ]),
         has_extra_attack: true,
+        // 5e Ranger **Fighting Style: Archery** (lv2 class feature). Passive
+        // +2 to ranged weapon attack rolls. Read at `resolve_attack` gated
+        // on `!is_melee && !is_spell` so a longbow shot picks up the bonus
+        // but a Fire Bolt spell attack doesn't. Composes cleanly with the
+        // ranger's longbow kite — the extra +2 accuracy on every arrow
+        // stacks with Hunter's Mark's per-hit rider and Colossus Slayer's
+        // once-per-turn +1d8.
+        has_archery_style: true,
         // 5e Ranger **Foe Slayer** (level 20 capstone). Passive once-
         // per-turn +WIS-mod flat damage rider on any weapon hit. Ships
         // on the CR-1 baseline template above its strict RAW level

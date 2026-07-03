@@ -129,6 +129,23 @@ pub fn resolve_attack_outcome(
     // The rider clear below removes Inspired alongside Helped/Hidden,
     // so swapping the order would zero out the +3.
     let (buff, cond_attack_bonus) = encounter.caster_attack_buffs(p.caster_id);
+    // 5e Fighting Style: **Archery** — +2 to attack rolls made with ranged
+    // weapons. RAW carves out spell attack rolls ("ranged weapon attacks"
+    // specifically), so the bonus is gated on `!p.is_melee && !p.is_spell`.
+    // Read on the caster side so a ranger's longbow shot picks up the bonus
+    // regardless of the target — mirrors how the item / condition attack
+    // bonus lanes fold in above.
+    let archery_bonus = if !p.is_melee
+        && !p.is_spell
+        && encounter
+            .actors
+            .get(&p.caster_id)
+            .is_some_and(|a| a.has_archery_style())
+    {
+        2
+    } else {
+        0
+    };
     // Bless/Bane: roll an actual 1d4 once per attack and add (Bless) or
     // subtract (Bane) from the total. Both: they cancel and no die is
     // rolled. We log the d4 separately so the player can see why the
@@ -152,7 +169,8 @@ pub fn resolve_attack_outcome(
     // The engine-level `crit_threshold` accessor folds in the default of
     // 20 for missing actors / non-Champion builds.
     let mut nat_crit = raw_attack >= encounter.crit_threshold(p.caster_id);
-    let mut attack_total = raw_attack + p.attack_bonus + buff + cond_attack_bonus + bless_die;
+    let mut attack_total =
+        raw_attack + p.attack_bonus + buff + cond_attack_bonus + bless_die + archery_bonus;
     let mut is_nat_one = raw_attack == 1;
     let mut hit = !is_nat_one && (nat_crit || attack_total >= target_ac);
     // 5e Tasha's Sorcerer Seeking Spell metamagic: on a missed spell
@@ -166,7 +184,12 @@ pub fn resolve_attack_outcome(
         if new_raw != raw_attack {
             raw_attack = new_raw;
             nat_crit = raw_attack >= encounter.crit_threshold(p.caster_id);
-            attack_total = raw_attack + p.attack_bonus + buff + cond_attack_bonus + bless_die;
+            attack_total = raw_attack
+                + p.attack_bonus
+                + buff
+                + cond_attack_bonus
+                + bless_die
+                + archery_bonus;
             is_nat_one = raw_attack == 1;
             hit = !is_nat_one && (nat_crit || attack_total >= target_ac);
         }
@@ -211,7 +234,7 @@ pub fn resolve_attack_outcome(
         "  {}: 1d20({}){:+}{}{} = {} vs AC {}{}{} \u{2014} {}",
         p.action_name,
         raw_attack,
-        p.attack_bonus + buff + cond_attack_bonus,
+        p.attack_bonus + buff + cond_attack_bonus + archery_bonus,
         bless_note,
         bend_note,
         attack_total,
@@ -325,6 +348,24 @@ pub fn resolve_attack_outcome(
     {
         damage = damage.saturating_add(2);
         encounter.log("  rage: +2 melee damage");
+    }
+    // 5e Fighting Style: **Dueling** — +2 to damage rolls on melee weapon
+    // attacks. RAW gates on "wielding a one-handed weapon and no other
+    // weapon"; we don't model weapon-hand-usage so the gate collapses to
+    // "melee weapon attack" (a fighter carrying a shortsword-and-scimitar
+    // pair would false-positive here, but the templates that ship the
+    // style flag only carry one weapon in the action list). Gated on
+    // `p.is_melee` so a longbow shot doesn't pick up the bonus. Additive
+    // with Rage's +2 melee damage so a raging dueling fighter stacks
+    // both (unlikely in practice — no template ships both flags).
+    if p.is_melee
+        && encounter
+            .actors
+            .get(&p.caster_id)
+            .is_some_and(|a| a.has_dueling_style())
+    {
+        damage = damage.saturating_add(2);
+        encounter.log("  dueling: +2 melee damage");
     }
     // Hunter's Mark rider: attacker concentrating on Hunter's Mark with
     // this target marked deals +1d6 (weapon-typed). Crits double the

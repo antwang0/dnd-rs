@@ -156,6 +156,18 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             IMPROVED_DIVINE_SMITE_TAG,
         ]),
         has_extra_attack: true,
+        // 5e Paladin **Fighting Style: Defense** (lv2 pick): passive +1 AC
+        // while wearing armor. RAW gate collapses to "always on" since the
+        // engine doesn't model armor tiers. The plate-baseline paladin
+        // (AC 18) becomes AC 19 with the style pick — folds into
+        // `armor_class` next to the item / condition AC lanes. Composes
+        // cleanly with the paladin's aura + smite kit: the +1 AC keeps
+        // the paladin standing longer for the aura bubble to keep
+        // ticking. Distinct from Dueling (Fighter baseline) — the
+        // paladin's greatsword is two-handed so Dueling doesn't apply
+        // RAW, but Defense is the natural pick for a shield-forward
+        // (or plate-forward) paladin build.
+        has_defense_style: true,
         // Aura of Protection (level 6+): allies within 10ft add the
         // paladin's CHA mod (min +1) to all saves. The headline late-
         // game paladin feature — turns the squishy wizard adjacent to

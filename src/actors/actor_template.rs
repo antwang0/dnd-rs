@@ -563,6 +563,34 @@ pub struct CreatureTemplate {
     /// stacks the dice). Read at the same crit-damage site in
     /// `engine::attack` next to `brutal_critical_dice`.
     pub has_savage_attacks: bool,
+    /// 5e Fighting Style: **Archery** (Fighter / Ranger / Paladin lv1
+    /// pick): +2 to attack rolls made with ranged weapons. Read at
+    /// `resolve_attack` — gated on `!is_melee && !is_spell` so a spell
+    /// attack roll (Fire Bolt, Eldritch Blast) doesn't pick up the bonus
+    /// per RAW ("ranged weapon attacks" specifically). Ships on the
+    /// baseline RANGER_TEMPLATE + HUNTER_RANGER_TEMPLATE since both
+    /// wield the longbow as their workhorse ranged weapon.
+    pub has_archery_style: bool,
+    /// 5e Fighting Style: **Defense** (Fighter / Paladin / Ranger lv1
+    /// pick): +1 AC while wearing armor. Read at
+    /// `ActorInstance::armor_class` — we don't model armor tiers so the
+    /// gate collapses to "always on" for any holder of the flag, same
+    /// shape as Fast Movement's "always on" collapse. Ships on the
+    /// baseline FIGHTER + CHAMPION + PALADIN (and every paladin
+    /// subclass) since the fighting-style pick is a lv1 class feature
+    /// that composes cleanly with the smite / maneuver kits.
+    pub has_defense_style: bool,
+    /// 5e Fighting Style: **Dueling** (Fighter / Paladin / Ranger lv1
+    /// pick): +2 to damage rolls on melee weapon attacks while wielding
+    /// a one-handed weapon and no other weapon. Read at the damage-roll
+    /// chokepoint in `engine::attack` — we don't track weapon-hand-usage
+    /// so the gate collapses to "melee weapon attacks" (RAW pre-req
+    /// on wielding one-handed is approximated). Ships on the baseline
+    /// FIGHTER template (scimitar is one-handed slashing) so the class
+    /// feature is engine-visible without stepping on the Champion /
+    /// Paladin (both use two-handed weapons where Dueling doesn't apply
+    /// RAW).
+    pub has_dueling_style: bool,
     /// 5e Dwarven Resilience: advantage on saving throws against poison
     /// AND resistance to poison damage. Read by `compute_save_mode`
     /// (advantage clause) and `effective_damage` (resistance clause).
@@ -714,6 +742,9 @@ impl CreatureTemplate {
             has_diamond_soul: false,
             has_slippery_mind: false,
             has_savage_attacks: false,
+            has_archery_style: false,
+            has_defense_style: false,
+            has_dueling_style: false,
             has_dwarven_resilience: false,
             has_gnome_cunning: false,
             draconic_ancestry: None,
@@ -1077,6 +1108,14 @@ pub struct ActorInstance {
     has_slippery_mind: bool,
     /// 5e Half-Orc Savage Attacks. See `CreatureTemplate` docs.
     has_savage_attacks: bool,
+    /// 5e Fighting Style: Archery (+2 ranged weapon attack rolls). See
+    /// `CreatureTemplate` docs.
+    has_archery_style: bool,
+    /// 5e Fighting Style: Defense (+1 AC). See `CreatureTemplate` docs.
+    has_defense_style: bool,
+    /// 5e Fighting Style: Dueling (+2 melee weapon damage). See
+    /// `CreatureTemplate` docs.
+    has_dueling_style: bool,
     /// 5e Dwarven Resilience. See `CreatureTemplate` docs.
     has_dwarven_resilience: bool,
     /// 5e Gnome Cunning. See `CreatureTemplate` docs.
@@ -1228,6 +1267,9 @@ impl ActorInstance {
             has_diamond_soul: ct.has_diamond_soul,
             has_slippery_mind: ct.has_slippery_mind,
             has_savage_attacks: ct.has_savage_attacks,
+            has_archery_style: ct.has_archery_style,
+            has_defense_style: ct.has_defense_style,
+            has_dueling_style: ct.has_dueling_style,
             has_dwarven_resilience: ct.has_dwarven_resilience,
             has_gnome_cunning: ct.has_gnome_cunning,
             draconic_ancestry: ct.draconic_ancestry,
@@ -1466,6 +1508,35 @@ impl ActorInstance {
     /// barbarian.
     pub fn has_savage_attacks(&self) -> bool {
         self.has_savage_attacks
+    }
+
+    /// 5e Fighting Style: Archery — +2 to attack rolls with ranged
+    /// weapons. Read at `resolve_attack` gated on `!is_melee && !is_spell`.
+    pub fn has_archery_style(&self) -> bool {
+        self.has_archery_style
+    }
+
+    /// 5e Fighting Style: Defense — +1 AC. Read at
+    /// `ActorInstance::armor_class`.
+    pub fn has_defense_style(&self) -> bool {
+        self.has_defense_style
+    }
+
+    /// 5e Fighting Style: Dueling — +2 to melee weapon damage rolls
+    /// (RAW gated on wielding a one-handed weapon; the engine's
+    /// weapon-hand-usage collapse turns the gate into "melee weapon
+    /// attack only"). Read at the damage-roll site in `engine::attack`.
+    pub fn has_dueling_style(&self) -> bool {
+        self.has_dueling_style
+    }
+
+    /// Test-only setter for the Dueling Fighting Style flag. Lets tests
+    /// dial the flag on or off on any chassis so the +2 damage rider
+    /// can be exercised in isolation. Mirrors `set_savage_attacks` /
+    /// `set_dwarven_resilience` etc. on the racial-flag lane.
+    #[cfg(test)]
+    pub fn set_dueling_style(&mut self, value: bool) {
+        self.has_dueling_style = value;
     }
 
     /// 5e Dwarven Resilience — advantage on saves vs poison AND resistance
@@ -2519,7 +2590,15 @@ impl ActorInstance {
         // floor lets the caster benefit when their base AC is lower.
         // The condition AC bonus (Shield, Shield of Faith, Hasted, etc.)
         // stacks on top of whichever number wins.
-        let raw_base = self.base_ac as i32 + self.total_item_bonuses().ac;
+        //
+        // 5e Fighting Style: Defense (+1 AC while wearing armor) reads
+        // here as a flat +1 on the base AC lane — we don't model armor
+        // tiers so the RAW "while wearing armor" gate collapses to
+        // "always on" for any holder of the flag. Applied to the raw
+        // base *before* the floor comparison so an AC-floor buff
+        // (Mage Armor / Barkskin) still overrides a lower armored AC.
+        let defense_bonus = if self.has_defense_style { 1 } else { 0 };
+        let raw_base = self.base_ac as i32 + self.total_item_bonuses().ac + defense_bonus;
         let floor = self.ac_floor();
         (raw_base.max(floor) + self.condition_ac_bonus()).max(0) as u32
     }

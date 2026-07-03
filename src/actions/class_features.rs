@@ -2740,27 +2740,73 @@ pub static DIVINE_STRIKE: LazyLock<DivineStrike> = LazyLock::new(|| DivineStrike
 /// Surge / Indomitable.
 pub const TRIP_ATTACK_TAG: &str = "fighter.trip_attack";
 
-/// Trip Attack — Fighter Battle Master maneuver. Bonus action; primes
-/// the next melee weapon hit: on connect, the target makes a STR save
-/// vs the fighter's maneuver DC (8 + prof + STR); on fail, they're
-/// knocked Prone. RAW's superiority-die damage rider is skipped; the
-/// prone-on-fail half is the load-bearing tactical effect. One-shot
-/// — the OnHitRider table strips the prime the moment a melee swing
-/// lands. Tick-down timer (2 rounds) caps the prime if the fighter
-/// can't connect.
-pub struct TripAttack {}
+/// Shared "bonus-action prime → next melee hit rides a save-vs-condition
+/// (or accuracy / splash / reach) rider" shape for Battle Master
+/// maneuvers and any other class feature whose only surface is a
+/// self-installed priming condition. Every field ships as a `&'static`
+/// so the type can be a `pub const` (matching how `CreateSpellSlot` /
+/// `ConvertSpellSlot` are declared elsewhere in this file).
+///
+/// Collapses the ~60-line `impl Action for XxxAttack {}` block that
+/// nine Battle Master primes previously open-coded — every one wrote
+/// the same trait body (NoArgs / bonus-action-only / feature-prime-
+/// gated / self-condition-install) with only the tag / condition /
+/// timer / log line changing. Sibling to the `SpellSlotRecovery` shape
+/// (which collapses Arcane Recovery + Natural Recovery through the
+/// same channel) — one row per maneuver instead of one impl block per
+/// maneuver.
+///
+/// The shared `feature_prime_ready` + `prime_self_condition` helpers
+/// already carried the gate + install logic — this struct just gives
+/// them a shape that the `Action` trait can hang off. Adding a future
+/// Battle Master pickup (Riposte, Parry, Bait and Switch, etc.) that
+/// installs a caster-side prime lands as one `pub const` row here
+/// instead of a fresh 60-line trait impl.
+pub struct ManeuverPrime {
+    /// Display name — surfaces in the action list + log line prefix and
+    /// as the prompt parser's canonical entry (`Action::name`).
+    pub name: &'static str,
+    /// Alias set for the prompt parser (`Action::aliases`). Kept as a
+    /// `&'static [&'static str]` so the struct stays plain data at
+    /// LazyLock init.
+    pub aliases: &'static [&'static str],
+    /// Feature tag whose once-per-rest charge gates the prime. Read via
+    /// `feature_available` in `custom_validate_input`; spent via
+    /// `spend_feature` when the prime installs.
+    pub tag: &'static str,
+    /// The self-condition this prime installs on the caster. Read on
+    /// both the validate side (`feature_prime_ready`'s no-stack clause
+    /// bounces a duplicate cast while the prime is still up) and the
+    /// install side (`prime_self_condition` runs an `ApplyCondition`).
+    pub prime_condition: Condition,
+    /// Duration of the installed prime. RAW's per-maneuver "until end of
+    /// your next turn" varies (Rounds(2) covers the typical prime; the
+    /// Distracting Strike case uses `UntilStartOfNextTurn` to match
+    /// RAW's until-end-of-target's-next-turn window on the ally-side
+    /// advantage rider).
+    pub timer: ConditionTimer,
+    /// Log flavor line emitted by `prime_self_condition` when the prime
+    /// installs — surfaces in the combat log so the player can see
+    /// exactly which prime is up.
+    pub log_line: &'static str,
+}
 
-impl Action for TripAttack {
+impl Action for ManeuverPrime {
     fn name(&self) -> &str {
-        "trip attack"
+        self.name
     }
     fn aliases(&self) -> Vec<&str> {
-        vec!["trip", "ta"]
+        self.aliases.to_vec()
     }
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::NoArgs
     }
     fn is_harmful(&self) -> bool {
+        // The prime targets the caster, not an enemy — mirrors how
+        // every other self-installed prime (Sacred Weapon, Divine Smite,
+        // Stunning Strike) declares itself non-harmful. The eventual
+        // damage / debuff lands on the *consuming* swing, which routes
+        // through the weapon's `is_harmful` gate.
         false
     }
     fn deals_damage(&self) -> bool {
@@ -2784,7 +2830,7 @@ impl Action for TripAttack {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        feature_prime_ready(encounter, caster_id, TRIP_ATTACK_TAG, Condition::TripAttacking)
+        feature_prime_ready(encounter, caster_id, self.tag, self.prime_condition)
     }
     fn side_effects(
         &self,
@@ -2797,15 +2843,30 @@ impl Action for TripAttack {
         prime_self_condition(
             encounter,
             caster_id,
-            TRIP_ATTACK_TAG,
-            Condition::TripAttacking,
-            ConditionTimer::Rounds(2),
-            "  trip attack: fighter's next hit forces a STR save vs prone.",
+            self.tag,
+            self.prime_condition,
+            self.timer,
+            self.log_line,
         )
     }
 }
 
-pub static TRIP_ATTACK: LazyLock<TripAttack> = LazyLock::new(|| TripAttack {});
+/// Trip Attack — Fighter Battle Master maneuver. Bonus action; primes
+/// the next melee weapon hit: on connect, the target makes a STR save
+/// vs the fighter's maneuver DC (8 + prof + STR); on fail, they're
+/// knocked Prone. RAW's superiority-die damage rider is skipped; the
+/// prone-on-fail half is the load-bearing tactical effect. One-shot
+/// — the OnHitRider table strips the prime the moment a melee swing
+/// lands. Tick-down timer (2 rounds) caps the prime if the fighter
+/// can't connect. Backed by the shared `ManeuverPrime` shape.
+pub static TRIP_ATTACK: LazyLock<ManeuverPrime> = LazyLock::new(|| ManeuverPrime {
+    name: "trip attack",
+    aliases: &["trip", "ta"],
+    tag: TRIP_ATTACK_TAG,
+    prime_condition: Condition::TripAttacking,
+    timer: ConditionTimer::Rounds(2),
+    log_line: "  trip attack: fighter's next hit forces a STR save vs prone.",
+});
 
 /// Build the "+1 Action token" side-effect vector for bonus-action
 /// economy-trade actions: `Action Surge`, `Flurry of Blows`, `Frenzy`,
@@ -2875,70 +2936,16 @@ pub const MENACING_ATTACK_TAG: &str = "fighter.menacing_attack";
 /// vs the fighter's STR-based maneuver DC; on fail, they're Frightened
 /// until the end of the fighter's next turn. RAW's +1d8 superiority-die
 /// damage is skipped (same caveat as Trip Attack); the frighten-on-fail
-/// IS the load-bearing tactical effect. Mirrors Trip Attack's shape.
-pub struct MenacingAttack {}
-
-impl Action for MenacingAttack {
-    fn name(&self) -> &str {
-        "menacing attack"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["menace", "ma"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-    fn is_harmful(&self) -> bool {
-        false
-    }
-    fn deals_damage(&self) -> bool {
-        false
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        bonus_action_only()
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        feature_prime_ready(
-            encounter,
-            caster_id,
-            MENACING_ATTACK_TAG,
-            Condition::MenacingAttacking,
-        )
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        prime_self_condition(
-            encounter,
-            caster_id,
-            MENACING_ATTACK_TAG,
-            Condition::MenacingAttacking,
-            ConditionTimer::Rounds(2),
-            "  menacing attack: fighter's next hit forces a WIS save vs frighten.",
-        )
-    }
-}
-
-pub static MENACING_ATTACK: LazyLock<MenacingAttack> = LazyLock::new(|| MenacingAttack {});
+/// IS the load-bearing tactical effect. Backed by the shared
+/// `ManeuverPrime` shape.
+pub static MENACING_ATTACK: LazyLock<ManeuverPrime> = LazyLock::new(|| ManeuverPrime {
+    name: "menacing attack",
+    aliases: &["menace", "ma"],
+    tag: MENACING_ATTACK_TAG,
+    prime_condition: Condition::MenacingAttacking,
+    timer: ConditionTimer::Rounds(2),
+    log_line: "  menacing attack: fighter's next hit forces a WIS save vs frighten.",
+});
 
 /// Class-feature tag for the Fighter's Disarming Attack Battle Master
 /// maneuver (once per long rest in our model).
@@ -2950,70 +2957,16 @@ pub const DISARMING_ATTACK_TAG: &str = "fighter.disarming_attack";
 /// Disarmed — attack rolls have disadvantage until the start of their
 /// next turn. RAW: target drops their weapon; we collapse the
 /// pickup-takes-a-move clause into the `UntilStartOfNextTurn` timer
-/// since the engine doesn't track held items.
-pub struct DisarmingAttack {}
-
-impl Action for DisarmingAttack {
-    fn name(&self) -> &str {
-        "disarming attack"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["disarm", "da"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-    fn is_harmful(&self) -> bool {
-        false
-    }
-    fn deals_damage(&self) -> bool {
-        false
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        bonus_action_only()
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        feature_prime_ready(
-            encounter,
-            caster_id,
-            DISARMING_ATTACK_TAG,
-            Condition::DisarmingAttacking,
-        )
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        prime_self_condition(
-            encounter,
-            caster_id,
-            DISARMING_ATTACK_TAG,
-            Condition::DisarmingAttacking,
-            ConditionTimer::Rounds(2),
-            "  disarming attack: fighter's next hit forces a STR save vs disarm.",
-        )
-    }
-}
-
-pub static DISARMING_ATTACK: LazyLock<DisarmingAttack> = LazyLock::new(|| DisarmingAttack {});
+/// since the engine doesn't track held items. Backed by the shared
+/// `ManeuverPrime` shape.
+pub static DISARMING_ATTACK: LazyLock<ManeuverPrime> = LazyLock::new(|| ManeuverPrime {
+    name: "disarming attack",
+    aliases: &["disarm", "da"],
+    tag: DISARMING_ATTACK_TAG,
+    prime_condition: Condition::DisarmingAttacking,
+    timer: ConditionTimer::Rounds(2),
+    log_line: "  disarming attack: fighter's next hit forces a STR save vs disarm.",
+});
 
 /// Class-feature tag for the Fighter's Pushing Attack Battle Master
 /// maneuver (once per long rest in our model).
@@ -3026,70 +2979,16 @@ pub const PUSHING_ATTACK_TAG: &str = "fighter.pushing_attack";
 /// the standard `PushActor` helper. RAW's +1d8 superiority-die damage
 /// is skipped (same caveat as the other maneuvers); the displacement
 /// IS the load-bearing tactical effect. First maneuver to use the
-/// `Push` variant of `FollowUpEffect`.
-pub struct PushingAttack {}
-
-impl Action for PushingAttack {
-    fn name(&self) -> &str {
-        "pushing attack"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["pa", "shovea"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-    fn is_harmful(&self) -> bool {
-        false
-    }
-    fn deals_damage(&self) -> bool {
-        false
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        bonus_action_only()
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        feature_prime_ready(
-            encounter,
-            caster_id,
-            PUSHING_ATTACK_TAG,
-            Condition::PushingAttacking,
-        )
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        prime_self_condition(
-            encounter,
-            caster_id,
-            PUSHING_ATTACK_TAG,
-            Condition::PushingAttacking,
-            ConditionTimer::Rounds(2),
-            "  pushing attack: fighter's next hit forces a STR save vs shove.",
-        )
-    }
-}
-
-pub static PUSHING_ATTACK: LazyLock<PushingAttack> = LazyLock::new(|| PushingAttack {});
+/// `Push` variant of `FollowUpEffect`. Backed by the shared
+/// `ManeuverPrime` shape.
+pub static PUSHING_ATTACK: LazyLock<ManeuverPrime> = LazyLock::new(|| ManeuverPrime {
+    name: "pushing attack",
+    aliases: &["pa", "shovea"],
+    tag: PUSHING_ATTACK_TAG,
+    prime_condition: Condition::PushingAttacking,
+    timer: ConditionTimer::Rounds(2),
+    log_line: "  pushing attack: fighter's next hit forces a STR save vs shove.",
+});
 
 /// Class-feature tag for the Fighter's Goading Attack Battle Master
 /// maneuver (once per long rest in our model). Refreshes on a short
@@ -3104,70 +3003,16 @@ pub const GOADING_ATTACK_TAG: &str = "fighter.goading_attack";
 /// superiority-die damage is skipped (same caveat as the other
 /// maneuvers); the goad debuff IS the load-bearing tactical effect.
 /// Mirrors Compelled Duel's tank-anchor envelope but is per-rest
-/// rather than concentration-bound.
-pub struct GoadingAttack {}
-
-impl Action for GoadingAttack {
-    fn name(&self) -> &str {
-        "goading attack"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["goad", "ga"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-    fn is_harmful(&self) -> bool {
-        false
-    }
-    fn deals_damage(&self) -> bool {
-        false
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        bonus_action_only()
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        feature_prime_ready(
-            encounter,
-            caster_id,
-            GOADING_ATTACK_TAG,
-            Condition::GoadingAttacking,
-        )
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        prime_self_condition(
-            encounter,
-            caster_id,
-            GOADING_ATTACK_TAG,
-            Condition::GoadingAttacking,
-            ConditionTimer::Rounds(2),
-            "  goading attack: fighter's next hit forces a WIS save vs goad.",
-        )
-    }
-}
-
-pub static GOADING_ATTACK: LazyLock<GoadingAttack> = LazyLock::new(|| GoadingAttack {});
+/// rather than concentration-bound. Backed by the shared
+/// `ManeuverPrime` shape.
+pub static GOADING_ATTACK: LazyLock<ManeuverPrime> = LazyLock::new(|| ManeuverPrime {
+    name: "goading attack",
+    aliases: &["goad", "ga"],
+    tag: GOADING_ATTACK_TAG,
+    prime_condition: Condition::GoadingAttacking,
+    timer: ConditionTimer::Rounds(2),
+    log_line: "  goading attack: fighter's next hit forces a WIS save vs goad.",
+});
 
 /// Class-feature tag for the Fighter's Distracting Strike Battle Master
 /// maneuver (once per long rest in our model). Refreshes on a short rest
@@ -3184,71 +3029,18 @@ pub const DISTRACTING_ATTACK_TAG: &str = "fighter.distracting_attack";
 /// unconditionally on hit). Mirrors Goading Attack's prime + target-
 /// link pairing, but flipped to a target-side advantage rather than
 /// an attacker-side disadvantage. One-shot — the OnHitRider table
-/// strips this flag the moment a melee swing lands.
-pub struct DistractingAttack {}
-
-impl Action for DistractingAttack {
-    fn name(&self) -> &str {
-        "distracting strike"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["distract", "dsa"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-    fn is_harmful(&self) -> bool {
-        false
-    }
-    fn deals_damage(&self) -> bool {
-        false
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        bonus_action_only()
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        feature_prime_ready(
-            encounter,
-            caster_id,
-            DISTRACTING_ATTACK_TAG,
-            Condition::DistractingAttacking,
-        )
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        prime_self_condition(
-            encounter,
-            caster_id,
-            DISTRACTING_ATTACK_TAG,
-            Condition::DistractingAttacking,
-            ConditionTimer::UntilStartOfNextTurn,
-            "  distracting strike: fighter's next melee hit will rattle the target's guard.",
-        )
-    }
-}
-
-pub static DISTRACTING_ATTACK: LazyLock<DistractingAttack> =
-    LazyLock::new(|| DistractingAttack {});
+/// strips this flag the moment a melee swing lands. Backed by the
+/// shared `ManeuverPrime` shape; uses `UntilStartOfNextTurn` for the
+/// timer to match RAW's until-end-of-target's-next-turn envelope on
+/// the ally-side advantage rider.
+pub static DISTRACTING_ATTACK: LazyLock<ManeuverPrime> = LazyLock::new(|| ManeuverPrime {
+    name: "distracting strike",
+    aliases: &["distract", "dsa"],
+    tag: DISTRACTING_ATTACK_TAG,
+    prime_condition: Condition::DistractingAttacking,
+    timer: ConditionTimer::UntilStartOfNextTurn,
+    log_line: "  distracting strike: fighter's next melee hit will rattle the target's guard.",
+});
 
 /// Class-feature tag for the Wizard's Arcane Recovery — once per long
 /// rest, refreshes on long rest. RAW: once per day during a short rest,
@@ -3683,73 +3475,19 @@ pub const PRECISION_ATTACK_TAG: &str = "fighter.precision_attack";
 /// Unlike Trip / Menacing / Disarming / Pushing / Goading, this
 /// maneuver has no melee-only or save gate — it lands on any attack
 /// roll the fighter makes that turn (RAW: weapon attack roll, melee or
-/// ranged). One-shot via the clear-on-attack consume site.
-pub struct PrecisionAttack {}
-
-impl Action for PrecisionAttack {
-    fn name(&self) -> &str {
-        "precision attack"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["precision", "pra"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-    fn is_harmful(&self) -> bool {
-        false
-    }
-    fn deals_damage(&self) -> bool {
-        false
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        bonus_action_only()
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        feature_prime_ready(
-            encounter,
-            caster_id,
-            PRECISION_ATTACK_TAG,
-            Condition::PrecisionAttacking,
-        )
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        prime_self_condition(
-            encounter,
-            caster_id,
-            PRECISION_ATTACK_TAG,
-            Condition::PrecisionAttacking,
-            // 2-round window so the prime survives until the fighter's
-            // next swing even if their turn ends on a movement-only
-            // sequence (mirrors Trip / Menacing / Smite primes).
-            ConditionTimer::Rounds(2),
-            "  precision attack: fighter's next attack roll gains +4.",
-        )
-    }
-}
-
-pub static PRECISION_ATTACK: LazyLock<PrecisionAttack> = LazyLock::new(|| PrecisionAttack {});
+/// ranged). One-shot via the clear-on-attack consume site. Backed by
+/// the shared `ManeuverPrime` shape.
+pub static PRECISION_ATTACK: LazyLock<ManeuverPrime> = LazyLock::new(|| ManeuverPrime {
+    name: "precision attack",
+    aliases: &["precision", "pra"],
+    tag: PRECISION_ATTACK_TAG,
+    prime_condition: Condition::PrecisionAttacking,
+    // 2-round window so the prime survives until the fighter's next
+    // swing even if their turn ends on a movement-only sequence
+    // (mirrors Trip / Menacing / Smite primes).
+    timer: ConditionTimer::Rounds(2),
+    log_line: "  precision attack: fighter's next attack roll gains +4.",
+});
 
 /// Class-feature tag for the Fighter's Sweeping Attack Battle Master
 /// maneuver (once per long rest in our model). Listed in
@@ -3766,73 +3504,16 @@ pub const SWEEPING_ATTACK_TAG: &str = "fighter.sweeping_attack";
 /// (no save) — RAW: the original attack roll is reused.
 ///
 /// One-shot — the rider table strips the `SweepingAttacking` flag the
-/// moment a melee swing lands.
-pub struct SweepingAttack {}
-
-impl Action for SweepingAttack {
-    fn name(&self) -> &str {
-        "sweeping attack"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["sweep", "swa"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-    fn is_harmful(&self) -> bool {
-        false
-    }
-    fn deals_damage(&self) -> bool {
-        // Indirect: the splash damage lands on the consuming swing, not
-        // on cast. Mirrors the other Battle Master primes / Smite
-        // bonus-actions.
-        false
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        bonus_action_only()
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        feature_prime_ready(
-            encounter,
-            caster_id,
-            SWEEPING_ATTACK_TAG,
-            Condition::SweepingAttacking,
-        )
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        prime_self_condition(
-            encounter,
-            caster_id,
-            SWEEPING_ATTACK_TAG,
-            Condition::SweepingAttacking,
-            ConditionTimer::Rounds(2),
-            "  sweeping attack: fighter's next melee hit splashes to an adjacent foe.",
-        )
-    }
-}
-
-pub static SWEEPING_ATTACK: LazyLock<SweepingAttack> = LazyLock::new(|| SweepingAttack {});
+/// moment a melee swing lands. Backed by the shared `ManeuverPrime`
+/// shape.
+pub static SWEEPING_ATTACK: LazyLock<ManeuverPrime> = LazyLock::new(|| ManeuverPrime {
+    name: "sweeping attack",
+    aliases: &["sweep", "swa"],
+    tag: SWEEPING_ATTACK_TAG,
+    prime_condition: Condition::SweepingAttacking,
+    timer: ConditionTimer::Rounds(2),
+    log_line: "  sweeping attack: fighter's next melee hit splashes to an adjacent foe.",
+});
 
 /// Class-feature tag for the Fighter's Feinting Attack Battle Master
 /// maneuver (once per long rest in our model). Listed in
@@ -3964,72 +3645,18 @@ pub const LUNGING_ATTACK_TAG: &str = "fighter.lunging_attack";
 ///
 /// One-shot — mirrors the Trip / Menacing / Sweeping shape but with the
 /// reach extension as the load-bearing effect instead of a save-or-debuff.
-pub struct LungingAttack {}
-
-impl Action for LungingAttack {
-    fn name(&self) -> &str {
-        "lunging attack"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["lunge", "la"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-    fn is_harmful(&self) -> bool {
-        false
-    }
-    fn deals_damage(&self) -> bool {
-        false
-    }
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        bonus_action_only()
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        feature_prime_ready(
-            encounter,
-            caster_id,
-            LUNGING_ATTACK_TAG,
-            Condition::LungingAttacking,
-        )
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        prime_self_condition(
-            encounter,
-            caster_id,
-            LUNGING_ATTACK_TAG,
-            Condition::LungingAttacking,
-            // Short timer caps the prime so an idle fighter doesn't carry
-            // the reach extension across rests. CONSUMED_ON_ATTACK clears
-            // it on the next swing; the timer is just a safety net.
-            ConditionTimer::Rounds(2),
-            "  lunging attack: fighter's next melee swing gains +5 ft of reach.",
-        )
-    }
-}
-
-pub static LUNGING_ATTACK: LazyLock<LungingAttack> = LazyLock::new(|| LungingAttack {});
+/// Backed by the shared `ManeuverPrime` shape.
+pub static LUNGING_ATTACK: LazyLock<ManeuverPrime> = LazyLock::new(|| ManeuverPrime {
+    name: "lunging attack",
+    aliases: &["lunge", "la"],
+    tag: LUNGING_ATTACK_TAG,
+    prime_condition: Condition::LungingAttacking,
+    // Short timer caps the prime so an idle fighter doesn't carry the
+    // reach extension across rests. CONSUMED_ON_ATTACK clears it on
+    // the next swing; the timer is just a safety net.
+    timer: ConditionTimer::Rounds(2),
+    log_line: "  lunging attack: fighter's next melee swing gains +5 ft of reach.",
+});
 
 /// Class-feature tag for the Fighter's Rally Battle Master maneuver
 /// (once per long rest in our model). Listed in `SHORT_REST_FEATURES`
