@@ -42,6 +42,48 @@ pub struct AttackParams<'a> {
     pub is_spell: bool,
 }
 
+/// 5e Fighting Style: **Interception** — shared reduction helper for
+/// weapon and spell attacks. Finds the first eligible adjacent ally with
+/// the flag + reaction, rolls `1d10 + prof`, spends the ally's reaction,
+/// and returns the post-clamp damage. Damage of 0 is a no-op (skip the
+/// scan). No-op when no ally qualifies.
+///
+/// Shared between `resolve_attack_outcome` here and
+/// `spell_attack_outcome` in `spells.rs` so a single site owns the
+/// 1d10 + prof reduction envelope for every attack roll — RAW's
+/// "weapon or spell attack" is honored by having both call sites
+/// funnel through this helper.
+pub fn apply_interception_reduction(
+    encounter: &mut EncounterInstance,
+    attacker_id: usize,
+    target_id: usize,
+    damage: u32,
+) -> u32 {
+    if damage == 0 {
+        return damage;
+    }
+    let Some(interceptor_id) = encounter.first_eligible_interceptor(attacker_id, target_id)
+    else {
+        return damage;
+    };
+    let Some(interceptor) = encounter.actors.get(&interceptor_id) else {
+        return damage;
+    };
+    let prof = interceptor.proficiency_bonus();
+    let interceptor_name = interceptor.name().to_string();
+    let raw = encounter.roll(&Dice::new(1, 10)) as i32;
+    let reduction = (raw + prof).max(0) as u32;
+    let reduced = damage.saturating_sub(reduction);
+    encounter.log(format!(
+        "  interception: {} clamps 1d10({}){:+} = -{} damage ({} \u{2192} {})",
+        interceptor_name, raw, prof, reduction, damage, reduced
+    ));
+    if let Some(a) = encounter.actors.get_mut(&interceptor_id) {
+        a.consume_resource(crate::engine::side_effects::Resource::Reaction);
+    }
+    reduced
+}
+
 /// Resolve a 5e d20 attack roll against a single target's AC. On a hit,
 /// returns a `DealDamage` side-effect for the rolled damage; on a miss,
 /// returns an empty vec. The d20 result, hit/miss outcome, and damage
@@ -126,6 +168,20 @@ pub fn resolve_attack_outcome(
         encounter.log(
             "  protection: attack against target imposed disadvantage (protector's reaction spent)",
         );
+    }
+    // 5e Light Domain Cleric Warding Flare (lv1 subclass): the target may
+    // spend their reaction (+ per-rest charge) to impose disadvantage on
+    // this attack roll. Wired here rather than inside `compute_attack_mode`
+    // because the reaction spend + log needs `&mut encounter`. RAW is
+    // "any attack roll" — no weapon-only qualifier — so the same helper
+    // fires on spell attacks via `spell_attack_outcome`. Layered AFTER
+    // Protection so a target with both an adjacent Protection ally AND
+    // a self-carried Warding Flare doesn't waste the flare charge when
+    // Protection already handled the tax.
+    if mode != crate::engine::dice::RollMode::Disadvantage
+        && encounter.apply_warding_flare_disadvantage(p.target_id, p.caster_id)
+    {
+        mode = mode.combine(crate::engine::dice::RollMode::Disadvantage);
     }
     // 5e long-range disadvantage: ranged weapon attacks beyond normal
     // range but within max range impose disadvantage. The `long_range`
@@ -489,6 +545,18 @@ pub fn resolve_attack_outcome(
         if let Some(t) = encounter.actors.get_mut(&p.target_id) {
             t.consume_resource(crate::engine::side_effects::Resource::Reaction);
         }
+    }
+    // 5e Fighting Style: **Interception** (XGtE). An adjacent ally
+    // (within 5 ft of the target) with the style flag and an unspent
+    // reaction may burn their reaction to reduce the incoming damage
+    // by `1d10 + prof`. Layered AFTER Deflect Missiles / Uncanny Dodge
+    // so the ally's clamp fires on whatever damage remains — a monk
+    // deflecting first and a paladin intercepting second is the RAW
+    // "each reaction is independent" stacking. Skipped on zero damage
+    // (no work to shield). Same helper feeds `spell_attack_outcome`
+    // so an intercepting ally covers spell attacks too per RAW.
+    if damage > 0 {
+        damage = apply_interception_reduction(encounter, p.caster_id, p.target_id, damage);
     }
     let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
         actor_id: p.target_id,

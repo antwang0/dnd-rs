@@ -45,6 +45,13 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // Divinity" resource lane with Turn Undead / Preserve Life / Guided
     // Strike, but each tag is a distinct per-rest charge in our model.
     RADIANCE_OF_THE_DAWN_TAG,
+    // 5e Light Domain Cleric level-1 feature — Warding Flare: passive
+    // reaction that imposes disadvantage on an incoming attack roll.
+    // RAW: uses per long rest equal to WIS mod (min 1), refreshed on a
+    // long rest. We collapse to a once-per-short-rest charge so the
+    // Light Cleric doesn't lose the flare between engagements — same
+    // gating shape as the other Cleric Channel Divinity charges.
+    WARDING_FLARE_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -4886,3 +4893,28 @@ impl Action for RadianceOfTheDawn {
 
 pub static RADIANCE_OF_THE_DAWN: LazyLock<RadianceOfTheDawn> =
     LazyLock::new(|| RadianceOfTheDawn {});
+
+/// 5e Light Domain Cleric level-1 subclass feature — **Warding Flare**.
+/// Passive reaction: when a creature within 30 ft that the cleric can
+/// see makes an attack roll against them, the cleric can use their
+/// reaction to impose disadvantage on the attack roll. RAW uses per
+/// long rest equal to WIS mod (min 1); we collapse to a once-per-
+/// short-rest charge (registered in `SHORT_REST_FEATURES`) so the
+/// Light cleric doesn't lose the flare between engagements — same
+/// gating shape as the Cleric's other Channel Divinity charges.
+///
+/// No action surface — the trigger fires automatically at the attack
+/// chokepoint (`resolve_attack` for weapon swings and
+/// `spell_attack_outcome` for spell attacks) via
+/// `EncounterInstance::apply_warding_flare_disadvantage`. Ships as a
+/// pure passive template tag on `LIGHT_CLERIC_TEMPLATE` — no per-
+/// action `Action` impl, no bonus-action lane, mirroring how
+/// Blood Frenzy / Fast Movement / Mindless Rage layer as passive
+/// tags without a bonus-action shape.
+///
+/// RAW blindness clause ("can see"): we approximate with `!Blinded`.
+/// The 30ft range collapses to a footprint-Chebyshev cap of 12 tiles
+/// (2.5ft grid). The engine reads the trigger in
+/// `apply_warding_flare_disadvantage`, spending the reaction + charge
+/// on fire and combining `Disadvantage` into the attack mode.
+pub const WARDING_FLARE_TAG: &str = "cleric.warding_flare";

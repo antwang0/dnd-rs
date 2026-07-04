@@ -133,7 +133,22 @@ fn spell_attack_outcome(
     // attack_mode_with_riders so a one-shot Help grant on the caster is
     // consumed exactly once (matching weapon-attack semantics in
     // resolve_attack).
-    let mode = encounter.attack_mode_with_riders(caster_id, target_id, is_melee, true);
+    let mut mode = encounter.attack_mode_with_riders(caster_id, target_id, is_melee, true);
+    // 5e Light Domain Cleric **Warding Flare** (lv1 subclass): mirrored
+    // from the weapon-attack path in `engine::attack::resolve_attack`
+    // since RAW's "attack roll" trigger applies to spell attacks too.
+    // The target may spend their reaction + per-rest charge to impose
+    // disadvantage on this spell attack roll. Layered here (after
+    // `attack_mode_with_riders`) so any advantage the spell attack
+    // picked up from Help / Bless / Hidden still combines cleanly with
+    // the flare disadvantage via `RollMode::combine`. Skipped when
+    // the mode is already disadvantage (a wasted flare charge would
+    // provide no additional tax).
+    if mode != crate::engine::dice::RollMode::Disadvantage
+        && encounter.apply_warding_flare_disadvantage(target_id, caster_id)
+    {
+        mode = mode.combine(crate::engine::dice::RollMode::Disadvantage);
+    }
     // Pull through the same caster-side flat buffs (Bless / Bane d4,
     // attack_bonus_buff, condition_attack_bonus) that weapon attacks
     // get via `resolve_attack`. This keeps spell-attack rolls
@@ -267,6 +282,13 @@ fn spell_attack_outcome(
             String::new()
         }
     ));
+    // 5e Fighting Style: **Interception** (XGtE) — RAW covers "weapon
+    // or spell attack", so the reduction fires against spell attacks
+    // too. Shared with the weapon path in `engine::attack` via
+    // `apply_interception_reduction` so the 1d10 + prof clamp lives
+    // in one place. A no-op when no adjacent ally qualifies.
+    let total_dmg =
+        crate::engine::attack::apply_interception_reduction(encounter, caster_id, target_id, total_dmg);
     let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
         actor_id: target_id,
         amount: total_dmg,

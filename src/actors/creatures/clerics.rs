@@ -1,7 +1,7 @@
 use crate::actions::class_features::{
     DIVINE_STRIKE, DIVINE_STRIKE_TAG, GUIDED_STRIKE, GUIDED_STRIKE_TAG, PRESERVE_LIFE,
     PRESERVE_LIFE_TAG, RADIANCE_OF_THE_DAWN, RADIANCE_OF_THE_DAWN_TAG, TURN_UNDEAD, TURN_UNDEAD_TAG,
-    WAR_PRIEST, WAR_PRIEST_TAG,
+    WAR_PRIEST, WAR_PRIEST_TAG, WARDING_FLARE_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
@@ -286,11 +286,18 @@ pub static WAR_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 /// Light Domain Cleric — subclass build. Identical envelope to the
 /// baseline `CLERIC_TEMPLATE` (WIS-primary caster, Sacred Flame / Guiding
 /// Bolt / Cure Wounds / Bless / Turn Undead / Preserve Life / Divine
-/// Strike, full cleric spell ladder) with one subclass feature layered
-/// on: **Radiance of the Dawn** (lv2 Channel Divinity) — action-cost
-/// 30ft self-centered radiant burst, once per short rest. Every enemy
-/// in range makes a CON save vs the cleric's spell save DC; on fail
-/// they eat `2d10 + cleric level` radiant, on save they take half.
+/// Strike, full cleric spell ladder) with two subclass features layered
+/// on:
+///
+/// - **Warding Flare** (lv1 subclass): passive reaction that imposes
+///   disadvantage on an incoming attack from within 30 ft. Fires at
+///   the attack-mode chokepoint (weapon + spell) — no action surface,
+///   once per short rest (RAW: WIS-mod uses per long rest; collapsed).
+/// - **Radiance of the Dawn** (lv2 Channel Divinity) — action-cost
+///   30ft self-centered radiant burst, once per short rest. Every
+///   enemy in range makes a CON save vs the cleric's spell save DC;
+///   on fail they eat `2d10 + cleric level` radiant, on save they
+///   take half.
 ///
 /// The Light Domain's damage-lane sibling to Turn Undead (Frightened
 /// install, undead-only) and Preserve Life (mass heal). Where Turn
@@ -322,6 +329,12 @@ pub static LIGHT_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
     actions.push(&*RADIANCE_OF_THE_DAWN);
     let mut features = CLERIC_TEMPLATE.features.clone();
     features.insert(RADIANCE_OF_THE_DAWN_TAG);
+    // Warding Flare (lv1 Light subclass): passive reaction that imposes
+    // disadvantage on an incoming attack from within 30 ft. No action
+    // surface — the trigger fires automatically at every attack
+    // chokepoint (weapon + spell). Registered in `SHORT_REST_FEATURES`
+    // so the charge refreshes alongside Radiance of the Dawn.
+    features.insert(WARDING_FLARE_TAG);
     CreatureTemplate {
         name: "Light Cleric",
         glyph: 'L',

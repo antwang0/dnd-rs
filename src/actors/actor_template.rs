@@ -651,6 +651,21 @@ pub struct CreatureTemplate {
     /// Master / Paladin sub-build) can opt in without inventing a new
     /// item slot.
     pub has_protection_style: bool,
+    /// 5e Fighting Style: **Interception** (Fighter / Paladin lv1 pick,
+    /// XGtE). When a creature the holder can see hits a target OTHER
+    /// than the holder with a weapon or spell attack within 5 ft of the
+    /// holder, they can use their reaction to reduce the damage the
+    /// target takes by `1d10 + proficiency bonus` (to a minimum of 0).
+    /// RAW gates on "wielding a shield or a simple / martial weapon" —
+    /// we don't model shield / weapon-slot wielding as a template-
+    /// visible flag, so the gate collapses to "flag holder, ally-
+    /// adjacent, reaction available". Read at `resolve_attack_outcome`
+    /// AFTER the damage is computed but BEFORE it's applied — the
+    /// helper `apply_interception_reduction` returns the reduction,
+    /// which the attack site clamps against the pending damage. Not
+    /// shipped on any current template by default; the flag exists so
+    /// templates that carry a shield can opt in.
+    pub has_interception_style: bool,
     /// 5e Dwarven Resilience: advantage on saving throws against poison
     /// AND resistance to poison damage. Read by `compute_save_mode`
     /// (advantage clause) and `effective_damage` (resistance clause).
@@ -808,6 +823,7 @@ impl CreatureTemplate {
             has_great_weapon_fighting: false,
             has_two_weapon_fighting_style: false,
             has_protection_style: false,
+            has_interception_style: false,
             has_dwarven_resilience: false,
             has_gnome_cunning: false,
             draconic_ancestry: None,
@@ -1188,6 +1204,9 @@ pub struct ActorInstance {
     /// 5e Fighting Style: Protection (reaction: impose disadvantage on
     /// attack against ally). See `CreatureTemplate` docs.
     has_protection_style: bool,
+    /// 5e Fighting Style: Interception (reaction: reduce damage to
+    /// adjacent ally by 1d10 + prof). See `CreatureTemplate` docs.
+    has_interception_style: bool,
     /// 5e Dwarven Resilience. See `CreatureTemplate` docs.
     has_dwarven_resilience: bool,
     /// 5e Gnome Cunning. See `CreatureTemplate` docs.
@@ -1345,6 +1364,7 @@ impl ActorInstance {
             has_great_weapon_fighting: ct.has_great_weapon_fighting,
             has_two_weapon_fighting_style: ct.has_two_weapon_fighting_style,
             has_protection_style: ct.has_protection_style,
+            has_interception_style: ct.has_interception_style,
             has_dwarven_resilience: ct.has_dwarven_resilience,
             has_gnome_cunning: ct.has_gnome_cunning,
             draconic_ancestry: ct.draconic_ancestry,
@@ -1656,6 +1676,20 @@ impl ActorInstance {
     #[cfg(test)]
     pub fn set_protection_style(&mut self, value: bool) {
         self.has_protection_style = value;
+    }
+
+    /// 5e Fighting Style: Interception — reaction: reduce the damage of
+    /// an incoming attack against an adjacent ally by 1d10 + proficiency
+    /// bonus. Read at `resolve_attack_outcome` / `spell_attack_outcome`
+    /// AFTER the damage is computed but BEFORE it's applied.
+    pub fn has_interception_style(&self) -> bool {
+        self.has_interception_style
+    }
+
+    /// Test-only setter for the Interception Fighting Style flag.
+    #[cfg(test)]
+    pub fn set_interception_style(&mut self, value: bool) {
+        self.has_interception_style = value;
     }
 
     /// 5e Dwarven Resilience — advantage on saves vs poison AND resistance

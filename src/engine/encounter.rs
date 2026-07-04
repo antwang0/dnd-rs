@@ -2691,24 +2691,78 @@ impl EncounterInstance {
         attacker_id: usize,
         target_id: usize,
     ) -> Option<usize> {
-        let attacker = self.actors.get(&attacker_id)?;
-        let target = self.actors.get(&target_id)?;
-        // Same-team swings (friendly-fire, e.g. a Confused ally) don't
-        // draw a protection tax — the protector's own team is doing the
-        // attacking, so there's no one to protect against.
-        if attacker.team() == target.team() {
-            return None;
-        }
-        let attacker_blinded = attacker.has_condition(Condition::Blinded);
-        let target_team = target.team();
         // Blinded attackers already eat their own disadvantage; layering
         // Protection on top would burn the protector's reaction for no
         // net advantage gain (disadvantage.combine(disadvantage) is
         // still disadvantage). Short-circuit here so the protector's
-        // reaction is saved for a swing that isn't already taxed.
-        if attacker_blinded {
+        // reaction is saved for a swing that isn't already taxed. This
+        // early-out is Protection-specific — Interception reduces damage
+        // AFTER the swing lands and doesn't care whether the roll was
+        // taxed, so the shared scan below doesn't fold this in.
+        let attacker = self.actors.get(&attacker_id)?;
+        if attacker.has_condition(Condition::Blinded) {
             return None;
         }
+        self.first_adjacent_reactive_ally(attacker_id, target_id, |a| a.has_protection_style())
+    }
+
+    /// 5e Fighting Style: **Interception** (XGtE, lv1 pick). When a
+    /// creature the interceptor can see hits a target OTHER than them
+    /// with a weapon or spell attack within 5 ft, the interceptor may
+    /// use their reaction to reduce the damage by `1d10 + proficiency
+    /// bonus`. Sibling to `first_eligible_protector` — same target-
+    /// adjacent-ally scan, same reaction / sight gates, but no
+    /// attacker-Blinded short-circuit: Interception reduces the damage
+    /// that lands, so it's worth firing even against a disadvantage-
+    /// taxed swing.
+    ///
+    /// This is a `&self` lookup — the reaction spend, 1d10 roll, and
+    /// damage clamp are handled by the caller
+    /// (`engine::attack::resolve_attack_outcome` and
+    /// `spell_attack_outcome` — RAW says "weapon or spell attack").
+    ///
+    /// Returns `None` when the attacker / target ids are unknown, when
+    /// they're on the same team (friendly-fire — no interception),
+    /// or when no ally qualifies. Actor id order is used for the pick
+    /// so seed reproducibility is preserved.
+    pub fn first_eligible_interceptor(
+        &self,
+        attacker_id: usize,
+        target_id: usize,
+    ) -> Option<usize> {
+        self.first_adjacent_reactive_ally(attacker_id, target_id, |a| a.has_interception_style())
+    }
+
+    /// Shared eligibility scan for the "adjacent-ally with reaction and a
+    /// per-style flag" cohort — Fighting Style Protection and Fighting
+    /// Style Interception both need the same footprint-adjacent, ally-
+    /// team, has-reaction, not-Blinded, has-FLAG filter over a
+    /// deterministic id order. Extracted so a future third style
+    /// (Interception's Rune Knight sibling, a homebrew ally-shield) lands
+    /// as one line — the closure picks the per-style flag.
+    ///
+    /// Returns `None` for missing ids or same-team swings (friendly-fire
+    /// doesn't draw the tax on either style). Callers own the reaction
+    /// spend / log line and any style-specific extra gates (e.g.
+    /// Protection's attacker-Blinded early-out).
+    fn first_adjacent_reactive_ally<F>(
+        &self,
+        attacker_id: usize,
+        target_id: usize,
+        has_flag: F,
+    ) -> Option<usize>
+    where
+        F: Fn(&ActorInstance) -> bool,
+    {
+        let attacker = self.actors.get(&attacker_id)?;
+        let target = self.actors.get(&target_id)?;
+        // Same-team swings (friendly-fire, e.g. a Confused ally) don't
+        // draw the reactive-style tax — the ally's own team is doing
+        // the attacking, so there's no one to shield against.
+        if attacker.team() == target.team() {
+            return None;
+        }
+        let target_team = target.team();
         // Actor id order — `HashMap` iteration isn't stable across runs,
         // so we collect + sort to keep the "first eligible" pick
         // deterministic under identical seeds. Keeps seed reproducibility
@@ -2722,18 +2776,10 @@ impl EncounterInstance {
             let Some(a) = self.actors.get(&id) else {
                 continue;
             };
-            if a.team() != target_team {
-                continue;
-            }
-            if !a.is_combat_active() {
-                continue;
-            }
-            if !a.has_protection_style() {
-                continue;
-            }
-            if !a.has_reaction() {
-                continue;
-            }
+            // Gate cohort: same-team, alive-and-combat-active, holds the
+            // per-style flag, has an unspent reaction, and can see the
+            // attacker (approximated as !Blinded).
+            //
             // `has_reaction()` covers Stunned / Paralyzed / Incapacitated
             // / Unconscious / Petrified / Mazed / Sphered via
             // `blocks_action_economy` and NoReaction / Confused via
@@ -2741,9 +2787,14 @@ impl EncounterInstance {
             // filter. Blinded still needs an explicit gate here: it's
             // NOT a reaction-blocking condition (a blinded creature CAN
             // spend reactions), but the RAW "you can see" clause on
-            // Protection specifically requires the protector to see
-            // the attacker.
-            if a.has_condition(Condition::Blinded) {
+            // both styles specifically requires the ally to see the
+            // attacker.
+            if a.team() != target_team
+                || !a.is_combat_active()
+                || !has_flag(a)
+                || !a.has_reaction()
+                || a.has_condition(Condition::Blinded)
+            {
                 continue;
             }
             if self
@@ -4984,6 +5035,77 @@ impl EncounterInstance {
             target_name, penalty, attacker_name, sp_left
         ));
         penalty
+    }
+
+    /// 5e Light Domain Cleric **Warding Flare** (lv1 subclass): when a
+    /// creature the cleric can see attacks them, the cleric can spend
+    /// their reaction to impose disadvantage on the attack roll. RAW
+    /// gates: the attacker must be within 30 ft AND the cleric must be
+    /// able to see them. The engine collapses "can see" to `!Blinded`
+    /// and the 30ft range to a 12-tile footprint-Chebyshev cap
+    /// (2.5ft/tile).
+    ///
+    /// Returns `true` when the flare fires — the caller should combine
+    /// `Disadvantage` into the attack mode. Returns `false` when any
+    /// gate fails (no charge, no reaction, blinded, out of range,
+    /// downed): the caller leaves the mode unchanged.
+    ///
+    /// The reaction and per-rest charge are spent on fire so a follow-
+    /// up swing this round bounces off the same target's gate cleanly.
+    /// Sibling to `first_eligible_protector` (target-side Fighting Style:
+    /// Protection reaction) and `apply_bend_luck_penalty` (target-side
+    /// Wild Magic Sorcerer reactive d4). Shared with weapon attacks
+    /// (`resolve_attack`) and spell attacks (`spell_attack_outcome`) so
+    /// the flare fires uniformly against any attack roll — RAW says
+    /// "attack roll" without a weapon-only qualifier.
+    pub fn apply_warding_flare_disadvantage(
+        &mut self,
+        target_id: usize,
+        attacker_id: usize,
+    ) -> bool {
+        use crate::actions::class_features::WARDING_FLARE_TAG;
+        use crate::engine::side_effects::Resource;
+        const WARDING_FLARE_RANGE_TILES: isize = 12;
+        let Some(target) = self.actors.get(&target_id) else {
+            return false;
+        };
+        if !target.has_passive_feature(WARDING_FLARE_TAG)
+            || !target.feature_available(WARDING_FLARE_TAG)
+            || !target.can_consume_resource(Resource::Reaction)
+            || target.has_condition(Condition::Blinded)
+            || !target.is_combat_active()
+        {
+            return false;
+        }
+        if self
+            .footprint_distance(target_id, attacker_id)
+            .is_none_or(|d| d > WARDING_FLARE_RANGE_TILES)
+        {
+            return false;
+        }
+        // Snapshot names before the mutable spend so the log line reads
+        // cleanly. The reaction + charge spend and log both fire off
+        // the same &mut borrow.
+        let (target_name, attacker_name) = {
+            let target = match self.actors.get_mut(&target_id) {
+                Some(a) => a,
+                None => return false,
+            };
+            target.spend_feature(WARDING_FLARE_TAG);
+            target.consume_resource(Resource::Reaction);
+            let tn = target.name().to_string();
+            let an = self
+                .actors
+                .get(&attacker_id)
+                .map(|a| a.name().to_string())
+                .unwrap_or_default();
+            (tn, an)
+        };
+        self.log(format!(
+            "  warding flare: {} flares a burst of light, imposing disadvantage on {}'s attack",
+            target_name, attacker_name
+        ));
+        true
     }
 
     /// 5e Mirror Image deflection check. With N duplicates remaining on
@@ -46855,7 +46977,7 @@ mod tests {
     /// baseline-vs-War-Domain split for Guided Strike / War Priest.
     #[test]
     fn baseline_cleric_does_not_ship_light_domain_features() {
-        use crate::actions::class_features::RADIANCE_OF_THE_DAWN_TAG;
+        use crate::actions::class_features::{RADIANCE_OF_THE_DAWN_TAG, WARDING_FLARE_TAG};
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
         let mut e = ei_with_terrain(15, 15, &[]);
         let cleric = e
@@ -46864,6 +46986,258 @@ mod tests {
         assert!(
             !e.actors[&cleric].feature_available(RADIANCE_OF_THE_DAWN_TAG),
             "baseline cleric must not ship radiance of the dawn"
+        );
+        assert!(
+            !e.actors[&cleric].feature_available(WARDING_FLARE_TAG),
+            "baseline cleric must not ship warding flare"
+        );
+        assert!(
+            !e.actors[&cleric].has_passive_feature(WARDING_FLARE_TAG),
+            "baseline cleric must not carry the warding flare passive tag"
+        );
+    }
+
+    /// Warding Flare (Light Cleric lv1): the passive charge lives on the
+    /// LIGHT_CLERIC_TEMPLATE, `apply_warding_flare_disadvantage` fires
+    /// while in range with an unspent reaction, spends both the reaction
+    /// AND the per-rest feature charge, and reports the disadvantage
+    /// via its bool return. Verifies the charge / reaction gates
+    /// close the door once spent.
+    #[test]
+    fn warding_flare_fires_and_spends_reaction_and_charge() {
+        use crate::actions::class_features::WARDING_FLARE_TAG;
+        use crate::actors::creatures::clerics::LIGHT_CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&LIGHT_CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Enemy within 30ft (12 tiles).
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        assert!(e.actors[&cleric].has_passive_feature(WARDING_FLARE_TAG));
+        assert!(e.actors[&cleric].feature_available(WARDING_FLARE_TAG));
+        assert!(e.actors[&cleric].can_consume_resource(Resource::Reaction));
+        // First trigger fires: returns true, spends the charge + reaction.
+        assert!(e.apply_warding_flare_disadvantage(cleric, goblin));
+        assert!(
+            !e.actors[&cleric].feature_available(WARDING_FLARE_TAG),
+            "warding flare charge should be spent"
+        );
+        assert!(
+            !e.actors[&cleric].can_consume_resource(Resource::Reaction),
+            "warding flare should burn the reaction"
+        );
+        // Second trigger bounces: no charge left.
+        assert!(!e.apply_warding_flare_disadvantage(cleric, goblin));
+    }
+
+    /// Warding Flare respects the 30ft (12-tile) range gate. An attacker
+    /// beyond that footprint-Chebyshev cap does NOT trigger the flare,
+    /// so the charge and reaction stay untouched.
+    #[test]
+    fn warding_flare_skips_when_attacker_out_of_range() {
+        use crate::actions::class_features::WARDING_FLARE_TAG;
+        use crate::actors::creatures::clerics::LIGHT_CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let cleric = e
+            .instantiate_creature(&LIGHT_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Far attacker — 20 tiles away, well beyond the 12-tile cap.
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(24, 2), 1, 0)
+            .unwrap();
+        assert!(!e.apply_warding_flare_disadvantage(cleric, goblin));
+        assert!(
+            e.actors[&cleric].feature_available(WARDING_FLARE_TAG),
+            "out-of-range attacker should not spend the flare charge"
+        );
+    }
+
+    /// A Blinded cleric can't see the attacker per RAW, so the flare
+    /// bounces even in range with a full charge. Mirrors the same
+    /// Blinded gate on Bend Luck.
+    #[test]
+    fn warding_flare_skips_when_cleric_blinded() {
+        use crate::actions::class_features::WARDING_FLARE_TAG;
+        use crate::actors::creatures::clerics::LIGHT_CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&LIGHT_CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Rounds(3));
+        assert!(!e.apply_warding_flare_disadvantage(cleric, goblin));
+        assert!(
+            e.actors[&cleric].feature_available(WARDING_FLARE_TAG),
+            "blinded cleric should not spend the flare charge"
+        );
+    }
+
+    /// Fighting Style: Interception (XGtE) — the eligibility scan
+    /// returns an adjacent ally with the flag and reaction. The 5-ft
+    /// gate collapses to footprint-Chebyshev == 0 (touching); an ally
+    /// two tiles away does NOT qualify.
+    #[test]
+    fn interceptor_pick_requires_adjacent_ally_with_flag_and_reaction() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        // Attacker on team 1.
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(1, 5), 1, 0)
+            .unwrap();
+        // Target on team 0, adjacent to the interceptor.
+        let target = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Interceptor without the style flag: no pick.
+        let plain = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 1)
+            .unwrap();
+        assert_eq!(e.first_eligible_interceptor(goblin, target), None);
+        // Grant the style flag — now picks up plain.
+        e.actors.get_mut(&plain).unwrap().set_interception_style(true);
+        assert_eq!(e.first_eligible_interceptor(goblin, target), Some(plain));
+        // Interceptor with a spent reaction: bounced.
+        e.actors
+            .get_mut(&plain)
+            .unwrap()
+            .consume_resource(crate::engine::side_effects::Resource::Reaction);
+        assert_eq!(e.first_eligible_interceptor(goblin, target), None);
+        // Reset reaction — placeable but out of adjacency.
+        e.actors.get_mut(&plain).unwrap().reset_for_new_round();
+        let mut e2 = ei_with_terrain(20, 20, &[]);
+        let far_attacker = e2
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(1, 5), 1, 0)
+            .unwrap();
+        let far_target = e2
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Interceptor two tiles away: not adjacent, no pick.
+        let too_far = e2
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 5), 0, 1)
+            .unwrap();
+        e2.actors
+            .get_mut(&too_far)
+            .unwrap()
+            .set_interception_style(true);
+        assert_eq!(
+            e2.first_eligible_interceptor(far_attacker, far_target),
+            None
+        );
+    }
+
+    /// Interception fires end-to-end via `apply_interception_reduction`:
+    /// non-zero damage is reduced, the ally's reaction is spent, and
+    /// zero damage is a no-op (the ally's reaction stays intact so a
+    /// follow-up hit can still be intercepted).
+    #[test]
+    fn apply_interception_reduction_spends_reaction_and_reduces_damage() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::attack::apply_interception_reduction;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 5), 1, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 1)
+            .unwrap();
+        e.actors.get_mut(&ally).unwrap().set_interception_style(true);
+        // Zero-damage swing: no-op, no reaction spent.
+        let reduced = apply_interception_reduction(&mut e, goblin, target, 0);
+        assert_eq!(reduced, 0);
+        assert!(e.actors[&ally].can_consume_resource(Resource::Reaction));
+        // Non-zero damage: reduced by 1d10 + prof (>=1), reaction spent.
+        let reduced = apply_interception_reduction(&mut e, goblin, target, 20);
+        assert!(reduced < 20, "interception must reduce non-zero damage");
+        assert!(
+            !e.actors[&ally].can_consume_resource(Resource::Reaction),
+            "interception must burn the reaction"
+        );
+        // Follow-up hit: ally's reaction is gone, so the second
+        // reduction is a no-op (damage stays).
+        let reduced2 = apply_interception_reduction(&mut e, goblin, target, 20);
+        assert_eq!(
+            reduced2, 20,
+            "second interception attempt without a reaction should pass damage through"
+        );
+    }
+
+    /// Warding Flare refreshes on a short rest. Its tag lives on
+    /// `SHORT_REST_FEATURES` alongside Radiance of the Dawn / Turn
+    /// Undead / Preserve Life, so `short_rest` re-arms the charge.
+    #[test]
+    fn warding_flare_refreshes_on_short_rest() {
+        use crate::actions::class_features::WARDING_FLARE_TAG;
+        use crate::actors::creatures::clerics::LIGHT_CLERIC_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&LIGHT_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .spend_feature(WARDING_FLARE_TAG);
+        assert!(!e.actors[&cleric].feature_available(WARDING_FLARE_TAG));
+        let mut r = FastRandRoller::with_seed(1);
+        e.actors.get_mut(&cleric).unwrap().short_rest(&mut r);
+        assert!(
+            e.actors[&cleric].feature_available(WARDING_FLARE_TAG),
+            "short rest should refresh the warding flare charge"
+        );
+    }
+
+    /// End-to-end: a goblin swinging a scimitar at a Light Cleric
+    /// triggers Warding Flare — the log records the flare, the charge
+    /// is spent, and the attack log records the disadvantage. This
+    /// verifies the wire-in inside `engine::attack::resolve_attack`
+    /// alongside the standalone `apply_warding_flare_disadvantage`
+    /// unit test.
+    #[test]
+    fn warding_flare_fires_through_actual_attack() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::WARDING_FLARE_TAG;
+        use crate::actions::monster_attacks::SCIMITAR;
+        use crate::actors::creatures::clerics::LIGHT_CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&LIGHT_CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        assert!(e.actors[&cleric].feature_available(WARDING_FLARE_TAG));
+        let log_before = e.messages().len();
+        let action: &dyn Action = &SCIMITAR;
+        let effects = action.side_effects(&mut e, goblin, Some(&vec![cleric]), None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        // Warding Flare fires: the log records it, the charge is spent.
+        let flared = e.messages()[log_before..]
+            .iter()
+            .any(|m| m.contains("warding flare"));
+        assert!(flared, "warding flare should fire during the attack");
+        assert!(
+            !e.actors[&cleric].feature_available(WARDING_FLARE_TAG),
+            "warding flare charge should be spent after the attack"
         );
     }
 }
