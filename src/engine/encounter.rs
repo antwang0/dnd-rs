@@ -46646,4 +46646,224 @@ mod tests {
             "baseline cleric must not ship guided strike"
         );
     }
+
+    /// 5e Path of the Berserker **Mindless Rage** (level 6): passive
+    /// Charmed / Frightened immunity while raging. Verifies the
+    /// compound gate — the Berserker holds the passive tag, but the
+    /// immunity should only fire while the `Raging` condition is
+    /// active. Outside of rage the Berserker eats a Charm / Fear
+    /// install like anyone else.
+    #[test]
+    fn mindless_rage_suppresses_charmed_and_frightened_while_raging() {
+        use crate::actors::creatures::barbarians::BERSERKER_BARBARIAN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let barb = e
+            .instantiate_creature(&BERSERKER_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Not yet raging: Charmed and Frightened installs land as usual.
+        assert!(
+            e.actors.get_mut(&barb).unwrap().add_condition(
+                Condition::Charmed,
+                ConditionTimer::Rounds(5),
+            ),
+            "non-raging Berserker should accept Charmed installs"
+        );
+        e.actors.get_mut(&barb).unwrap().remove_condition(Condition::Charmed);
+        assert!(
+            e.actors.get_mut(&barb).unwrap().add_condition(
+                Condition::Frightened,
+                ConditionTimer::Rounds(5),
+            ),
+            "non-raging Berserker should accept Frightened installs"
+        );
+        e.actors.get_mut(&barb).unwrap().remove_condition(Condition::Frightened);
+        // Enter rage — install now bounces on both conditions.
+        e.actors
+            .get_mut(&barb)
+            .unwrap()
+            .add_condition(Condition::Raging, ConditionTimer::Rounds(10));
+        assert!(
+            !e.actors.get_mut(&barb).unwrap().add_condition(
+                Condition::Charmed,
+                ConditionTimer::Rounds(5),
+            ),
+            "raging Berserker should suppress Charmed installs"
+        );
+        assert!(
+            !e.actors[&barb].has_condition(Condition::Charmed),
+            "raging Berserker should NOT hold Charmed after a suppressed install"
+        );
+        assert!(
+            !e.actors.get_mut(&barb).unwrap().add_condition(
+                Condition::Frightened,
+                ConditionTimer::Rounds(5),
+            ),
+            "raging Berserker should suppress Frightened installs"
+        );
+        assert!(
+            !e.actors[&barb].has_condition(Condition::Frightened),
+            "raging Berserker should NOT hold Frightened after a suppressed install"
+        );
+    }
+
+    /// The immunity is compound — drops the moment rage ends. Once
+    /// rage lifts, the Berserker is once again a normal target for
+    /// Charmed / Frightened.
+    #[test]
+    fn mindless_rage_immunity_lifts_when_rage_drops() {
+        use crate::actors::creatures::barbarians::BERSERKER_BARBARIAN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let barb = e
+            .instantiate_creature(&BERSERKER_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Enter rage — immunity is on.
+        e.actors
+            .get_mut(&barb)
+            .unwrap()
+            .add_condition(Condition::Raging, ConditionTimer::Rounds(10));
+        assert!(!e.actors.get_mut(&barb).unwrap().add_condition(
+            Condition::Charmed,
+            ConditionTimer::Rounds(5),
+        ));
+        // Drop rage — the Charmed lockout drops with it.
+        assert!(e.actors.get_mut(&barb).unwrap().remove_condition(Condition::Raging));
+        assert!(
+            e.actors.get_mut(&barb).unwrap().add_condition(
+                Condition::Charmed,
+                ConditionTimer::Rounds(5),
+            ),
+            "post-rage Berserker should once again accept Charmed installs"
+        );
+    }
+
+    /// Mindless Rage is Berserker-only — the baseline Barbarian ships
+    /// Frenzy but NOT Mindless Rage (RAW: Mindless Rage is a level-6
+    /// Berserker subclass feature). The baseline Barbarian's rage
+    /// leaves them Charmable / Frightenable per RAW.
+    #[test]
+    fn baseline_barbarian_does_not_ship_mindless_rage() {
+        use crate::actions::class_features::MINDLESS_RAGE_TAG;
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let barb = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            !e.actors[&barb].has_passive_feature(MINDLESS_RAGE_TAG),
+            "baseline barbarian must not ship mindless rage"
+        );
+        // Enter rage; Charmed install should still land — no compound
+        // immunity for the non-Berserker baseline.
+        e.actors
+            .get_mut(&barb)
+            .unwrap()
+            .add_condition(Condition::Raging, ConditionTimer::Rounds(10));
+        assert!(
+            e.actors.get_mut(&barb).unwrap().add_condition(
+                Condition::Charmed,
+                ConditionTimer::Rounds(5),
+            ),
+            "baseline barbarian without Mindless Rage should accept Charmed installs even while raging"
+        );
+    }
+
+    /// 5e Light Domain Cleric **Radiance of the Dawn** Channel Divinity
+    /// (lv2 subclass): once-per-short-rest action that deals `2d10 +
+    /// level` radiant to every enemy in a 30ft self-centered burst.
+    /// CON save for half. Verifies the charge is spent, the enemy in
+    /// range takes non-zero radiant damage, and the ally in range is
+    /// spared (enemy-only burst, not friend-or-foe).
+    #[test]
+    fn radiance_of_the_dawn_hits_enemies_only_and_consumes_feature() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{RADIANCE_OF_THE_DAWN, RADIANCE_OF_THE_DAWN_TAG};
+        use crate::actors::creatures::clerics::LIGHT_CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&LIGHT_CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Ally on the same team, adjacent — should be spared.
+        let ally = e
+            .instantiate_creature(&LIGHT_CLERIC_TEMPLATE, Coordinate::new(6, 5), 0, 1)
+            .unwrap();
+        // Enemy on team 1, in range — should take radiant damage.
+        let enemy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Enemy far out — outside the 12-tile radius, should be spared.
+        let far = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(19, 19), 1, 1)
+            .unwrap();
+        let ally_hp_before = e.actors[&ally].hitpoints();
+        let enemy_hp_before = e.actors[&enemy].hitpoints();
+        let far_hp_before = e.actors[&far].hitpoints();
+        assert!(e.actors[&cleric].feature_available(RADIANCE_OF_THE_DAWN_TAG));
+        let action: &dyn Action = &*RADIANCE_OF_THE_DAWN;
+        assert!(action.custom_validate_input(&e, cleric, None, None, None));
+        let effects = action.side_effects(&mut e, cleric, None, None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&ally].hitpoints(),
+            ally_hp_before,
+            "ally in the burst should be spared (enemy-only AoE)"
+        );
+        assert!(
+            e.actors[&enemy].hitpoints() < enemy_hp_before,
+            "enemy in the burst should take radiant damage"
+        );
+        assert_eq!(
+            e.actors[&far].hitpoints(),
+            far_hp_before,
+            "enemy out of range (chebyshev>12) should be spared"
+        );
+        // Charge consumed — re-fire attempt bounces.
+        assert!(!e.actors[&cleric].feature_available(RADIANCE_OF_THE_DAWN_TAG));
+        assert!(!action.custom_validate_input(&e, cleric, None, None, None));
+    }
+
+    /// Radiance of the Dawn refreshes on a short rest. Its tag lives on
+    /// `SHORT_REST_FEATURES` alongside Turn Undead / Preserve Life /
+    /// Guided Strike, so `short_rest` re-arms the charge.
+    #[test]
+    fn radiance_of_the_dawn_refreshes_on_short_rest() {
+        use crate::actions::class_features::RADIANCE_OF_THE_DAWN_TAG;
+        use crate::actors::creatures::clerics::LIGHT_CLERIC_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&LIGHT_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&cleric].feature_available(RADIANCE_OF_THE_DAWN_TAG));
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .spend_feature(RADIANCE_OF_THE_DAWN_TAG);
+        assert!(!e.actors[&cleric].feature_available(RADIANCE_OF_THE_DAWN_TAG));
+        let mut r = FastRandRoller::with_seed(1);
+        e.actors.get_mut(&cleric).unwrap().short_rest(&mut r);
+        assert!(
+            e.actors[&cleric].feature_available(RADIANCE_OF_THE_DAWN_TAG),
+            "short rest should refresh radiance of the dawn charge"
+        );
+    }
+
+    /// The baseline Cleric template does NOT ship Radiance of the Dawn
+    /// — it's a Light Domain subclass-only feature. Mirrors the
+    /// baseline-vs-War-Domain split for Guided Strike / War Priest.
+    #[test]
+    fn baseline_cleric_does_not_ship_light_domain_features() {
+        use crate::actions::class_features::RADIANCE_OF_THE_DAWN_TAG;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            !e.actors[&cleric].feature_available(RADIANCE_OF_THE_DAWN_TAG),
+            "baseline cleric must not ship radiance of the dawn"
+        );
+    }
 }

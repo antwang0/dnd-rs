@@ -1,6 +1,7 @@
 use crate::actions::class_features::{
     DIVINE_STRIKE, DIVINE_STRIKE_TAG, GUIDED_STRIKE, GUIDED_STRIKE_TAG, PRESERVE_LIFE,
-    PRESERVE_LIFE_TAG, TURN_UNDEAD, TURN_UNDEAD_TAG, WAR_PRIEST, WAR_PRIEST_TAG,
+    PRESERVE_LIFE_TAG, RADIANCE_OF_THE_DAWN, RADIANCE_OF_THE_DAWN_TAG, TURN_UNDEAD, TURN_UNDEAD_TAG,
+    WAR_PRIEST, WAR_PRIEST_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
@@ -276,6 +277,54 @@ pub static WAR_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     CreatureTemplate {
         name: "War Cleric",
         glyph: 'W',
+        actions,
+        features,
+        ..CLERIC_TEMPLATE.clone()
+    }
+});
+
+/// Light Domain Cleric — subclass build. Identical envelope to the
+/// baseline `CLERIC_TEMPLATE` (WIS-primary caster, Sacred Flame / Guiding
+/// Bolt / Cure Wounds / Bless / Turn Undead / Preserve Life / Divine
+/// Strike, full cleric spell ladder) with one subclass feature layered
+/// on: **Radiance of the Dawn** (lv2 Channel Divinity) — action-cost
+/// 30ft self-centered radiant burst, once per short rest. Every enemy
+/// in range makes a CON save vs the cleric's spell save DC; on fail
+/// they eat `2d10 + cleric level` radiant, on save they take half.
+///
+/// The Light Domain's damage-lane sibling to Turn Undead (Frightened
+/// install, undead-only) and Preserve Life (mass heal). Where Turn
+/// Undead is single-type and Preserve Life is friend-only, Radiance of
+/// the Dawn is undiscriminating enemy damage — the "burst of dawn"
+/// signature the RAW's Light Domain gets three levels earlier than the
+/// baseline cleric's other AoE (Spirit Guardians at level 5, Flame
+/// Strike at level 9).
+///
+/// Pairs naturally with the cleric's radiant single-target lane —
+/// Guiding Bolt (4d6 radiant) at range, Sacred Flame (1d8 radiant) as
+/// a cantrip fallback, and now Radiance of the Dawn (2d10 + level
+/// radiant) as the burst. The Light cleric leans hardest into the
+/// radiant-type advantage against fiends / undead (both commonly
+/// vulnerable or non-resistant to radiant).
+///
+/// Distinct from `CLERIC_TEMPLATE` (subclass-less baseline) and
+/// `WAR_CLERIC_TEMPLATE` (War Domain subclass) so a Light-vs-War-vs-
+/// baseline encounter renders unambiguously by name. Glyph 'L' so the
+/// Light Cleric shows up distinctly on the map next to the baseline
+/// 'C' and War Cleric 'W'.
+pub static LIGHT_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: mirrors the War Cleric shape above — clone
+    // the baseline Cleric envelope wholesale and layer on the subclass
+    // action + feature tag. The `..CLERIC_TEMPLATE.clone()` tail picks
+    // up the full spell ladder, save profs, stats, and slots without
+    // an N-line field-by-field copy.
+    let mut actions = CLERIC_TEMPLATE.actions.clone();
+    actions.push(&*RADIANCE_OF_THE_DAWN);
+    let mut features = CLERIC_TEMPLATE.features.clone();
+    features.insert(RADIANCE_OF_THE_DAWN_TAG);
+    CreatureTemplate {
+        name: "Light Cleric",
+        glyph: 'L',
         actions,
         features,
         ..CLERIC_TEMPLATE.clone()

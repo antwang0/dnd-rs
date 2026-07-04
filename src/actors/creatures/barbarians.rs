@@ -1,7 +1,7 @@
 use crate::actions::action_template::Action;
 use crate::actions::class_features::{
-    BEAR_TOTEM_TAG, EAGLE_DIVE, EAGLE_TOTEM_TAG, FAST_MOVEMENT_TAG, FRENZY, FRENZY_TAG, RAGE,
-    RAGE_TAG, RELENTLESS_RAGE_TAG, TIGER_TOTEM_TAG, WOLF_TOTEM_TAG,
+    BEAR_TOTEM_TAG, EAGLE_DIVE, EAGLE_TOTEM_TAG, FAST_MOVEMENT_TAG, FRENZY, FRENZY_TAG,
+    MINDLESS_RAGE_TAG, RAGE, RAGE_TAG, RELENTLESS_RAGE_TAG, TIGER_TOTEM_TAG, WOLF_TOTEM_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GREATAXE, RECKLESS_ATTACK};
@@ -247,4 +247,47 @@ pub static EAGLE_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock
 /// map.
 pub static TIGER_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     totem_barbarian_template("Tiger Totem Barbarian", 'I', TIGER_TOTEM_TAG, &[])
+});
+
+/// Berserker Barbarian — Path of the Berserker subclass build. Identical
+/// envelope to the baseline `BARBARIAN_TEMPLATE` (greataxe + reckless
+/// attack + rage + brutal critical, level-9 stat block) with one subclass
+/// feature layered on top of the existing Frenzy: **Mindless Rage**
+/// (Berserker subclass level 6) — passive immunity to Charmed and
+/// Frightened while raging.
+///
+/// The Berserker's signature "no matter what you do, I keep swinging"
+/// tell — where a raging barbarian without Mindless Rage still eats a
+/// Fear cone / Charm Person and stops attacking, the Berserker just
+/// shrugs both off while the rage holds. Read at the flag-driven
+/// immunity table in `actor_template.rs` — the closure checks both
+/// `has_passive_feature(MINDLESS_RAGE_TAG)` AND `has_condition(Raging)`
+/// so the immunity flips off the moment rage drops.
+///
+/// The baseline `BARBARIAN_TEMPLATE` ships Frenzy already (it's
+/// effectively the Berserker chassis at levels 3-5); this template
+/// stacks the level-6 Berserker feature on top, so the Berserker is
+/// distinct from the baseline by name / glyph AND by the layered
+/// Mindless Rage passive. Distinct from the Totem Warrior siblings
+/// (`TOTEM_BARBARIAN_TEMPLATE` / `WOLF_TOTEM_BARBARIAN_TEMPLATE` /
+/// `EAGLE_TOTEM_BARBARIAN_TEMPLATE` / `TIGER_TOTEM_BARBARIAN_TEMPLATE`)
+/// so subclass features don't stack RAW-illegally on a single PC build.
+///
+/// Glyph 'Z' (for berZerker) so berserker-vs-baseline-vs-totem renders
+/// unambiguously on the map next to baseline 'B' / Totem 'T' / Wolf 'W'
+/// / Eagle 'A' / Tiger 'I'.
+pub static BERSERKER_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Barbarian envelope wholesale
+    // (which already ships FRENZY_TAG + FRENZY action) and layer on the
+    // MINDLESS_RAGE_TAG passive. Actions list needs no additions — Mindless
+    // Rage is a pure passive with no active surface, unlike Frenzy which
+    // has the paired `FRENZY` bonus-action swing.
+    let mut features = BARBARIAN_TEMPLATE.features.clone();
+    features.insert(MINDLESS_RAGE_TAG);
+    CreatureTemplate {
+        name: "Berserker Barbarian",
+        glyph: 'Z',
+        features,
+        ..BARBARIAN_TEMPLATE.clone()
+    }
 });

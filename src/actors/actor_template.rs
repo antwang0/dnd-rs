@@ -188,6 +188,21 @@ const FLAG_DRIVEN_IMMUNITIES: &[FlagDrivenImmunity] = &[
         ),
         suppressed: &[Condition::Poisoned],
     },
+    // 5e Barbarian Path of the Berserker Mindless Rage (lv6): while
+    // raging, the barbarian can't be charmed or frightened. Compound
+    // gate — the flag closure checks BOTH the passive-feature tag AND
+    // the `Raging` condition, so the immunity flips off the moment
+    // rage drops. RAW also suspends any pre-existing Charmed /
+    // Frightened for the duration; our engine reads immunity via
+    // `dynamic_immunity_to` at every effect chokepoint so a mid-rage
+    // read short-circuits identically for pre-installed conditions.
+    FlagDrivenImmunity {
+        flag: |a| {
+            a.has_passive_feature(crate::actions::class_features::MINDLESS_RAGE_TAG)
+                && a.has_condition(Condition::Raging)
+        },
+        suppressed: &[Condition::Charmed, Condition::Frightened],
+    },
 ];
 
 /// Lifecycle state of an actor's hit points. Replaces the previous

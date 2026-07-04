@@ -3,8 +3,8 @@ use std::sync::LazyLock;
 
 use crate::{
     actions::action_template::{
-        Action, TargetingSchema, bonus_action_and_slot, bonus_action_only, first_target_id,
-        first_target_location, free_cost,
+        Action, TargetingSchema, action_only, bonus_action_and_slot, bonus_action_only,
+        first_target_id, first_target_location, free_cost, resolve_enemy_burst_save_damage,
     },
     conditions::{Condition, ConditionTimer},
     engine::{
@@ -15,7 +15,7 @@ use crate::{
             ApplicableSideEffect, ApplyCondition, DealDamage, GainTempHp, GiveResource, Heal,
             Resource,
         },
-        types::{Coordinate, DamageType},
+        types::{AbilityScoreType, Coordinate, DamageType},
     },
 };
 
@@ -40,6 +40,11 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // STRIKE is the Channel Divinity +10 accuracy prime.
     WAR_PRIEST_TAG,
     GUIDED_STRIKE_TAG,
+    // 5e Light Domain Cleric Channel Divinity — Radiance of the Dawn:
+    // once-per-short-rest 30ft radiant burst. Shares the RAW "Channel
+    // Divinity" resource lane with Turn Undead / Preserve Life / Guided
+    // Strike, but each tag is a distinct per-rest charge in our model.
+    RADIANCE_OF_THE_DAWN_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -1088,6 +1093,34 @@ impl Action for Frenzy {
 }
 
 pub static FRENZY: LazyLock<Frenzy> = LazyLock::new(|| Frenzy {});
+
+/// 5e Barbarian Path of the Berserker — **Mindless Rage** (level 6) feature
+/// tag. Passive subclass feature: while raging, the barbarian is immune to
+/// installs of Charmed and Frightened, AND any existing Charmed or
+/// Frightened is suppressed for the duration (RAW: "you can't be charmed
+/// or frightened while raging"; installs mid-rage bounce, and any
+/// pre-existing installs are held at bay). The immunity flips off the
+/// moment the `Raging` condition drops.
+///
+/// Stored as a `has_passive_feature` flag so it composes naturally with
+/// the existing `Raging` condition gate. Read by the flag-driven
+/// immunity table in `actor_template.rs` next to Nature's Ward
+/// (Charmed / Frightened) and Halfling Brave (Frightened) — the row's
+/// closure predicate checks both the passive flag AND the Raging
+/// condition, so a non-raging Berserker gets no benefit. RAW also
+/// suspends any pre-existing Charmed / Frightened while raging and
+/// resumes them when rage ends; our engine's `dynamic_immunity_to`
+/// short-circuits the "has this condition installed" check for immune
+/// creatures at every read site (compute_attack_mode, etc.), so a
+/// mid-rage install that later drops-and-resumes matches this
+/// simplified read-only suppression.
+///
+/// Pairs naturally with the Berserker's Frenzy — the Berserker
+/// barbarian is meant to bull-rush the enemy caster's opener, and the
+/// classic anti-melee-brute answer is a fear / charm lockout. Mindless
+/// Rage gives the Berserker the "no, I don't care" no-op that frees
+/// them to keep swinging while every teammate eats the same effect.
+pub const MINDLESS_RAGE_TAG: &str = "barbarian.mindless_rage";
 
 /// 5e Barbarian Path of the Totem Warrior — **Bear Totem Spirit** (level 3).
 /// Passive subclass feature: while raging, the holder has resistance to all
@@ -4738,3 +4771,118 @@ impl Action for GuidedStrike {
 }
 
 pub static GUIDED_STRIKE: LazyLock<GuidedStrike> = LazyLock::new(|| GuidedStrike {});
+
+/// 5e Light Domain Cleric **Radiance of the Dawn** Channel Divinity tag
+/// (level 2 subclass). Once per short rest, action-cost 30ft self-centered
+/// radiant burst — every enemy in range makes a CON save vs the cleric's
+/// spell save DC. On fail: 2d10 + cleric level radiant. On save: half.
+/// RAW clause "any magical darkness within 30 ft is dispelled" is a
+/// no-op in our engine (magical darkness isn't a modeled hazard).
+///
+/// Registered in `SHORT_REST_FEATURES` so short rests refresh the charge
+/// alongside Turn Undead / Preserve Life / Guided Strike / War Priest.
+pub const RADIANCE_OF_THE_DAWN_TAG: &str = "cleric.radiance_of_the_dawn";
+
+/// Channel Divinity: Radiance of the Dawn — Light Domain Cleric action.
+/// Self-centered 30ft (12-tile) enemy burst. Each enemy rolls a CON save
+/// vs the cleric's spell save DC (WIS-based); pass = half, fail = full
+/// `2d10 + cleric level` radiant. Once per short rest.
+///
+/// The Light Domain's signature crowd-control-and-damage lane — sibling
+/// to Turn Undead (Frightened install, undead-only) and Preserve Life
+/// (mass heal). Where Turn Undead targets a narrow creature type and
+/// Preserve Life heals allies, Radiance of the Dawn is undiscriminating
+/// damage against every enemy in the burst. RAW gates on the Light
+/// Domain subclass; we surface it through the `LIGHT_CLERIC_TEMPLATE`
+/// subclass template so a baseline cleric can't fire it.
+///
+/// Pairs naturally with Guiding Bolt (single-target 4d6 radiant) and
+/// Sacred Flame (single-target 1d8 radiant) for a radiant-damage
+/// combo — the Light cleric plays the "burst of light" damage lane
+/// where Turn Undead / Preserve Life play the crowd-control / heal
+/// lanes.
+pub struct RadianceOfTheDawn {}
+
+impl Action for RadianceOfTheDawn {
+    fn name(&self) -> &str {
+        "radiance of the dawn"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["rod", "cd-radiance", "dawn"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Radiant]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        feature_ready(encounter, caster_id, RADIANCE_OF_THE_DAWN_TAG)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // Spend the charge up-front so a mid-resolution actor lookup can't
+        // double-fire (same shape as Preserve Life / Turn Undead).
+        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+            actor.spend_feature(RADIANCE_OF_THE_DAWN_TAG);
+        }
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let center = caster.location();
+        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let level = caster.level();
+        // 2d10 + cleric level radiant — rolled once and shared across
+        // the burst (5e AoE damage rolls are shared). Log the breakdown
+        // for the same reason Flame Strike / Destructive Wave do:
+        // players can trace back exactly how much each target ate.
+        let raw = encounter.roll(&Dice::new(2, 10));
+        let damage = raw + level;
+        encounter.log(format!(
+            "  radiance of the dawn: 2d10({})+{} radiant, DC {} CON save for half.",
+            raw, level, dc
+        ));
+        resolve_enemy_burst_save_damage(
+            encounter,
+            caster_id,
+            center,
+            12,
+            AbilityScoreType::Constitution,
+            dc,
+            damage,
+            DamageType::Radiant,
+        )
+    }
+}
+
+pub static RADIANCE_OF_THE_DAWN: LazyLock<RadianceOfTheDawn> =
+    LazyLock::new(|| RadianceOfTheDawn {});

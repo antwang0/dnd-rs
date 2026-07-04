@@ -8,37 +8,34 @@ use crate::engine::{
     types::{AbilityScoreType, Coordinate, DamageType},
 };
 
-/// Resolve a damage-burst AoE: every combat-active actor whose footprint is
-/// within `radius` of `center` (excluding the caster) makes a save against
-/// `dc` using `save_ability`. Pass = half damage (rounded down), fail = full.
-/// `damage` is rolled once and shared, matching 5e shared-roll semantics
-/// for area effects. Returns DealDamage side-effects (empty for actors who
-/// take 0). Caller controls the actual roll + log message.
+/// Per-target save-and-scale loop shared by every "roll a save for half"
+/// burst helper in this file. Walks `target_ids` in the given order,
+/// rolls a caster-aware save (so Sorcerer Heightened Spell fires on the
+/// first target per RAW), applies Rogue / Monk / Ranger Evasion on DEX
+/// saves, and emits a `DealDamage` side-effect for every non-zero hit.
+/// Ids in `shielded` (Sorcerer Careful Spell) auto-pass with 0 damage
+/// and skip the roll entirely.
 ///
-/// Centralizes the pattern shared by Sacred Burst, Burning Hands, and the
-/// Fireball scroll — keeps save sequencing deterministic (sorted ids) and
-/// the caster-exempt + combat-active filters consistent.
+/// Extracted so `resolve_burst_save_damage` (neutral) and
+/// `resolve_enemy_burst_save_damage` (enemy-only) share the loop body
+/// verbatim — the only per-variant difference is the target-id source
+/// (neutral vs enemy) and whether Careful Spell can shield anyone.
+/// Every save/damage rule change lands in one place. Sibling to
+/// `burst_save_damage` in `spells.rs`, which layers a shared damage
+/// roll + logging on top of the same per-target semantics.
 #[allow(clippy::too_many_arguments)]
-pub fn resolve_burst_save_damage(
+fn resolve_burst_targets(
     encounter: &mut EncounterInstance,
     caster_id: usize,
-    center: Coordinate,
-    radius: isize,
+    target_ids: &[usize],
     save_ability: AbilityScoreType,
     dc: i32,
     damage: u32,
     damage_type: DamageType,
+    shielded: &HashSet<usize>,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
     let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-    // 5e Sorcerer Careful Spell metamagic: protected allies in the burst
-    // auto-pass the save AND take 0 damage. Resolved up-front so the loop
-    // below can skip them cleanly; the prime is consumed inside the helper.
-    let shielded = encounter.careful_spell_shielded(caster_id, center, radius);
-    // `neutral_burst_targets` shares the "caster-excluded, combat-active,
-    // footprint in radius" filter with the rest of the engine — folding
-    // it here keeps the caster-exclusion / footprint-Chebyshev / sorted-
-    // ids invariant in one place instead of re-inlining the loop.
-    for target_id in encounter.neutral_burst_targets(caster_id, center, radius) {
+    for &target_id in target_ids {
         if shielded.contains(&target_id) {
             continue;
         }
@@ -74,6 +71,89 @@ pub fn resolve_burst_save_damage(
         }));
     }
     effects
+}
+
+/// Resolve a damage-burst AoE: every combat-active actor whose footprint is
+/// within `radius` of `center` (excluding the caster) makes a save against
+/// `dc` using `save_ability`. Pass = half damage (rounded down), fail = full.
+/// `damage` is rolled once and shared, matching 5e shared-roll semantics
+/// for area effects. Returns DealDamage side-effects (empty for actors who
+/// take 0). Caller controls the actual roll + log message.
+///
+/// Centralizes the pattern shared by Sacred Burst, Burning Hands, and the
+/// Fireball scroll — keeps save sequencing deterministic (sorted ids) and
+/// the caster-exempt + combat-active filters consistent.
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_burst_save_damage(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    center: Coordinate,
+    radius: isize,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    damage: u32,
+    damage_type: DamageType,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    // 5e Sorcerer Careful Spell metamagic: protected allies in the burst
+    // auto-pass the save AND take 0 damage. Resolved up-front so the shared
+    // per-target loop can skip them cleanly; the prime is consumed inside
+    // the helper.
+    let shielded = encounter.careful_spell_shielded(caster_id, center, radius);
+    // `neutral_burst_targets` shares the "caster-excluded, combat-active,
+    // footprint in radius" filter with the rest of the engine — folding it
+    // here keeps the caster-exclusion / footprint-Chebyshev / sorted-ids
+    // invariant in one place instead of re-inlining the loop.
+    let target_ids = encounter.neutral_burst_targets(caster_id, center, radius);
+    resolve_burst_targets(
+        encounter,
+        caster_id,
+        &target_ids,
+        save_ability,
+        dc,
+        damage,
+        damage_type,
+        &shielded,
+    )
+}
+
+/// Enemy-only sibling of `resolve_burst_save_damage`. Every combat-active
+/// enemy inside `radius` of `center` makes a save vs `dc` for half of a
+/// pre-rolled `damage`. Same shape as the neutral variant — Sorcerer
+/// Careful Spell auto-passes are a no-op here since Careful Spell only
+/// protects allies (enemy bursts already exclude them). Same Evasion
+/// handling for DEX saves.
+///
+/// Used by class features whose RAW target set is "hostile creatures
+/// within the burst" (Radiance of the Dawn) — distinct from friend-or-foe
+/// bursts (Sacred Burst / Burning Hands / Fireball) that route through
+/// the neutral variant. Both variants share the per-target loop via
+/// `resolve_burst_targets` so save-half rule changes land once.
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_enemy_burst_save_damage(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    center: Coordinate,
+    radius: isize,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    damage: u32,
+    damage_type: DamageType,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    // Enemy bursts skip allies at the target-list step, so Careful Spell
+    // has nothing left to shield — pass an empty set through instead of
+    // re-running the shielded lookup.
+    let shielded: HashSet<usize> = HashSet::new();
+    let target_ids = encounter.enemy_burst_targets(caster_id, center, radius);
+    resolve_burst_targets(
+        encounter,
+        caster_id,
+        &target_ids,
+        save_ability,
+        dc,
+        damage,
+        damage_type,
+        &shielded,
+    )
 }
 
 /// Reach for melee/touch actions, expressed as a footprint-Chebyshev gap cap.
