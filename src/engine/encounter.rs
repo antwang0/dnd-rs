@@ -1099,25 +1099,24 @@ impl EncounterInstance {
             mode = mode.combine(RollMode::Disadvantage);
         }
 
-        // 5e True Seeing: snapshot up-front so we can suppress the
-        // matching invisibility / illusion advantages and disadvantages
-        // on the per-side condition sweeps below. Keeps the condition-
-        // cohort loops branch-free of the "who is true-sighted?" lookup.
-        // Routes through `ActorInstance::has_truesight` so a creature
-        // with template `SpecialSense::Truesight(_)` (Deva, Solar, Pit
-        // Fiend, Lich, Kraken, Nalfeshnee, etc.) automatically counters
-        // illusion-concealment without needing the True Seeing spell or
-        // an Eyes-of-Truth trinket — matching RAW. Pre-accessor this
-        // gate only fired on the transient condition, silently letting
-        // a Solar miss an invisible mage at disadvantage.
-        let attacker_truesight = self
-            .actors
-            .get(&attacker_id)
-            .is_some_and(|a| a.has_truesight());
-        let target_truesight = self
-            .actors
-            .get(&target_id)
-            .is_some_and(|a| a.has_truesight());
+        // 5e concealment-piercing snapshot: does the attacker see through
+        // the target's illusion / invisibility, and does the target see
+        // through the attacker's? Both booleans feed the suppression
+        // clauses on the per-side condition sweeps below, so the
+        // condition-cohort loops stay branch-free of the piercing
+        // lookup. `pierces_illusion_of` unifies the three sources:
+        //   - `has_truesight` (Truesight sense OR True Seeing condition,
+        //     any range — Deva, Solar, Pit Fiend, Lich, etc.)
+        //   - `has_feral_senses` (Ranger lv18 capstone — any range)
+        //   - `has_blindsense` (Rogue lv14 — 10 ft footprint envelope,
+        //     gated on !Deafened)
+        // Pre-refactor this gate only cohorted `has_truesight`; folding
+        // the ranger / rogue passive piercers into the same helper lets
+        // each new "sees through illusion" tag land as a one-line
+        // extension to `pierces_illusion_of` instead of a new
+        // suppression clause at every attack-mode caller.
+        let attacker_pierces = self.pierces_illusion_of(attacker_id, target_id);
+        let target_pierces = self.pierces_illusion_of(target_id, attacker_id);
 
         // Attacker-side modifiers. The disadvantage / advantage cohorts
         // live on `Condition` itself (`imposes_attacker_disadvantage` /
@@ -1129,11 +1128,12 @@ impl EncounterInstance {
                     mode = mode.combine(RollMode::Disadvantage);
                 }
                 if c.grants_self_attack_advantage() {
-                    // 5e True Seeing on the target neuters the attacker's
-                    // invisibility-style concealment advantages (Invisible,
-                    // Blurred, Displaced). Hidden / Helped / Bless / etc.
-                    // are unaffected — they're not concealment.
-                    let suppressed = target_truesight && c.countered_by_truesight();
+                    // 5e concealment-piercing on the target (Truesight /
+                    // Feral Senses / Blindsense-in-range) neuters the
+                    // attacker's invisibility-style concealment advantages
+                    // (Invisible, Blurred, Displaced). Hidden / Helped /
+                    // Bless / etc. are unaffected — they're not concealment.
+                    let suppressed = target_pierces && c.countered_by_truesight();
                     if !suppressed {
                         mode = mode.combine(RollMode::Advantage);
                     }
@@ -1256,12 +1256,14 @@ impl EncounterInstance {
                     mode = mode.combine(RollMode::Advantage);
                 }
                 if c.imposes_disadvantage_to_attackers() {
-                    // 5e True Seeing on the attacker neuters the target's
-                    // invisibility-style concealment disadvantages
-                    // (Invisible, Blurred, Displaced). Dodging / Holy
-                    // Aura / Foreseen / etc. are unaffected — those are
-                    // active defenses, not illusory concealment.
-                    let suppressed = attacker_truesight && c.countered_by_truesight();
+                    // 5e concealment-piercing on the attacker (Truesight
+                    // / Feral Senses / Blindsense-in-range) neuters the
+                    // target's invisibility-style concealment
+                    // disadvantages (Invisible, Blurred, Displaced).
+                    // Dodging / Holy Aura / Foreseen / etc. are
+                    // unaffected — those are active defenses, not
+                    // illusory concealment.
+                    let suppressed = attacker_pierces && c.countered_by_truesight();
                     if !suppressed {
                         mode = mode.combine(RollMode::Disadvantage);
                     }
@@ -1353,6 +1355,117 @@ impl EncounterInstance {
             }
         }
         mode
+    }
+
+    /// True if `viewer` can "see" `subject` in the RAW sense used by
+    /// "when a creature you can see..." reaction gates (Warding Flare,
+    /// Fighting Style: Protection, Fighting Style: Interception, and
+    /// friends). Two clauses in RAW:
+    ///
+    ///   1. **Viewer isn't Blinded** — a blinded observer sees nothing
+    ///      period, regardless of what the subject is doing.
+    ///   2. **Subject isn't illusion-concealed from the viewer** — an
+    ///      Invisible / Blurred / Displaced subject is unseen UNLESS the
+    ///      viewer's piercing lookup (Truesight / Feral Senses /
+    ///      Blindsense-in-range) sees through it.
+    ///
+    /// Returns false when either actor is unknown. Sibling helper to
+    /// `pierces_illusion_of` — that one answers "does the viewer see
+    /// through the illusion cohort?" and this one answers "does the
+    /// viewer actually see the subject right now?", folding in the
+    /// Blinded gate and the "no illusion in play means yes" default.
+    ///
+    /// Centralized so the "you can see" clauses across Warding Flare
+    /// (Cleric Light) and future sight-gated reactions (a lifetime of
+    /// "when a creature you can see..." wordings — Sentinel-flavored
+    /// riders, Cutting Words RAW's "creature you can see", the Rune
+    /// Knight's Giant Might reactive shield, etc.) all read the same
+    /// gate. Pre-refactor Warding Flare only checked `Blinded` on the
+    /// cleric, letting an Invisible attacker still draw the flare
+    /// charge even though RAW the cleric couldn't see them.
+    pub fn viewer_can_see(&self, viewer_id: usize, subject_id: usize) -> bool {
+        let Some(viewer) = self.actors.get(&viewer_id) else {
+            return false;
+        };
+        if viewer.has_condition(Condition::Blinded) {
+            return false;
+        }
+        let Some(subject) = self.actors.get(&subject_id) else {
+            return false;
+        };
+        // "Illusion-concealed" cohort matches the `countered_by_truesight`
+        // set the attack-mode suppression clauses read — same cohort so
+        // a future addition (a hypothetical Hide-in-Mists condition)
+        // lands in one place instead of at every sight-gated caller.
+        let concealed = subject
+            .conditions()
+            .keys()
+            .any(|c| c.countered_by_truesight());
+        !concealed || self.pierces_illusion_of(viewer_id, subject_id)
+    }
+
+    /// True if `viewer` sees through `subject`'s illusion / invisibility
+    /// concealment. Unifies the three sources the `compute_attack_mode`
+    /// suppression clauses need to check:
+    ///   - **Truesight** — sense (`SpecialSense::Truesight(_)` on Deva,
+    ///     Solar, Pit Fiend, Lich, Kraken, Nalfeshnee, etc.) OR
+    ///     transient `TrueSighted` condition (True Seeing spell / Eyes
+    ///     of Truth trinket). Unbounded range.
+    ///   - **Feral Senses** (Ranger lv18 class feature). Unbounded range.
+    ///   - **Blindsense** (Rogue lv14 class feature). 10-ft footprint-
+    ///     Chebyshev envelope; gated on the viewer not being Deafened
+    ///     (RAW: "while able to hear").
+    ///
+    /// Returns false if either actor is unknown, keeping the caller
+    /// free of `is_some_and` chains. Callers pair `pierces_illusion_of`
+    /// against `Condition::countered_by_truesight` at the concealment-
+    /// suppression clauses — the suppression fires when the viewer
+    /// pierces AND the condition is in the illusion cohort.
+    ///
+    /// The "attacker → target" and "target → attacker" symmetry lives
+    /// at the call site (both angles matter in `compute_attack_mode`):
+    /// this helper takes an already-directed (viewer, subject) pair
+    /// and stays polarity-neutral.
+    pub fn pierces_illusion_of(
+        &self,
+        viewer_id: usize,
+        subject_id: usize,
+    ) -> bool {
+        let Some(viewer) = self.actors.get(&viewer_id) else {
+            return false;
+        };
+        // Truesight and Feral Senses are unbounded-range so they short-
+        // circuit before we look up the subject at all — saves a
+        // hashmap lookup on the vastly more common attack-mode path
+        // where neither actor holds the flag.
+        if viewer.has_truesight() || viewer.has_feral_senses() {
+            return true;
+        }
+        // Blindsense is the only range-gated piercer: 10 ft (footprint
+        // Chebyshev ≤ 4 tiles on the 2.5-ft grid) and gated on the
+        // viewer being able to hear. Deafened / Silenced snuff the
+        // rogue's ability to place the invisible attacker, so the
+        // pierce lapses; Blinded doesn't (RAW: "while able to hear").
+        if !viewer.has_blindsense() {
+            return false;
+        }
+        if viewer.has_condition(Condition::Deafened) {
+            return false;
+        }
+        let Some(subject) = self.actors.get(&subject_id) else {
+            return false;
+        };
+        // 10 ft = 4 tiles on the 2.5-ft grid. Uses footprint distance so
+        // a Large / Huge subject's edge counts (a Huge invisible
+        // creature 6 ft away pierces even though its origin tile is
+        // 15+ ft off).
+        let dist = footprint_chebyshev(
+            viewer.location(),
+            get_tiles_from_size(viewer.size()),
+            subject.location(),
+            get_tiles_from_size(subject.size()),
+        );
+        dist <= 4
     }
 
     /// Compute the save-roll mode for an actor's ability save.
@@ -2736,10 +2849,15 @@ impl EncounterInstance {
     /// Shared eligibility scan for the "adjacent-ally with reaction and a
     /// per-style flag" cohort — Fighting Style Protection and Fighting
     /// Style Interception both need the same footprint-adjacent, ally-
-    /// team, has-reaction, not-Blinded, has-FLAG filter over a
-    /// deterministic id order. Extracted so a future third style
-    /// (Interception's Rune Knight sibling, a homebrew ally-shield) lands
-    /// as one line — the closure picks the per-style flag.
+    /// team, has-reaction, can-see-attacker, has-FLAG filter over a
+    /// deterministic id order. The "can see" clause routes through
+    /// `viewer_can_see` so an Invisible / Blurred / Displaced attacker
+    /// (that the ally doesn't pierce) bounces both style reactions —
+    /// pre-refactor this only checked `!Blinded` on the ally, silently
+    /// letting an invisible attacker still draw the reactive shield.
+    /// Extracted so a future third style (Interception's Rune Knight
+    /// sibling, a homebrew ally-shield) lands as one line — the
+    /// closure picks the per-style flag.
     ///
     /// Returns `None` for missing ids or same-team swings (friendly-fire
     /// doesn't draw the tax on either style). Callers own the reaction
@@ -2778,22 +2896,25 @@ impl EncounterInstance {
             };
             // Gate cohort: same-team, alive-and-combat-active, holds the
             // per-style flag, has an unspent reaction, and can see the
-            // attacker (approximated as !Blinded).
+            // attacker.
             //
             // `has_reaction()` covers Stunned / Paralyzed / Incapacitated
             // / Unconscious / Petrified / Mazed / Sphered via
             // `blocks_action_economy` and NoReaction / Confused via
             // `blocks_reactions` — the reaction lane's action-economy
-            // filter. Blinded still needs an explicit gate here: it's
-            // NOT a reaction-blocking condition (a blinded creature CAN
-            // spend reactions), but the RAW "you can see" clause on
-            // both styles specifically requires the ally to see the
-            // attacker.
+            // filter. The "you can see the attacker" clause routes
+            // through `viewer_can_see` — same helper the Warding Flare
+            // gate uses — so an Invisible attacker (or a Blurred /
+            // Displaced attacker the ally doesn't pierce) doesn't
+            // still draw the ally's reactive shield. Pre-refactor this
+            // only checked `!Blinded` on the ally, letting an invisible
+            // goblin still burn the paladin's Protection reaction even
+            // though RAW they can't see the source of the swing.
             if a.team() != target_team
                 || !a.is_combat_active()
                 || !has_flag(a)
                 || !a.has_reaction()
-                || a.has_condition(Condition::Blinded)
+                || !self.viewer_can_see(id, attacker_id)
             {
                 continue;
             }
@@ -5072,9 +5193,17 @@ impl EncounterInstance {
         if !target.has_passive_feature(WARDING_FLARE_TAG)
             || !target.feature_available(WARDING_FLARE_TAG)
             || !target.can_consume_resource(Resource::Reaction)
-            || target.has_condition(Condition::Blinded)
             || !target.is_combat_active()
         {
+            return false;
+        }
+        // RAW "when a creature you can see..." gate — routes through the
+        // shared `viewer_can_see` helper so both the Blinded clause AND
+        // the "attacker is illusion-concealed and the cleric doesn't
+        // pierce" clause land in one lookup. Pre-refactor this only
+        // checked `!Blinded`, letting an Invisible attacker still draw
+        // the flare charge even though RAW the cleric can't see them.
+        if !self.viewer_can_see(target_id, attacker_id) {
             return false;
         }
         if self
@@ -47239,5 +47368,245 @@ mod tests {
             !e.actors[&cleric].feature_available(WARDING_FLARE_TAG),
             "warding flare charge should be spent after the attack"
         );
+    }
+
+    /// Protection Fighting Style's RAW "you can see" gate — same
+    /// correctness fix as Warding Flare: an invisible attacker isn't
+    /// visible to the ally, so the protector's reaction shouldn't
+    /// fire. Pre-`viewer_can_see` refactor the shared
+    /// `first_adjacent_reactive_ally` scan only checked the ally's own
+    /// `!Blinded` state, letting an invisible attacker still draw a
+    /// protection / interception reaction even though RAW the ally
+    /// literally couldn't see the source of the swing.
+    #[test]
+    fn protection_and_interception_skip_when_attacker_invisible() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let attacker = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(1, 5), 1, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 1)
+            .unwrap();
+        // Dial both styles on so a single test pins the shared gate.
+        e.actors.get_mut(&ally).unwrap().set_protection_style(true);
+        e.actors.get_mut(&ally).unwrap().set_interception_style(true);
+        // Baseline: visible attacker — both picks fire.
+        assert_eq!(e.first_eligible_protector(attacker, target), Some(ally));
+        assert_eq!(e.first_eligible_interceptor(attacker, target), Some(ally));
+        // Invisible attacker — the ally can't see them, both picks
+        // bounce.
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Rounds(10));
+        assert_eq!(e.first_eligible_protector(attacker, target), None);
+        assert_eq!(e.first_eligible_interceptor(attacker, target), None);
+        // Grant the ally Truesight — pierces the invisible; both
+        // picks resume.
+        e.actors
+            .get_mut(&ally)
+            .unwrap()
+            .add_condition(Condition::TrueSighted, ConditionTimer::Rounds(10));
+        assert_eq!(e.first_eligible_protector(attacker, target), Some(ally));
+        assert_eq!(e.first_eligible_interceptor(attacker, target), Some(ally));
+    }
+
+    /// Warding Flare RAW "you can see" gate — an invisible attacker
+    /// bypasses the flare because the cleric literally can't see them.
+    /// Pre-`viewer_can_see` refactor this only checked `!Blinded` on
+    /// the cleric, silently letting the invisible goblin still draw
+    /// the flare charge. The fix routes the gate through the shared
+    /// `viewer_can_see` helper which folds the Blinded clause and the
+    /// concealment clause into one lookup.
+    #[test]
+    fn warding_flare_skips_when_attacker_invisible_and_cleric_cannot_pierce() {
+        use crate::actions::class_features::WARDING_FLARE_TAG;
+        use crate::actors::creatures::clerics::LIGHT_CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&LIGHT_CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        // Invisible attacker: the cleric can't see them, so the flare
+        // shouldn't fire even in range with a full charge.
+        e.actors
+            .get_mut(&goblin)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Rounds(10));
+        assert!(!e.apply_warding_flare_disadvantage(cleric, goblin));
+        assert!(
+            e.actors[&cleric].feature_available(WARDING_FLARE_TAG),
+            "invisible attacker shouldn't spend the flare charge"
+        );
+        // Grant the cleric True Seeing — now they pierce the invisible
+        // and the flare fires.
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .add_condition(Condition::TrueSighted, ConditionTimer::Rounds(10));
+        assert!(e.apply_warding_flare_disadvantage(cleric, goblin));
+        assert!(
+            !e.actors[&cleric].feature_available(WARDING_FLARE_TAG),
+            "piercing cleric should spend the flare charge on the invisible attacker"
+        );
+    }
+
+    /// 5e Ranger **Feral Senses** (lv18): the ranger's swings against
+    /// an invisible target don't suffer disadvantage, and an invisible
+    /// attacker doesn't gain advantage on swings against the ranger.
+    /// Both sides pin through the shared `pierces_illusion_of` gate
+    /// at the `compute_attack_mode` chokepoint. Unbounded range —
+    /// distinct from Blindsense's 10-ft envelope, so we place the
+    /// participants deliberately far apart to prove the pierce fires
+    /// regardless of gap.
+    #[test]
+    fn feral_senses_pierces_target_invisible_at_any_range() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rangers::RANGER_TEMPLATE;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let ranger = e
+            .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // 20+ tiles apart — well outside Blindsense's 10-ft envelope,
+        // so only Feral Senses' unbounded reach can pin the pierce.
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(25, 25), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&goblin)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Rounds(10));
+        // Ranger attacks the invisible goblin: no disadvantage.
+        assert_eq!(
+            e.compute_attack_mode(ranger, goblin, false),
+            RollMode::Normal,
+            "Feral Senses must pierce the target's Invisible at long range"
+        );
+        // Symmetric side: goblin (invisible) attacks the ranger. Absent
+        // Feral Senses the goblin would get advantage — the pierce
+        // suppresses it.
+        assert_eq!(
+            e.compute_attack_mode(goblin, ranger, false),
+            RollMode::Normal,
+            "invisible attacker must not gain advantage against a Feral Senses target"
+        );
+    }
+
+    /// 5e Rogue **Blindsense** (lv14): the rogue's concealment pierce
+    /// fires only within 10 ft. Beyond that envelope, the standard
+    /// Invisible / Blurred / Displaced tax lands. Also gated on the
+    /// rogue being able to hear (`!Deafened`).
+    #[test]
+    fn blindsense_pierces_only_within_10ft_and_not_when_deafened() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Adjacent invisible goblin — well inside the 10-ft envelope.
+        let near = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&near)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Rounds(10));
+        assert_eq!(
+            e.compute_attack_mode(rogue, near, true),
+            RollMode::Normal,
+            "Blindsense must pierce Invisible within 10 ft"
+        );
+        // Second goblin far outside the envelope (>4 tiles Chebyshev).
+        let far = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(25, 25), 1, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&far)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Rounds(10));
+        assert_eq!(
+            e.compute_attack_mode(rogue, far, false),
+            RollMode::Disadvantage,
+            "Blindsense must NOT pierce Invisible beyond 10 ft"
+        );
+        // Deafened rogue can't place the near goblin either — the pierce
+        // lapses (RAW: "while able to hear").
+        e.actors
+            .get_mut(&rogue)
+            .unwrap()
+            .add_condition(Condition::Deafened, ConditionTimer::Rounds(10));
+        assert_eq!(
+            e.compute_attack_mode(rogue, near, true),
+            RollMode::Disadvantage,
+            "Deafened Blindsense holder loses the pierce"
+        );
+    }
+
+    /// The `pierces_illusion_of` helper unifies Truesight / Feral
+    /// Senses / Blindsense on the same viewer side. Pin the three
+    /// sources fire independently and no source at all returns false —
+    /// keeps the helper's callers (compute_attack_mode) contract
+    /// visible on refactor.
+    #[test]
+    fn pierces_illusion_of_unifies_all_three_sources() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let viewer = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Subject placed within 10 ft (2 tiles apart) so Blindsense's
+        // envelope holds — the subject-side gap doesn't factor for the
+        // unbounded piercers.
+        let subject = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        // Baseline: no source, no pierce.
+        assert!(!e.pierces_illusion_of(viewer, subject));
+        // Truesight fires (via the condition lane — the sense lane
+        // works too but touching the condition keeps this test off
+        // any specific template).
+        e.actors
+            .get_mut(&viewer)
+            .unwrap()
+            .add_condition(Condition::TrueSighted, ConditionTimer::Rounds(10));
+        assert!(e.pierces_illusion_of(viewer, subject));
+        // Strip Truesight and dial on Feral Senses via the test setter.
+        e.actors
+            .get_mut(&viewer)
+            .unwrap()
+            .remove_condition(Condition::TrueSighted);
+        e.actors.get_mut(&viewer).unwrap().set_feral_senses(true);
+        assert!(e.pierces_illusion_of(viewer, subject));
+        // Strip Feral Senses and dial on Blindsense — pierces at
+        // adjacent range (2 tiles < 10 ft envelope).
+        e.actors.get_mut(&viewer).unwrap().set_feral_senses(false);
+        e.actors.get_mut(&viewer).unwrap().set_blindsense(true);
+        assert!(e.pierces_illusion_of(viewer, subject));
+    }
+
+    /// Baseline templates that carry these passive piercers today:
+    /// RANGER_TEMPLATE / HUNTER_RANGER_TEMPLATE ship Feral Senses;
+    /// ROGUE_TEMPLATE / ASSASSIN_ROGUE_TEMPLATE ship Blindsense. Pin
+    /// the wire-up so a future template refactor surfaces breakage
+    /// here instead of in a downstream attack-mode assertion.
+    #[test]
+    fn template_passive_piercers_ship_on_the_expected_chassis() {
+        use crate::actors::creatures::rangers::{HUNTER_RANGER_TEMPLATE, RANGER_TEMPLATE};
+        use crate::actors::creatures::rogues::{ASSASSIN_ROGUE_TEMPLATE, ROGUE_TEMPLATE};
+        assert!(RANGER_TEMPLATE.has_feral_senses);
+        assert!(HUNTER_RANGER_TEMPLATE.has_feral_senses);
+        assert!(!RANGER_TEMPLATE.has_blindsense);
+        assert!(ROGUE_TEMPLATE.has_blindsense);
+        assert!(ASSASSIN_ROGUE_TEMPLATE.has_blindsense);
+        assert!(!ROGUE_TEMPLATE.has_feral_senses);
     }
 }

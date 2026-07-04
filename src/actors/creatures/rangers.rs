@@ -121,6 +121,23 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // stacks with Hunter's Mark's per-hit rider and Colossus Slayer's
         // once-per-turn +1d8.
         has_archery_style: true,
+        // 5e Ranger **Feral Senses** (level 18 capstone). Passive
+        // concealment-piercer: unbounded-range immunity to the
+        // Invisible / Blurred / Displaced attack-mode tax on both
+        // sides (the ranger's swings against invisible targets don't
+        // suffer disadvantage, and invisible attackers don't gain
+        // advantage against the ranger). Ships on the CR-1 baseline
+        // template above its strict RAW level gate for the same reason
+        // Foe Slayer (lv20 capstone) does — class templates target a
+        // balanced playable level, not lockstep PHB progression. Read
+        // at the `EncounterInstance::pierces_illusion_of` chokepoint
+        // next to Truesight. Composes cleanly with Colossus Slayer /
+        // Multiattack Defense (Hunter subclass features inherited via
+        // `..RANGER_TEMPLATE.clone()`) and Faerie Fire (the ranger's
+        // Outline install already breaks Invisible / Blurred /
+        // Displaced offensively — Feral Senses is the defensive half
+        // of the "we don't lose accuracy to concealment" identity).
+        has_feral_senses: true,
         // 5e Ranger **Foe Slayer** (level 20 capstone). Passive once-
         // per-turn +WIS-mod flat damage rider on any weapon hit. Ships
         // on the CR-1 baseline template above its strict RAW level

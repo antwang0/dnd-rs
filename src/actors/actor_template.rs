@@ -666,6 +666,36 @@ pub struct CreatureTemplate {
     /// shipped on any current template by default; the flag exists so
     /// templates that carry a shield can opt in.
     pub has_interception_style: bool,
+    /// 5e Ranger **Feral Senses** (level 18 class capstone). Passive
+    /// concealment-piercer: an unseen attacker doesn't gain advantage
+    /// on attack rolls against the holder, and the holder doesn't
+    /// suffer disadvantage on attack rolls against an unseen target.
+    /// Read at `compute_attack_mode` next to `has_truesight` — the
+    /// piercing lookup joins the truesight cohort so an Invisible /
+    /// Blurred / Displaced attacker (or target) has their concealment
+    /// tax suppressed against the flag holder. Distinct from Truesight
+    /// (sense) which is available intrinsically or via the True Seeing
+    /// spell — Feral Senses is a flat "ranger's animal instincts"
+    /// template flag, unrangeable and unconditional. Ships on the
+    /// baseline RANGER_TEMPLATE (inherited by HUNTER_RANGER_TEMPLATE)
+    /// above its strict RAW level gate for the same reason Foe Slayer
+    /// (lv20 capstone) does — class templates target a balanced
+    /// playable level, not lockstep PHB progression.
+    pub has_feral_senses: bool,
+    /// 5e Rogue **Blindsense** (level 14 class feature). Passive
+    /// concealment-piercer with a 10-ft (4-tile footprint Chebyshev)
+    /// range gate: while able to hear, the rogue is aware of the
+    /// location of any hidden or invisible creature within 10 ft. Read
+    /// at `compute_attack_mode` next to `has_truesight` / `has_feral_senses`
+    /// — same illusion-suppression cohort, but only fires when the
+    /// subject is within the 10-ft envelope. RAW "while able to hear"
+    /// clause collapses to "!Deafened" on the holder. Ships on the
+    /// baseline ROGUE_TEMPLATE (inherited by ASSASSIN_ROGUE_TEMPLATE)
+    /// above its strict RAW level gate for the same reason Elusive /
+    /// Slippery Mind do. The 10-ft envelope keeps the flag from
+    /// out-classing Feral Senses (unbounded) — the rogue leans in
+    /// close to leverage it, the ranger benefits at any range.
+    pub has_blindsense: bool,
     /// 5e Dwarven Resilience: advantage on saving throws against poison
     /// AND resistance to poison damage. Read by `compute_save_mode`
     /// (advantage clause) and `effective_damage` (resistance clause).
@@ -824,6 +854,8 @@ impl CreatureTemplate {
             has_two_weapon_fighting_style: false,
             has_protection_style: false,
             has_interception_style: false,
+            has_feral_senses: false,
+            has_blindsense: false,
             has_dwarven_resilience: false,
             has_gnome_cunning: false,
             draconic_ancestry: None,
@@ -1207,6 +1239,12 @@ pub struct ActorInstance {
     /// 5e Fighting Style: Interception (reaction: reduce damage to
     /// adjacent ally by 1d10 + prof). See `CreatureTemplate` docs.
     has_interception_style: bool,
+    /// 5e Ranger Feral Senses (level 18). Passive concealment-piercer
+    /// with no range gate. See `CreatureTemplate` docs.
+    has_feral_senses: bool,
+    /// 5e Rogue Blindsense (level 14). Passive concealment-piercer
+    /// with a 10-ft range gate. See `CreatureTemplate` docs.
+    has_blindsense: bool,
     /// 5e Dwarven Resilience. See `CreatureTemplate` docs.
     has_dwarven_resilience: bool,
     /// 5e Gnome Cunning. See `CreatureTemplate` docs.
@@ -1365,6 +1403,8 @@ impl ActorInstance {
             has_two_weapon_fighting_style: ct.has_two_weapon_fighting_style,
             has_protection_style: ct.has_protection_style,
             has_interception_style: ct.has_interception_style,
+            has_feral_senses: ct.has_feral_senses,
+            has_blindsense: ct.has_blindsense,
             has_dwarven_resilience: ct.has_dwarven_resilience,
             has_gnome_cunning: ct.has_gnome_cunning,
             draconic_ancestry: ct.draconic_ancestry,
@@ -1690,6 +1730,40 @@ impl ActorInstance {
     #[cfg(test)]
     pub fn set_interception_style(&mut self, value: bool) {
         self.has_interception_style = value;
+    }
+
+    /// 5e Ranger **Feral Senses** (lv18 capstone): the holder pierces
+    /// illusion-style concealment at any range — sibling to Truesight
+    /// on the concealment-suppression cohort. Wired through
+    /// `EncounterInstance::pierces_illusion_of` at the
+    /// `compute_attack_mode` chokepoint.
+    pub fn has_feral_senses(&self) -> bool {
+        self.has_feral_senses
+    }
+
+    /// Test-only setter for the Feral Senses flag. Mirrors
+    /// `set_interception_style` so tests can dial it on without
+    /// needing the RANGER_TEMPLATE chassis.
+    #[cfg(test)]
+    pub fn set_feral_senses(&mut self, value: bool) {
+        self.has_feral_senses = value;
+    }
+
+    /// 5e Rogue **Blindsense** (lv14): the holder pierces illusion-style
+    /// concealment against subjects within 10 ft, provided the holder
+    /// isn't Deafened. Wired through
+    /// `EncounterInstance::pierces_illusion_of` — the 10-ft envelope
+    /// and the deafened gate both live in the encounter helper so the
+    /// accessor stays a flat boolean.
+    pub fn has_blindsense(&self) -> bool {
+        self.has_blindsense
+    }
+
+    /// Test-only setter for the Blindsense flag. Mirrors
+    /// `set_feral_senses` for the same reason.
+    #[cfg(test)]
+    pub fn set_blindsense(&mut self, value: bool) {
+        self.has_blindsense = value;
     }
 
     /// 5e Dwarven Resilience — advantage on saves vs poison AND resistance

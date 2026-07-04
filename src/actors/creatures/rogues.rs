@@ -82,6 +82,24 @@ pub static ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Protection — the CHA-bonus save layer stacks on top of the
         // slippery-mind proficiency floor.
         has_slippery_mind: true,
+        // 5e Rogue **Blindsense** (level 14 class feature). Passive
+        // concealment-piercer with a 10-ft footprint envelope: while
+        // able to hear, the rogue is aware of any hidden or invisible
+        // creature within 10 ft — so their attacks against unseen
+        // targets (and unseen attackers' swings at them) resolve at
+        // Normal instead of Disadvantage / Advantage. Ships on the
+        // CR-1 baseline rogue template above its strict RAW level gate
+        // alongside Elusive (lv18) / Slippery Mind (lv15) for the same
+        // reason — class templates target a balanced playable level,
+        // not lockstep PHB progression. Read at the
+        // `EncounterInstance::pierces_illusion_of` chokepoint next to
+        // Truesight / Feral Senses; the 10-ft envelope and the
+        // Deafened gate both live in the helper. Composes cleanly
+        // with the rogue's Assassin subclass identity — the alpha-
+        // strike opening favors close-quarters engagement where
+        // Blindsense's 10-ft envelope covers the crit / advantage
+        // trigger window.
+        has_blindsense: true,
         ..CreatureTemplate::defaults()
     }
 });
