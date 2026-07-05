@@ -239,3 +239,49 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     }
 });
 
+/// Fiend Warlock — Otherworldly Patron **The Fiend** subclass build.
+/// Identical envelope to the baseline `WARLOCK_TEMPLATE` (CHA-primary
+/// half-caster with Pact Magic, Eldritch Blast + Hex + Witch Bolt at
+/// will, Agonizing / Repelling / Eldritch Mind invocations) with one
+/// subclass feature layered on: **Dark One's Blessing** (Fiend
+/// subclass level 1) — passive: whenever the warlock reduces a
+/// hostile to 0 HP they gain `max(1, CHA mod + warlock level)` temp
+/// HP.
+///
+/// The signature "fiendish resilience" tell — a Fiend warlock who
+/// lands the killing blow on a downed enemy walks into the next
+/// swing armored with a fresh temp-HP buffer. Pairs naturally with
+/// the warlock's Eldritch Blast finisher pattern: the last beam that
+/// drops a target reads the pool cap (CHA 18 → +4, level 5 → total
+/// 9 temp HP), sizeable enough to soak the next Guiding Bolt or a
+/// second-tier Fireball beam.
+///
+/// Distinct from `WARLOCK_TEMPLATE` (Patron-less baseline). RAW's
+/// Fiend patron picks up an expanded spell list (Burning Hands /
+/// Command / Blindness / Scorching Ray / Fireball / Stinking Cloud
+/// / Wall of Fire / Fire Shield / Insect Plague) — the baseline
+/// template's spell list already covers most of the overlap
+/// (Burning Hands, Blindness, Fear at lv3, Sickening Radiance at
+/// lv4) so we don't re-add the whole spell list here; the subclass
+/// tell is the passive kill-triggered temp-HP well.
+///
+/// Ships the CR-4 template above the strict RAW gate for the same
+/// reason every other subclass template runs above strict RAW level
+/// (class templates target a balanced playable level, not lockstep
+/// PHB progression). Glyph 'F' so the Fiend warlock shows up
+/// distinctly on the map next to the baseline warlock 'L'.
+pub static FIEND_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Warlock envelope wholesale
+    // and layer on the DARK_ONES_BLESSING_TAG passive. Actions list
+    // needs no additions — Dark One's Blessing is a pure passive with
+    // no active surface, unlike Hex which has the bonus-action prime.
+    let mut features = WARLOCK_TEMPLATE.features.clone();
+    features.insert(crate::actions::class_features::DARK_ONES_BLESSING_TAG);
+    CreatureTemplate {
+        name: "Fiend Warlock",
+        glyph: 'F',
+        features,
+        ..WARLOCK_TEMPLATE.clone()
+    }
+});
+

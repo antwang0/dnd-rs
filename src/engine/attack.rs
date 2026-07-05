@@ -790,6 +790,51 @@ pub fn resolve_attack_outcome(
             }
         }
     }
+    // 5e Barbarian Path of the Zealot **Divine Fury** (level 3) — passive
+    // once-per-turn rider. The first weapon hit each turn while raging
+    // lays +1d6 + half barbarian level (min +1) radiant damage. Three
+    // gates:
+    //   1. Not a spell attack (RAW: "with a weapon attack").
+    //   2. Caster has the DIVINE_FURY_TAG passive feature flag AND is
+    //      currently Raging (RAW: "while you're raging").
+    //   3. Caster hasn't already fired Divine Fury this turn
+    //      (`divine_fury_used` — cleared at turn-start by
+    //      `reset_for_new_round`).
+    // Crits double the die per `roll_rider` RAW; the +level/2 flat mod
+    // doesn't double. Damage is typed Radiant — RAW gives the zealot a
+    // choice of radiant or necrotic, we lock to radiant so the "holy
+    // warrior" tell stays visible on the log line.
+    if !p.is_spell
+        && encounter
+            .actors
+            .get(&p.caster_id)
+            .is_some_and(|a| {
+                a.has_passive_feature(
+                    crate::actions::class_features::DIVINE_FURY_TAG,
+                ) && a.has_condition(Condition::Raging)
+                    && !a.divine_fury_used()
+            })
+    {
+        let half_level = encounter
+            .actors
+            .get(&p.caster_id)
+            .map(|a| (a.level() / 2).max(1))
+            .unwrap_or(1);
+        let die = roll_rider(encounter, Dice::new(1, 6), is_crit);
+        let total = die + half_level;
+        encounter.log(format!(
+            "  divine fury: +{} (1d6({})+{}) Radiant",
+            total, die, half_level
+        ));
+        effects.push(Box::new(DealDamage {
+            actor_id: p.target_id,
+            amount: total,
+            damage_type: DamageType::Radiant,
+        }));
+        if let Some(caster) = encounter.actors.get_mut(&p.caster_id) {
+            caster.mark_divine_fury_used();
+        }
+    }
     // Melee-only retaliation table: any condition the *target* holds that
     // bounces damage back at a melee attacker (Fire Shield 2d8 fire,
     // Armor of Agathys 5 cold, Investiture of Flame 1d10 fire). Each

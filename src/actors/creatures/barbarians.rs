@@ -1,7 +1,8 @@
 use crate::actions::action_template::Action;
 use crate::actions::class_features::{
-    BEAR_TOTEM_TAG, EAGLE_DIVE, EAGLE_TOTEM_TAG, FAST_MOVEMENT_TAG, FRENZY, FRENZY_TAG,
-    MINDLESS_RAGE_TAG, RAGE, RAGE_TAG, RELENTLESS_RAGE_TAG, TIGER_TOTEM_TAG, WOLF_TOTEM_TAG,
+    BEAR_TOTEM_TAG, DIVINE_FURY_TAG, EAGLE_DIVE, EAGLE_TOTEM_TAG, FAST_MOVEMENT_TAG, FRENZY,
+    FRENZY_TAG, MINDLESS_RAGE_TAG, RAGE, RAGE_TAG, RELENTLESS_RAGE_TAG, TIGER_TOTEM_TAG,
+    WOLF_TOTEM_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GREATAXE, RECKLESS_ATTACK};
@@ -287,6 +288,65 @@ pub static BERSERKER_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
     CreatureTemplate {
         name: "Berserker Barbarian",
         glyph: 'Z',
+        features,
+        ..BARBARIAN_TEMPLATE.clone()
+    }
+});
+
+/// Zealot Barbarian — Path of the Zealot subclass build. Identical
+/// envelope to the baseline `BARBARIAN_TEMPLATE` (greataxe + reckless
+/// attack + rage + brutal critical, level-9 stat block) with one
+/// subclass feature layered on: **Divine Fury** (Zealot subclass level
+/// 3) — a passive once-per-turn on-hit rider that adds `1d6 + half
+/// barbarian level` (min +1) radiant damage to the first weapon hit
+/// while raging.
+///
+/// The "holy warrior barbarian" tell: where the baseline barbarian
+/// hits with greataxe + rage's +2 melee bump, the zealot layers a
+/// radiant burst on top of the opening swing that lets them chip
+/// through fire-resistant fiends and slashing-resistant elementals
+/// alike. Radiant damage is universally uncommon-to-vulnerable
+/// coverage among the creature types the zealot is meant to hunt
+/// (fiends, undead, oozes), so the rider hits the widest possible
+/// resistance envelope for its slot.
+///
+/// Pairs naturally with:
+///   - **Reckless Attack** — the swing that opens with advantage is
+///     usually the one that lands, and Divine Fury fires on that
+///     opener since it's rate-limited by first-hit-per-turn.
+///   - **Brutal Critical (1d)** — a natural 20 on the reckless swing
+///     doubles both the greataxe die AND the Divine Fury 1d6 via
+///     `roll_rider`, stacking two damage-double events on the same
+///     hit.
+///
+/// Distinct from the totem family (Bear damage envelope / Wolf ally
+/// aura / Eagle bonus-action Dash / Tiger flat speed) and Berserker
+/// (Frenzy bonus-action swing + Mindless Rage passive) so a Zealot-
+/// vs-anything encounter renders unambiguously by name AND subclass
+/// features don't stack RAW-illegally on a single PC build.
+///
+/// Glyph 'X' (for zealot's X-cross) so zealot-vs-berserker-vs-totem
+/// renders unambiguously on the map next to baseline 'B' / Totem 'T'
+/// / Wolf 'W' / Eagle 'A' / Tiger 'I' / Berserker 'Z'.
+pub static ZEALOT_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Barbarian envelope
+    // wholesale and layer on the DIVINE_FURY_TAG passive. Actions list
+    // needs no additions — Divine Fury is a pure passive on-hit rider
+    // with no active surface, unlike Frenzy which has the paired
+    // `FRENZY` bonus-action swing.
+    //
+    // The Berserker's FRENZY_TAG stays on the inherited feature set
+    // (baseline barbarians pick up Frenzy at level 3 in our engine),
+    // but the FRENZY action still gates on FRENZY_TAG at swing time —
+    // the zealot's frenzy stays engine-legal alongside Divine Fury
+    // since both are passive-flag-driven. If a strict subclass
+    // separation is needed later, the baseline can shed FRENZY_TAG
+    // from its default feature set.
+    let mut features = BARBARIAN_TEMPLATE.features.clone();
+    features.insert(DIVINE_FURY_TAG);
+    CreatureTemplate {
+        name: "Zealot Barbarian",
+        glyph: 'X',
         features,
         ..BARBARIAN_TEMPLATE.clone()
     }

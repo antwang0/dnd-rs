@@ -1104,18 +1104,18 @@ pub struct ActorInstance {
     /// the passive carried-item lane); both sources sum at the damage-
     /// roll site via `caster_damage_buffs`.
     damage_bonus_buff: i32,
-    /// Sneak Attack guard — true if the rogue has spent their once-per-turn
-    /// sneak this turn. Cleared at turn-start by `reset_for_new_round`.
-    sneak_attack_used: bool,
-    /// Colossus Slayer guard — symmetric with `sneak_attack_used`. True
-    /// if a Hunter ranger has spent their once-per-turn Colossus Slayer
-    /// rider this turn. Cleared at turn-start by `reset_for_new_round`.
-    colossus_slayer_used: bool,
-    /// Foe Slayer guard — symmetric with `sneak_attack_used` and
-    /// `colossus_slayer_used`. True if a Ranger has spent their once-
-    /// per-turn Foe Slayer +WIS-mod damage rider this turn. Cleared at
-    /// turn-start by `reset_for_new_round`.
-    foe_slayer_used: bool,
+    /// Shared once-per-turn rider ledger — a set of feature tags
+    /// whose "already fired this turn" state is tracked in one place
+    /// instead of a bool field per feature. Marked at the swing site
+    /// via `mark_once_per_turn_used(tag)`; cleared wholesale at
+    /// turn-start by `reset_for_new_round`. Read via
+    /// `once_per_turn_used(tag)` — reserved thin-wrappers
+    /// (`sneak_attack_used` / `colossus_slayer_used` /
+    /// `foe_slayer_used` / `divine_fury_used`) delegate to it so
+    /// existing callsites keep the same one-liner shape. The tag
+    /// list is documented in
+    /// `class_features::ONCE_PER_TURN_RIDER_TAGS`.
+    once_per_turn_marks: HashSet<&'static str>,
     /// 5e Hunter Ranger **Multiattack Defense** (Defensive Tactics
     /// option, lv7) ledger. Every target this actor lands a connecting
     /// attack on this turn is inserted here, keyed by target id; a
@@ -1405,9 +1405,7 @@ impl ActorInstance {
             attack_bonus_buff: 0,
             save_bonus_buff: 0,
             damage_bonus_buff: 0,
-            sneak_attack_used: false,
-            colossus_slayer_used: false,
-            foe_slayer_used: false,
+            once_per_turn_marks: HashSet::new(),
             hit_targets_this_turn: HashSet::new(),
             has_taken_turn_in_combat: false,
             relentless_rage_dc: 10,
@@ -3329,18 +3327,16 @@ impl ActorInstance {
         if self.conditions.remove(&Condition::MindWhipped).is_some() {
             self.action_slots = 0;
         }
-        // Once-per-turn flags reset at start of turn. Sneak Attack:
-        // available again. Colossus Slayer: same once-per-turn cadence —
-        // the Hunter ranger gets a fresh +1d8 rider window each turn.
-        // Help grants from this actor live with the helped actor, so we
-        // don't clear them here.
-        self.sneak_attack_used = false;
-        self.colossus_slayer_used = false;
-        // Foe Slayer: passive once-per-turn +WIS-mod damage rider on
-        // any weapon hit. Cleared at turn-start alongside the sibling
-        // once-per-turn ranger ledger (Colossus Slayer) so the next
-        // turn's opening swing re-arms the rider.
-        self.foe_slayer_used = false;
+        // Once-per-turn attack-rider ledger — Sneak Attack, Colossus
+        // Slayer, Foe Slayer, Divine Fury all share a single
+        // `HashSet<&'static str>` cleared here in one line. Adding a
+        // future once-per-turn rider (a subclass equivalent, a new
+        // Battle Master maneuver's per-turn window) needs no touch
+        // to this reset site — the tag just plugs into the shared
+        // ledger via `mark_once_per_turn_used(TAG)`. Help grants
+        // from this actor live with the helped actor, so we don't
+        // clear them here.
+        self.once_per_turn_marks.clear();
         // 5e Hunter Ranger Multiattack Defense (Defensive Tactics, lv7):
         // per-turn ledger of targets this actor has landed a connecting
         // hit on. Cleared at turn-start so the +4 AC penalty against
@@ -3747,37 +3743,67 @@ impl ActorInstance {
     }
 
     /// Has the rogue used their once-per-turn Sneak Attack already?
+    /// Shared once-per-turn ledger read. Returns true when `tag` has
+    /// been marked spent this turn (via `mark_once_per_turn_used`).
+    /// Cleared wholesale at turn-start by `reset_for_new_round`. The
+    /// registered tags are documented in
+    /// `class_features::ONCE_PER_TURN_RIDER_TAGS`, though any static
+    /// str can be used — the ledger doesn't consult the registry at
+    /// runtime.
+    pub fn once_per_turn_used(&self, tag: &'static str) -> bool {
+        self.once_per_turn_marks.contains(tag)
+    }
+
+    /// Shared once-per-turn ledger write. Marks `tag` as spent for
+    /// the remainder of this actor's turn; a subsequent
+    /// `once_per_turn_used(tag)` returns true until
+    /// `reset_for_new_round` clears the whole ledger.
+    pub fn mark_once_per_turn_used(&mut self, tag: &'static str) {
+        self.once_per_turn_marks.insert(tag);
+    }
+
+    /// Rogue Sneak Attack once-per-turn ledger read. Thin wrapper on
+    /// the shared `once_per_turn_used(SNEAK_ATTACK_TAG)` — kept for
+    /// callsite ergonomics on the rogue's attack path.
     pub fn sneak_attack_used(&self) -> bool {
-        self.sneak_attack_used
+        self.once_per_turn_used(crate::actions::class_features::SNEAK_ATTACK_TAG)
     }
 
     pub fn mark_sneak_attack_used(&mut self) {
-        self.sneak_attack_used = true;
+        self.mark_once_per_turn_used(crate::actions::class_features::SNEAK_ATTACK_TAG)
     }
 
-    /// Has the Hunter ranger spent their once-per-turn Colossus Slayer
-    /// rider already this turn? Symmetric with `sneak_attack_used` — set
-    /// at the swing site when the rider fires, cleared at the holder's
-    /// turn-start by `reset_for_new_round`.
+    /// Hunter Ranger Colossus Slayer once-per-turn ledger read. Thin
+    /// wrapper on the shared `once_per_turn_used(COLOSSUS_SLAYER_TAG)`
+    /// — kept for callsite ergonomics on the swing rider path.
     pub fn colossus_slayer_used(&self) -> bool {
-        self.colossus_slayer_used
+        self.once_per_turn_used(crate::actions::class_features::COLOSSUS_SLAYER_TAG)
     }
 
     pub fn mark_colossus_slayer_used(&mut self) {
-        self.colossus_slayer_used = true;
+        self.mark_once_per_turn_used(crate::actions::class_features::COLOSSUS_SLAYER_TAG)
     }
 
-    /// Has the ranger spent their once-per-turn Foe Slayer +WIS-mod
-    /// damage rider already this turn? Symmetric with
-    /// `colossus_slayer_used` and `sneak_attack_used` — set at the
-    /// swing site when the rider fires, cleared at the holder's
-    /// turn-start by `reset_for_new_round`.
+    /// Ranger Foe Slayer once-per-turn ledger read. Thin wrapper on
+    /// the shared `once_per_turn_used(FOE_SLAYER_TAG)` — kept for
+    /// callsite ergonomics on the swing rider path.
     pub fn foe_slayer_used(&self) -> bool {
-        self.foe_slayer_used
+        self.once_per_turn_used(crate::actions::class_features::FOE_SLAYER_TAG)
     }
 
     pub fn mark_foe_slayer_used(&mut self) {
-        self.foe_slayer_used = true;
+        self.mark_once_per_turn_used(crate::actions::class_features::FOE_SLAYER_TAG)
+    }
+
+    /// Zealot Barbarian Divine Fury once-per-turn ledger read. Thin
+    /// wrapper on the shared `once_per_turn_used(DIVINE_FURY_TAG)` —
+    /// kept for callsite ergonomics on the swing rider path.
+    pub fn divine_fury_used(&self) -> bool {
+        self.once_per_turn_used(crate::actions::class_features::DIVINE_FURY_TAG)
+    }
+
+    pub fn mark_divine_fury_used(&mut self) {
+        self.mark_once_per_turn_used(crate::actions::class_features::DIVINE_FURY_TAG)
     }
 
     /// 5e Hunter Ranger **Multiattack Defense** (Defensive Tactics

@@ -1190,6 +1190,34 @@ pub static FRENZY: LazyLock<Frenzy> = LazyLock::new(|| Frenzy {});
 /// them to keep swinging while every teammate eats the same effect.
 pub const MINDLESS_RAGE_TAG: &str = "barbarian.mindless_rage";
 
+/// 5e Barbarian Path of the Zealot — **Divine Fury** (level 3) feature
+/// tag. Passive subclass feature: while raging, the first creature the
+/// zealot hits with a weapon attack on each of their turns takes extra
+/// `1d6 + half barbarian level` (min +1) radiant damage. RAW gives the
+/// zealot a choice of radiant or necrotic per RAW; we lock the type to
+/// radiant to keep the tell "holy warrior" flavor unambiguous.
+///
+/// Stored as a `has_passive_feature` flag with no per-rest charge — the
+/// rate limit is the per-turn `divine_fury_used` ledger on
+/// `ActorInstance`, sibling to `sneak_attack_used` / `colossus_slayer_used`
+/// / `foe_slayer_used`. Cleared at turn-start by `reset_for_new_round`
+/// so the opening swing of every turn re-arms the rider.
+///
+/// Three gates on the swing site (`engine::attack::resolve_attack_outcome`):
+///   1. Caster has the `DIVINE_FURY_TAG` passive feature flag.
+///   2. Caster carries the `Raging` condition (RAW: "while you're
+///      raging"). The rider vanishes the moment rage drops.
+///   3. Caster hasn't already fired Divine Fury this turn.
+///
+/// Composes cleanly with the barbarian's other on-hit riders: Brutal
+/// Critical (extra weapon die on a crit), Rage's flat +2 melee bump
+/// through `MELEE_CASTER_BUMPS`, and any smite-lane rider a hypothetical
+/// paladin / barbarian multiclass might carry — all fire on the same
+/// swing without stepping on each other. Weapon-only (RAW: "with a
+/// weapon attack") so a hypothetical spell attack won't consume the
+/// prime.
+pub const DIVINE_FURY_TAG: &str = "barbarian.divine_fury";
+
 /// 5e Barbarian Path of the Totem Warrior — **Bear Totem Spirit** (level 3).
 /// Passive subclass feature: while raging, the holder has resistance to all
 /// damage except psychic. Replaces the default Rage's "BPS resistance only"
@@ -1389,6 +1417,42 @@ pub const SURVIVOR_TAG: &str = "fighter.survivor";
 /// intercept `EncounterInstance::try_relentless_rage`, which the
 /// `DealDamage::apply` path calls before the Downed transition lands.
 pub const RELENTLESS_RAGE_TAG: &str = "barbarian.relentless_rage";
+
+/// 5e Rogue **Sneak Attack** feature tag. Passive once-per-turn +Nd6
+/// damage rider on any weapon attack that qualifies (advantage or
+/// ally-adjacent target, no disadvantage; RAW: PHB p. 96). Used as
+/// the ledger key for the shared `ONCE_PER_TURN_RIDER_TAGS` cohort on
+/// `ActorInstance` — the once-per-turn gate reads / writes through
+/// `actor.once_per_turn_used(SNEAK_ATTACK_TAG)` /
+/// `mark_once_per_turn_used(SNEAK_ATTACK_TAG)`. Cleared at turn-start
+/// by `reset_for_new_round` alongside the sibling rider tags.
+///
+/// The tag exists solely for the ledger — Sneak Attack is exposed as
+/// an attack-time property of the rogue's weapon path, NOT as a
+/// `has_passive_feature` check on the actor (the rogue's chassis
+/// implicitly qualifies). The `class_attacks::sneak_attack_dice_for_level`
+/// helper reads the caster's level to size the die pool.
+pub const SNEAK_ATTACK_TAG: &str = "rogue.sneak_attack";
+
+/// Ordered cohort of feature tags whose "once-per-turn used" ledger
+/// lives on `ActorInstance::once_per_turn_marks`. Adding a future
+/// once-per-turn attack rider (a new Battle Master maneuver's
+/// per-turn window, a subclass equivalent to Colossus Slayer) lands
+/// as a fresh const + one entry here rather than a fresh `bool`
+/// field + accessor pair + reset call. The shared ledger is a
+/// `HashSet<&'static str>` cleared once at `reset_for_new_round`.
+///
+/// Entries are listed for docs / self-check purposes; the ledger
+/// itself doesn't consult this array at runtime — any tag can be
+/// marked / read through the shared API without pre-registration.
+/// Keeps the cohort discoverable in one place, mirroring the shape
+/// of `SHORT_REST_FEATURES` / `LETHAL_DAMAGE_ABSORBER_FEATURES`.
+pub const ONCE_PER_TURN_RIDER_TAGS: &[&str] = &[
+    SNEAK_ATTACK_TAG,
+    COLOSSUS_SLAYER_TAG,
+    FOE_SLAYER_TAG,
+    DIVINE_FURY_TAG,
+];
 
 /// 5e **Colossus Slayer** — Hunter Ranger subclass feature (level 3).
 /// Passive once-per-turn rider: on a weapon hit, if the target's
@@ -4295,6 +4359,34 @@ pub const REPELLING_BLAST_TAG: &str = "warlock.repelling_blast";
 /// Permanent passive — never consumed. Add this tag to a warlock
 /// template's `features` set to install it.
 pub const ELDRITCH_MIND_TAG: &str = "warlock.eldritch_mind";
+
+/// 5e Warlock — Otherworldly Patron **The Fiend**, level-1 feature
+/// **Dark One's Blessing**. Passive: whenever the warlock reduces a
+/// hostile creature to 0 HP, they gain temporary hit points equal to
+/// their Charisma modifier + warlock level (min 1). RAW: "When you
+/// reduce a hostile creature to 0 hit points, you gain temporary hit
+/// points equal to your Charisma modifier + your warlock level (a
+/// minimum of 1)."
+///
+/// Read at the `DealDamage::apply` chokepoint on the `Downed` /
+/// `Killed` outcome branches: the current turn actor is looked up
+/// via `EncounterInstance::current_turn_actor_id`, and if they hold
+/// this tag AND the dropped target is on a different team (RAW
+/// "hostile"), the temp HP is granted through the standard
+/// `GainTempHp` side effect so the max-of-current-and-new stack rule
+/// still holds. Attributing the "reduced-to-0 hit" to the current
+/// turn actor sidesteps threading an attacker id through every damage
+/// path (reactive burns, ongoing DoT, condition drips) — RAW's plain
+/// reading is that the warlock is the one landing the killing hit,
+/// and out-of-turn triggers (Hellish Rebuke fired on someone else's
+/// turn) don't reward the wrong warlock.
+///
+/// Passive with no per-rest charge — fires every time the trigger
+/// condition holds. Add this tag to a warlock template's `features`
+/// set to install it. Not shipped on the baseline
+/// `WARLOCK_TEMPLATE` (Patron is a subclass pick); rides on the
+/// dedicated `FIEND_WARLOCK_TEMPLATE`.
+pub const DARK_ONES_BLESSING_TAG: &str = "warlock.dark_ones_blessing";
 
 /// 5e Wild Magic Sorcerer **Tides of Chaos** feature tag. Once per long
 /// rest charge — the sorcerer leans into the chaos of their bloodline to

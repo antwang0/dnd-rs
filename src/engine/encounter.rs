@@ -4387,6 +4387,78 @@ impl EncounterInstance {
         self.start_turn_for(next_id);
     }
 
+    /// Actor id whose turn is currently active, or `None` if the
+    /// initiative queue is empty. Public accessor for side-effect
+    /// chokepoints (Warlock **Dark One's Blessing**, future
+    /// current-turn-scoped triggers) that need to attribute an outcome
+    /// to whoever is swinging without threading an explicit attacker
+    /// argument through every call site. Reads through the same
+    /// initiative-tracker slot the AI / action-execution loop uses,
+    /// so an out-of-turn effect (reaction, legendary action) fires
+    /// against the currently-scheduled actor rather than the reaction
+    /// holder — matching RAW's "on your turn" phrasing.
+    pub fn current_turn_actor_id(&self) -> Option<usize> {
+        self.initiative_tracker.current_player()
+    }
+
+    /// 5e Warlock **The Fiend** patron, level-1 subclass feature —
+    /// **Dark One's Blessing** trigger. Called from
+    /// `DealDamage::apply` when the damage instance drops
+    /// `dropped_target_id` to 0 HP (`Downed`) or kills it outright
+    /// (`Killed`). If the current turn actor holds
+    /// `DARK_ONES_BLESSING_TAG` AND the dropped target belongs to a
+    /// different team (RAW: "hostile creature"), grant the warlock
+    /// `max(1, CHA mod + level)` temporary HP through the standard
+    /// `GainTempHp` side effect. The temp-HP grant uses the
+    /// max-of-current-and-new stack rule, matching RAW: a warlock
+    /// killing two enemies in one turn keeps whichever gift was
+    /// larger, not both stacked.
+    ///
+    /// The self-kill guard (`current_turn != dropped_target`) covers
+    /// the pathological "reduce self to 0" case (e.g. Hellish Rebuke
+    /// mirroring damage back onto the caster via Warding Bond). The
+    /// team check runs even when both actors are hostile-to-hostile —
+    /// a Fiend warlock on the enemy team dropping a party PC still
+    /// fires Dark One's Blessing per RAW ("hostile" is anchored to
+    /// the warlock, not the party); the team-distinct filter is the
+    /// engine's cleanest proxy.
+    ///
+    /// No-op when the current turn actor is missing (start-of-encounter
+    /// pre-init edge case) or lacks the tag — the check runs on every
+    /// downed / killed event, and template-flag lookup is cheap.
+    pub fn trigger_dark_ones_blessing(&mut self, dropped_target_id: usize) {
+        use crate::actions::class_features::DARK_ONES_BLESSING_TAG;
+        use crate::engine::side_effects::{ApplicableSideEffect, GainTempHp};
+        let Some(warlock_id) = self.current_turn_actor_id() else {
+            return;
+        };
+        // Team-distinct guard runs through the shared `actors_enemies`
+        // helper — the same negation-of-`actors_allied` gate that the
+        // harmful-action pipeline uses. This handles both the self-kill
+        // case (`actors_enemies(x, x)` is false) and the friendly-fire
+        // case (same team → false) in one check.
+        if !self.actors_enemies(warlock_id, dropped_target_id) {
+            return;
+        }
+        let temp_amount = {
+            let Some(warlock) = self.actors.get(&warlock_id) else {
+                return;
+            };
+            if !warlock.has_passive_feature(DARK_ONES_BLESSING_TAG) {
+                return;
+            }
+            let cha = warlock
+                .ability_modifier(crate::engine::types::AbilityScoreType::Charisma);
+            let level = warlock.level() as i32;
+            (cha + level).max(1) as u32
+        };
+        GainTempHp {
+            actor_id: warlock_id,
+            amount: temp_amount,
+        }
+        .apply(self);
+    }
+
     /// Per-actor turn-start hook: refresh resources, clear expiring
     /// self-buffs (Dodge), and log anything that ended. Centralized so
     /// every code path that advances the queue (skip_turn, dying-loop,
@@ -48310,6 +48382,380 @@ mod tests {
         assert!(
             oathbreaker.has_aura_of_hate(),
             "oathbreaker paladin ships Aura of Hate"
+        );
+    }
+
+    /// 5e Zealot Barbarian **Divine Fury** (lv3 subclass): passive
+    /// once-per-turn +1d6 + half-level (min +1) radiant rider on the
+    /// first weapon hit while raging. Verifies the rider fires with
+    /// the log line, marks `divine_fury_used`, and gates on both the
+    /// passive-feature tag AND the `Raging` condition.
+    #[test]
+    fn divine_fury_fires_on_weapon_hit_while_raging_and_marks_used() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::GREATAXE;
+        use crate::actors::creatures::barbarians::ZEALOT_BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut saw_rider = false;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let z = e
+                .instantiate_creature(&ZEALOT_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            // Rage first — the rider gates on the Raging condition.
+            e.actors
+                .get_mut(&z)
+                .unwrap()
+                .add_condition(Condition::Raging, ConditionTimer::Rounds(10));
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let log_before = e.messages().len();
+            let tv = vec![g];
+            let _ = GREATAXE.side_effects(&mut e, z, Some(&tv), None, None);
+            let log_lines: Vec<&String> = e.messages()[log_before..].iter().collect();
+            if log_lines.iter().any(|s| s.contains("divine fury")) {
+                saw_rider = true;
+                assert!(
+                    e.actors[&z].divine_fury_used(),
+                    "once-per-turn flag should flip after divine fury fires"
+                );
+                break;
+            }
+        }
+        assert!(
+            saw_rider,
+            "expected a 'divine fury' log line on at least one connecting swing"
+        );
+    }
+
+    /// Divine Fury does NOT fire on a non-raging Zealot barbarian —
+    /// even though the passive feature tag is present, the `Raging`
+    /// gate short-circuits the rider.
+    #[test]
+    fn divine_fury_does_not_fire_without_raging() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::GREATAXE;
+        use crate::actors::creatures::barbarians::ZEALOT_BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let z = e
+                .instantiate_creature(&ZEALOT_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            // Deliberately NOT raging.
+            assert!(!e.actors[&z].has_condition(Condition::Raging));
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let log_before = e.messages().len();
+            let tv = vec![g];
+            let _ = GREATAXE.side_effects(&mut e, z, Some(&tv), None, None);
+            let log_lines: Vec<&String> = e.messages()[log_before..].iter().collect();
+            assert!(
+                !log_lines.iter().any(|s| s.contains("divine fury")),
+                "divine fury should NOT fire without Raging (seed={})",
+                seed
+            );
+        }
+    }
+
+    /// Divine Fury is once-per-turn. Marking `divine_fury_used`
+    /// suppresses subsequent riders on the same turn — mirrors the
+    /// Colossus Slayer / Foe Slayer once-per-turn assertions.
+    #[test]
+    fn divine_fury_fires_only_once_per_turn() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::GREATAXE;
+        use crate::actors::creatures::barbarians::ZEALOT_BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let z = e
+            .instantiate_creature(&ZEALOT_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&z)
+            .unwrap()
+            .add_condition(Condition::Raging, ConditionTimer::Rounds(10));
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        e.actors.get_mut(&z).unwrap().mark_divine_fury_used();
+        let log_before = e.messages().len();
+        for _ in 0..50 {
+            let max = e.actors[&g].max_hitpoints();
+            e.actors.get_mut(&g).unwrap().heal(max);
+            let tv = vec![g];
+            let _ = GREATAXE.side_effects(&mut e, z, Some(&tv), None, None);
+        }
+        let any_rider = e.messages()[log_before..]
+            .iter()
+            .any(|s| s.contains("divine fury"));
+        assert!(
+            !any_rider,
+            "divine fury must not fire while the once-per-turn flag is set"
+        );
+    }
+
+    /// Divine Fury does NOT fire on a raging baseline barbarian — the
+    /// baseline template lacks the `DIVINE_FURY_TAG` so the passive-
+    /// feature gate closes even when the raging half is open. Locks
+    /// the subclass exclusivity so a baseline PC doesn't get the
+    /// Zealot rider for free.
+    #[test]
+    fn divine_fury_does_not_fire_on_baseline_raging_barbarian() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::GREATAXE;
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        for seed in 0..40 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let b = e
+                .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&b)
+                .unwrap()
+                .add_condition(Condition::Raging, ConditionTimer::Rounds(10));
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let log_before = e.messages().len();
+            let tv = vec![g];
+            let _ = GREATAXE.side_effects(&mut e, b, Some(&tv), None, None);
+            let log_lines: Vec<&String> = e.messages()[log_before..].iter().collect();
+            assert!(
+                !log_lines.iter().any(|s| s.contains("divine fury")),
+                "divine fury must not fire on the subclass-less baseline barbarian (seed={})",
+                seed
+            );
+        }
+    }
+
+    /// The Zealot Barbarian template ships with the `DIVINE_FURY_TAG`
+    /// feature flag, and the once-per-turn `divine_fury_used` ledger
+    /// is cleared at `reset_for_new_round`. Verifies the two together
+    /// so the round-over-round rearm shape holds.
+    #[test]
+    fn zealot_barbarian_ships_divine_fury_and_rearms_at_turn_start() {
+        use crate::actions::class_features::DIVINE_FURY_TAG;
+        use crate::actors::creatures::barbarians::ZEALOT_BARBARIAN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let z = e
+            .instantiate_creature(&ZEALOT_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&z].has_passive_feature(DIVINE_FURY_TAG),
+            "Zealot Barbarian should ship with Divine Fury"
+        );
+        e.actors.get_mut(&z).unwrap().mark_divine_fury_used();
+        assert!(e.actors[&z].divine_fury_used());
+        e.actors.get_mut(&z).unwrap().reset_for_new_round();
+        assert!(
+            !e.actors[&z].divine_fury_used(),
+            "reset_for_new_round should re-arm the once-per-turn flag"
+        );
+    }
+
+    /// 5e Warlock Fiend Patron **Dark One's Blessing** (lv1 subclass):
+    /// passive: when the warlock's swing reduces a hostile to 0 HP,
+    /// they gain `max(1, CHA mod + level)` temp HP. Verifies the temp
+    /// HP grant lands on kill via a direct DealDamage burn (side-steps
+    /// the seed sweep of the attack pipeline — the trigger fires on
+    /// the outcome, not on a specific attack path).
+    #[test]
+    fn dark_ones_blessing_grants_temp_hp_on_hostile_kill() {
+        use crate::actions::class_features::DARK_ONES_BLESSING_TAG;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::warlocks::FIEND_WARLOCK_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let w = e
+            .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&w].has_passive_feature(DARK_ONES_BLESSING_TAG));
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        // Seed the initiative slot so `current_turn_actor_id` returns
+        // the warlock — the trigger keys off whose turn it is at the
+        // damage-apply site. `ei_with_terrain` already initialized the
+        // encounter; the instantiate calls above wired both actors
+        // into the initiative tracker at their rolled slots.
+        // Advance until the warlock's slot is up. In a two-actor
+        // encounter the tracker will land on the warlock after at
+        // most one advance.
+        while e.current_turn_actor_id() != Some(w) {
+            e.skip_turn();
+        }
+        assert_eq!(e.actors[&w].temp_hp(), 0);
+        let goblin_hp = e.actors[&g].hitpoints();
+        DealDamage {
+            actor_id: g,
+            amount: goblin_hp + 100,
+            damage_type: crate::engine::types::DamageType::Force,
+        }
+        .apply(&mut e);
+        // Expected temp HP = max(1, CHA mod + level). Warlock CHA 18
+        // → +4; the template's HP dice give the warlock ~level 8 in
+        // our engine (8d8+8 = 8 dice). Compute against the actual
+        // template to stay resilient to level shifts.
+        let expected = {
+            let a = &e.actors[&w];
+            let mod_ = a.ability_modifier(crate::engine::types::AbilityScoreType::Charisma);
+            let lvl = a.level() as i32;
+            (mod_ + lvl).max(1) as u32
+        };
+        // Use >= to accommodate any future template level bump making
+        // the pool larger; the load-bearing check is "temp HP > 0".
+        assert!(
+            e.actors[&w].temp_hp() >= expected,
+            "expected at least {} temp HP (CHA + level), got {}",
+            expected,
+            e.actors[&w].temp_hp()
+        );
+    }
+
+    /// Dark One's Blessing does NOT fire on a same-team kill —
+    /// friendly-fire drops shouldn't reward the warlock. RAW gates
+    /// the temp-HP grant on "hostile creature" — the team-distinct
+    /// filter is our closest engine proxy.
+    #[test]
+    fn dark_ones_blessing_does_not_fire_on_friendly_kill() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::warlocks::FIEND_WARLOCK_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let w = e
+            .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Ally goblin on team 0 (same team as warlock).
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 0, 1)
+            .unwrap();
+        // ei_with_terrain already initialized the encounter; the
+        // instantiate_creature calls above wired the warlock + target
+        // into the initiative tracker at their rolled slots. Advance
+        // the tracker until the warlock's slot is up.
+        while e.current_turn_actor_id() != Some(w) {
+            e.skip_turn();
+        }
+        assert_eq!(e.actors[&w].temp_hp(), 0);
+        let goblin_hp = e.actors[&g].hitpoints();
+        DealDamage {
+            actor_id: g,
+            amount: goblin_hp + 100,
+            damage_type: crate::engine::types::DamageType::Force,
+        }
+        .apply(&mut e);
+        assert_eq!(
+            e.actors[&w].temp_hp(),
+            0,
+            "Dark One's Blessing should NOT fire on a same-team kill"
+        );
+    }
+
+    /// The shared once-per-turn rider ledger cleanly separates its
+    /// four registered tags — a Sneak Attack mark doesn't accidentally
+    /// suppress a Colossus Slayer / Foe Slayer / Divine Fury swing
+    /// (and vice versa). Locks the HashSet-backed decoupling that the
+    /// pre-refactor bool cohort trivially had by construction.
+    #[test]
+    fn once_per_turn_rider_ledger_tags_are_independent() {
+        use crate::actions::class_features::{
+            COLOSSUS_SLAYER_TAG, DIVINE_FURY_TAG, FOE_SLAYER_TAG, ONCE_PER_TURN_RIDER_TAGS,
+            SNEAK_ATTACK_TAG,
+        };
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        // Sanity: the registry lists every named tag we're checking so
+        // this test also pins the cohort inventory.
+        assert_eq!(
+            ONCE_PER_TURN_RIDER_TAGS.len(),
+            4,
+            "once-per-turn rider tag registry drifted"
+        );
+        assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&SNEAK_ATTACK_TAG));
+        assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&COLOSSUS_SLAYER_TAG));
+        assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&FOE_SLAYER_TAG));
+        assert!(ONCE_PER_TURN_RIDER_TAGS.contains(&DIVINE_FURY_TAG));
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+
+        // Every tag starts unmarked.
+        for tag in ONCE_PER_TURN_RIDER_TAGS {
+            assert!(!e.actors[&g].once_per_turn_used(tag));
+        }
+        // Marking Sneak Attack does not leak into the other three tags.
+        e.actors.get_mut(&g).unwrap().mark_sneak_attack_used();
+        assert!(e.actors[&g].sneak_attack_used());
+        assert!(!e.actors[&g].colossus_slayer_used());
+        assert!(!e.actors[&g].foe_slayer_used());
+        assert!(!e.actors[&g].divine_fury_used());
+
+        // Adding Foe Slayer preserves the earlier Sneak Attack mark.
+        e.actors.get_mut(&g).unwrap().mark_foe_slayer_used();
+        assert!(e.actors[&g].sneak_attack_used());
+        assert!(e.actors[&g].foe_slayer_used());
+        assert!(!e.actors[&g].colossus_slayer_used());
+        assert!(!e.actors[&g].divine_fury_used());
+
+        // `reset_for_new_round` clears the whole cohort in one call.
+        e.actors.get_mut(&g).unwrap().reset_for_new_round();
+        for tag in ONCE_PER_TURN_RIDER_TAGS {
+            assert!(
+                !e.actors[&g].once_per_turn_used(tag),
+                "reset_for_new_round should clear {}",
+                tag
+            );
+        }
+    }
+
+    /// Dark One's Blessing does NOT fire when the swinging actor
+    /// lacks the tag. Verifies a baseline WARLOCK_TEMPLATE (which
+    /// doesn't ship the Fiend patron feature) doesn't accidentally
+    /// get the temp-HP well.
+    #[test]
+    fn dark_ones_blessing_does_not_fire_on_baseline_warlock_kill() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let w = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        // ei_with_terrain already initialized the encounter; the
+        // instantiate_creature calls above wired the warlock + target
+        // into the initiative tracker at their rolled slots. Advance
+        // the tracker until the warlock's slot is up.
+        while e.current_turn_actor_id() != Some(w) {
+            e.skip_turn();
+        }
+        let goblin_hp = e.actors[&g].hitpoints();
+        DealDamage {
+            actor_id: g,
+            amount: goblin_hp + 100,
+            damage_type: crate::engine::types::DamageType::Force,
+        }
+        .apply(&mut e);
+        assert_eq!(
+            e.actors[&w].temp_hp(),
+            0,
+            "baseline Warlock (no Fiend patron tag) shouldn't get temp HP on kill"
         );
     }
 }

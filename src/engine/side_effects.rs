@@ -461,12 +461,25 @@ impl ApplicableSideEffect for DealDamage {
                 if !ei.try_relentless_rage(self.actor_id) {
                     ei.log(format!("{} falls unconscious.", name));
                     ei.drop_concentration(self.actor_id);
+                    // 5e Warlock Fiend Patron **Dark One's Blessing**:
+                    // reducing a hostile to 0 HP grants the swinging
+                    // warlock temp HP = CHA mod + level (min 1). Fires
+                    // after Relentless Rage since a raging barbarian
+                    // who pins at 1 HP wasn't actually reduced to 0
+                    // per RAW.
+                    ei.trigger_dark_ones_blessing(self.actor_id);
                 }
             }
             DamageOutcome::Killed => {
                 // cleanup_dead_actors logs "X dies." when it removes
                 // the actor; we just drop concentration here.
                 ei.drop_concentration(self.actor_id);
+                // 5e Warlock Fiend Patron **Dark One's Blessing** —
+                // same trigger as the Downed branch: the outright kill
+                // path (monster HP → 0) is functionally a "reduced to
+                // 0 HP" event per RAW. Attributed to whoever's turn
+                // is currently active via `current_turn_actor_id`.
+                ei.trigger_dark_ones_blessing(self.actor_id);
             }
             DamageOutcome::Reduced if was_concentrating && landed > 0 => {
                 // 5e: take damage while concentrating → CON save vs
