@@ -1,7 +1,7 @@
 use crate::actions::class_features::{
-    CLEANSING_TOUCH, CLEANSING_TOUCH_TAG, DIVINE_SMITE, IMPROVED_DIVINE_SMITE_TAG, LAY_ON_HANDS,
-    LAY_ON_HANDS_TAG, SACRED_WEAPON, SACRED_WEAPON_TAG, UNDYING_SENTINEL_TAG, VOW_OF_ENMITY,
-    VOW_OF_ENMITY_TAG,
+    CLEANSING_TOUCH, CLEANSING_TOUCH_TAG, DIVINE_SMITE, FANATICAL_FOCUS_TAG,
+    IMPROVED_DIVINE_SMITE_TAG, LAY_ON_HANDS, LAY_ON_HANDS_TAG, SACRED_WEAPON, SACRED_WEAPON_TAG,
+    UNDYING_SENTINEL_TAG, VOW_OF_ENMITY, VOW_OF_ENMITY_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GREATSWORD;
@@ -320,6 +320,65 @@ pub static VENGEANCE_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         name: "Vengeance Paladin",
         glyph: 'V',
         actions,
+        features,
+        ..PALADIN_TEMPLATE.clone()
+    }
+});
+
+/// Oathbreaker Paladin — Oath-broken subclass build (DMG). The dark
+/// counterpart to the Devotion / Ancients / Vengeance chassis:
+/// identical envelope to the baseline `PALADIN_TEMPLATE` (greatsword
+/// + smite suite, half-caster slot ladder, Lay on Hands / Sacred
+/// Weapon / Cleansing Touch, Improved Divine Smite passive, Aura of
+/// Protection / Aura of Courage) with two subclass features layered
+/// on:
+///
+///   - **Aura of Hate** (Oathbreaker subclass level 7) — passive
+///     template flag: +CHA modifier (min +1) to melee weapon damage
+///     rolls. Read at the shared `MELEE_CASTER_BUMPS` table next to
+///     Rage / Dueling / Two-Weapon Fighting. RAW's ally-side aura
+///     on adjacent fiends / undead is dropped since the engine
+///     doesn't tag those as an aura-eligible cohort at the template
+///     level; the self-side +CHA bump is the mechanical core.
+///
+///   - **Fanatical Focus** (Oathbreaker subclass level 15) — once-
+///     per-short-rest passive: on a failed saving throw, re-roll
+///     once with the same modifier / mode. Auto-fires at the save
+///     site — no Action call, no pre-priming (distinct from
+///     Fighter Indomitable). Ships as a `FANATICAL_FOCUS_TAG`
+///     feature charge on the template's `features` set; refreshes
+///     via `SHORT_REST_FEATURES`.
+///
+/// Ships the CR-1.5 template above the strict RAW level gates
+/// (Aura of Hate lv7, Fanatical Focus lv15) for the same reason
+/// Nature's Ward / Undying Sentinel ride on `ANCIENTS_PALADIN_TEMPLATE`
+/// — class templates target a balanced playable level, not lockstep
+/// PHB progression. Distinct from Ancients / Devotion / Vengeance
+/// paladins on the aura family: Ancients projects self-immunity
+/// (Nature's Ward), Devotion projects ally-Charmed suppression
+/// (Aura of Devotion), Vengeance holds the Vow of Enmity attack
+/// prime, and Oathbreaker plays the "raw damage aura + auto-reroll"
+/// lane. Glyph 'O' so the Oathbreaker paladin shows up distinctly
+/// on the map next to baseline 'P', Devotion 'D', Ancients 'A',
+/// and Vengeance 'V'.
+pub static OATHBREAKER_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Layer both subclass features onto the inherited paladin feature
+    // set (Lay on Hands, Sacred Weapon, Cleansing Touch, Improved
+    // Divine Smite) rather than clobbering it. Fanatical Focus is a
+    // once-per-short-rest charge — spawning the tag in `features`
+    // seeds both `features_remaining` and `features_max` at
+    // instantiation, and the `SHORT_REST_FEATURES` registry copies
+    // the max back into remaining on short rest.
+    let mut features = PALADIN_TEMPLATE.features.clone();
+    features.insert(FANATICAL_FOCUS_TAG);
+    CreatureTemplate {
+        name: "Oathbreaker Paladin",
+        glyph: 'O',
+        // Aura of Hate — passive template flag, read in
+        // `MELEE_CASTER_BUMPS` at every melee swing site.
+        has_aura_of_hate: true,
+        // Fanatical Focus — once-per-short-rest failed-save reroll.
+        // Layered onto the inherited paladin feature set.
         features,
         ..PALADIN_TEMPLATE.clone()
     }

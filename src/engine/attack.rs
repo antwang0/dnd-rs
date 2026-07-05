@@ -42,6 +42,78 @@ pub struct AttackParams<'a> {
     pub is_spell: bool,
 }
 
+/// Caster-side flat melee-only damage bumps read at
+/// `resolve_attack_outcome` after the base damage roll lands. Each
+/// entry is a (label, amount_fn) tuple: the amount_fn reads the
+/// caster's features/conditions and returns the flat bonus (`0`
+/// skips the log line). All entries stack additively on holders that
+/// carry multiple flags.
+///
+/// Entries:
+///   - **Rage (+2)**: Barbarian's Raging condition.
+///   - **Dueling (+2)**: Fighting Style flag; RAW's "one-handed and
+///     no other weapon" clause collapses to "melee weapon attack" in
+///     this engine.
+///   - **Two-Weapon Fighting (+STR mod)**: Fighting Style flag; RAW's
+///     "second attack" clause collapses to "every melee swing on the
+///     holder" since we don't distinguish off-hand swings at the
+///     action-list level.
+///   - **Aura of Hate (+CHA mod, min +1)**: Oathbreaker Paladin lv7
+///     subclass feature. RAW's ally-side aura on adjacent fiends /
+///     undead is dropped since the engine doesn't tag those as an
+///     aura-eligible cohort — the self-side +CHA damage is the
+///     mechanical core.
+///
+/// A new melee-side bump (Ancestral Guardians retribution, Rage
+/// tier-scaling to +3/+4, a Warlock's Lifedrinker) drops in here as
+/// a new tuple.
+const MELEE_CASTER_BUMPS: &[(&str, fn(&crate::actors::actor_template::ActorInstance) -> u32)] = &[
+    ("rage", |a| {
+        if a.has_condition(Condition::Raging) { 2 } else { 0 }
+    }),
+    ("dueling", |a| {
+        if a.has_dueling_style() { 2 } else { 0 }
+    }),
+    ("two-weapon fighting", |a| {
+        if !a.has_two_weapon_fighting_style() {
+            return 0;
+        }
+        a.ability_modifier(AbilityScoreType::Strength).max(0) as u32
+    }),
+    ("aura of hate", |a| {
+        if !a.has_aura_of_hate() {
+            return 0;
+        }
+        // RAW: minimum +1 even if the paladin's CHA modifier is
+        // zero or negative. Matches the Aura of Protection floor
+        // shape (`aura_of_protection_bonus` clamps to `max(1)`).
+        a.ability_modifier(AbilityScoreType::Charisma).max(1) as u32
+    }),
+];
+
+/// Caster-side crit-only melee extra-dice sources read at
+/// `resolve_attack_outcome` when a critical hit lands with a melee
+/// weapon. Each entry is a (label, count_fn) tuple: the count_fn
+/// reads the caster's template flag / dice-count field and returns
+/// the number of extra weapon-face dice to roll (`0` skips the log
+/// line and the roll).
+///
+/// Entries stack additively on holders that carry multiple sources —
+/// a level-17 half-orc barbarian reads Brutal Critical's 3 dice AND
+/// Savage Attacks' 1 die for a +4 dice crit bump.
+///
+/// Entries:
+///   - **Brutal Critical**: Barbarian level 9 / 13 / 17 template-
+///     driven dice count. `0` for non-barbarians (the default).
+///   - **Savage Attacks**: Half-Orc racial flag; one flat extra die.
+///
+/// A new crit-extra-dice source (Piercer feat's +1 die, a hypothetical
+/// Champion "Superior Critical" bonus die) drops in as a new tuple.
+const CRIT_MELEE_EXTRA_DICE_SOURCES: &[(&str, fn(&crate::actors::actor_template::ActorInstance) -> u32)] = &[
+    ("brutal critical", |a| a.brutal_critical_dice()),
+    ("savage attacks", |a| if a.has_savage_attacks() { 1 } else { 0 }),
+];
+
 /// 5e Fighting Style: **Interception** — shared reduction helper for
 /// weapon and spell attacks. Finds the first eligible adjacent ally with
 /// the flag + reaction, rolls `1d10 + prof`, spends the ally's reaction,
@@ -368,35 +440,33 @@ pub fn resolve_attack_outcome(
     } else {
         0
     };
-    // 5e Brutal Critical (Barbarian level 9 / 13 / 17) + Half-Orc Savage
-    // Attacks: both add extra weapon damage dice on a critical melee hit.
-    // Spell attacks don't qualify — gated on `is_melee`. The dice counts
-    // are template-driven so a level-17 half-orc barbarian rolls
-    // 3 (Brutal Critical) + 1 (Savage Attacks) = 4 extra dice without
-    // touching this site. Each rider logs separately so the source of
-    // the extra dice is legible in the combat log.
+    // 5e Brutal Critical (Barbarian level 9 / 13 / 17) + Half-Orc
+    // Savage Attacks: both add extra weapon damage dice on a critical
+    // melee hit. Spell attacks don't qualify — gated on `is_melee` +
+    // `is_crit`. Read from the shared `CRIT_MELEE_EXTRA_DICE_SOURCES`
+    // table — each entry is a (label, dice_count_fn) pair; the fn
+    // reads the caster's template flag / dice-count field and returns
+    // the number of extra weapon-face dice to roll (0 = skip). A
+    // level-17 half-orc barbarian rolls 3 (Brutal Critical) + 1
+    // (Savage Attacks) = 4 extra dice without touching this site.
+    // Each rider logs separately so the source of the extra dice is
+    // legible in the combat log. A new crit-extra-dice source (Piercer
+    // feat's +1 die, a hypothetical Champion "Superior Critical"
+    // bonus die) drops in as a new tuple rather than another
+    // if-block copy.
     let brutal_extra = if is_crit && p.is_melee {
         let mut total = 0;
-        let (brutal_dice_count, savage) = encounter
-            .actors
-            .get(&p.caster_id)
-            .map(|a| (a.brutal_critical_dice(), a.has_savage_attacks()))
-            .unwrap_or((0, false));
-        if brutal_dice_count > 0 {
-            let brutal_dice = Dice::new(brutal_dice_count, p.damage_dice.faces);
-            let rolled = encounter.roll(&brutal_dice) as i32;
+        for (label, count_fn) in CRIT_MELEE_EXTRA_DICE_SOURCES {
+            let Some(a) = encounter.actors.get(&p.caster_id) else { break; };
+            let count = count_fn(a);
+            if count == 0 {
+                continue;
+            }
+            let extra_dice = Dice::new(count, p.damage_dice.faces);
+            let rolled = encounter.roll(&extra_dice) as i32;
             encounter.log(format!(
-                "  brutal critical: +{}({}) = +{} {:?}",
-                brutal_dice, rolled, rolled, p.damage_type
-            ));
-            total += rolled;
-        }
-        if savage {
-            let savage_dice = Dice::new(1, p.damage_dice.faces);
-            let rolled = encounter.roll(&savage_dice) as i32;
-            encounter.log(format!(
-                "  savage attacks: +{}({}) = +{} {:?}",
-                savage_dice, rolled, rolled, p.damage_type
+                "  {}: +{}({}) = +{} {:?}",
+                label, extra_dice, rolled, rolled, p.damage_type
             ));
             total += rolled;
         }
@@ -432,42 +502,17 @@ pub fn resolve_attack_outcome(
             p.action_name, p.damage_dice, raw_damage, total_damage_bonus, damage, p.damage_type,
         ));
     }
-    // Caster-side flat melee-only bumps. Each entry is a
-    // (label, gate, amount) tuple: the gate reads the caster's
-    // features/conditions, and if it holds the amount is added to the
-    // pending damage with a "  {label}: +{n} melee damage" log line.
-    // Order matters only for legibility (all three stack additively on
-    // holders that carry multiple flags).
-    //   - Rage (+2): Barbarian Raging condition.
-    //   - Dueling (+2): Fighting Style flag; RAW's "one-handed and no
-    //     other weapon" clause collapses to "melee weapon attack" in
-    //     this engine.
-    //   - Two-Weapon Fighting (+STR mod): Fighting Style flag; RAW's
-    //     "second attack" clause collapses to "every melee swing on
-    //     the holder" since we don't distinguish off-hand swings at
-    //     the action-list level.
-    // Pre-refactor these three were open-coded on nearly identical
-    // `if p.is_melee && encounter.actors.get(&p.caster_id).is_some_and(...)`
-    // blocks — a new melee-side bump (Rage tier-scaling, Aura of Hate,
-    // Ancestral Guardians retribution) drops in here as a new tuple
-    // rather than a fourth copy of the block.
+    // Caster-side flat melee-only bumps. Read from the
+    // `MELEE_CASTER_BUMPS` table — each entry is a (label,
+    // amount_fn) pair; the amount_fn reads the caster's
+    // features/conditions and returns the flat bonus (0 = skip). A
+    // new melee-side bump (Ancestral Guardians retribution, Rage
+    // tier-scaling to +3/+4, etc.) drops in as a new tuple rather
+    // than another `if p.is_melee && …` block. Order matters only
+    // for legibility (all entries stack additively on holders that
+    // carry multiple flags).
     if p.is_melee {
-        let bumps: &[(&str, fn(&crate::actors::actor_template::ActorInstance) -> u32)] = &[
-            ("rage", |a| {
-                if a.has_condition(Condition::Raging) { 2 } else { 0 }
-            }),
-            ("dueling", |a| {
-                if a.has_dueling_style() { 2 } else { 0 }
-            }),
-            ("two-weapon fighting", |a| {
-                if !a.has_two_weapon_fighting_style() {
-                    return 0;
-                }
-                a.ability_modifier(crate::engine::types::AbilityScoreType::Strength)
-                    .max(0) as u32
-            }),
-        ];
-        for (label, amount_fn) in bumps {
+        for (label, amount_fn) in MELEE_CASTER_BUMPS {
             let Some(a) = encounter.actors.get(&p.caster_id) else { break; };
             let bump = amount_fn(a);
             if bump == 0 {

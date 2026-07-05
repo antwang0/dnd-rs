@@ -696,6 +696,22 @@ pub struct CreatureTemplate {
     /// out-classing Feral Senses (unbounded) — the rogue leans in
     /// close to leverage it, the ranger benefits at any range.
     pub has_blindsense: bool,
+    /// 5e Oathbreaker Paladin (DMG) level-7 subclass feature — **Aura
+    /// of Hate**. Passive template flag: when the holder swings in
+    /// melee, they add their Charisma modifier (minimum +1) to the
+    /// weapon damage roll. Approximates RAW's "the paladin, as well as
+    /// any fiends and undead within 10 feet" aura shape by collapsing
+    /// to a self-only bonus at the caster-side melee bumps table in
+    /// `engine::attack::resolve_attack_outcome` — the ally-side fiend /
+    /// undead half of the aura is dropped since we don't tag those as
+    /// an aura-eligible cohort at the template level.
+    ///
+    /// Read in the shared `MELEE_CASTER_BUMPS` table alongside Rage
+    /// (+2), Dueling (+2), and Two-Weapon Fighting (+STR mod). Ships
+    /// on `OATHBREAKER_PALADIN_TEMPLATE` — no default-on template
+    /// otherwise carries it. See `class_features::AURA_OF_HATE_TAG`
+    /// for the full RAW envelope.
+    pub has_aura_of_hate: bool,
     /// 5e Fighting Style: **Blind Fighting** (Tasha's Cauldron of
     /// Everything, Fighter / Ranger / Paladin lv1 pick). Passive
     /// concealment-piercer with a 10-ft (4-tile footprint Chebyshev)
@@ -888,6 +904,7 @@ impl CreatureTemplate {
             has_feral_senses: false,
             has_blindsense: false,
             has_blind_fighting_style: false,
+            has_aura_of_hate: false,
             has_dwarven_resilience: false,
             has_gnome_cunning: false,
             draconic_ancestry: None,
@@ -1281,6 +1298,10 @@ pub struct ActorInstance {
     /// concealment-piercer with a 10-ft range gate, no hearing gate.
     /// See `CreatureTemplate` docs.
     has_blind_fighting_style: bool,
+    /// 5e Oathbreaker Paladin Aura of Hate (level 7). Self-side +CHA
+    /// mod (min +1) to melee weapon damage. See `CreatureTemplate`
+    /// docs.
+    has_aura_of_hate: bool,
     /// 5e Dwarven Resilience. See `CreatureTemplate` docs.
     has_dwarven_resilience: bool,
     /// 5e Gnome Cunning. See `CreatureTemplate` docs.
@@ -1442,6 +1463,7 @@ impl ActorInstance {
             has_feral_senses: ct.has_feral_senses,
             has_blindsense: ct.has_blindsense,
             has_blind_fighting_style: ct.has_blind_fighting_style,
+            has_aura_of_hate: ct.has_aura_of_hate,
             has_dwarven_resilience: ct.has_dwarven_resilience,
             has_gnome_cunning: ct.has_gnome_cunning,
             draconic_ancestry: ct.draconic_ancestry,
@@ -1820,6 +1842,22 @@ impl ActorInstance {
     #[cfg(test)]
     pub fn set_blind_fighting_style(&mut self, value: bool) {
         self.has_blind_fighting_style = value;
+    }
+
+    /// 5e Oathbreaker Paladin **Aura of Hate** (level 7): +CHA mod
+    /// (min +1) to melee weapon damage. Read at the caster-side melee
+    /// bumps table in `engine::attack::resolve_attack_outcome` next
+    /// to Rage / Dueling / Two-Weapon Fighting.
+    pub fn has_aura_of_hate(&self) -> bool {
+        self.has_aura_of_hate
+    }
+
+    /// Test-only setter for the Aura of Hate flag. Mirrors
+    /// `set_dueling_style` — lets tests dial the flag on any chassis
+    /// so the +CHA melee bump rider can be exercised in isolation.
+    #[cfg(test)]
+    pub fn set_aura_of_hate(&mut self, value: bool) {
+        self.has_aura_of_hate = value;
     }
 
     /// Test-only helper: install a class-feature tag on both

@@ -493,6 +493,72 @@ const BLANKET_SAVE_ADVANTAGE_CONDITIONS: &[Condition] = &[
     Condition::Foreseen,
 ];
 
+/// A single "reroll the failed save once" source read at
+/// `roll_save_with_extra_mode` after the initial roll lands on a
+/// `Fail`. Each entry's `consume` closure returns true iff its
+/// per-rest charge (or one-shot latch) was spent — the caller then
+/// rolls a new d20, logs it with `label`, and stops iterating if the
+/// reroll passes. Consumption fires only when the initial roll
+/// failed AND no earlier source in the table has already granted a
+/// pass, so a paladin/fighter multiclass burns Indomitable's pre-
+/// primed latch before Fanatical Focus's short-rest charge.
+struct FailedSaveRerollSource {
+    /// Log-friendly tag ("indomitable", "fanatical focus"). Appears
+    /// in the "  {} reroll: 1d20(X)+Y = Z — pass/fail" line.
+    label: &'static str,
+    /// Attempts to spend this source's per-rest / pre-primed charge
+    /// on the failing actor. Returns true on a successful spend (the
+    /// reroll fires); false when the charge was unavailable
+    /// (unprimed Indomitable, spent Fanatical Focus, etc.).
+    consume: fn(&mut crate::actors::actor_template::ActorInstance) -> bool,
+}
+
+/// Ordered cohort of "reroll the failed save once" sources, read by
+/// `roll_save_with_extra_mode`. Iteration stops as soon as one
+/// source's reroll produces a `Pass`, so at most one source burns
+/// its charge per save; ordering is significant because
+/// pre-primed / action-cost sources appear ahead of automatic ones
+/// (the pre-primed choice was explicit, so it should burn first on a
+/// multiclass holding both).
+///
+/// Entries:
+///   - **Indomitable** (Fighter lv9): pre-primed once-per-long-rest
+///     latch set by the `Indomitable` Action. Consumes the
+///     `indomitable_pending` field; returns false if the latch was
+///     never set (RAW: the reroll must be declared before rolling —
+///     since we don't model the "before I roll" cadence, we surface
+///     it as an explicit Action call the actor takes on their turn
+///     as insurance for the next save).
+///   - **Fanatical Focus** (Oathbreaker Paladin lv15): auto-fire
+///     once-per-short-rest gate. Consumes the `FANATICAL_FOCUS_TAG`
+///     charge on `features_remaining` — no pre-priming, so the
+///     first failed save while the tag is unspent triggers the
+///     reroll. Ships in `SHORT_REST_FEATURES` so a short rest
+///     refills the charge.
+///
+/// A new failed-save reroll source (Halfling's "you can reroll a
+/// nat-1", except we already model that as `has_lucky` at the roll
+/// site rather than the fail site; a hypothetical racial reroll, a
+/// future "Reroll One" feat) drops in as a new entry.
+const FAILED_SAVE_REROLL_SOURCES: &[FailedSaveRerollSource] = &[
+    FailedSaveRerollSource {
+        label: "indomitable",
+        consume: |a| a.consume_indomitable(),
+    },
+    FailedSaveRerollSource {
+        label: "fanatical focus",
+        consume: |a| {
+            use crate::actions::class_features::FANATICAL_FOCUS_TAG;
+            if a.feature_available(FANATICAL_FOCUS_TAG) {
+                a.spend_feature(FANATICAL_FOCUS_TAG);
+                true
+            } else {
+                false
+            }
+        },
+    },
+];
+
 pub enum StackElementEntry {
     SideEffect(Box<dyn ApplicableSideEffect>),
     Action(Box<ActionExecutionInfo>),
@@ -1932,44 +1998,65 @@ impl EncounterInstance {
         {
             a.remove_condition(Condition::Inspired);
         }
-        // 5e Fighter Indomitable: on a fail, if the actor has the
-        // marker set, re-roll once and keep the better outcome. The
-        // marker is consumed regardless of whether the reroll helps.
-        if !outcome.passed()
-            && self
-                .actors
-                .get_mut(&actor_id)
-                .is_some_and(|a| a.consume_indomitable())
-        {
-            // Indomitable + Lucky: the reroll is itself a fresh d20 roll,
-            // so a nat-1 on the reroll should still trigger Lucky for a
-            // Halfling fighter. Routes through `roll_d20_lucky` for the
-            // same reason the initial save does.
-            let reroll = self.roll_d20_lucky(actor_id, mode);
-            let reroll_total = reroll as i32 + modifier + extra;
-            let reroll_outcome = if reroll_total >= dc {
-                SaveOutcome::Pass
-            } else {
-                SaveOutcome::Fail
-            };
-            self.log(format!(
-                "  indomitable reroll: 1d20({}){:+}{} = {} \u{2014} {}",
-                reroll,
-                modifier,
-                extra_suffix,
-                reroll_total,
-                if reroll_outcome.passed() {
-                    "pass"
-                } else {
-                    "fail"
+        // 5e Fighter Indomitable + Oathbreaker Paladin Fanatical
+        // Focus: each is a "reroll the failed save once per {long,
+        // short} rest" gate. Indomitable is pre-primed (Action call
+        // sets `mark_indomitable_pending` before the save); Fanatical
+        // Focus auto-fires the first failed save while the paladin
+        // holds an unspent charge. Both reroll shapes are identical
+        // once the trigger fires — same lookup, same log line — so
+        // one shared loop over `FAILED_SAVE_REROLL_SOURCES` handles
+        // the pass through both sources; each source's "did we
+        // consume?" gate lives inside its own `consume` closure.
+        //
+        // Order is significant: Indomitable fires first (it's pre-
+        // primed by the actor's own choice, so a paladin/fighter
+        // multiclass burns the pre-primed charge before the passive
+        // one). Only ONE reroll fires per failed save regardless of
+        // its outcome — RAW rerolls are once-per-save, not stack-
+        // and-chain — so the loop breaks after the first consume
+        // returns true. A missed reroll falls through to the shared
+        // Legendary Resistance gate below so a boss-tier paladin
+        // still gets LR as a third layer.
+        if !outcome.passed() {
+            for source in FAILED_SAVE_REROLL_SOURCES {
+                let Some(actor) = self.actors.get_mut(&actor_id) else { break; };
+                if !(source.consume)(actor) {
+                    continue;
                 }
-            ));
-            // Indomitable's reroll exhausts the per-rest pool — if the
-            // reroll still fails, the Legendary Resistance check below
-            // gets a second shot at converting it. Fall through to the
-            // shared LR gate.
-            if reroll_outcome.passed() {
-                return reroll_outcome;
+                // Reroll routes through `roll_d20_lucky` for the
+                // same reason the initial save does — a nat-1 on
+                // the reroll still triggers Lucky for a Halfling
+                // holder.
+                let reroll = self.roll_d20_lucky(actor_id, mode);
+                let reroll_total = reroll as i32 + modifier + extra;
+                let reroll_outcome = if reroll_total >= dc {
+                    SaveOutcome::Pass
+                } else {
+                    SaveOutcome::Fail
+                };
+                self.log(format!(
+                    "  {} reroll: 1d20({}){:+}{} = {} \u{2014} {}",
+                    source.label,
+                    reroll,
+                    modifier,
+                    extra_suffix,
+                    reroll_total,
+                    if reroll_outcome.passed() {
+                        "pass"
+                    } else {
+                        "fail"
+                    }
+                ));
+                if reroll_outcome.passed() {
+                    return reroll_outcome;
+                }
+                // Only one reroll per failed save — RAW rerolls
+                // don't chain, so a failed Indomitable reroll
+                // doesn't cascade into Fanatical Focus. Break out
+                // of the cohort iteration and fall through to the
+                // Legendary Resistance gate below.
+                break;
             }
         }
         // 5e Legendary Resistance: on a fail, boss-tier creatures may
@@ -47854,6 +47941,375 @@ mod tests {
         assert_eq!(
             e.compute_attack_mode(attacker, target, true),
             RollMode::Normal
+        );
+    }
+
+    /// 5e Oathbreaker Paladin **Aura of Hate** — +CHA modifier (min
+    /// +1) to melee weapon damage rolls. Seeded-RNG averaging test:
+    /// the aura holder deals meaningfully more melee damage than the
+    /// same chassis with the flag off across 200 trials. Uses the
+    /// same "seed sequence identical, flag delta only" shape as
+    /// `dueling_style_adds_damage_on_melee_weapon_hits`.
+    #[test]
+    fn aura_of_hate_adds_damage_on_melee_weapon_hits() {
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+
+        let trials = 200u64;
+        let mut aura_dmg: u32 = 0;
+        let mut baseline_dmg: u32 = 0;
+        for seed in 0..trials {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let attacker = e
+                .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            // Dial on Aura of Hate to isolate the +CHA rider on a
+            // paladin chassis that would otherwise not carry it.
+            e.actors.get_mut(&attacker).unwrap().set_aura_of_hate(true);
+            let target = e
+                .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let (_, dealt) = resolve_attack_outcome(
+                &mut e,
+                AttackParams {
+                    caster_id: attacker,
+                    target_id: target,
+                    action_name: "greatsword",
+                    attack_bonus: 5,
+                    damage_dice: Dice::new(2, 6),
+                    damage_bonus: 3,
+                    damage_type: DamageType::Slashing,
+                    is_melee: true,
+                    long_range: None,
+                    is_spell: false,
+                },
+            );
+            aura_dmg = aura_dmg.saturating_add(dealt);
+        }
+        for seed in 0..trials {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let attacker = e
+                .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            // Baseline: flag off (paladin's default).
+            e.actors.get_mut(&attacker).unwrap().set_aura_of_hate(false);
+            let target = e
+                .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let (_, dealt) = resolve_attack_outcome(
+                &mut e,
+                AttackParams {
+                    caster_id: attacker,
+                    target_id: target,
+                    action_name: "greatsword",
+                    attack_bonus: 5,
+                    damage_dice: Dice::new(2, 6),
+                    damage_bonus: 3,
+                    damage_type: DamageType::Slashing,
+                    is_melee: true,
+                    long_range: None,
+                    is_spell: false,
+                },
+            );
+            baseline_dmg = baseline_dmg.saturating_add(dealt);
+        }
+        assert!(
+            aura_dmg > baseline_dmg,
+            "aura of hate should add damage over baseline (aura {} vs baseline {})",
+            aura_dmg,
+            baseline_dmg,
+        );
+    }
+
+    /// Aura of Hate only fires on melee swings — RAW: "bonus to
+    /// melee weapon damage rolls". A ranged swing (longbow, thrown
+    /// dagger, javelin) picks up NO +CHA rider even on a holder.
+    /// Pins the melee-only gate at the `MELEE_CASTER_BUMPS` table.
+    #[test]
+    fn aura_of_hate_does_not_fire_on_ranged_weapon_hits() {
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+        use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+
+        let trials = 200u64;
+        let mut aura_dmg: u32 = 0;
+        let mut baseline_dmg: u32 = 0;
+        for seed in 0..trials {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let attacker = e
+                .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            e.actors.get_mut(&attacker).unwrap().set_aura_of_hate(true);
+            let target = e
+                .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+                .unwrap();
+            let (_, dealt) = resolve_attack_outcome(
+                &mut e,
+                AttackParams {
+                    caster_id: attacker,
+                    target_id: target,
+                    action_name: "longbow",
+                    attack_bonus: 5,
+                    damage_dice: Dice::new(1, 8),
+                    damage_bonus: 3,
+                    damage_type: DamageType::Piercing,
+                    is_melee: false,
+                    long_range: Some(30),
+                    is_spell: false,
+                },
+            );
+            aura_dmg = aura_dmg.saturating_add(dealt);
+        }
+        for seed in 0..trials {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let attacker = e
+                .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            e.actors.get_mut(&attacker).unwrap().set_aura_of_hate(false);
+            let target = e
+                .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+                .unwrap();
+            let (_, dealt) = resolve_attack_outcome(
+                &mut e,
+                AttackParams {
+                    caster_id: attacker,
+                    target_id: target,
+                    action_name: "longbow",
+                    attack_bonus: 5,
+                    damage_dice: Dice::new(1, 8),
+                    damage_bonus: 3,
+                    damage_type: DamageType::Piercing,
+                    is_melee: false,
+                    long_range: Some(30),
+                    is_spell: false,
+                },
+            );
+            baseline_dmg = baseline_dmg.saturating_add(dealt);
+        }
+        assert_eq!(
+            aura_dmg, baseline_dmg,
+            "aura of hate must NOT fire on ranged swings (aura {} vs baseline {})",
+            aura_dmg, baseline_dmg,
+        );
+    }
+
+    /// The Oathbreaker Paladin subclass template ships both Aura of
+    /// Hate AND Fanatical Focus; other paladin subclasses (Devotion,
+    /// Ancients, Vengeance) and the baseline paladin don't. Pins
+    /// the subclass-of layering so a future template refactor
+    /// surfaces breakage here.
+    #[test]
+    fn oathbreaker_paladin_ships_aura_of_hate_and_fanatical_focus() {
+        use crate::actions::class_features::FANATICAL_FOCUS_TAG;
+        use crate::actors::creatures::paladins::{
+            ANCIENTS_PALADIN_TEMPLATE, DEVOTION_PALADIN_TEMPLATE, OATHBREAKER_PALADIN_TEMPLATE,
+            PALADIN_TEMPLATE, VENGEANCE_PALADIN_TEMPLATE,
+        };
+        // Aura of Hate template flag.
+        assert!(OATHBREAKER_PALADIN_TEMPLATE.has_aura_of_hate);
+        assert!(!PALADIN_TEMPLATE.has_aura_of_hate);
+        assert!(!DEVOTION_PALADIN_TEMPLATE.has_aura_of_hate);
+        assert!(!ANCIENTS_PALADIN_TEMPLATE.has_aura_of_hate);
+        assert!(!VENGEANCE_PALADIN_TEMPLATE.has_aura_of_hate);
+        // Fanatical Focus feature tag on `features` set.
+        assert!(OATHBREAKER_PALADIN_TEMPLATE
+            .features
+            .contains(FANATICAL_FOCUS_TAG));
+        assert!(!PALADIN_TEMPLATE.features.contains(FANATICAL_FOCUS_TAG));
+        assert!(!DEVOTION_PALADIN_TEMPLATE
+            .features
+            .contains(FANATICAL_FOCUS_TAG));
+        assert!(!ANCIENTS_PALADIN_TEMPLATE
+            .features
+            .contains(FANATICAL_FOCUS_TAG));
+        assert!(!VENGEANCE_PALADIN_TEMPLATE
+            .features
+            .contains(FANATICAL_FOCUS_TAG));
+    }
+
+    /// Fanatical Focus auto-fires on the first failed save while
+    /// the tag is unspent. The reroll fires without an Action call
+    /// (distinct from Fighter Indomitable's pre-primed shape) and
+    /// spends the tag on trigger. Fails a save deterministically
+    /// with a very high DC so the first roll can't accidentally
+    /// pass; picks a mid-CHA paladin (CHA 14 = mod +2) so the
+    /// reroll's own d20 is the only variable.
+    #[test]
+    fn fanatical_focus_auto_fires_on_failed_save_and_spends_charge() {
+        use crate::actions::class_features::FANATICAL_FOCUS_TAG;
+        use crate::actors::creatures::paladins::OATHBREAKER_PALADIN_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // Seed 42 chosen so the initial d20 roll on WIS save with
+        // the paladin's CHA-mod bonuses lands under DC 100 — a
+        // guaranteed fail across every reasonable seed since 100 is
+        // uncatchable on a 1d20+modifier envelope.
+        e.roller = FastRandRoller::with_seed(42);
+        let id = e
+            .instantiate_creature(&OATHBREAKER_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Precondition: the paladin's Fanatical Focus charge is
+        // unspent at spawn.
+        assert!(
+            e.actors[&id].feature_available(FANATICAL_FOCUS_TAG),
+            "Fanatical Focus charge starts full",
+        );
+        // Fail the save. DC 100 is unreachable — both the initial
+        // roll AND the Fanatical Focus reroll fail, so the outcome
+        // stays Fail. But the charge burns on trigger regardless of
+        // the reroll's own pass/fail.
+        let _outcome = e.roll_save(id, AbilityScoreType::Wisdom, 100);
+        assert!(
+            !e.actors[&id].feature_available(FANATICAL_FOCUS_TAG),
+            "Fanatical Focus tag spent after the first failed save",
+        );
+    }
+
+    /// Fanatical Focus refreshes on a short rest (distinct from
+    /// Indomitable which is long-rest only). Pins the tag in
+    /// `SHORT_REST_FEATURES` — spending the charge, taking a short
+    /// rest, and re-checking the availability isolates the short-
+    /// rest refresh path.
+    #[test]
+    fn fanatical_focus_refreshes_on_short_rest() {
+        use crate::actions::class_features::FANATICAL_FOCUS_TAG;
+        use crate::actors::creatures::paladins::OATHBREAKER_PALADIN_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        e.roller = FastRandRoller::with_seed(7);
+        let id = e
+            .instantiate_creature(&OATHBREAKER_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Burn the charge on an unreachable-DC save.
+        let _ = e.roll_save(id, AbilityScoreType::Wisdom, 100);
+        assert!(!e.actors[&id].feature_available(FANATICAL_FOCUS_TAG));
+        // Short rest — the tag is on `SHORT_REST_FEATURES` so the
+        // charge refills.
+        let mut roller = FastRandRoller::with_seed(0);
+        e.actors.get_mut(&id).unwrap().short_rest(&mut roller);
+        assert!(
+            e.actors[&id].feature_available(FANATICAL_FOCUS_TAG),
+            "short rest must refresh Fanatical Focus",
+        );
+    }
+
+    /// Fanatical Focus stays quiet on a passing save — no charge
+    /// burn unless the save actually failed. Uses DC 0 so the
+    /// save auto-passes on any reasonable roll, and asserts the
+    /// tag survives untouched.
+    #[test]
+    fn fanatical_focus_does_not_fire_on_passing_save() {
+        use crate::actions::class_features::FANATICAL_FOCUS_TAG;
+        use crate::actors::creatures::paladins::OATHBREAKER_PALADIN_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        e.roller = FastRandRoller::with_seed(1);
+        let id = e
+            .instantiate_creature(&OATHBREAKER_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let outcome = e.roll_save(id, AbilityScoreType::Constitution, 0);
+        assert!(outcome.passed(), "DC 0 must pass");
+        assert!(
+            e.actors[&id].feature_available(FANATICAL_FOCUS_TAG),
+            "Fanatical Focus charge must NOT burn on a passing save",
+        );
+    }
+
+    /// A paladin/fighter multiclass with both Indomitable AND
+    /// Fanatical Focus available spends Indomitable first per the
+    /// ordering in `FAILED_SAVE_REROLL_SOURCES`. Confirms that
+    /// pre-primed sources fire before automatic ones (RAW: the
+    /// pre-primed choice was explicit so it burns first).
+    #[test]
+    fn indomitable_burns_before_fanatical_focus_on_multiclass() {
+        use crate::actions::class_features::{FANATICAL_FOCUS_TAG, INDOMITABLE_TAG};
+        use crate::actors::creatures::paladins::OATHBREAKER_PALADIN_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        e.roller = FastRandRoller::with_seed(3);
+        let id = e
+            .instantiate_creature(&OATHBREAKER_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Multiclass fixture: grant Indomitable + pre-prime the
+        // pending latch. The paladin already carries Fanatical
+        // Focus from the template.
+        {
+            let actor = e.actors.get_mut(&id).unwrap();
+            actor.grant_feature_for_test(INDOMITABLE_TAG);
+            actor.mark_indomitable_pending();
+        }
+        assert!(e.actors[&id].feature_available(FANATICAL_FOCUS_TAG));
+        assert!(e.actors[&id].indomitable_pending());
+        // Fail the save at DC 100 (both initial roll and reroll
+        // fail). Indomitable (first in the cohort) burns; the
+        // paladin's Fanatical Focus charge stays untouched.
+        let _ = e.roll_save(id, AbilityScoreType::Wisdom, 100);
+        assert!(
+            !e.actors[&id].indomitable_pending(),
+            "Indomitable's pre-primed latch spent first"
+        );
+        assert!(
+            e.actors[&id].feature_available(FANATICAL_FOCUS_TAG),
+            "Fanatical Focus preserved — cohort iteration stopped after Indomitable's reroll landed"
+        );
+    }
+
+    /// The `MELEE_CASTER_BUMPS` table refactor pins log-line
+    /// backwards compatibility: the "  {label}: +{n} melee damage"
+    /// shape is unchanged from the pre-refactor open-coded blocks,
+    /// so log-scraping tooling still parses. Rage / Dueling /
+    /// Two-Weapon Fighting / Aura of Hate labels are all in place.
+    #[test]
+    fn melee_caster_bumps_table_covers_all_expected_sources() {
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::paladins::OATHBREAKER_PALADIN_TEMPLATE;
+
+        // Rage (+2): a raging barbarian reads +2.
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Raging, ConditionTimer::Rounds(10));
+        // Dueling (+2): fighter ships the flag.
+        let fighter = ActorInstance::from_creature_template(
+            &FIGHTER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut crate::engine::dice::FastRandRoller::with_seed(1),
+            0,
+        )
+        .unwrap();
+        assert!(fighter.has_dueling_style(), "fighter ships Dueling");
+        // Aura of Hate (+CHA mod, min +1): Oathbreaker paladin
+        // ships the flag.
+        let oathbreaker = ActorInstance::from_creature_template(
+            &OATHBREAKER_PALADIN_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut crate::engine::dice::FastRandRoller::with_seed(1),
+            0,
+        )
+        .unwrap();
+        assert!(
+            oathbreaker.has_aura_of_hate(),
+            "oathbreaker paladin ships Aura of Hate"
         );
     }
 }

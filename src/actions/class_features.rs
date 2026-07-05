@@ -52,6 +52,13 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // Light Cleric doesn't lose the flare between engagements — same
     // gating shape as the other Cleric Channel Divinity charges.
     WARDING_FLARE_TAG,
+    // 5e Oathbreaker Paladin level-15 subclass feature — Fanatical
+    // Focus. Auto-fire "reroll one failed save per short rest" gate.
+    // RAW: refreshes on a short or long rest, matching the Cleric
+    // Channel Divinity cadence — registered here so the short rest
+    // refresh path picks it up alongside Guided Strike / Radiance of
+    // the Dawn / Warding Flare.
+    FANATICAL_FOCUS_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -4972,3 +4979,83 @@ pub static RADIANCE_OF_THE_DAWN: LazyLock<RadianceOfTheDawn> =
 /// `apply_warding_flare_disadvantage`, spending the reaction + charge
 /// on fire and combining `Disadvantage` into the attack mode.
 pub const WARDING_FLARE_TAG: &str = "cleric.warding_flare";
+
+/// 5e Oathbreaker Paladin (DMG) level-15 subclass feature —
+/// **Fanatical Focus**. Auto-fire once-per-short-rest reroll of a
+/// failed saving throw. RAW: "If you fail a saving throw while your
+/// aura is active, you can reroll it. Once you use this ability, you
+/// can't use it again until you finish a short or long rest."
+///
+/// Distinct from Fighter Indomitable (`INDOMITABLE_TAG`) in three
+/// ways:
+///   1. **Auto-fire vs pre-primed** — Indomitable requires an Action
+///      call to set `mark_indomitable_pending` *before* the save; if
+///      the fighter didn't pre-prime, a failed save doesn't trigger.
+///      Fanatical Focus fires automatically on the first failed save
+///      after a short rest — no advance planning needed.
+///   2. **Short rest vs long rest** — Indomitable is once per long
+///      rest (not in `SHORT_REST_FEATURES`). Fanatical Focus is once
+///      per short rest — the Oathbreaker paladin gets one on every
+///      engagement rather than one per adventuring day.
+///   3. **Uses a feature charge, not a pending latch** — Indomitable
+///      spends the tag at Action time and stashes a pending latch on
+///      the actor; Fanatical Focus spends the tag *at the save site*
+///      the first time the paladin fails a save with an unspent
+///      charge. One less state field to carry per actor, and the
+///      "sees an unspent charge → fire" gate reads uniformly with
+///      Legendary Resistance's shape.
+///
+/// RAW gates on "while your aura is active" (Aura of Protection, lv6+).
+/// Since Aura of Protection isn't a togglable resource in the engine —
+/// it's always on for any level-6+ paladin holding the
+/// `has_aura_of_protection` flag — the "while active" clause collapses
+/// to a no-op on the Oathbreaker paladin chassis. A hypothetical build
+/// that lost the aura (e.g. Silenced-cohort suppression down the line)
+/// would still fire this: the RAW clause exists as flavor rather than
+/// a mechanical gate, so we don't tie the reroll to a re-check of the
+/// aura flag.
+///
+/// Wired in `EncounterInstance::roll_save_with_extra_mode`: on a
+/// failed save (post-Indomitable, pre-Legendary-Resistance), if the
+/// actor holds `FANATICAL_FOCUS_TAG` on `features_remaining`, the tag
+/// is spent and the save re-rolled once with the same modifier /
+/// mode. Legendary Resistance stays checked below the Fanatical
+/// Focus gate — RAW: LR is an active DM/boss resource, so the
+/// once-per-short-rest passive fires first.
+pub const FANATICAL_FOCUS_TAG: &str = "paladin.fanatical_focus";
+
+/// 5e Oathbreaker Paladin (DMG) level-7 subclass feature — **Aura of
+/// Hate**. Passive template flag: the paladin and any fiends / undead
+/// within 10 ft gain a bonus to melee weapon damage rolls equal to the
+/// paladin's Charisma modifier (minimum +1). We collapse the RAW aura
+/// shape to a self-only bonus at the caster-side melee bumps table in
+/// `engine::attack::resolve_attack_outcome` — the paladin themselves
+/// picks up the +CHA mod on every melee swing while the flag is set.
+///
+/// The "any fiends and undead within 10 ft" clause is dropped in the
+/// current model since we don't tag allied fiends / undead as an
+/// aura-eligible cohort at the template level. Adding a broader
+/// "adjacent-fiend-or-undead ally gets +CHA mod melee damage" scan
+/// would need a fresh footprint-Chebyshev pass at the attack site,
+/// which is an aura-shape mismatch with the other paladin auras (Aura
+/// of Protection, Aura of Courage, Aura of Devotion) that read the
+/// EMITTER's flag on the ally-side rather than the ATTACKER's own
+/// flag on the caster-side. Self-only keeps the read local and the
+/// bump-table plumbing uniform.
+///
+/// Reads through the existing melee bumps table next to Rage (+2),
+/// Dueling (+2), Two-Weapon Fighting (+STR mod) — one new tuple, no
+/// re-shape of the attack-outcome shape. Minimum +1 clause folds in
+/// via `max(1)` on the CHA modifier lookup, matching RAW.
+///
+/// Distinguished from Vow of Enmity (Vengeance paladin, once-per-
+/// long-rest Advantage prime): Aura of Hate is passive, always-on
+/// (once the flag ships on the Oathbreaker template), and a damage
+/// bump rather than an attack-mode bump. Distinguished from
+/// Improved Divine Smite (+1d8 radiant on every melee hit, no gate):
+/// Aura of Hate is a flat mod rather than a die, and its damage rides
+/// as part of the base weapon damage roll rather than a separate
+/// `push_die_rider` payload — so a resistance-halving on the weapon
+/// type also halves the Aura of Hate bonus, mirroring how Rage /
+/// Dueling / Two-Weapon Fighting fold into the base swing.
+pub const AURA_OF_HATE_TAG: &str = "paladin.aura_of_hate";
