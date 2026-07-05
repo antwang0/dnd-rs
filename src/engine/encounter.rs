@@ -1104,17 +1104,20 @@ impl EncounterInstance {
         // through the attacker's? Both booleans feed the suppression
         // clauses on the per-side condition sweeps below, so the
         // condition-cohort loops stay branch-free of the piercing
-        // lookup. `pierces_illusion_of` unifies the three sources:
+        // lookup. `pierces_illusion_of` unifies the four sources:
         //   - `has_truesight` (Truesight sense OR True Seeing condition,
         //     any range — Deva, Solar, Pit Fiend, Lich, etc.)
         //   - `has_feral_senses` (Ranger lv18 capstone — any range)
         //   - `has_blindsense` (Rogue lv14 — 10 ft footprint envelope,
         //     gated on !Deafened)
+        //   - `has_blind_fighting_style` (Tasha Fighter / Ranger /
+        //     Paladin Fighting Style — 10 ft footprint envelope, no
+        //     hearing gate)
         // Pre-refactor this gate only cohorted `has_truesight`; folding
-        // the ranger / rogue passive piercers into the same helper lets
-        // each new "sees through illusion" tag land as a one-line
-        // extension to `pierces_illusion_of` instead of a new
-        // suppression clause at every attack-mode caller.
+        // the ranger / rogue passive piercers + Blind Fighting into the
+        // same helper lets each new "sees through illusion" tag land as
+        // a one-line extension to `pierces_illusion_of` instead of a
+        // new suppression clause at every attack-mode caller.
         let attacker_pierces = self.pierces_illusion_of(attacker_id, target_id);
         let target_pierces = self.pierces_illusion_of(target_id, attacker_id);
 
@@ -1441,31 +1444,44 @@ impl EncounterInstance {
         if viewer.has_truesight() || viewer.has_feral_senses() {
             return true;
         }
-        // Blindsense is the only range-gated piercer: 10 ft (footprint
-        // Chebyshev ≤ 4 tiles on the 2.5-ft grid) and gated on the
-        // viewer being able to hear. Deafened / Silenced snuff the
-        // rogue's ability to place the invisible attacker, so the
-        // pierce lapses; Blinded doesn't (RAW: "while able to hear").
-        if !viewer.has_blindsense() {
-            return false;
+        // Range-gated piercers — Blindsense (Rogue lv14) and Blind
+        // Fighting (Tasha Fighting Style) both project a 10-ft
+        // (footprint Chebyshev ≤ 4 tiles on the 2.5-ft grid)
+        // blindsight envelope. They differ only on the "while able to
+        // hear" clause:
+        //   - Blindsense: gated on !Deafened (RAW "while able to
+        //     hear" — Silenced-cohort suppresses the sense).
+        //   - Blind Fighting: no hearing gate (RAW "even if you're
+        //     blinded or in darkness" — no hearing clause).
+        // We compute the effective envelope up front — the widest
+        // 10-ft piercer that survives its own gate — then a single
+        // footprint distance read decides. Adding a further range-
+        // gated piercer (a hypothetical wider Ranger Feral Senses
+        // envelope, a Rune Knight's runic sight) drops in as a new
+        // `.max()` term rather than a duplicated distance read.
+        let mut envelope: isize = 0;
+        if viewer.has_blindsense() && !viewer.has_condition(Condition::Deafened) {
+            envelope = envelope.max(4);
         }
-        if viewer.has_condition(Condition::Deafened) {
+        if viewer.has_blind_fighting_style() {
+            envelope = envelope.max(4);
+        }
+        if envelope == 0 {
             return false;
         }
         let Some(subject) = self.actors.get(&subject_id) else {
             return false;
         };
-        // 10 ft = 4 tiles on the 2.5-ft grid. Uses footprint distance so
-        // a Large / Huge subject's edge counts (a Huge invisible
-        // creature 6 ft away pierces even though its origin tile is
-        // 15+ ft off).
+        // Uses footprint distance so a Large / Huge subject's edge
+        // counts (a Huge invisible creature 6 ft away pierces even
+        // though its origin tile is 15+ ft off).
         let dist = footprint_chebyshev(
             viewer.location(),
             get_tiles_from_size(viewer.size()),
             subject.location(),
             get_tiles_from_size(subject.size()),
         );
-        dist <= 4
+        dist <= envelope
     }
 
     /// Compute the save-roll mode for an actor's ability save.
@@ -20107,6 +20123,141 @@ mod tests {
         // Death Ward burns; Relentless Endurance is still available.
         assert!(!actor.has_condition(Condition::DeathWarded));
         assert!(actor.feature_available(RELENTLESS_ENDURANCE_TAG));
+        assert_eq!(actor.hitpoints(), 1);
+    }
+
+    /// Undying Sentinel (Paladin Ancients lv15): the Ancients paladin
+    /// carries the tag on their template, so a killing blow drops the
+    /// paladin to 1 HP instead of 0 and the once-per-long-rest feature
+    /// is spent. Mirrors the Relentless Endurance test — the RAW
+    /// mechanic is identical, and both flow through the shared
+    /// `LETHAL_DAMAGE_ABSORBER_FEATURES` cohort.
+    #[test]
+    fn undying_sentinel_absorbs_killing_blow_and_spends_feature() {
+        use crate::actions::class_features::UNDYING_SENTINEL_TAG;
+        use crate::actors::creatures::paladins::ANCIENTS_PALADIN_TEMPLATE;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ANCIENTS_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        assert!(actor.feature_available(UNDYING_SENTINEL_TAG));
+        let max = actor.max_hitpoints();
+        actor.take_typed_damage(max + 5, DamageType::Slashing);
+        assert_eq!(
+            actor.hitpoints(),
+            1,
+            "Undying Sentinel pins HP at 1 on killing blow"
+        );
+        assert!(
+            !actor.feature_available(UNDYING_SENTINEL_TAG),
+            "Undying Sentinel spent after firing"
+        );
+        assert!(actor.is_combat_active(), "paladin is still up");
+    }
+
+    /// Undying Sentinel is a long-rest feature, not a short-rest one:
+    /// spent charge stays spent through a short rest, but a long rest
+    /// restores it. Pins the placement outside `SHORT_REST_FEATURES`.
+    #[test]
+    fn undying_sentinel_refreshes_on_long_rest_not_short() {
+        use crate::actions::class_features::UNDYING_SENTINEL_TAG;
+        use crate::actors::creatures::paladins::ANCIENTS_PALADIN_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ANCIENTS_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        let max = actor.max_hitpoints();
+        // Fire and spend the charge.
+        actor.take_typed_damage(max + 5, DamageType::Slashing);
+        assert!(!actor.feature_available(UNDYING_SENTINEL_TAG));
+        // Short rest doesn't restore the charge (not in
+        // SHORT_REST_FEATURES).
+        let mut roller = FastRandRoller::with_seed(0);
+        actor.short_rest(&mut roller);
+        assert!(
+            !actor.feature_available(UNDYING_SENTINEL_TAG),
+            "short rest must NOT refresh Undying Sentinel"
+        );
+        // Long rest restores the charge (via `features_remaining =
+        // features_max`).
+        actor.long_rest();
+        assert!(
+            actor.feature_available(UNDYING_SENTINEL_TAG),
+            "long rest must refresh Undying Sentinel"
+        );
+    }
+
+    /// The Ancients Paladin subclass template ships the tag; other
+    /// paladin subclasses (Devotion, Vengeance) and the baseline
+    /// paladin don't — pins the subclass-of layering so a future
+    /// template refactor surfaces breakage here.
+    #[test]
+    fn undying_sentinel_ships_only_on_ancients_paladin_template() {
+        use crate::actions::class_features::UNDYING_SENTINEL_TAG;
+        use crate::actors::creatures::paladins::{
+            ANCIENTS_PALADIN_TEMPLATE, DEVOTION_PALADIN_TEMPLATE, PALADIN_TEMPLATE,
+            VENGEANCE_PALADIN_TEMPLATE,
+        };
+        assert!(ANCIENTS_PALADIN_TEMPLATE
+            .features
+            .contains(UNDYING_SENTINEL_TAG));
+        assert!(!PALADIN_TEMPLATE.features.contains(UNDYING_SENTINEL_TAG));
+        assert!(!DEVOTION_PALADIN_TEMPLATE
+            .features
+            .contains(UNDYING_SENTINEL_TAG));
+        assert!(!VENGEANCE_PALADIN_TEMPLATE
+            .features
+            .contains(UNDYING_SENTINEL_TAG));
+    }
+
+    /// The `LETHAL_DAMAGE_ABSORBER_FEATURES` cohort spends the first
+    /// available charge in order. On a hypothetical multiclass carrying
+    /// both Half-Orc Relentless Endurance AND Paladin Undying Sentinel,
+    /// the first entry (Relentless Endurance) burns before the second
+    /// (Undying Sentinel) — RAW: each feature says "instead of 0 HP" so
+    /// only one fires per instance.
+    #[test]
+    fn lethal_absorber_cohort_spends_first_charge_only() {
+        use crate::actions::class_features::{
+            RELENTLESS_ENDURANCE_TAG, UNDYING_SENTINEL_TAG,
+        };
+        use crate::actors::creatures::paladins::ANCIENTS_PALADIN_TEMPLATE;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&ANCIENTS_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Dial on Relentless Endurance in addition to the ANCIENTS
+        // paladin's default Undying Sentinel via the direct
+        // features-map lane (test-only fixture, matching the shape
+        // that the `set_*_style` accessors use for template flags).
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .grant_feature_for_test(RELENTLESS_ENDURANCE_TAG);
+        let actor = e.actors.get_mut(&id).unwrap();
+        assert!(actor.feature_available(RELENTLESS_ENDURANCE_TAG));
+        assert!(actor.feature_available(UNDYING_SENTINEL_TAG));
+        let max = actor.max_hitpoints();
+        actor.take_typed_damage(max + 5, DamageType::Slashing);
+        // Relentless Endurance (first in the cohort list) burns;
+        // Undying Sentinel is preserved.
+        assert!(
+            !actor.feature_available(RELENTLESS_ENDURANCE_TAG),
+            "first cohort entry spent"
+        );
+        assert!(
+            actor.feature_available(UNDYING_SENTINEL_TAG),
+            "second cohort entry preserved"
+        );
         assert_eq!(actor.hitpoints(), 1);
     }
 
@@ -47608,5 +47759,101 @@ mod tests {
         assert!(ROGUE_TEMPLATE.has_blindsense);
         assert!(ASSASSIN_ROGUE_TEMPLATE.has_blindsense);
         assert!(!ROGUE_TEMPLATE.has_feral_senses);
+        // Blind Fighting (Tasha) is defined but not shipped on any
+        // template by default — mirrors the `has_two_weapon_fighting_style`
+        // / `has_protection_style` / `has_interception_style`
+        // "flag-exists-opt-in" pattern.
+        assert!(!RANGER_TEMPLATE.has_blind_fighting_style);
+        assert!(!ROGUE_TEMPLATE.has_blind_fighting_style);
+    }
+
+    /// Blind Fighting (Tasha Fighting Style) pierces illusion-style
+    /// concealment within 10 ft — identical envelope to Blindsense —
+    /// and unlike Blindsense it fires even when the holder is
+    /// Deafened (RAW: no "while able to hear" clause). Distinct from
+    /// Feral Senses (unbounded range). Attacks-out and attacks-in
+    /// both pick up the pierce because `compute_attack_mode` reads
+    /// `pierces_illusion_of` symmetrically on both sides.
+    #[test]
+    fn blind_fighting_style_pierces_within_10_ft_regardless_of_deafened() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let holder = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&holder)
+            .unwrap()
+            .set_blind_fighting_style(true);
+        // Near invisible target (2 tiles away — well within the 10-ft
+        // envelope): the blind-fighting holder attacks at Normal
+        // instead of Disadvantage.
+        let near = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&near)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Rounds(10));
+        assert_eq!(
+            e.compute_attack_mode(holder, near, true),
+            RollMode::Normal,
+            "Blind Fighting pierces Invisible within 10 ft"
+        );
+        // Far invisible target (>10 ft): the envelope caps, so
+        // Disadvantage stands.
+        let far = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(25, 25), 1, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&far)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Rounds(10));
+        assert_eq!(
+            e.compute_attack_mode(holder, far, false),
+            RollMode::Disadvantage,
+            "Blind Fighting must NOT pierce Invisible beyond 10 ft"
+        );
+        // Distinct from Blindsense: Deafened doesn't lapse the pierce
+        // (RAW has no hearing clause on Blind Fighting).
+        e.actors
+            .get_mut(&holder)
+            .unwrap()
+            .add_condition(Condition::Deafened, ConditionTimer::Rounds(10));
+        assert_eq!(
+            e.compute_attack_mode(holder, near, true),
+            RollMode::Normal,
+            "Blind Fighting fires even when Deafened (unlike Blindsense)"
+        );
+    }
+
+    /// Symmetric pin: an invisible attacker's advantage against a
+    /// Blind-Fighting holder is suppressed when the attacker is
+    /// within the 10-ft envelope. Same helper (`pierces_illusion_of`)
+    /// on the target side.
+    #[test]
+    fn blind_fighting_style_pierces_invisible_attacker_in_range() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let attacker = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Rounds(10));
+        let target = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&target)
+            .unwrap()
+            .set_blind_fighting_style(true);
+        // Target's Blind Fighting pierces the invisible attacker at 2
+        // tiles: attack mode collapses to Normal.
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Normal
+        );
     }
 }

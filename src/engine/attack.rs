@@ -432,55 +432,49 @@ pub fn resolve_attack_outcome(
             p.action_name, p.damage_dice, raw_damage, total_damage_bonus, damage, p.damage_type,
         ));
     }
-    // 5e Barbarian Rage: +2 melee weapon damage (scales to +3/+4 at
-    // higher levels in RAW, but we use +2 for the base tier). Only
-    // applies to STR-based melee attacks.
-    if p.is_melee
-        && encounter
-            .actors
-            .get(&p.caster_id)
-            .is_some_and(|a| a.has_condition(Condition::Raging))
-    {
-        damage = damage.saturating_add(2);
-        encounter.log("  rage: +2 melee damage");
-    }
-    // 5e Fighting Style: **Dueling** — +2 to damage rolls on melee weapon
-    // attacks. RAW gates on "wielding a one-handed weapon and no other
-    // weapon"; we don't model weapon-hand-usage so the gate collapses to
-    // "melee weapon attack" (a fighter carrying a shortsword-and-scimitar
-    // pair would false-positive here, but the templates that ship the
-    // style flag only carry one weapon in the action list). Gated on
-    // `p.is_melee` so a longbow shot doesn't pick up the bonus. Additive
-    // with Rage's +2 melee damage so a raging dueling fighter stacks
-    // both (unlikely in practice — no template ships both flags).
-    if p.is_melee
-        && encounter
-            .actors
-            .get(&p.caster_id)
-            .is_some_and(|a| a.has_dueling_style())
-    {
-        damage = damage.saturating_add(2);
-        encounter.log("  dueling: +2 melee damage");
-    }
-    // 5e Fighting Style: **Two-Weapon Fighting** — RAW: "when you engage
-    // in two-weapon fighting, you can add your ability modifier to the
-    // damage of the second attack". The engine doesn't distinguish the
-    // "off-hand" swing at the action-list level (extra attacks share
-    // the same weapon slot), so the flag folds the STR-mod bonus into
-    // every melee weapon swing on the holder. Gated on `p.is_melee` so
-    // ranged weapons / spell attacks don't pick up the bonus. Additive
-    // with Dueling (mutually exclusive per RAW but engine-neutral) and
-    // Rage — no template currently combines TWF with either.
-    if p.is_melee
-        && let Some(a) = encounter.actors.get(&p.caster_id)
-        && a.has_two_weapon_fighting_style()
-    {
-        let bonus = a
-            .ability_modifier(crate::engine::types::AbilityScoreType::Strength)
-            .max(0);
-        if bonus > 0 {
-            damage = damage.saturating_add(bonus as u32);
-            encounter.log(format!("  two-weapon fighting: +{} melee damage", bonus));
+    // Caster-side flat melee-only bumps. Each entry is a
+    // (label, gate, amount) tuple: the gate reads the caster's
+    // features/conditions, and if it holds the amount is added to the
+    // pending damage with a "  {label}: +{n} melee damage" log line.
+    // Order matters only for legibility (all three stack additively on
+    // holders that carry multiple flags).
+    //   - Rage (+2): Barbarian Raging condition.
+    //   - Dueling (+2): Fighting Style flag; RAW's "one-handed and no
+    //     other weapon" clause collapses to "melee weapon attack" in
+    //     this engine.
+    //   - Two-Weapon Fighting (+STR mod): Fighting Style flag; RAW's
+    //     "second attack" clause collapses to "every melee swing on
+    //     the holder" since we don't distinguish off-hand swings at
+    //     the action-list level.
+    // Pre-refactor these three were open-coded on nearly identical
+    // `if p.is_melee && encounter.actors.get(&p.caster_id).is_some_and(...)`
+    // blocks — a new melee-side bump (Rage tier-scaling, Aura of Hate,
+    // Ancestral Guardians retribution) drops in here as a new tuple
+    // rather than a fourth copy of the block.
+    if p.is_melee {
+        let bumps: &[(&str, fn(&crate::actors::actor_template::ActorInstance) -> u32)] = &[
+            ("rage", |a| {
+                if a.has_condition(Condition::Raging) { 2 } else { 0 }
+            }),
+            ("dueling", |a| {
+                if a.has_dueling_style() { 2 } else { 0 }
+            }),
+            ("two-weapon fighting", |a| {
+                if !a.has_two_weapon_fighting_style() {
+                    return 0;
+                }
+                a.ability_modifier(crate::engine::types::AbilityScoreType::Strength)
+                    .max(0) as u32
+            }),
+        ];
+        for (label, amount_fn) in bumps {
+            let Some(a) = encounter.actors.get(&p.caster_id) else { break; };
+            let bump = amount_fn(a);
+            if bump == 0 {
+                continue;
+            }
+            damage = damage.saturating_add(bump);
+            encounter.log(format!("  {}: +{} melee damage", label, bump));
         }
     }
     // Hunter's Mark rider: attacker concentrating on Hunter's Mark with

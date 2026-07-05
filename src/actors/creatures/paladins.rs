@@ -1,6 +1,7 @@
 use crate::actions::class_features::{
     CLEANSING_TOUCH, CLEANSING_TOUCH_TAG, DIVINE_SMITE, IMPROVED_DIVINE_SMITE_TAG, LAY_ON_HANDS,
-    LAY_ON_HANDS_TAG, SACRED_WEAPON, SACRED_WEAPON_TAG, VOW_OF_ENMITY, VOW_OF_ENMITY_TAG,
+    LAY_ON_HANDS_TAG, SACRED_WEAPON, SACRED_WEAPON_TAG, UNDYING_SENTINEL_TAG, VOW_OF_ENMITY,
+    VOW_OF_ENMITY_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GREATSWORD;
@@ -257,13 +258,30 @@ pub static DEVOTION_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
 /// 'A' so the Ancients paladin shows up distinctly next to baseline 'P',
 /// Devotion 'D', and Vengeance 'V'.
 pub static ANCIENTS_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Two subclass features layer onto the baseline paladin envelope:
+    //   - `has_natures_ward` (lv15): passive self-immunity to Charmed /
+    //     Frightened installs. Template-flag lane, no charge.
+    //   - `UNDYING_SENTINEL_TAG` (lv15): once-per-long-rest "drop to 1
+    //     HP instead of 0" cheat-death. Feature-set lane, refreshed on
+    //     long rest via the `features_max` copy in
+    //     `ActorInstance::new_from_template`. Mechanically identical
+    //     to Half-Orc Relentless Endurance — both route through the
+    //     shared `LETHAL_DAMAGE_ABSORBER_FEATURES` cohort in
+    //     `take_typed_damage` so a multiclass (half-orc Ancients
+    //     paladin) spends the tags in order rather than double-dipping
+    //     on the same lethal hit.
+    let mut features = PALADIN_TEMPLATE.features.clone();
+    features.insert(UNDYING_SENTINEL_TAG);
     CreatureTemplate {
         name: "Ancients Paladin",
         glyph: 'A',
-        // Nature's Ward is the entire subclass surface here — a passive
-        // template flag rather than an added action, so the subclass-of
-        // pattern collapses to name + glyph + the ward flag.
+        // Nature's Ward — passive template flag, always on.
         has_natures_ward: true,
+        // Undying Sentinel — once-per-long-rest cheat-death. Layered
+        // onto the inherited paladin feature set (Lay on Hands,
+        // Sacred Weapon, Cleansing Touch, Improved Divine Smite)
+        // rather than clobbering it.
+        features,
         ..PALADIN_TEMPLATE.clone()
     }
 });

@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::error::Error;
 
 use crate::actions::class_features::{
-    BATTLE_MASTER_MANEUVERS, RELENTLESS_ENDURANCE_TAG, SHORT_REST_FEATURES,
+    BATTLE_MASTER_MANEUVERS, LETHAL_DAMAGE_ABSORBER_FEATURES, SHORT_REST_FEATURES,
     SORCEROUS_RESTORATION_TAG,
 };
 
@@ -696,6 +696,37 @@ pub struct CreatureTemplate {
     /// out-classing Feral Senses (unbounded) — the rogue leans in
     /// close to leverage it, the ranger benefits at any range.
     pub has_blindsense: bool,
+    /// 5e Fighting Style: **Blind Fighting** (Tasha's Cauldron of
+    /// Everything, Fighter / Ranger / Paladin lv1 pick). Passive
+    /// concealment-piercer with a 10-ft (4-tile footprint Chebyshev)
+    /// range gate — the holder has blindsight out to 10 ft. Sits in
+    /// the same `pierces_illusion_of` cohort as `has_truesight` /
+    /// `has_feral_senses` / `has_blindsense`, with the Blindsense-
+    /// shape 10-ft envelope for a range-gated close-quarters piercer.
+    ///
+    /// Two distinctions from the neighboring flags:
+    ///   1. **No hearing gate** — RAW: "you can see any creature that
+    ///      isn't behind total cover in a 10-foot radius, even if
+    ///      you're blinded or in darkness." No "while able to hear"
+    ///      clause, so Deafened doesn't suppress the flag (unlike
+    ///      Blindsense which lapses when the holder can't hear).
+    ///   2. **Fighting-style pick** — mutually exclusive with the
+    ///      other Fighting Style options at the RAW-level pick, but
+    ///      cohabits engine-side with Dueling / Defense / Archery on
+    ///      the fighter chassis (same "class templates target a
+    ///      playable level, not lockstep PHB progression" reasoning
+    ///      that lets the Champion carry Defense + Dueling).
+    ///
+    /// Not shipped on any current template by default — the flag
+    /// exists so a future Battle Master / Paladin sub-build (a chassis
+    /// that leans into close-quarters melee against invisible or
+    /// concealed opponents) can opt in as a single-line template
+    /// switch. Same "flag exists, not shipped by default" pattern the
+    /// engine uses for `has_two_weapon_fighting_style`,
+    /// `has_protection_style`, and `has_interception_style`. Ranger
+    /// (Feral Senses at unbounded range) and Rogue (Blindsense at 10 ft)
+    /// already carry redundant piercers so no ship-by-default there.
+    pub has_blind_fighting_style: bool,
     /// 5e Dwarven Resilience: advantage on saving throws against poison
     /// AND resistance to poison damage. Read by `compute_save_mode`
     /// (advantage clause) and `effective_damage` (resistance clause).
@@ -856,6 +887,7 @@ impl CreatureTemplate {
             has_interception_style: false,
             has_feral_senses: false,
             has_blindsense: false,
+            has_blind_fighting_style: false,
             has_dwarven_resilience: false,
             has_gnome_cunning: false,
             draconic_ancestry: None,
@@ -1245,6 +1277,10 @@ pub struct ActorInstance {
     /// 5e Rogue Blindsense (level 14). Passive concealment-piercer
     /// with a 10-ft range gate. See `CreatureTemplate` docs.
     has_blindsense: bool,
+    /// 5e Fighting Style: Blind Fighting (Tasha). Passive
+    /// concealment-piercer with a 10-ft range gate, no hearing gate.
+    /// See `CreatureTemplate` docs.
+    has_blind_fighting_style: bool,
     /// 5e Dwarven Resilience. See `CreatureTemplate` docs.
     has_dwarven_resilience: bool,
     /// 5e Gnome Cunning. See `CreatureTemplate` docs.
@@ -1405,6 +1441,7 @@ impl ActorInstance {
             has_interception_style: ct.has_interception_style,
             has_feral_senses: ct.has_feral_senses,
             has_blindsense: ct.has_blindsense,
+            has_blind_fighting_style: ct.has_blind_fighting_style,
             has_dwarven_resilience: ct.has_dwarven_resilience,
             has_gnome_cunning: ct.has_gnome_cunning,
             draconic_ancestry: ct.draconic_ancestry,
@@ -1764,6 +1801,40 @@ impl ActorInstance {
     #[cfg(test)]
     pub fn set_blindsense(&mut self, value: bool) {
         self.has_blindsense = value;
+    }
+
+    /// 5e Fighting Style: **Blind Fighting** (Tasha): the holder
+    /// pierces illusion-style concealment against subjects within 10
+    /// ft. Unlike Blindsense, no hearing gate — Deafened doesn't
+    /// suppress the flag (RAW: "even if you're blinded or in
+    /// darkness"). Wired through
+    /// `EncounterInstance::pierces_illusion_of` — the 10-ft envelope
+    /// lives in the encounter helper so the accessor stays a flat
+    /// boolean.
+    pub fn has_blind_fighting_style(&self) -> bool {
+        self.has_blind_fighting_style
+    }
+
+    /// Test-only setter for the Blind Fighting Fighting Style flag.
+    /// Mirrors `set_blindsense` for the same reason.
+    #[cfg(test)]
+    pub fn set_blind_fighting_style(&mut self, value: bool) {
+        self.has_blind_fighting_style = value;
+    }
+
+    /// Test-only helper: install a class-feature tag on both
+    /// `features_max` (so long-rest refills work) and
+    /// `features_remaining` (so it fires immediately). Used by
+    /// multiclass-shape fixtures that need to layer a feature on top
+    /// of a template that doesn't natively carry it — e.g. dialing
+    /// Half-Orc Relentless Endurance onto an Ancients Paladin to
+    /// verify the `LETHAL_DAMAGE_ABSORBER_FEATURES` cohort's
+    /// order-of-consumption. Non-test callers should always route
+    /// through the template's `features` HashSet at creation time.
+    #[cfg(test)]
+    pub fn grant_feature_for_test(&mut self, tag: &'static str) {
+        self.features_max.insert(tag);
+        self.features_remaining.insert(tag);
     }
 
     /// 5e Dwarven Resilience — advantage on saves vs poison AND resistance
@@ -3502,21 +3573,22 @@ impl ActorInstance {
                         self.conditions.remove(&Condition::DeathWarded);
                         return DamageOutcome::Reduced;
                     }
-                    // 5e Half-Orc Relentless Endurance: when the holder
-                    // would drop to 0 HP, they instead drop to 1 HP and
-                    // the once-per-rest feature is spent. Identical
-                    // mechanical hook to Death Ward but gated on a
-                    // feature flag (long-rest refresh) instead of a
-                    // condition timer. Death Ward takes priority — it's
-                    // an active spell the caster chose to maintain, so
-                    // burning the racial first would waste the slot.
-                    if self
-                        .features_remaining
-                        .contains(RELENTLESS_ENDURANCE_TAG)
-                    {
-                        self.hitpoints = 1;
-                        self.features_remaining.remove(RELENTLESS_ENDURANCE_TAG);
-                        return DamageOutcome::Reduced;
+                    // 5e "drop to 1 HP instead" cohort — Half-Orc
+                    // Relentless Endurance, Paladin Ancients Undying
+                    // Sentinel, and any future sibling — routed through
+                    // one ordered list so the first-available charge
+                    // fires. Death Ward is checked *above* this loop —
+                    // RAW: the spell is an active resource the caster
+                    // chose to maintain, so burning the racial / class
+                    // feature before Death Ward would waste the slot.
+                    // Massive Damage (overflow ≥ max HP) also short-
+                    // circuits before this cohort (RAW).
+                    for &tag in LETHAL_DAMAGE_ABSORBER_FEATURES {
+                        if self.features_remaining.contains(tag) {
+                            self.hitpoints = 1;
+                            self.features_remaining.remove(tag);
+                            return DamageOutcome::Reduced;
+                        }
                     }
                     if self.rolls_death_saves {
                         self.hp_state = HpState::Dying {

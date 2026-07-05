@@ -89,6 +89,60 @@ pub const ACTION_SURGE_TAG: &str = "fighter.action_surge";
 /// short-duration condition.
 pub const RELENTLESS_ENDURANCE_TAG: &str = "half_orc.relentless_endurance";
 
+/// Tag for the Paladin **Undying Sentinel** feature (Oath of the
+/// Ancients level 15 subclass feature). Passive no-action feature:
+/// once per long rest, when damage would reduce the holder to 0 HP
+/// (and they're not killed outright by Massive Damage), they drop to
+/// 1 HP instead. Mechanically identical to Half-Orc Relentless
+/// Endurance — both route through the shared
+/// `LETHAL_DAMAGE_ABSORBER_FEATURES` cohort in
+/// `take_typed_damage` so a hypothetical multiclass (a half-orc
+/// Ancients paladin) spends the tags in order rather than double-
+/// dipping on the same damage instance.
+///
+/// Ships on the ANCIENTS_PALADIN_TEMPLATE feature set (Oath of the
+/// Ancients level-15 capstone) above its strict RAW level gate for
+/// the same reason Nature's Ward (lv15) does — class templates target
+/// a balanced playable level, not lockstep PHB progression. Distinct
+/// from Nature's Ward (self-immunity to Charmed / Frightened, always
+/// on) — Undying Sentinel is a one-shot "cheat death" resource that
+/// refreshes on long rest. RAW-flavored as "the paladin refuses to
+/// fall while there's still a chance to strike back", it's the
+/// signature Ancients tell in low-HP combat rounds.
+///
+/// Long-rest refresh: the tag lives on `features_max` for holders,
+/// so `long_rest` restores the charge (features_remaining =
+/// features_max). Not in `SHORT_REST_FEATURES` — RAW gates on the
+/// long rest per PHB text.
+pub const UNDYING_SENTINEL_TAG: &str = "paladin.undying_sentinel";
+
+/// Ordered cohort of feature tags that intercept a lethal HP-to-zero
+/// damage instance and convert it to a "drop to 1 HP instead" outcome.
+/// Read in order by `ActorInstance::take_typed_damage` at the 0-HP
+/// transition site: the *first* tag on the actor's
+/// `features_remaining` is spent, the HP is clamped to 1, and the
+/// damage outcome downgrades to `Reduced`. Subsequent tags in the
+/// list stay unspent — RAW: each feature says "instead of 0 HP" so
+/// only one fires per instance.
+///
+/// Ordering is significant: earlier entries are consumed first, so
+/// a hypothetical Half-Orc / Ancients Paladin multiclass would burn
+/// Relentless Endurance before Undying Sentinel on a single lethal
+/// hit. Both refresh on long rest (both live on `features_max`);
+/// neither refreshes on short rest (neither is in
+/// `SHORT_REST_FEATURES`).
+///
+/// Death Ward is checked separately, *before* this cohort — RAW: the
+/// spell is an active resource the caster chose to maintain, so
+/// burning the racial / class feature before Death Ward would waste
+/// the slot. Massive Damage (overflow ≥ max HP) also short-circuits
+/// before this cohort — RAW: "if remaining damage after hitting 0 HP
+/// equals or exceeds the creature's max HP, it dies instantly."
+pub const LETHAL_DAMAGE_ABSORBER_FEATURES: &[&str] = &[
+    RELENTLESS_ENDURANCE_TAG,
+    UNDYING_SENTINEL_TAG,
+];
+
 /// Tag for the Sahuagin Blood Frenzy racial trait. Passive always-on
 /// feature: the holder rolls melee attacks with advantage against any
 /// target that doesn't have all its hit points. We weave the gate into
