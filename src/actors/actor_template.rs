@@ -712,6 +712,61 @@ pub struct CreatureTemplate {
     /// otherwise carries it. See `class_features::AURA_OF_HATE_TAG`
     /// for the full RAW envelope.
     pub has_aura_of_hate: bool,
+    /// 5e Ancients Paladin (PHB) level-7 subclass feature — **Aura of
+    /// Warding**. Passive template flag: the paladin and any friendly
+    /// creatures whose footprint sits within 10 ft (4 tiles) of the
+    /// paladin have resistance to damage from spells. RAW keys off
+    /// "damage from spells"; we approximate with the closed set of
+    /// spell-typical damage types (acid / cold / fire / lightning /
+    /// thunder / necrotic / radiant / force / psychic — every element
+    /// that shows up on the standard spell blast lane). Weapon-only
+    /// types (bludgeoning / piercing / slashing / poison) are excluded
+    /// so a paladin's aura doesn't accidentally halve a nearby swing's
+    /// melee damage.
+    ///
+    /// Read at the `DealDamage::apply` chokepoint via
+    /// `EncounterInstance::is_in_aura_of_warding` — the raw amount is
+    /// halved BEFORE `effective_damage` runs so the standard 5e
+    /// "one halving per damage instance" rule still holds (the aura
+    /// no-ops when the target already has a same-type resistance /
+    /// immunity from their template / condition / item lanes).
+    /// Emitter must be combat-active and not incapacitated — RAW: the
+    /// aura requires the paladin to be conscious, mirroring the
+    /// Aura of Protection / Aura of Courage / Aura of Devotion gate.
+    ///
+    /// Ships on `ANCIENTS_PALADIN_TEMPLATE`. Distinct from Nature's
+    /// Ward (self-immunity to Charmed / Frightened, self-only) and
+    /// Undying Sentinel (once-per-long-rest drop-to-1-HP cheat-death):
+    /// the aura extends the Ancients paladin's anti-magic identity to
+    /// every 10ft-adjacent ally, forming a bubble that shrugs off the
+    /// classic caster's Fireball / Cone of Cold / Lightning Bolt burst
+    /// on the whole huddled party.
+    pub has_aura_of_warding: bool,
+    /// 5e Barbarian **Persistent Rage** (level 15 class feature). Passive
+    /// template flag: the barbarian's Rage lasts longer. RAW says the
+    /// rage no longer ends prematurely if the barbarian doesn't attack
+    /// or take damage. Our engine's Rage doesn't end early to begin with
+    /// — it holds for a fixed `Rounds(10)` timer regardless of activity
+    /// — so the RAW "no premature end" clause is a no-op. We repurpose
+    /// the flag as a duration bump: a Persistent-Rage barbarian's Rage
+    /// installs for `Rounds(20)` instead of the baseline `Rounds(10)`,
+    /// matching the RAW "1 minute → practically-encounter-length"
+    /// intent by doubling the timer.
+    ///
+    /// Read by the `RAGE` action's `side_effects` — the rage-installer
+    /// swaps the timer based on the caster's `has_persistent_rage()`
+    /// flag. Ships on the CR-4 (level-9) Barbarian family templates
+    /// above their strict RAW level gate for the same reason
+    /// Relentless Rage / Feral Instinct / Brutal Critical do — class
+    /// templates target a balanced playable level, not lockstep PHB
+    /// progression. The extended timer composes cleanly with the
+    /// Berserker's Frenzy (more raging turns = more Frenzy strikes),
+    /// the Zealot's Divine Fury (more Rage rounds mean more turns
+    /// where the once-per-turn rider fires), and each totem spirit
+    /// (Bear's blanket resistance, Wolf's ally-adjacency aura, Eagle's
+    /// bonus-action Dash, Tiger's +10 ft speed) — every effect that
+    /// gates on Raging benefits from the doubled window.
+    pub has_persistent_rage: bool,
     /// 5e Fighting Style: **Blind Fighting** (Tasha's Cauldron of
     /// Everything, Fighter / Ranger / Paladin lv1 pick). Passive
     /// concealment-piercer with a 10-ft (4-tile footprint Chebyshev)
@@ -905,6 +960,8 @@ impl CreatureTemplate {
             has_blindsense: false,
             has_blind_fighting_style: false,
             has_aura_of_hate: false,
+            has_aura_of_warding: false,
+            has_persistent_rage: false,
             has_dwarven_resilience: false,
             has_gnome_cunning: false,
             draconic_ancestry: None,
@@ -1302,6 +1359,13 @@ pub struct ActorInstance {
     /// mod (min +1) to melee weapon damage. See `CreatureTemplate`
     /// docs.
     has_aura_of_hate: bool,
+    /// 5e Ancients Paladin Aura of Warding (level 7). Passive 10ft
+    /// aura granting spell-typical damage resistance to nearby allies.
+    /// See `CreatureTemplate` docs.
+    has_aura_of_warding: bool,
+    /// 5e Barbarian Persistent Rage (level 15). Doubles the Rage
+    /// condition timer. See `CreatureTemplate` docs.
+    has_persistent_rage: bool,
     /// 5e Dwarven Resilience. See `CreatureTemplate` docs.
     has_dwarven_resilience: bool,
     /// 5e Gnome Cunning. See `CreatureTemplate` docs.
@@ -1462,6 +1526,8 @@ impl ActorInstance {
             has_blindsense: ct.has_blindsense,
             has_blind_fighting_style: ct.has_blind_fighting_style,
             has_aura_of_hate: ct.has_aura_of_hate,
+            has_aura_of_warding: ct.has_aura_of_warding,
+            has_persistent_rage: ct.has_persistent_rage,
             has_dwarven_resilience: ct.has_dwarven_resilience,
             has_gnome_cunning: ct.has_gnome_cunning,
             draconic_ancestry: ct.draconic_ancestry,
@@ -1856,6 +1922,41 @@ impl ActorInstance {
     #[cfg(test)]
     pub fn set_aura_of_hate(&mut self, value: bool) {
         self.has_aura_of_hate = value;
+    }
+
+    /// 5e Ancients Paladin **Aura of Warding** (level 7): the paladin
+    /// emits a 10-ft aura that grants resistance to spell-typical
+    /// damage to nearby allies. Read by
+    /// `EncounterInstance::is_in_aura_of_warding` — this accessor
+    /// exposes the emitter side; the ally-side lookup walks all
+    /// emitters and picks the first one whose footprint sits in
+    /// range.
+    pub fn has_aura_of_warding(&self) -> bool {
+        self.has_aura_of_warding
+    }
+
+    /// Test-only setter for the Aura of Warding flag. Mirrors
+    /// `set_aura_of_hate` — lets tests dial the aura onto any chassis
+    /// so the spell-damage halving envelope can be exercised in
+    /// isolation.
+    #[cfg(test)]
+    pub fn set_aura_of_warding(&mut self, value: bool) {
+        self.has_aura_of_warding = value;
+    }
+
+    /// 5e Barbarian **Persistent Rage** (level 15): passive that
+    /// keeps the Rage installed longer. Read by `RAGE`'s
+    /// `side_effects` — swaps the install timer from `Rounds(10)` to
+    /// `Rounds(20)` when the flag is set.
+    pub fn has_persistent_rage(&self) -> bool {
+        self.has_persistent_rage
+    }
+
+    /// Test-only setter for the Persistent Rage flag. Mirrors
+    /// `set_aura_of_hate` on the racial / class flag lane.
+    #[cfg(test)]
+    pub fn set_persistent_rage(&mut self, value: bool) {
+        self.has_persistent_rage = value;
     }
 
     /// Test-only helper: install a class-feature tag on both
@@ -2273,41 +2374,15 @@ impl ActorInstance {
     /// `resisted` and skip further halving once it's set. Immunity still
     /// trumps everything and zeros the amount immediately.
     pub fn effective_damage(&self, raw: u32, dt: DamageType) -> u32 {
-        // Template-level modifier (resistance / immunity / vulnerability).
+        // Immunity from any source zeroes damage outright — walk the
+        // four immunity lanes (template modifier, condition table, item
+        // grant, Monk Purity of Body) through the shared helper.
+        if self.is_immune_to_damage_type(dt) {
+            return 0;
+        }
+        // Template-level modifier (resistance / vulnerability) — the
+        // immunity case is already handled above.
         let modifier = self.damage_modifiers.get(&dt).copied();
-        // Immunity from any source zeroes damage outright.
-        if matches!(modifier, Some(DamageModifier::Immunity)) {
-            return 0;
-        }
-        // Condition-driven typed immunity (Mind Blank → Psychic, Silenced
-        // → Thunder, future entries). Table-driven via
-        // `TYPED_IMMUNITY_CONDITIONS` so adding a new immunity rider is a
-        // one-line tuple instead of another `if dt == ... && ...` branch
-        // here. Mirrors the `TYPED_RESISTANCE_CONDITIONS` cohort.
-        if self.has_condition_immunity(dt) {
-            return 0;
-        }
-        // Item-granted immunity (Periapt of Proof against Poison →
-        // poison, Ring of Mind Shielding → psychic). Folded in next to
-        // the template / condition immunity sources above — no "one
-        // halving" stacking concern since immunity short-circuits the
-        // pipeline before any resistance roll fires.
-        if self.item_immunity_to_damage(dt) {
-            return 0;
-        }
-        // 5e Monk Purity of Body (level 10). Passive: immune to poison
-        // damage AND the Poisoned condition. The condition half lives at
-        // `dynamic_immunity_to(Poisoned)`; the damage half folds in here
-        // next to the item / condition immunity sources — same "immunity
-        // trumps everything" short-circuit. Only fires for the Poison
-        // type; the tag has no effect on non-poison damage.
-        if dt == DamageType::Poison
-            && self.has_passive_feature(
-                crate::actions::class_features::PURITY_OF_BODY_TAG,
-            )
-        {
-            return 0;
-        }
         // 5e Dwarven Resilience: resistance to poison damage. Folds into
         // the same template-resistance lane below so the 5e "only one
         // halving" rule still holds when a creature has resilience AND
@@ -2353,6 +2428,33 @@ impl ActorInstance {
             .any(|(c, types)| self.has_condition(*c) && types.contains(&dt))
     }
 
+    /// True iff the actor is immune to damage of type `dt` from ANY
+    /// source. Walks the four immunity lanes in one call:
+    ///   1. Template `damage_modifiers` marked `Immunity`.
+    ///   2. Condition-driven typed immunity (`TYPED_IMMUNITY_CONDITIONS`
+    ///      — Mind Blank / Silence / Purified etc.).
+    ///   3. Item-granted immunity (Periapt of Proof against Poison,
+    ///      Ring of Mind Shielding, etc.).
+    ///   4. Class-feature typed immunity — Monk Purity of Body pins
+    ///      Poison damage to zero.
+    ///
+    /// Shared read chokepoint for `effective_damage` (which uses it as
+    /// its top-of-pipeline immunity short-circuit) and any external
+    /// rider that needs a single "is this actor zero-taking this type?"
+    /// check. Sibling to `has_own_typed_reduction` (broader — includes
+    /// resistance / vulnerability) but narrower — immunity only.
+    pub fn is_immune_to_damage_type(&self, dt: DamageType) -> bool {
+        matches!(
+            self.damage_modifiers.get(&dt),
+            Some(DamageModifier::Immunity)
+        ) || self.has_condition_immunity(dt)
+            || self.item_immunity_to_damage(dt)
+            || (dt == DamageType::Poison
+                && self.has_passive_feature(
+                    crate::actions::class_features::PURITY_OF_BODY_TAG,
+                ))
+    }
+
     /// True iff the actor holds a condition that grants resistance to
     /// damage of type `dt`. Walks two cohorts:
     /// - `BLANKET_RESISTANCE_CONDITIONS`: conditions that resist *every*
@@ -2392,6 +2494,31 @@ impl ActorInstance {
 
     pub fn damage_modifier(&self, dt: DamageType) -> Option<DamageModifier> {
         self.damage_modifiers.get(&dt).copied()
+    }
+
+    /// True iff this actor already has some form of typed damage
+    /// modification (resistance / immunity / vulnerability) for `dt`
+    /// coming from their OWN sources — template damage modifiers,
+    /// blanket + typed condition resistances / immunities, or item-
+    /// granted resistance / immunity. Used by external "extra halving"
+    /// riders (Ancients Paladin **Aura of Warding**) to enforce the
+    /// standard 5e "one halving per damage instance" rule — if the
+    /// actor already scales the damage themselves, the rider no-ops
+    /// and the built-in scaling in `effective_damage` fires unchanged.
+    ///
+    /// Vulnerability counts too even though it *doubles* damage — the
+    /// point of the check is "does the actor already handle this type
+    /// specially?", and layering a halving on top of a doubling would
+    /// unpredictably wash out to no change (0.5 * 2 = 1).
+    pub fn has_own_typed_reduction(&self, dt: DamageType) -> bool {
+        // Template `damage_modifiers` — any entry (resistance / immunity
+        // / vulnerability) means the actor already has a typed handler.
+        self.damage_modifiers.contains_key(&dt)
+            || self.has_condition_resistance(dt)
+            || self.item_resistance_to(dt)
+            || (dt == DamageType::Poison && self.has_dwarven_resilience)
+            // Immunity (any source) short-circuits at the shared helper.
+            || self.is_immune_to_damage_type(dt)
     }
 
     /// Test-only setter for an actor's per-type damage modifier. Lets tests

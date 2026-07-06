@@ -65,6 +65,15 @@ fn totem_barbarian_template(
         // through the shared helper so a Bear / Wolf / Eagle / Tiger
         // totem barbarian all open the round competitively.
         has_feral_instinct: true,
+        // 5e Barbarian **Persistent Rage** (level 15) — see the
+        // baseline `BARBARIAN_TEMPLATE` for the full envelope. Ships
+        // on every totem subclass alongside the baseline chassis so
+        // the "raging window doubles" identity is uniform across the
+        // barbarian family. Composes especially cleanly with Wolf
+        // Totem (allies get advantage on the paladin's every swing
+        // for twice as many rounds) and Tiger Totem (the +10 ft
+        // speed bump holds for the doubled window).
+        has_persistent_rage: true,
         ..CreatureTemplate::defaults()
     }
 }
@@ -150,6 +159,19 @@ pub static BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // DEX-save advantage on the first round so the barbarian
         // survives the enemy caster's opener even if they win init.
         has_feral_instinct: true,
+        // 5e Barbarian **Persistent Rage** (level 15 class feature).
+        // Passive template flag: the Rage condition installs with a
+        // doubled `Rounds(20)` timer instead of the baseline
+        // `Rounds(10)`. Read by `Rage::side_effects` — the timer swap
+        // is the only mechanical surface. Ships on the CR-4 (level-9)
+        // baseline above its strict RAW level gate for the same
+        // reason Relentless Rage / Brutal Critical (1d) do — class
+        // templates target a balanced playable level, not lockstep
+        // PHB progression. Composes cleanly with every other rage-
+        // gated feature on the barbarian chassis (Frenzy / Divine
+        // Fury / totem spirits / Reckless Attack) — more rage rounds
+        // means more turns where those riders fire.
+        has_persistent_rage: true,
         ..CreatureTemplate::defaults()
     }
 });

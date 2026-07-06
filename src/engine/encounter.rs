@@ -1840,6 +1840,19 @@ impl EncounterInstance {
             .is_some()
     }
 
+    /// True if `actor_id` is inside the 10 ft Aura of Warding of any
+    /// allied Ancients Paladin (Ancients subclass level 7+). Read by
+    /// `DealDamage::apply` to halve the raw amount of spell-typical
+    /// damage before the target's own resistance / immunity pipeline
+    /// runs. Same emitter model as `is_in_aura_of_courage` (combat-
+    /// active + not incapacitated + in range) — a downed paladin's
+    /// aura goes dark.
+    pub fn is_in_aura_of_warding(&self, actor_id: usize) -> bool {
+        self.paladin_aura_emitters(actor_id, ActorInstance::has_aura_of_warding)
+            .next()
+            .is_some()
+    }
+
     /// 5e Hunter Ranger **Multiattack Defense** (Defensive Tactics
     /// option, lv7) AC bonus for the target's effective AC. Returns 4
     /// when the target holds `MULTIATTACK_DEFENSE_TAG` AND the
@@ -49052,6 +49065,299 @@ mod tests {
         assert!(
             !e.actors[&dev].feature_available(TURN_THE_FAITHLESS_TAG),
             "Turn the Faithless charge spent"
+        );
+    }
+
+    /// 5e Ancients Paladin **Aura of Warding** (lv7): the paladin
+    /// projects a 10-ft aura (footprint-Chebyshev 4 tiles) that halves
+    /// spell-typical damage on allies inside. Verifies the aura fires
+    /// on Fire damage (a spell-typical type) for both the emitter and
+    /// an adjacent ally.
+    #[test]
+    fn aura_of_warding_halves_spell_damage_for_ally_and_emitter() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::paladins::ANCIENTS_PALADIN_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let pal = e
+            .instantiate_creature(&ANCIENTS_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Use a Fighter as the ally — 24 HP baseline puts the delta
+        // measurement well above the 10-damage threshold so we don't
+        // accidentally read a truncated (HP-floor) delta.
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        assert!(e.is_in_aura_of_warding(pal));
+        assert!(e.is_in_aura_of_warding(ally));
+        // 20 fire → halved to 10 for the ally inside the aura.
+        let ally_hp_before = e.actors[&ally].hitpoints();
+        DealDamage {
+            actor_id: ally,
+            amount: 20,
+            damage_type: DamageType::Fire,
+        }
+        .apply(&mut e);
+        let ally_hp_after = e.actors[&ally].hitpoints();
+        assert_eq!(
+            ally_hp_before - ally_hp_after,
+            10,
+            "ally inside Aura of Warding halves 20 fire → 10"
+        );
+        // Emitter is covered too — 20 fire → 10.
+        let pal_hp_before = e.actors[&pal].hitpoints();
+        DealDamage {
+            actor_id: pal,
+            amount: 20,
+            damage_type: DamageType::Fire,
+        }
+        .apply(&mut e);
+        let pal_hp_after = e.actors[&pal].hitpoints();
+        assert_eq!(
+            pal_hp_before - pal_hp_after,
+            10,
+            "paladin emitter also benefits from Aura of Warding"
+        );
+    }
+
+    /// Aura of Warding only halves spell-typical damage types. Physical
+    /// (bludgeoning / piercing / slashing) and poison damage pass
+    /// through at full amount so a nearby ally's greatsword swing
+    /// doesn't get accidentally shrunk.
+    #[test]
+    fn aura_of_warding_does_not_halve_physical_or_poison_damage() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::paladins::ANCIENTS_PALADIN_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let _pal = e
+            .instantiate_creature(&ANCIENTS_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        for dt in [
+            DamageType::Slashing,
+            DamageType::Piercing,
+            DamageType::Bludgeoning,
+            DamageType::Poison,
+        ] {
+            // Top the ally up before each iteration so damage lands from
+            // a known-good starting HP. `heal` clamps at max HP so a
+            // large-number top-up is safe regardless of prior state.
+            e.actors.get_mut(&ally).unwrap().heal(999);
+            let before = e.actors[&ally].hitpoints();
+            DealDamage {
+                actor_id: ally,
+                amount: 5,
+                damage_type: dt,
+            }
+            .apply(&mut e);
+            let after = e.actors[&ally].hitpoints();
+            assert_eq!(
+                before - after,
+                5,
+                "Aura of Warding must NOT halve {:?} damage",
+                dt
+            );
+        }
+    }
+
+    /// Aura of Warding is ally-only and range-gated: enemies in range
+    /// still eat full spell damage; allies far outside the 10ft
+    /// footprint-Chebyshev radius don't get the halving either.
+    #[test]
+    fn aura_of_warding_does_not_cover_enemies_or_distant_allies() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::paladins::ANCIENTS_PALADIN_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let _pal = e
+            .instantiate_creature(&ANCIENTS_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Fighter chassis on both far actors — enough HP to absorb the
+        // full 10-damage hit cleanly and read a stable delta.
+        let enemy_close = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 1, 0)
+            .unwrap();
+        let ally_far = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(25, 25), 0, 0)
+            .unwrap();
+        assert!(!e.is_in_aura_of_warding(enemy_close));
+        assert!(!e.is_in_aura_of_warding(ally_far));
+        // Adjacent enemy — full damage.
+        let before = e.actors[&enemy_close].hitpoints();
+        DealDamage {
+            actor_id: enemy_close,
+            amount: 10,
+            damage_type: DamageType::Fire,
+        }
+        .apply(&mut e);
+        let after = e.actors[&enemy_close].hitpoints();
+        assert_eq!(
+            before - after,
+            10,
+            "enemy in range still eats full spell damage — aura is ally-only"
+        );
+        // Distant ally — full damage.
+        let before = e.actors[&ally_far].hitpoints();
+        DealDamage {
+            actor_id: ally_far,
+            amount: 10,
+            damage_type: DamageType::Fire,
+        }
+        .apply(&mut e);
+        let after = e.actors[&ally_far].hitpoints();
+        assert_eq!(
+            before - after,
+            10,
+            "ally outside 10ft radius still eats full spell damage"
+        );
+    }
+
+    /// Aura of Warding respects the standard "one halving per damage
+    /// instance" rule: if the ally already has resistance / immunity
+    /// to the damage type through their own sources, the aura no-ops
+    /// and the existing pipeline halves once — never twice.
+    #[test]
+    fn aura_of_warding_does_not_stack_with_own_resistance() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::paladins::ANCIENTS_PALADIN_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::{DamageModifier, DamageType};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let _pal = e
+            .instantiate_creature(&ANCIENTS_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        // Give the ally template-side fire resistance so their own
+        // pipeline halves fire damage once. The aura should NOT layer
+        // an extra halving on top.
+        e.actors
+            .get_mut(&ally)
+            .unwrap()
+            .set_damage_modifier(DamageType::Fire, DamageModifier::Resistance);
+        let before = e.actors[&ally].hitpoints();
+        DealDamage {
+            actor_id: ally,
+            amount: 20,
+            damage_type: DamageType::Fire,
+        }
+        .apply(&mut e);
+        let after = e.actors[&ally].hitpoints();
+        assert_eq!(
+            before - after,
+            10,
+            "one halving only: template-side resistance already halved; aura no-ops"
+        );
+    }
+
+    /// A baseline paladin (non-Ancients) doesn't emit the Aura of
+    /// Warding — spell damage lands at full amount on nearby allies.
+    #[test]
+    fn baseline_paladin_does_not_emit_aura_of_warding() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        assert!(!e.is_in_aura_of_warding(pal));
+        assert!(!e.is_in_aura_of_warding(ally));
+        let before = e.actors[&ally].hitpoints();
+        DealDamage {
+            actor_id: ally,
+            amount: 10,
+            damage_type: DamageType::Fire,
+        }
+        .apply(&mut e);
+        let after = e.actors[&ally].hitpoints();
+        assert_eq!(
+            before - after,
+            10,
+            "no aura → full damage passes through"
+        );
+    }
+
+    /// 5e Barbarian **Persistent Rage** (lv15): the Rage condition
+    /// installs with a doubled `Rounds(20)` timer. Verifies the
+    /// baseline BARBARIAN_TEMPLATE (which ships the flag) picks up
+    /// the doubled window by casting Rage and reading the installed
+    /// timer.
+    #[test]
+    fn persistent_rage_doubles_rage_duration() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::RAGE;
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let barb = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&barb].has_persistent_rage());
+        // Grant the bonus action so Rage can pay its cost.
+        e.actors.get_mut(&barb).unwrap().give_resource(
+            crate::engine::side_effects::Resource::BonusAction,
+        );
+        let effects = RAGE.side_effects(&mut e, barb, None, None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert!(e.actors[&barb].has_condition(Condition::Raging));
+        // Timer should be Rounds(20), NOT Rounds(10).
+        let timer = e.actors[&barb]
+            .conditions()
+            .get(&Condition::Raging)
+            .copied()
+            .expect("Raging installed with a timer");
+        assert_eq!(
+            timer,
+            ConditionTimer::Rounds(20),
+            "Persistent Rage: Rage timer should double to Rounds(20)"
+        );
+    }
+
+    /// Without the Persistent Rage flag, Rage installs with the
+    /// baseline `Rounds(10)` timer. Verifies by patching the flag
+    /// off on a barbarian so the timer swap fallback fires.
+    #[test]
+    fn rage_installs_baseline_ten_round_timer_without_persistent_rage() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::RAGE;
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let barb = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Turn Persistent Rage off so the fallback path fires.
+        e.actors.get_mut(&barb).unwrap().set_persistent_rage(false);
+        e.actors.get_mut(&barb).unwrap().give_resource(
+            crate::engine::side_effects::Resource::BonusAction,
+        );
+        let effects = RAGE.side_effects(&mut e, barb, None, None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        let timer = e.actors[&barb]
+            .conditions()
+            .get(&Condition::Raging)
+            .copied()
+            .expect("Raging installed with a timer");
+        assert_eq!(
+            timer,
+            ConditionTimer::Rounds(10),
+            "without Persistent Rage: timer stays Rounds(10)"
         );
     }
 }

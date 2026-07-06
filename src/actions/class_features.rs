@@ -1087,13 +1087,34 @@ impl Action for Rage {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // 5e Barbarian **Persistent Rage** (lv15 class feature): the
+        // barbarian's rage no longer ends prematurely. Our engine's
+        // rage never *ends* early — it holds for a fixed timer — so we
+        // repurpose the flag as a duration bump, doubling the install
+        // window from Rounds(10) to Rounds(20). Matches the RAW
+        // "1 minute → practically-encounter-length" intent for any
+        // build that ships the flag on its template.
+        let has_persistent = encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_persistent_rage());
+        let timer = if has_persistent {
+            ConditionTimer::Rounds(20)
+        } else {
+            ConditionTimer::Rounds(10)
+        };
+        let log_line = if has_persistent {
+            "  rage: barbarian enters a battle frenzy (persistent rage — extended duration)."
+        } else {
+            "  rage: barbarian enters a battle frenzy."
+        };
         prime_self_condition(
             encounter,
             caster_id,
             RAGE_TAG,
             Condition::Raging,
-            ConditionTimer::Rounds(10),
-            "  rage: barbarian enters a battle frenzy.",
+            timer,
+            log_line,
         )
     }
 }

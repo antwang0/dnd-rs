@@ -58,6 +58,33 @@ pub const EXTENDED_SPELL_MIN_ROUNDS: u32 = 10;
 /// risking a runaway value on a future install that nudges past 100.
 pub const EXTENDED_SPELL_MAX_ROUNDS: u32 = 200;
 
+/// Damage types considered "spell-typical" for the purpose of the
+/// Ancients Paladin's **Aura of Warding** (RAW: "damage from spells").
+/// We approximate the RAW clause by pattern-matching on the closed set
+/// of magical damage types that show up on every canonical damage-
+/// dealing spell in the SRD. Physical types (bludgeoning / piercing /
+/// slashing) are excluded — they belong to weapon attacks and the
+/// nearby ally shouldn't get their greatsword swing accidentally
+/// halved. Poison is also excluded — RAW spells that deal poison
+/// damage (Poison Spray, Cloudkill, etc.) do exist, but the tag also
+/// covers monster poison bites where the aura shouldn't fire. We err
+/// toward the conservative "close but not RAW-exact" pick over an
+/// invasive `is_spell` plumbing pass through every `DealDamage` call
+/// site — the load-bearing coverage (fireball, lightning bolt, cone
+/// of cold, thunderwave, disintegrate, magic missile, sunburst, and
+/// every future evocation blast) all fall inside the set.
+pub const SPELL_TYPICAL_DAMAGE_TYPES: &[DamageType] = &[
+    DamageType::Acid,
+    DamageType::Cold,
+    DamageType::Fire,
+    DamageType::Force,
+    DamageType::Lightning,
+    DamageType::Necrotic,
+    DamageType::Psychic,
+    DamageType::Radiant,
+    DamageType::Thunder,
+];
+
 /// Walk `side_effects` and call `extend_duration` on each entry. Returns
 /// true if at least one entry doubled its timer (i.e. the cast carried
 /// an eligible long-duration install). Used by both the original
@@ -354,20 +381,56 @@ impl ApplicableSideEffect for DealDamage {
     fn apply(&self, ei: &mut EncounterInstance) {
         use crate::engine::types::DamageModifier;
 
-        let Some(actor) = ei.get_actor(self.actor_id) else {
+        // Snapshot the actor's name and self-reduction state before any
+        // encounter-wide lookups — the aura check below re-borrows `ei`
+        // immutably and can't coexist with a live `&mut actor`.
+        let (name, has_own_reduction) = {
+            let Some(actor) = ei.get_actor(self.actor_id) else {
+                ei.log(format!(
+                    "DealDamage: actor {} missing, ignoring",
+                    self.actor_id
+                ));
+                return;
+            };
+            (
+                actor.name().to_string(),
+                actor.has_own_typed_reduction(self.damage_type),
+            )
+        };
+
+        // 5e Ancients Paladin **Aura of Warding** (lv7): allies inside
+        // a paladin's 10-ft aura resist damage from spells. We
+        // approximate "damage from spells" with the closed set of
+        // spell-typical damage types (`SPELL_TYPICAL_DAMAGE_TYPES`);
+        // weapon-only physical types + poison are excluded so a
+        // greatsword swing through the bubble doesn't get accidentally
+        // halved. The halving runs BEFORE `effective_damage` so the
+        // standard "one halving per damage instance" rule still holds —
+        // if the target already halves / zeros / doubles the type via
+        // their own template / condition / item lanes, the aura no-ops
+        // and the existing resistance pipeline fires unchanged.
+        let aura_halves = SPELL_TYPICAL_DAMAGE_TYPES.contains(&self.damage_type)
+            && !has_own_reduction
+            && ei.is_in_aura_of_warding(self.actor_id);
+        let raw_amount = if aura_halves {
+            let halved = self.amount / 2;
             ei.log(format!(
-                "DealDamage: actor {} missing, ignoring",
-                self.actor_id
+                "  {} shrugs off spell magic (aura of warding: {} \u{2192} {} {:?})",
+                name, self.amount, halved, self.damage_type
             ));
+            halved
+        } else {
+            self.amount
+        };
+        let Some(actor) = ei.get_actor(self.actor_id) else {
             return;
         };
-        let name = actor.name().to_string();
 
         // Apply per-creature damage modifier (resistance / immunity /
         // vulnerability) before HP is touched. Logging the adjustment
         // makes it obvious why a hit did half / no damage.
         let modifier = actor.damage_modifier(self.damage_type);
-        let scaled = actor.effective_damage(self.amount, self.damage_type);
+        let scaled = actor.effective_damage(raw_amount, self.damage_type);
         let was_concentrating = actor.is_concentrating();
         let temp_before = actor.temp_hp();
         if let Some(m) = modifier {
@@ -378,7 +441,7 @@ impl ApplicableSideEffect for DealDamage {
             };
             ei.log(format!(
                 "  {} {} {:?} ({} \u{2192} {})",
-                name, label, self.damage_type, self.amount, scaled
+                name, label, self.damage_type, raw_amount, scaled
             ));
         }
         if scaled == 0 {
@@ -401,7 +464,7 @@ impl ApplicableSideEffect for DealDamage {
         } else {
             None
         };
-        let (outcome, landed) = actor.take_typed_damage(self.amount, self.damage_type);
+        let (outcome, landed) = actor.take_typed_damage(raw_amount, self.damage_type);
         // Regenerator suppression: flag the actor if this damage type is
         // on their suppressor list (troll vs acid/fire). The flag is
         // cleared at round_end after the heal is skipped.

@@ -273,7 +273,15 @@ pub static DEVOTION_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
 /// 'A' so the Ancients paladin shows up distinctly next to baseline 'P',
 /// Devotion 'D', and Vengeance 'V'.
 pub static ANCIENTS_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    // Two subclass features layer onto the baseline paladin envelope:
+    // Three subclass features layer onto the baseline paladin envelope:
+    //   - `has_aura_of_warding` (lv7): passive 10ft ally-aura that
+    //     halves spell-typical damage on nearby allies. Template-flag
+    //     lane, no charge. Read at `DealDamage::apply` via
+    //     `EncounterInstance::is_in_aura_of_warding`. Fires alongside
+    //     the paladin's other aura auto-scans (Aura of Protection at
+    //     lv6 for saves and Aura of Courage at lv10 for Frightened
+    //     suppression) so an Ancients paladin bubbles allies with
+    //     three overlapping aura effects simultaneously.
     //   - `has_natures_ward` (lv15): passive self-immunity to Charmed /
     //     Frightened installs. Template-flag lane, no charge.
     //   - `UNDYING_SENTINEL_TAG` (lv15): once-per-long-rest "drop to 1
@@ -290,6 +298,14 @@ pub static ANCIENTS_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
     CreatureTemplate {
         name: "Ancients Paladin",
         glyph: 'A',
+        // Aura of Warding — passive template flag, always on. The
+        // 10ft aura's spell-damage halving lives at
+        // `is_in_aura_of_warding` on the encounter and the halving
+        // pass in `DealDamage::apply`. Ships on the CR-1.5 template
+        // above its strict RAW lv7 gate for the same reason Nature's
+        // Ward / Undying Sentinel ride here — class templates target
+        // a balanced playable level, not lockstep PHB progression.
+        has_aura_of_warding: true,
         // Nature's Ward — passive template flag, always on.
         has_natures_ward: true,
         // Undying Sentinel — once-per-long-rest cheat-death. Layered
