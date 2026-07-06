@@ -88,6 +88,46 @@ const TYPED_RESISTANCE_CONDITIONS: &[(Condition, &[DamageType])] = &[
     ),
 ];
 
+/// Passive-feature-driven typed resistance table read by
+/// `effective_damage` and `has_own_typed_reduction`. Each row is
+/// `(flag_fn, damage_type)` — the flag_fn reads a racial / subclass
+/// passive-feature accessor on `ActorInstance`; when it returns true the
+/// actor takes half damage of `damage_type` per the same "one halving
+/// per damage instance" rule that template `damage_modifiers` and the
+/// `TYPED_RESISTANCE_CONDITIONS` cohort honor.
+///
+/// Sibling to `TYPED_RESISTANCE_CONDITIONS` (condition-driven typed
+/// resistance) but keyed off always-on template flags rather than held
+/// conditions — these fire regardless of any timer-based source.
+///
+/// Entries:
+///   - **Dwarven Resilience (Dwarf racial)**: poison resistance. The
+///     save-advantage clause lives on `compute_save_mode` — this row
+///     covers only the damage-halving half.
+///   - **Fiendish Resilience (Warlock Fiend Patron lv10)**: fire
+///     resistance. RAW: "Choose one damage type when you finish a short
+///     or long rest. You have resistance to that damage type until you
+///     choose a different one." We collapse the choice to a fixed Fire
+///     lock so the flag is a single template pick — thematic for the
+///     Fiend patron's fire-anchored flavor (Burning Hands / Fireball /
+///     Wall of Fire on the expanded spell list, Dark One's Blessing as
+///     the kill-triggered temp-HP well) and it drops the need for a
+///     "picked type" mutable slot on `ActorInstance`. Adding a "choose
+///     any of the ten damage types on short rest" surface later is a
+///     `Option<DamageType>` swap at this row and a matching short-rest
+///     hook.
+///
+/// A new passive typed resistance (Circle of the Moon Wild Shape
+/// per-form types, Bladeling's Painful Quills necrotic resistance,
+/// etc.) drops in here as a one-line entry rather than another
+/// hand-rolled `if dt == ... && self.has_...` branch in
+/// `effective_damage`.
+type PassiveTypedResistance = (fn(&ActorInstance) -> bool, DamageType);
+const PASSIVE_TYPED_RESISTANCES: &[PassiveTypedResistance] = &[
+    (|a| a.has_dwarven_resilience, DamageType::Poison),
+    (|a| a.has_fiendish_resilience, DamageType::Fire),
+];
+
 /// Broad condition-driven immunity table read by `dynamic_immunity_to`.
 /// Each row pairs a source condition with the set of downstream condition
 /// installs it suppresses. Purified / Otherworldly Guise both grant the
@@ -804,6 +844,29 @@ pub struct CreatureTemplate {
     /// A single flag drives both halves because RAW: both clauses share
     /// the same trait gate.
     pub has_dwarven_resilience: bool,
+    /// 5e Warlock Fiend Patron **Fiendish Resilience** (level 10).
+    /// Passive template flag: the warlock has resistance to fire damage.
+    /// RAW gives the warlock a rest-cycle choice ("choose one damage
+    /// type when you finish a short or long rest; you have resistance
+    /// to that damage type until you choose a different one") — we
+    /// collapse the choice to a fixed Fire lock so the flag is a single
+    /// template pick. Thematic for the Fiend patron's fire-anchored
+    /// flavor (Burning Hands / Fireball / Wall of Fire on the expanded
+    /// spell list, Dark One's Blessing as the kill-triggered temp-HP
+    /// well) and it drops the need for a "picked type" mutable slot on
+    /// `ActorInstance`.
+    ///
+    /// Read at the `effective_damage` chokepoint via the shared
+    /// `PASSIVE_TYPED_RESISTANCES` cohort — same lane as Dwarven
+    /// Resilience's poison-halving half. Ships on
+    /// `FIEND_WARLOCK_TEMPLATE` above the strict RAW lv10 gate for the
+    /// same reason Dark One's Own Luck (RAW lv6) and Dark One's
+    /// Blessing (RAW lv1) do — class templates target a balanced
+    /// playable level, not lockstep PHB progression. Adding a "choose
+    /// any of the ten damage types on short rest" surface later is an
+    /// `Option<DamageType>` swap at the cohort row plus a short-rest
+    /// hook — no signature changes upstream.
+    pub has_fiendish_resilience: bool,
     /// 5e Gnome Cunning (Rock / Forest / Deep Gnome racial): advantage on
     /// Intelligence, Wisdom, and Charisma saving throws against magic.
     /// We don't tag saves by "magic vs mundane" in this engine, so we
@@ -963,6 +1026,7 @@ impl CreatureTemplate {
             has_aura_of_warding: false,
             has_persistent_rage: false,
             has_dwarven_resilience: false,
+            has_fiendish_resilience: false,
             has_gnome_cunning: false,
             draconic_ancestry: None,
             sorcery_points: 0,
@@ -1368,6 +1432,9 @@ pub struct ActorInstance {
     has_persistent_rage: bool,
     /// 5e Dwarven Resilience. See `CreatureTemplate` docs.
     has_dwarven_resilience: bool,
+    /// 5e Warlock Fiend Patron Fiendish Resilience (level 10). Passive
+    /// fire-damage resistance. See `CreatureTemplate` docs.
+    has_fiendish_resilience: bool,
     /// 5e Gnome Cunning. See `CreatureTemplate` docs.
     has_gnome_cunning: bool,
     /// 5e Dragonborn Draconic Ancestry damage type, if any. Drives the
@@ -1529,6 +1596,7 @@ impl ActorInstance {
             has_aura_of_warding: ct.has_aura_of_warding,
             has_persistent_rage: ct.has_persistent_rage,
             has_dwarven_resilience: ct.has_dwarven_resilience,
+            has_fiendish_resilience: ct.has_fiendish_resilience,
             has_gnome_cunning: ct.has_gnome_cunning,
             draconic_ancestry: ct.draconic_ancestry,
             sorcery_points: ct.sorcery_points,
@@ -1981,6 +2049,16 @@ impl ActorInstance {
         self.has_dwarven_resilience
     }
 
+    /// 5e Warlock Fiend Patron **Fiendish Resilience** (level 10) —
+    /// passive fire-damage resistance. Read by `effective_damage`
+    /// (resistance clause via `PASSIVE_TYPED_RESISTANCES`). RAW's rest-
+    /// cycle choice of damage type is collapsed to a fixed Fire lock
+    /// on this flag — see `CreatureTemplate::has_fiendish_resilience`
+    /// for the rationale.
+    pub fn has_fiendish_resilience(&self) -> bool {
+        self.has_fiendish_resilience
+    }
+
     /// 5e Gnome Cunning — advantage on INT / WIS / CHA saves vs magic.
     /// Approximated as advantage on every INT / WIS / CHA save (saves
     /// rarely originate from non-magical sources in this engine).
@@ -2383,13 +2461,14 @@ impl ActorInstance {
         // Template-level modifier (resistance / vulnerability) — the
         // immunity case is already handled above.
         let modifier = self.damage_modifiers.get(&dt).copied();
-        // 5e Dwarven Resilience: resistance to poison damage. Folds into
-        // the same template-resistance lane below so the 5e "only one
-        // halving" rule still holds when a creature has resilience AND
-        // a condition-based halver active (e.g. a dwarf barbarian raging
+        // Passive-feature typed resistance cohort (Dwarven Resilience →
+        // Poison, Fiendish Resilience → Fire, ...). Folds into the same
+        // template-resistance lane below so the 5e "only one halving"
+        // rule still holds when a creature has one of these AND a
+        // condition-based halver active (e.g. a dwarf barbarian raging
         // wouldn't get double resistance to poison — only one /2).
         let template_resisted = matches!(modifier, Some(DamageModifier::Resistance))
-            || (dt == DamageType::Poison && self.has_dwarven_resilience);
+            || self.has_passive_typed_resistance(dt);
         // Start with raw and apply vulnerability / template resistance.
         let mut amt = match modifier {
             Some(DamageModifier::Vulnerability) => raw.saturating_mul(2),
@@ -2516,9 +2595,24 @@ impl ActorInstance {
         self.damage_modifiers.contains_key(&dt)
             || self.has_condition_resistance(dt)
             || self.item_resistance_to(dt)
-            || (dt == DamageType::Poison && self.has_dwarven_resilience)
+            || self.has_passive_typed_resistance(dt)
             // Immunity (any source) short-circuits at the shared helper.
             || self.is_immune_to_damage_type(dt)
+    }
+
+    /// True iff the actor holds any passive-feature-driven typed
+    /// resistance to damage of type `dt`. Walks the shared
+    /// `PASSIVE_TYPED_RESISTANCES` cohort — each row is
+    /// `(flag_fn, damage_type)`. Read by `effective_damage` (folds
+    /// into the template-resistance lane) and `has_own_typed_reduction`
+    /// (the "does this actor already scale this type?" gate for Aura
+    /// of Warding stacking). A new passive typed resistance drops in
+    /// as a one-line cohort entry rather than another hand-rolled
+    /// `if dt == ... && self.has_...` branch here.
+    fn has_passive_typed_resistance(&self, dt: DamageType) -> bool {
+        PASSIVE_TYPED_RESISTANCES
+            .iter()
+            .any(|(flag, ty)| *ty == dt && flag(self))
     }
 
     /// Test-only setter for an actor's per-type damage modifier. Lets tests

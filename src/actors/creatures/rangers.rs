@@ -1,5 +1,5 @@
 use crate::actions::class_features::{
-    COLOSSUS_SLAYER_TAG, FOE_SLAYER_TAG, MULTIATTACK_DEFENSE_TAG,
+    COLOSSUS_SLAYER_TAG, FOE_SLAYER_TAG, MULTIATTACK_DEFENSE_TAG, VANISH, VANISH_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGBOW, SCIMITAR};
@@ -86,6 +86,22 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     locks out future ones for the duration.
     actions.push(&*crate::actions::spells::SILENCE);
     actions.push(&*crate::actions::spells::FREEDOM_OF_MOVEMENT);
+    // 5e Ranger **Vanish** (class feature, level 14). Bonus-action Hide
+    // gated on `VANISH_TAG` — same one-shot attack-advantage rider as
+    // the baseline Hide action, at the cheaper bonus-action cost.
+    // Signature "kite-and-vanish" tell that composes with the ranger's
+    // Hunter's Mark + longbow loop: mark a target, plink, then vanish
+    // as a bonus action so the next arrow lands with advantage
+    // (Hidden-attacker rider). Distinct from CunningHide (Rogue) —
+    // both are bonus-action Hides, but ship on different chassis so a
+    // multiclass rogue/ranger doesn't accidentally double-fire the
+    // action. The RAW "can't be tracked by nonmagical means" clause is
+    // a narrative rider with no combat surface — no wiring needed.
+    // Ships on the CR-1 (level-5) baseline template above its strict
+    // RAW lv14 gate for the same reason Foe Slayer (lv20) does —
+    // class templates target a balanced playable level, not lockstep
+    // PHB progression.
+    actions.push(&*VANISH);
     CreatureTemplate {
         name: "Ranger",
         glyph: 'R',
@@ -147,7 +163,13 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // capstone lives on the baseline template so the subclass
         // (Hunter Ranger) picks it up via `..RANGER_TEMPLATE.clone()`
         // alongside the Hunter's Prey / Defensive Tactics riders.
-        features: HashSet::from([FOE_SLAYER_TAG]),
+        //
+        // 5e Ranger **Vanish** (lv14 class feature): gates the paired
+        // `VANISH` bonus-action Hide action. See the action pushed
+        // above for the full RAW envelope; the tag lives here so a
+        // future non-Hunter subclass template (Beast Master, Gloom
+        // Stalker, etc.) inherits it for free via `..RANGER_TEMPLATE.clone()`.
+        features: HashSet::from([FOE_SLAYER_TAG, VANISH_TAG]),
         ..CreatureTemplate::defaults()
     }
 });
@@ -203,6 +225,13 @@ pub static HUNTER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
             // Ranger drops the +WIS-mod once-per-turn damage rider
             // alongside the Hunter-specific Colossus Slayer.
             FOE_SLAYER_TAG,
+            // 5e Ranger Vanish (lv14) — same "override the whole
+            // features set" caveat: re-listed here so the Hunter
+            // ranger's `VANISH` action (inherited via the baseline
+            // action list) still passes its `has_passive_feature`
+            // gate. Falling back on the baseline copy would leave
+            // the paired action gated off silently.
+            VANISH_TAG,
         ]),
         // 5e Hunter Ranger Superior Hunter's Defense (lv15, "Evasion"
         // option): on DEX saves for half damage, take 0 on a pass and

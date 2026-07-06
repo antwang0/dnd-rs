@@ -10719,6 +10719,151 @@ mod tests {
         );
     }
 
+    /// 5e Warlock Fiend Patron **Fiendish Resilience** (lv10) — passive
+    /// fire-damage resistance. Ships on `FIEND_WARLOCK_TEMPLATE` via
+    /// the `has_fiendish_resilience` flag. Read at `effective_damage`
+    /// through the shared `PASSIVE_TYPED_RESISTANCES` cohort — same
+    /// lane as Dwarven Resilience's poison-halving half.
+    #[test]
+    fn fiendish_resilience_halves_fire_damage() {
+        use crate::actors::creatures::warlocks::{FIEND_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let fiend = e
+            .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&fiend].has_fiendish_resilience());
+        assert!(!e.actors[&baseline].has_fiendish_resilience());
+        // 20 fire → 10 (halved by fiendish resilience) on the Fiend warlock.
+        assert_eq!(
+            e.actors[&fiend].effective_damage(20, DamageType::Fire),
+            10,
+            "fiend warlock halves fire damage"
+        );
+        // Baseline warlock (no patron) eats the full 20 fire.
+        assert_eq!(
+            e.actors[&baseline].effective_damage(20, DamageType::Fire),
+            20,
+            "baseline warlock takes full fire damage"
+        );
+        // Other damage types (cold, poison, radiant) still take full
+        // damage on the Fiend warlock — the RAW rest-cycle choice is
+        // fixed to Fire on this template.
+        assert_eq!(
+            e.actors[&fiend].effective_damage(20, DamageType::Cold),
+            20,
+        );
+        assert_eq!(
+            e.actors[&fiend].effective_damage(20, DamageType::Poison),
+            20,
+        );
+        assert_eq!(
+            e.actors[&fiend].effective_damage(20, DamageType::Radiant),
+            20,
+        );
+    }
+
+    /// The 5e "one halving per damage instance" rule: a Fiend warlock
+    /// concentrating on Blade Ward (blanket resistance for the round)
+    /// should still take exactly one /2 halving on incoming Fire —
+    /// not double-dip on Fiendish Resilience (template flag) AND the
+    /// concentration-resistance lane. Verifies the shared cohort's
+    /// `template_resisted` short-circuit fires cleanly.
+    #[test]
+    fn fiendish_resilience_does_not_stack_with_condition_resistance() {
+        use crate::actors::creatures::warlocks::FIEND_WARLOCK_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let fiend = e
+            .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Layer a Raging condition (physical-trio resistance) — irrelevant
+        // to the fire lane, but confirms the cohort routing works.
+        e.actors
+            .get_mut(&fiend)
+            .unwrap()
+            .add_condition(Condition::DamageResistant, ConditionTimer::Rounds(1));
+        // Both halvings would predict 20 → 5 if stacking; RAW predicts
+        // 20 → 10 (one halving only).
+        assert_eq!(
+            e.actors[&fiend].effective_damage(20, DamageType::Fire),
+            10,
+            "fiendish resilience and condition resistance stack at most once"
+        );
+    }
+
+    /// The shared `PASSIVE_TYPED_RESISTANCES` cohort makes both dwarven
+    /// resilience (poison) and fiendish resilience (fire) reachable
+    /// through `has_own_typed_reduction`. A Fiend warlock adjacent to
+    /// an Ancients paladin's Aura of Warding should have the aura
+    /// no-op on incoming Fire since the warlock already scales the
+    /// type — mirrors the "own resistance short-circuits the aura"
+    /// gate that dwarven resilience already exercised on Poison.
+    #[test]
+    fn fiendish_resilience_registers_own_typed_reduction() {
+        use crate::actors::creatures::warlocks::FIEND_WARLOCK_TEMPLATE;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let fiend = e
+            .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&fiend].has_own_typed_reduction(DamageType::Fire),
+            "fiend warlock's Fire reduction shows up in the own-typed cohort"
+        );
+        assert!(
+            !e.actors[&fiend].has_own_typed_reduction(DamageType::Cold),
+            "cold isn't reduced — cohort is type-scoped"
+        );
+    }
+
+    /// End-to-end: a Fiend warlock adjacent to an Ancients paladin's
+    /// Aura of Warding should still see exactly one /2 halving on
+    /// incoming Fireball damage. The aura reads
+    /// `has_own_typed_reduction` and no-ops since Fiendish Resilience
+    /// already handles Fire — locking down the "one halving per
+    /// damage instance" rule across the two features.
+    #[test]
+    fn fiendish_resilience_does_not_stack_with_aura_of_warding() {
+        use crate::actors::creatures::paladins::ANCIENTS_PALADIN_TEMPLATE;
+        use crate::actors::creatures::warlocks::FIEND_WARLOCK_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let _pal = e
+            .instantiate_creature(&ANCIENTS_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let fiend = e
+            .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        // Aura reaches the fiend (allied, within 10 ft). Fiendish
+        // Resilience registers on the own-typed cohort, so the aura
+        // no-ops on Fire and only Fiendish Resilience's halving
+        // fires.
+        assert!(e.is_in_aura_of_warding(fiend));
+        let before = e.actors[&fiend].hitpoints();
+        DealDamage {
+            actor_id: fiend,
+            amount: 20,
+            damage_type: DamageType::Fire,
+        }
+        .apply(&mut e);
+        let after = e.actors[&fiend].hitpoints();
+        assert_eq!(
+            before - after,
+            10,
+            "one halving only: fiendish resilience already halved; aura no-ops"
+        );
+    }
+
     /// 5e Sorcerer Empowered Spell metamagic: priming the condition then
     /// calling `roll_empowered` rerolls dice that came up at 1 or 2 and
     /// consumes the prime. Drive with a deterministic seed sweep to
@@ -24904,6 +25049,71 @@ mod tests {
         assert!(cost.contains(&Resource::BonusAction));
     }
 
+    /// 5e Ranger **Vanish** (lv14 class feature) — bonus-action Hide
+    /// gated on `VANISH_TAG`. Mirrors the Cunning Hide shape: same
+    /// `Hidden` install, same `BonusAction` cost, but the caster's
+    /// `has_passive_feature` gate short-circuits for a template that
+    /// doesn't ship the tag. Verifies:
+    ///   - RANGER_TEMPLATE (ships VANISH_TAG) passes the validate gate.
+    ///   - A ranger firing Vanish gets Hidden with a BonusAction cost.
+    ///   - A rogue (no VANISH_TAG) fails the validate gate — so an
+    ///     accidental multiclass action-list leak wouldn't fire.
+    #[test]
+    fn vanish_applies_hidden_gated_on_vanish_tag() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::VANISH;
+        use crate::actors::creatures::rangers::RANGER_TEMPLATE;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let ranger = e
+            .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        assert!(
+            VANISH.custom_validate_input(&e, ranger, None, None, None),
+            "ranger ships VANISH_TAG — validate passes"
+        );
+        assert!(
+            !VANISH.custom_validate_input(&e, rogue, None, None, None),
+            "rogue lacks VANISH_TAG — validate rejects"
+        );
+        let effects = VANISH.side_effects(&mut e, ranger, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&ranger].has_condition(Condition::Hidden));
+        let cost = VANISH.cost(&e, ranger, None, None, None);
+        assert!(cost.contains(&Resource::BonusAction));
+    }
+
+    /// The Hunter subclass overrides the ranger's `features` set
+    /// entirely (rather than extending it), so this test locks in that
+    /// VANISH_TAG rides the override — otherwise a Hunter ranger would
+    /// silently lose Vanish even though the paired action is still in
+    /// their action list.
+    #[test]
+    fn hunter_ranger_ships_vanish_tag() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{VANISH, VANISH_TAG};
+        use crate::actors::creatures::rangers::HUNTER_RANGER_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let hunter = e
+            .instantiate_creature(&HUNTER_RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&hunter].has_passive_feature(VANISH_TAG),
+            "hunter ranger inherits VANISH_TAG"
+        );
+        assert!(
+            VANISH.custom_validate_input(&e, hunter, None, None, None),
+            "hunter ranger can fire Vanish"
+        );
+    }
+
     /// Fighter Indomitable: setting the pending flag and watching
     /// `roll_save` re-roll once on a fail. We force a fail by using a
     /// high DC; the marker is consumed regardless of whether the
@@ -34494,6 +34704,150 @@ mod tests {
             melee_hit_seen,
             "expected at least one melee hit in 120 attempts"
         );
+    }
+
+    /// 5e Uncanny Dodge (Rogue 5) sight gate — post-refactor: the RAW
+    /// "attacker you can see" clause routes through
+    /// `viewer_can_see`, so an Invisible attacker (illusion-concealed
+    /// cohort) doesn't trigger the rogue's reaction charge even
+    /// though the target isn't Blinded. Pre-refactor gated only on
+    /// `!Blinded`, letting the reaction burn against an Invisible
+    /// fighter every swing regardless of RAW sight.
+    #[test]
+    fn uncanny_dodge_does_not_fire_against_invisible_attacker() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::attack::{AttackParams, resolve_attack};
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let attacker = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 1, 0)
+            .unwrap();
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(5, 3), 0, 0)
+            .unwrap();
+        // Cloak the attacker in Invisible — an illusion-concealed
+        // cohort member — so `viewer_can_see(rogue, attacker)` returns
+        // false. The rogue holds no piercing sense (Blindsense is a
+        // 10-ft flag; the attacker sits 2 tiles away which is within
+        // range, so we ship the setup with the ranged 5-tile gap
+        // below to avoid the piercer).
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Rounds(5));
+        // Move the attacker outside the rogue's Blindsense's 10-ft
+        // envelope so the sight gate genuinely rejects.
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .set_location(Coordinate::new(12, 12));
+        e.actors
+            .get_mut(&rogue)
+            .unwrap()
+            .set_location(Coordinate::new(3, 3));
+        assert!(!e.viewer_can_see(rogue, attacker));
+        // Force many rolls — every hit should leave the reaction
+        // intact since the sight gate rejects Uncanny Dodge.
+        let mut hit_seen = false;
+        for _ in 0..200 {
+            e.actors.get_mut(&rogue).unwrap().reset_for_new_round();
+            let max = e.actors[&rogue].max_hitpoints();
+            e.actors.get_mut(&rogue).unwrap().heal(max);
+            assert!(e.actors[&rogue].has_reaction());
+            let starting_hp = e.actors[&rogue].hitpoints();
+            let effects = resolve_attack(
+                &mut e,
+                AttackParams {
+                    caster_id: attacker,
+                    target_id: rogue,
+                    action_name: "longsword",
+                    attack_bonus: 8,
+                    damage_dice: Dice::new(1, 8),
+                    damage_bonus: 3,
+                    damage_type: DamageType::Slashing,
+                    is_melee: false,
+                    long_range: None,
+                    is_spell: false,
+                },
+            );
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e.actors[&rogue].hitpoints() < starting_hp {
+                hit_seen = true;
+                assert!(
+                    e.actors[&rogue].has_reaction(),
+                    "Uncanny Dodge must NOT fire when the rogue can't see the attacker"
+                );
+                break;
+            }
+        }
+        assert!(hit_seen, "expected at least one hit in 200 attempts");
+    }
+
+    /// 5e Monk Deflect Missiles sight gate — post-refactor: same
+    /// `viewer_can_see` routing as Uncanny Dodge. A Blinded monk
+    /// shouldn't burn their deflect charge on incoming arrows RAW,
+    /// and an Invisible archer shouldn't provoke the deflect either.
+    /// Sample the Blinded path here to complement the Uncanny Dodge
+    /// invisible-attacker path above — both gates now honor the
+    /// symmetric sight cohort.
+    #[test]
+    fn deflect_missiles_does_not_fire_when_monk_is_blinded() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::monks::MONK_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::attack::{AttackParams, resolve_attack};
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let archer = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let monk = e
+            .instantiate_creature(&MONK_TEMPLATE, Coordinate::new(10, 2), 0, 0)
+            .unwrap();
+        // Blind the monk — `viewer_can_see(monk, archer)` returns
+        // false immediately at the viewer check.
+        e.actors
+            .get_mut(&monk)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Rounds(5));
+        assert!(!e.viewer_can_see(monk, archer));
+        let mut hit_seen = false;
+        for _ in 0..200 {
+            e.actors.get_mut(&monk).unwrap().reset_for_new_round();
+            let max = e.actors[&monk].max_hitpoints();
+            e.actors.get_mut(&monk).unwrap().heal(max);
+            assert!(e.actors[&monk].has_reaction());
+            let starting_hp = e.actors[&monk].hitpoints();
+            let effects = resolve_attack(
+                &mut e,
+                AttackParams {
+                    caster_id: archer,
+                    target_id: monk,
+                    action_name: "shortbow",
+                    attack_bonus: 10,
+                    damage_dice: Dice::new(1, 6),
+                    damage_bonus: 2,
+                    damage_type: DamageType::Piercing,
+                    is_melee: false,
+                    long_range: None,
+                    is_spell: false,
+                },
+            );
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if e.actors[&monk].hitpoints() < starting_hp {
+                hit_seen = true;
+                assert!(
+                    e.actors[&monk].has_reaction(),
+                    "Deflect Missiles must NOT fire when the monk is blinded"
+                );
+                break;
+            }
+        }
+        assert!(hit_seen, "expected at least one hit in 200 attempts");
     }
 
     #[test]

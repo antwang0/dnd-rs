@@ -511,6 +511,25 @@ impl Action for CunningDisengage {
 
 pub static CUNNING_DISENGAGE: LazyLock<CunningDisengage> = LazyLock::new(|| CunningDisengage {});
 
+/// Shared side-effects payload for any bonus-action Hide feature —
+/// installs the `Hidden` condition on the caster with a Permanent
+/// timer (cleared on the caster's next attack via
+/// `clear_attack_advantage_riders`). Sibling to Cunning Hide (Rogue
+/// Cunning Action) and Vanish (Ranger lv14) — both classes get a
+/// "bonus-action Hide" pick that RAW-agnostically drops the same
+/// one-shot attack-advantage rider on the holder. Extracted so a new
+/// bonus-action Hide feature (Skulker feat, a hypothetical future
+/// Shadow Monk pick) lands as a one-line action `side_effects`
+/// delegating here rather than another hand-copied `ApplyCondition`
+/// literal.
+pub fn bonus_action_hide_effects(caster_id: usize) -> Vec<Box<dyn ApplicableSideEffect>> {
+    vec![Box::new(ApplyCondition {
+        actor_id: caster_id,
+        condition: Condition::Hidden,
+        timer: ConditionTimer::Permanent,
+    })]
+}
+
 /// Rogue Cunning Hide — bonus-action Hide. Same condition as the regular
 /// Hide action (Hidden flag for one-shot attack-advantage), at the
 /// cheaper bonus-action cost. Keeps the rogue's signature cunning-action
@@ -555,16 +574,103 @@ impl Action for CunningHide {
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         // Hidden lasts until the rogue's next attack — same one-shot
         // attack-advantage rider as the Hide Action. Tracked via the
-        // existing `Hidden` condition.
-        vec![Box::new(ApplyCondition {
-            actor_id: caster_id,
-            condition: Condition::Hidden,
-            timer: ConditionTimer::Permanent,
-        })]
+        // existing `Hidden` condition. Routed through the shared
+        // `bonus_action_hide_effects` helper so any future bonus-
+        // action Hide feature (Vanish, Skulker feat, ...) lands as a
+        // one-line delegation.
+        bonus_action_hide_effects(caster_id)
     }
 }
 
 pub static CUNNING_HIDE: LazyLock<CunningHide> = LazyLock::new(|| CunningHide {});
+
+/// 5e Ranger **Vanish** (class feature, level 14) — feature tag. Passive
+/// gate on the paired `VANISH` action, which is a bonus-action Hide
+/// (same one-shot attack-advantage rider as CunningHide / the baseline
+/// Hide action) available to any ranger regardless of subclass. RAW
+/// also states "you can't be tracked by nonmagical means" which is a
+/// pure narrative clause with no combat surface — no mechanical wiring
+/// needed. Ships as a `has_passive_feature` tag rather than an
+/// action-list-only pick so future features that check for "does this
+/// actor have Vanish?" (e.g. an anti-tracker override in a survival
+/// mini-game) can route through one lookup.
+///
+/// Sibling to `CUNNING_ACTION_TAG` on the tag lane — both are
+/// permanent passive class features with no per-rest charge. The
+/// action gates on this tag via `feature_available` inside
+/// `custom_validate_input` so a template that doesn't carry the tag
+/// can't accidentally fire it if the action leaks onto its action list.
+pub const VANISH_TAG: &str = "ranger.vanish";
+
+/// Ranger Vanish — bonus-action Hide gated on the `VANISH_TAG` passive
+/// feature. Same one-shot attack-advantage rider as Cunning Hide, at
+/// the cheaper bonus-action cost. Ships on `RANGER_TEMPLATE` (and by
+/// inheritance on `HUNTER_RANGER_TEMPLATE`); the RAW "can't be tracked
+/// by nonmagical means" clause is a pure narrative rider with no
+/// mechanical surface in the combat engine.
+pub struct Vanish {}
+
+impl Action for Vanish {
+    fn name(&self) -> &str {
+        "vanish"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["vnsh", "rvan"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Gate on the ranger having the VANISH_TAG passive — the
+        // action only fires for a template that ships the tag. Actors
+        // without the tag never see the action's cost / effect surface.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_passive_feature(VANISH_TAG))
+    }
+
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // Routed through the shared `bonus_action_hide_effects` helper
+        // so any tweak to the Hide install lands once across every
+        // bonus-action-Hide caller (Cunning Hide, Vanish, ...).
+        bonus_action_hide_effects(caster_id)
+    }
+}
+
+pub static VANISH: LazyLock<Vanish> = LazyLock::new(|| Vanish {});
 
 /// 5e Tasha's Rogue **Steady Aim** (level 3 alternate Cunning Action).
 /// Bonus action: grant the rogue advantage on their next attack roll this

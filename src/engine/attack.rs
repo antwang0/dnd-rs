@@ -535,14 +535,22 @@ pub fn resolve_attack_outcome(
     }
     // 5e Uncanny Dodge (Rogue 5): when hit by an attack, spend reaction
     // to halve the damage. Only fires if the target has the feature, a
-    // reaction available, and can see the attacker (we approximate sight
-    // as "not Blinded"). `has_reaction()` covers Unconscious /
-    // Incapacitated / Stunned / Paralyzed / etc. via the shared
-    // `blocks_action_economy` cohort — no need to re-check them here.
+    // reaction available, and can see the attacker. The RAW "attacker
+    // you can see" clause routes through the shared `viewer_can_see`
+    // helper — covers Blinded on the target AND the attacker being
+    // illusion-concealed (Invisible / Blurred / Displaced) without the
+    // target holding a piercing sense. Pre-refactor this checked only
+    // `!Blinded`, letting an Invisible attacker still draw the Uncanny
+    // Dodge reaction charge even though RAW the rogue can't see them.
+    // `has_reaction()` covers Unconscious / Incapacitated / Stunned /
+    // Paralyzed / etc. via the shared `blocks_action_economy` cohort —
+    // no need to re-check them here. Same gate shape now used by
+    // Warding Flare (Light Cleric lv1 reaction) — both features
+    // consume the reaction on trigger only when the sight test passes.
     if let Some(target) = encounter.actors.get(&p.target_id)
         && target.has_uncanny_dodge()
         && target.has_reaction()
-        && !target.has_condition(Condition::Blinded)
+        && encounter.viewer_can_see(p.target_id, p.caster_id)
     {
         damage /= 2;
         encounter.log(format!("  uncanny dodge: damage halved to {}", damage));
@@ -562,14 +570,17 @@ pub fn resolve_attack_outcome(
     // (RAW order doesn't matter since both are independent reactions).
     // `has_reaction()` handles the Unconscious / Incapacitated /
     // Stunned / Paralyzed lockouts via the shared `blocks_action_economy`
-    // cohort — the sight approximation (`!Blinded`) is the only
-    // condition-side gate that stays explicit here.
+    // cohort. The sight gate routes through `viewer_can_see` — same
+    // shape as Uncanny Dodge above — so an Invisible archer can't
+    // trigger a monk's deflect reaction charge either. RAW ties
+    // Deflect Missiles to catching the projectile mid-air, which
+    // conventionally requires seeing it coming.
     if !p.is_melee
         && damage > 0
         && let Some(target) = encounter.actors.get(&p.target_id)
         && target.has_deflect_missiles()
         && target.has_reaction()
-        && !target.has_condition(Condition::Blinded)
+        && encounter.viewer_can_see(p.target_id, p.caster_id)
     {
         let dex_mod = target.ability_modifier(crate::engine::types::AbilityScoreType::Dexterity);
         let level = target.level() as i32;

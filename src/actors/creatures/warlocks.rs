@@ -290,6 +290,23 @@ pub static FIEND_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         name: "Fiend Warlock",
         glyph: 'F',
         features,
+        // 5e Warlock Fiend Patron **Fiendish Resilience** (level 10) —
+        // passive template flag. RAW's rest-cycle "choose one damage
+        // type" surface collapses to a fixed Fire lock (thematic for
+        // the Fiend patron's fire-heavy identity — Burning Hands /
+        // Fireball / Wall of Fire on the expanded spell list, Dark
+        // One's Blessing as the kill-triggered temp-HP well). Read at
+        // the shared `PASSIVE_TYPED_RESISTANCES` cohort in
+        // `effective_damage` next to Dwarven Resilience's poison-
+        // halving half; folds into the standard "one halving per
+        // damage instance" rule so a Fiend warlock hit by Fireball
+        // takes /2 damage cleanly even if they were also concentrating
+        // on Blade Ward (which grants a blanket resistance the folder
+        // would already have caught). Ships on the CR-4 template above
+        // its strict RAW lv10 gate for the same reason Dark One's Own
+        // Luck (RAW lv6) does — class templates target a balanced
+        // playable level, not lockstep PHB progression.
+        has_fiendish_resilience: true,
         ..WARLOCK_TEMPLATE.clone()
     }
 });
