@@ -1,7 +1,8 @@
 use crate::actions::class_features::{
     CLEANSING_TOUCH, CLEANSING_TOUCH_TAG, DIVINE_SMITE, FANATICAL_FOCUS_TAG,
     IMPROVED_DIVINE_SMITE_TAG, LAY_ON_HANDS, LAY_ON_HANDS_TAG, SACRED_WEAPON, SACRED_WEAPON_TAG,
-    UNDYING_SENTINEL_TAG, VOW_OF_ENMITY, VOW_OF_ENMITY_TAG,
+    TURN_THE_FAITHLESS, TURN_THE_FAITHLESS_TAG, UNDYING_SENTINEL_TAG, VOW_OF_ENMITY,
+    VOW_OF_ENMITY_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GREATSWORD;
@@ -220,13 +221,27 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 /// `PALADIN_TEMPLATE` (baseline). Glyph 'D' so the Devotion paladin
 /// shows up distinctly next to Vengeance 'V' and baseline 'P'.
 pub static DEVOTION_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Paladin envelope wholesale
+    // and layer on Devotion-specific features:
+    //   - `has_aura_of_devotion` (lv7): passive 10ft ally aura suppressing
+    //     Charmed installs. Read at the flag-driven immunity table so
+    //     adjacent allies (and the paladin themselves) bounce Charm
+    //     Person / Suggestion / Dominate Person installs.
+    //   - `TURN_THE_FAITHLESS_TAG` (lv3 CD): once-per-short-rest 30ft
+    //     WIS-save burst that Frightens fey / fiend on fail. Ships as a
+    //     paired action + feature charge; the shared `resolve_turn_burst`
+    //     helper drives both this and Turn Undead so save/log rule
+    //     changes land once.
+    let mut actions = PALADIN_TEMPLATE.actions.clone();
+    actions.push(&*TURN_THE_FAITHLESS);
+    let mut features = PALADIN_TEMPLATE.features.clone();
+    features.insert(TURN_THE_FAITHLESS_TAG);
     CreatureTemplate {
         name: "Devotion Paladin",
         glyph: 'D',
-        // Aura of Devotion is the entire subclass surface here — a
-        // passive template flag rather than an added action, so the
-        // subclass-of pattern collapses to name + glyph + the aura flag.
         has_aura_of_devotion: true,
+        actions,
+        features,
         ..PALADIN_TEMPLATE.clone()
     }
 });

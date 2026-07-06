@@ -59,6 +59,19 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // refresh path picks it up alongside Guided Strike / Radiance of
     // the Dawn / Warding Flare.
     FANATICAL_FOCUS_TAG,
+    // 5e Fiend Warlock level-6 subclass feature — Dark One's Own Luck.
+    // Auto-fire "add 1d10 to a failed save" gate. RAW: refreshes on a
+    // short or long rest — sibling to Fanatical Focus's reroll shape
+    // on the failed-save recovery lane, but adds a die to the total
+    // rather than re-rolling the d20.
+    DARK_ONES_OWN_LUCK_TAG,
+    // 5e Devotion Paladin level-3 subclass Channel Divinity — Turn the
+    // Faithless. Fey / fiend within 30ft roll a WIS save vs the
+    // paladin's spell save DC; on fail they're Frightened for 10 rounds
+    // (1 minute RAW). Sibling to Turn Undead — RAW Channel Divinity
+    // refreshes on short rest, same as Guided Strike / Radiance of the
+    // Dawn.
+    TURN_THE_FAITHLESS_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -2656,11 +2669,123 @@ pub static BARDIC_INSPIRATION: LazyLock<BardicInspiration> = LazyLock::new(|| Ba
 /// Class-feature tag for Cleric Channel Divinity: Turn Undead.
 pub const TURN_UNDEAD_TAG: &str = "cleric.turn_undead";
 
+/// Class-feature tag for the Devotion Paladin's level-3 subclass
+/// Channel Divinity: **Turn the Faithless**. Mechanically identical to
+/// Turn Undead (30ft WIS-save burst → Frightened on fail) except the
+/// creature-type filter is fey / fiend rather than undead. Once per
+/// short rest; refreshes via `SHORT_REST_FEATURES`.
+///
+/// Distinct from the shared Cleric Turn Undead in three ways:
+///   1. **Class** — rides on the paladin's spell save DC (CHA-based)
+///      rather than the cleric's (WIS-based). RAW: the Turn CD lane
+///      always keys off the caster's spellcasting ability, so this
+///      matches per-caster.
+///   2. **Creature-type filter** — RAW targets any celestial, elemental,
+///      fey, fiend, or undead the paladin can see. We narrow to fey /
+///      fiend so the paladin has a distinct-from-cleric target set;
+///      celestials are RAW allies of the Devotion oath (a Turn against
+///      them is edge-case) and elementals / undead overlap with other
+///      lanes (Turn Undead for undead, Protection From Evil for the
+///      broader elemental/fey/fiend cohort).
+///   3. **Once per short rest** — refreshed via `SHORT_REST_FEATURES`.
+///      RAW Turn Undead is also once per short rest but our baseline
+///      cleric collapses it to long-rest for parity with the other
+///      cleric long-rest features; Turn the Faithless stays RAW-exact
+///      here since it ships with the paladin's short-rest CD family
+///      (Guided Strike / Radiance of the Dawn / Warding Flare all
+///      short-rest on their respective subclass templates).
+///
+/// Ships on `DEVOTION_PALADIN_TEMPLATE` above its strict RAW level
+/// gate for the same reason every other subclass template runs above
+/// strict RAW level (class templates target a balanced playable
+/// level, not lockstep PHB progression).
+pub const TURN_THE_FAITHLESS_TAG: &str = "paladin.turn_the_faithless";
+
+/// Shared "turn a creature-type cohort within 30ft with a WIS-save
+/// Frightened install" body. Turn Undead and Turn the Faithless are
+/// mechanically identical except for the creature-type filter and the
+/// caster's spellcasting ability, so the loop lives here once. Adding
+/// a future "Turn Elementals" / "Turn Fey" CD (Cleric domain, druid
+/// subclass) drops in as a fresh caller with a distinct filter closure.
+///
+/// - `caster_id` — spends `feature_tag` before running.
+/// - `spellcasting_ability` — used both for the save DC and the log
+///   line (the WIS-based cleric turns use WIS; the CHA-based paladin
+///   turns use CHA).
+/// - `is_affected` — creature-type gate: returns true iff the target's
+///   `CreatureType` is in the "turn" cohort (undead for Turn Undead,
+///   fey / fiend for Turn the Faithless).
+/// - `label` — log prefix ("turn undead" / "turn the faithless").
+fn resolve_turn_burst(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    feature_tag: &'static str,
+    spellcasting_ability: AbilityScoreType,
+    is_affected: fn(crate::engine::types::CreatureType) -> bool,
+    label: &'static str,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+    if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+        actor.spend_feature(feature_tag);
+    }
+    let Some(caster) = encounter.actors.get(&caster_id) else {
+        return Vec::new();
+    };
+    let dc = caster.spell_save_dc(spellcasting_ability);
+    let caster_loc = caster.location();
+    let caster_team = caster.team();
+    let caster_size = get_tiles_from_size(caster.size());
+    encounter.log(format!(
+        "  {}: every affected creature within 30ft saves (DC {}).",
+        label, dc
+    ));
+
+    let candidates: Vec<usize> = encounter
+        .sorted_actor_ids()
+        .into_iter()
+        .filter(|id| {
+            let Some(a) = encounter.actors.get(id) else {
+                return false;
+            };
+            if *id == caster_id || a.team() == caster_team || !a.is_combat_active() {
+                return false;
+            }
+            if !is_affected(a.creature_type()) {
+                return false;
+            }
+            let dist = footprint_chebyshev(
+                a.location(),
+                get_tiles_from_size(a.size()),
+                caster_loc,
+                caster_size,
+            );
+            dist <= 12
+        })
+        .collect();
+
+    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+    for id in candidates {
+        let save = encounter.roll_save(id, AbilityScoreType::Wisdom, dc);
+        if save.passed() {
+            continue;
+        }
+        effects.push(Box::new(ApplyCondition {
+            actor_id: id,
+            condition: Condition::Frightened,
+            timer: ConditionTimer::Rounds(10),
+        }));
+    }
+    effects
+}
+
 /// Turn Undead — Cleric Channel Divinity, action. Every creature of the
 /// Undead type within 30ft (12 tiles) makes a WIS save vs the cleric's
 /// WIS-based DC. On fail, they're Frightened for 10 rounds (1 minute
 /// RAW). Uses the `CreatureType::Undead` tag for accurate type checking.
-/// Once per long rest.
+/// Once per long rest in our model (RAW Channel Divinity is once per
+/// short rest — collapsed to long-rest here for parity with the other
+/// baseline cleric long-rest features).
 pub struct TurnUndead {}
 
 impl Action for TurnUndead {
@@ -2697,66 +2822,88 @@ impl Action for TurnUndead {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::types::AbilityScoreType;
-        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
-
-        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
-            actor.spend_feature(TURN_UNDEAD_TAG);
-        }
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
-        let caster_loc = caster.location();
-        let caster_team = caster.team();
-        let caster_size = get_tiles_from_size(caster.size());
-        encounter.log(format!(
-            "  turn undead: every undead within 30ft saves (DC {}).",
-            dc
-        ));
-
-        // Snapshot candidates so we don't mutate during iteration.
-        let candidates: Vec<usize> = encounter
-            .sorted_actor_ids()
-            .into_iter()
-            .filter(|id| {
-                let Some(a) = encounter.actors.get(id) else {
-                    return false;
-                };
-                if *id == caster_id || a.team() == caster_team || !a.is_combat_active() {
-                    return false;
-                }
-                // Only undead are affected by Turn Undead.
-                if !a.creature_type().is_undead() {
-                    return false;
-                }
-                let dist = footprint_chebyshev(
-                    a.location(),
-                    get_tiles_from_size(a.size()),
-                    caster_loc,
-                    caster_size,
-                );
-                dist <= 12
-            })
-            .collect();
-
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for id in candidates {
-            let save = encounter.roll_save(id, AbilityScoreType::Wisdom, dc);
-            if save.passed() {
-                continue;
-            }
-            effects.push(Box::new(ApplyCondition {
-                actor_id: id,
-                condition: Condition::Frightened,
-                timer: ConditionTimer::Rounds(10),
-            }));
-        }
-        effects
+        resolve_turn_burst(
+            encounter,
+            caster_id,
+            TURN_UNDEAD_TAG,
+            AbilityScoreType::Wisdom,
+            |ct| ct.is_undead(),
+            "turn undead",
+        )
     }
 }
 
 pub static TURN_UNDEAD: LazyLock<TurnUndead> = LazyLock::new(|| TurnUndead {});
+
+/// Turn the Faithless — Devotion Paladin Channel Divinity, action. Every
+/// fey and fiend within 30ft (12 tiles) makes a WIS save vs the paladin's
+/// CHA-based DC. On fail, they're Frightened for 10 rounds (1 minute
+/// RAW). Once per short rest. Uses the shared `resolve_turn_burst`
+/// helper with a fey/fiend creature-type filter and the paladin's
+/// spellcasting ability (Charisma) — sibling to Turn Undead's shape.
+///
+/// RAW gates on "any celestial, elemental, fey, fiend, or undead" the
+/// paladin can see; we narrow to fey / fiend so the paladin has a
+/// distinct-from-cleric target set (celestials are RAW allies of the
+/// Devotion oath; elementals / undead overlap with Turn Undead and
+/// Protection From Evil).
+pub struct TurnTheFaithless {}
+
+impl Action for TurnTheFaithless {
+    fn name(&self) -> &str {
+        "turn the faithless"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ttf", "cd-turnf", "faithless"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        feature_ready(encounter, caster_id, TURN_THE_FAITHLESS_TAG)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::types::CreatureType;
+        resolve_turn_burst(
+            encounter,
+            caster_id,
+            TURN_THE_FAITHLESS_TAG,
+            // Paladin's spellcasting ability is Charisma per PHB; every
+            // paladin subclass — Devotion, Ancients, Vengeance, Oathbreaker
+            // — uses CHA for spell save DCs. Distinct from Cleric's WIS-
+            // based Turn Undead.
+            AbilityScoreType::Charisma,
+            // RAW target cohort narrowed to fey / fiend (see the tag's
+            // docs). A future "Turn Elemental" / "Turn Celestial" CD
+            // would add its own action + tag with a matching filter.
+            |ct| matches!(ct, CreatureType::Fey | CreatureType::Fiend),
+            "turn the faithless",
+        )
+    }
+}
+
+pub static TURN_THE_FAITHLESS: LazyLock<TurnTheFaithless> =
+    LazyLock::new(|| TurnTheFaithless {});
 
 /// Flurry of Blows — Monk bonus action. After the monk takes the Attack
 /// action, they may spend a ki point (modeled as a bonus action — we don't
@@ -4387,6 +4534,41 @@ pub const ELDRITCH_MIND_TAG: &str = "warlock.eldritch_mind";
 /// `WARLOCK_TEMPLATE` (Patron is a subclass pick); rides on the
 /// dedicated `FIEND_WARLOCK_TEMPLATE`.
 pub const DARK_ONES_BLESSING_TAG: &str = "warlock.dark_ones_blessing";
+
+/// 5e Warlock — Otherworldly Patron **The Fiend**, level-6 feature
+/// **Dark One's Own Luck**. Auto-fire once-per-short-rest gate: when
+/// the holder fails a saving throw (or ability check RAW — save-only
+/// in this engine), spend the charge to add 1d10 to the failing
+/// total. If the boosted total meets or beats the DC, the save
+/// becomes a Pass. RAW: "when you make an ability check or a saving
+/// throw, you can use this feature to add a d10 to your roll... You
+/// can do so after seeing the initial roll but before any of the
+/// roll's effects occur."
+///
+/// Sibling to Fanatical Focus (Oathbreaker Paladin lv15) on the
+/// failed-save recovery lane, but distinct in shape:
+///   - **Fanatical Focus** rerolls the d20 with the same modifier.
+///   - **Dark One's Own Luck** keeps the d20 and adds 1d10 to the
+///     final total. A failed save with a d20 of 3 that Fanatical
+///     Focus rerolls to another 3 stays failed; the same save that
+///     Dark One's Own Luck fires on picks up +1d10 (avg +5.5),
+///     turning a mid-DC miss into a pass more consistently.
+///
+/// Fires at the shared save chokepoint
+/// (`EncounterInstance::roll_save_with_extra_mode`) after the initial
+/// d20 lands on a fail but *before* the reroll cohort — RAW gates on
+/// "the initial roll", so the +1d10 stacks on the d20 the holder just
+/// saw. The reroll cohort still fires if the boosted total still
+/// misses (a paladin/warlock multiclass with both DOOL and Fanatical
+/// Focus can burn both charges on the same failed save if the d10 +
+/// d20 total is still short). Legendary Resistance stays a third
+/// layer below both.
+///
+/// Refreshes via `SHORT_REST_FEATURES` — the tag lands on
+/// `features_max` for the holder and `features_remaining` refills
+/// on short rest. Add this tag to a warlock template's `features`
+/// set to install it (ships on `FIEND_WARLOCK_TEMPLATE`).
+pub const DARK_ONES_OWN_LUCK_TAG: &str = "warlock.dark_ones_own_luck";
 
 /// 5e Wild Magic Sorcerer **Tides of Chaos** feature tag. Once per long
 /// rest charge — the sorcerer leans into the chaos of their bloodline to
