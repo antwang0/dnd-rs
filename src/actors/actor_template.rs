@@ -12,8 +12,8 @@ use std::collections::{HashMap, HashSet};
 use std::error::Error;
 
 use crate::actions::class_features::{
-    BATTLE_MASTER_MANEUVERS, LETHAL_DAMAGE_ABSORBER_FEATURES, SHORT_REST_FEATURES,
-    SORCEROUS_RESTORATION_TAG,
+    BARDIC_INSPIRATION_TAG, BATTLE_MASTER_MANEUVERS, FONT_OF_INSPIRATION_TAG,
+    LETHAL_DAMAGE_ABSORBER_FEATURES, SHORT_REST_FEATURES, SORCEROUS_RESTORATION_TAG,
 };
 
 /// Conditions whose resistance covers every damage type — a blanket
@@ -2405,9 +2405,23 @@ impl ActorInstance {
             // Sorcerous Restoration / Tiger Totem / Fast Movement sites
             // already went through in a prior nudge. Keeps the passive-
             // feature read shape uniform across the class-feature lane.
-            if self.has_passive_feature(tag) {
-                self.features_remaining.insert(tag);
+            if !self.has_passive_feature(tag) {
+                continue;
             }
+            // Bardic Inspiration's short-rest refresh is a lv5-gated
+            // Bard feature (Font of Inspiration). Without the Font tag,
+            // Bardic Inspiration refreshes only on long rest per RAW; a
+            // lv1-4 bard would otherwise get free short-rest refills.
+            // Sibling to Sorcerous Restoration below on the "class-feature
+            // refresh gated by a distinct passive tag" lane — both live
+            // outside `SHORT_REST_FEATURES` proper as their conditional
+            // logic bites at the read site.
+            if tag == BARDIC_INSPIRATION_TAG
+                && !self.has_passive_feature(FONT_OF_INSPIRATION_TAG)
+            {
+                continue;
+            }
+            self.features_remaining.insert(tag);
         }
 
         // 5e Relentless Rage RAW: DC resets to 10 on short / long rest.

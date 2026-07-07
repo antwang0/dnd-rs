@@ -1,5 +1,6 @@
 use crate::actions::class_features::{
     BARDIC_INSPIRATION, BARDIC_INSPIRATION_TAG, CUTTING_WORDS, CUTTING_WORDS_TAG,
+    FONT_OF_INSPIRATION_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::SCIMITAR;
@@ -121,7 +122,26 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Dexterity,
             AbilityScoreType::Charisma,
         ]),
-        features: HashSet::from([BARDIC_INSPIRATION_TAG, CUTTING_WORDS_TAG]),
+        features: HashSet::from([
+            BARDIC_INSPIRATION_TAG,
+            CUTTING_WORDS_TAG,
+            // 5e Bard Font of Inspiration (level 5 passive): Bardic
+            // Inspiration die refreshes on a short rest instead of a
+            // long rest. Ships on the CR-2 (level-7) baseline template
+            // above its strict RAW level gate for the same reason
+            // Improved Divine Smite (lv11) ships on the CR-1.5 paladin
+            // — class templates target a balanced playable level, not
+            // lockstep PHB progression. Read at
+            // `ActorInstance::short_rest`: the `SHORT_REST_FEATURES`
+            // registry lists `BARDIC_INSPIRATION_TAG` unconditionally,
+            // and the short-rest cascade only restores it when the
+            // holder ALSO has this Font of Inspiration tag — so a
+            // lv1-4 bard without the tag still has to long-rest to
+            // reset the die. Composes cleanly with Cutting Words
+            // (already once-per-short-rest) so both bard per-rest
+            // charges refresh together.
+            FONT_OF_INSPIRATION_TAG,
+        ]),
         ..CreatureTemplate::defaults()
     }
 });

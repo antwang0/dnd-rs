@@ -5355,9 +5355,20 @@ impl EncounterInstance {
         if !target.has_passive_feature(BEND_LUCK_TAG)
             || target.sorcery_points() < BEND_LUCK_SP_COST
             || !target.can_consume_resource(Resource::Reaction)
-            || target.has_condition(Condition::Blinded)
             || !target.is_combat_active()
         {
+            return 0;
+        }
+        // RAW "another creature you can see" gate — routes through the
+        // shared `viewer_can_see` helper so both the Blinded clause AND
+        // the "attacker is illusion-concealed and the sorcerer doesn't
+        // pierce" clause land in one lookup. Pre-refactor this only
+        // checked `!Blinded` on the sorcerer, letting an Invisible
+        // attacker still draw the Bend Luck 2 SP + reaction spend even
+        // though RAW the sorcerer can't see them — same correctness
+        // pattern the prior nudge folded into Uncanny Dodge, Deflect
+        // Missiles, and Warding Flare.
+        if !self.viewer_can_see(target_id, attacker_id) {
             return 0;
         }
         if self
@@ -38883,6 +38894,67 @@ mod tests {
         assert_eq!(penalty, 0, "0 SP should suppress Bend Luck");
     }
 
+    /// Bend Luck's RAW "another creature you can see" clause routes
+    /// through the shared `viewer_can_see` helper — a Blinded sorcerer
+    /// can't spend Bend Luck. Sibling to the Warding Flare / Uncanny
+    /// Dodge / Deflect Missiles sight-gate correctness fixes on the
+    /// same helper — pre-refactor Bend Luck only gated on `!Blinded`
+    /// (which happened to also cover the blinded-sorcerer branch), but
+    /// the shared helper is the durable answer since a future
+    /// concealment-fold (Fog Cloud imposing Blinded via a burst) rides
+    /// through it uniformly.
+    #[test]
+    fn bend_luck_skips_when_sorcerer_is_blinded() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&sorcerer)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Permanent);
+        let penalty = e.apply_bend_luck_penalty(sorcerer, zombie);
+        assert_eq!(penalty, 0, "Blinded sorcerer cannot Bend Luck");
+    }
+
+    /// Bend Luck's RAW "another creature you can see" clause also
+    /// bounces an Invisible attacker — the sorcerer must actually see
+    /// the attacker per RAW, and an Invisible attacker without a
+    /// piercing sense (Truesight / Feral Senses / Blindsense inside
+    /// range) is unseeable. Pre-refactor Bend Luck only checked
+    /// `Blinded` and let an Invisible attacker still draw the 2 SP +
+    /// reaction spend.
+    #[test]
+    fn bend_luck_skips_when_attacker_is_invisible_and_sorcerer_lacks_piercing_sense() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        // Zombie has no Truesight / Feral Senses / Blindsense in
+        // range; sorcerer likewise doesn't pierce illusions.
+        e.actors
+            .get_mut(&zombie)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Permanent);
+        let penalty = e.apply_bend_luck_penalty(sorcerer, zombie);
+        assert_eq!(
+            penalty, 0,
+            "Invisible unseeable attacker cannot draw the Bend Luck reaction charge"
+        );
+    }
+
     /// Search action: a successful Perception check reveals an enemy
     /// hiding within line-of-sight. We pin the d20 with a seeded roller
     /// so the test is deterministic.
@@ -49799,7 +49871,7 @@ mod tests {
     /// picker should never queue it.
     #[test]
     fn intimidating_presence_rejects_ally_target() {
-        use crate::actions::action_template::{Action, ActionExecutionInfo};
+        use crate::actions::action_template::ActionExecutionInfo;
         use crate::actions::class_features::INTIMIDATING_PRESENCE;
         use crate::actors::creatures::barbarians::BERSERKER_BARBARIAN_TEMPLATE;
         let mut e = ei_with_terrain(10, 10, &[]);
@@ -49991,6 +50063,197 @@ mod tests {
         assert!(
             SHORT_REST_FEATURES.contains(&NATURES_WRATH_TAG),
             "Nature's Wrath tag must live on SHORT_REST_FEATURES"
+        );
+    }
+
+    /// Wrath of the Storm (Tempest Cleric CD lv1): action + tag both
+    /// ship on `TEMPEST_CLERIC_TEMPLATE`. Baseline `CLERIC_TEMPLATE` /
+    /// War Cleric / Light Cleric do NOT ship it — subclass sanity gate.
+    #[test]
+    fn wrath_of_the_storm_ships_on_tempest_cleric_only() {
+        use crate::actions::class_features::WRATH_OF_THE_STORM_TAG;
+        use crate::actors::creatures::clerics::{
+            CLERIC_TEMPLATE, LIGHT_CLERIC_TEMPLATE, TEMPEST_CLERIC_TEMPLATE, WAR_CLERIC_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let temp = e
+            .instantiate_creature(&TEMPEST_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(6, 6), 0, 1)
+            .unwrap();
+        let war = e
+            .instantiate_creature(&WAR_CLERIC_TEMPLATE, Coordinate::new(10, 6), 0, 2)
+            .unwrap();
+        let light = e
+            .instantiate_creature(&LIGHT_CLERIC_TEMPLATE, Coordinate::new(14, 6), 0, 3)
+            .unwrap();
+        assert!(
+            e.actors[&temp].feature_available(WRATH_OF_THE_STORM_TAG),
+            "Tempest Cleric must ship with Wrath of the Storm charge"
+        );
+        assert!(
+            e.actors[&temp].find_action("wrath of the storm").is_some(),
+            "Tempest Cleric must ship with the Wrath of the Storm action"
+        );
+        for (id, name) in [(base, "baseline"), (war, "War"), (light, "Light")] {
+            assert!(
+                !e.actors[&id].feature_available(WRATH_OF_THE_STORM_TAG),
+                "{} Cleric must NOT ship Wrath of the Storm",
+                name
+            );
+        }
+    }
+
+    /// Wrath of the Storm spend + damage path: across a seed sweep the
+    /// goblin takes non-zero lightning damage at least once. Charge is
+    /// spent whether the goblin passed or failed the save — matches the
+    /// Turn Undead / Intimidating Presence "action cost paid on cast"
+    /// cadence.
+    #[test]
+    fn wrath_of_the_storm_spends_charge_and_damages_goblin() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{WRATH_OF_THE_STORM, WRATH_OF_THE_STORM_TAG};
+        use crate::actors::creatures::clerics::TEMPEST_CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut goblin_damaged = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let temp = e
+                .instantiate_creature(&TEMPEST_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let start_hp = e.actors[&g].hitpoints();
+            assert!(e.actors[&temp].feature_available(WRATH_OF_THE_STORM_TAG));
+            let effects =
+                WRATH_OF_THE_STORM.side_effects(&mut e, temp, Some(&vec![g]), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            // Charge is spent whether the goblin passed or failed the
+            // save — matches the Turn Undead / Turn the Faithless / IP
+            // "action cost paid on cast" cadence.
+            assert!(!e.actors[&temp].feature_available(WRATH_OF_THE_STORM_TAG));
+            // A saved goblin still takes half damage per RAW's save-for-
+            // half fold; even lightning-resistant would keep some damage.
+            // A goblin is neither resistant nor immune to lightning, so
+            // at least some damage should land.
+            if e.actors[&g].hitpoints() < start_hp {
+                goblin_damaged = true;
+                break;
+            }
+        }
+        assert!(
+            goblin_damaged,
+            "wrath of the storm never damaged a goblin across 30 seeds"
+        );
+    }
+
+    /// Wrath of the Storm's `custom_validate_input` gates hostile-only
+    /// targets — zapping an ally is a wasted charge and the AI picker
+    /// should never queue it.
+    #[test]
+    fn wrath_of_the_storm_rejects_ally_target() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::class_features::WRATH_OF_THE_STORM;
+        use crate::actors::creatures::clerics::TEMPEST_CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let temp = e
+            .instantiate_creature(&TEMPEST_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&TEMPEST_CLERIC_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        let aei =
+            ActionExecutionInfo::new(&*WRATH_OF_THE_STORM, temp, Some(vec![ally]), None, None);
+        assert!(
+            !aei.validate(&e),
+            "wrath of the storm must reject a same-team target"
+        );
+    }
+
+    /// Wrath of the Storm's short-rest tag is registered so a short
+    /// rest refreshes the charge alongside the other cleric CD family
+    /// (Guided Strike / Radiance of the Dawn / Warding Flare).
+    #[test]
+    fn wrath_of_the_storm_short_rest_registered() {
+        use crate::actions::class_features::{SHORT_REST_FEATURES, WRATH_OF_THE_STORM_TAG};
+        assert!(
+            SHORT_REST_FEATURES.contains(&WRATH_OF_THE_STORM_TAG),
+            "Wrath of the Storm tag must live on SHORT_REST_FEATURES"
+        );
+    }
+
+    /// Wrath of the Storm refresh path — after a short rest the Tempest
+    /// cleric's spent charge is back. Sibling to the Guided Strike /
+    /// Radiance of the Dawn refresh tests above.
+    #[test]
+    fn wrath_of_the_storm_refreshes_on_short_rest() {
+        use crate::actions::class_features::WRATH_OF_THE_STORM_TAG;
+        use crate::actors::creatures::clerics::TEMPEST_CLERIC_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let temp = e
+            .instantiate_creature(&TEMPEST_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&temp].feature_available(WRATH_OF_THE_STORM_TAG));
+        e.actors
+            .get_mut(&temp)
+            .unwrap()
+            .spend_feature(WRATH_OF_THE_STORM_TAG);
+        assert!(!e.actors[&temp].feature_available(WRATH_OF_THE_STORM_TAG));
+        let mut roller = crate::engine::dice::FastRandRoller::with_seed(1);
+        e.actors.get_mut(&temp).unwrap().short_rest(&mut roller);
+        assert!(
+            e.actors[&temp].feature_available(WRATH_OF_THE_STORM_TAG),
+            "Wrath of the Storm charge must refresh on short rest"
+        );
+    }
+
+    /// Font of Inspiration (Bard lv5 passive): the Bard template ships
+    /// the `FONT_OF_INSPIRATION_TAG` passive; short-rest refresh of
+    /// Bardic Inspiration lands on the bard template but NOT on a non-
+    /// bard actor that hypothetically holds `BARDIC_INSPIRATION_TAG`.
+    #[test]
+    fn font_of_inspiration_ships_on_bard_template() {
+        use crate::actions::class_features::FONT_OF_INSPIRATION_TAG;
+        use crate::actors::creatures::bards::BARD_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let bard = e
+            .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&bard].has_passive_feature(FONT_OF_INSPIRATION_TAG),
+            "Bard template must ship Font of Inspiration (lv5 feature)"
+        );
+    }
+
+    /// Font of Inspiration refresh path: with the tag on, a spent Bardic
+    /// Inspiration charge refreshes on a short rest. Sibling to the
+    /// Cutting Words / Wrath of the Storm short-rest tests.
+    #[test]
+    fn font_of_inspiration_refreshes_bardic_inspiration_on_short_rest() {
+        use crate::actions::class_features::BARDIC_INSPIRATION_TAG;
+        use crate::actors::creatures::bards::BARD_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let bard = e
+            .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&bard].feature_available(BARDIC_INSPIRATION_TAG));
+        e.actors
+            .get_mut(&bard)
+            .unwrap()
+            .spend_feature(BARDIC_INSPIRATION_TAG);
+        assert!(!e.actors[&bard].feature_available(BARDIC_INSPIRATION_TAG));
+        let mut roller = crate::engine::dice::FastRandRoller::with_seed(1);
+        e.actors.get_mut(&bard).unwrap().short_rest(&mut roller);
+        assert!(
+            e.actors[&bard].feature_available(BARDIC_INSPIRATION_TAG),
+            "Font of Inspiration must refresh Bardic Inspiration on short rest"
         );
     }
 }

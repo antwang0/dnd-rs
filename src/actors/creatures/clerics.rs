@@ -1,7 +1,7 @@
 use crate::actions::class_features::{
     DIVINE_STRIKE, DIVINE_STRIKE_TAG, GUIDED_STRIKE, GUIDED_STRIKE_TAG, PRESERVE_LIFE,
     PRESERVE_LIFE_TAG, RADIANCE_OF_THE_DAWN, RADIANCE_OF_THE_DAWN_TAG, TURN_UNDEAD, TURN_UNDEAD_TAG,
-    WAR_PRIEST, WAR_PRIEST_TAG, WARDING_FLARE_TAG,
+    WAR_PRIEST, WAR_PRIEST_TAG, WARDING_FLARE_TAG, WRATH_OF_THE_STORM, WRATH_OF_THE_STORM_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
@@ -338,6 +338,55 @@ pub static LIGHT_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
     CreatureTemplate {
         name: "Light Cleric",
         glyph: 'L',
+        actions,
+        features,
+        ..CLERIC_TEMPLATE.clone()
+    }
+});
+
+/// Tempest Domain Cleric — subclass build. Identical envelope to the
+/// baseline `CLERIC_TEMPLATE` (WIS-primary caster, Sacred Flame / Guiding
+/// Bolt / Cure Wounds / Bless / Turn Undead / Preserve Life / Divine
+/// Strike, full cleric spell ladder) with one subclass feature layered
+/// on: **Wrath of the Storm** (lv1 subclass) — once-per-short-rest
+/// single-target 5ft-close 2d8 lightning damage burst on a DEX save vs
+/// the cleric's WIS-anchored spell save DC.
+///
+/// The Tempest Domain's melee-retaliation-lane sibling to the Light
+/// Domain (Warding Flare + Radiance of the Dawn — disadvantage
+/// reaction plus 30ft radiant burst) and the War Domain (War Priest +
+/// Guided Strike — extra swing plus +10 accuracy prime). Where Light
+/// leans radiant burst and War leans melee accuracy, Tempest leans
+/// lightning close-range zaps: the cleric's adjacent-target damage
+/// lane that doesn't burn a spell slot, mirroring the RAW Tempest
+/// flavor (the cleric who calls down thunder and lightning on any foe
+/// foolish enough to close within 5 ft).
+///
+/// Pairs naturally with the cleric's melee cantrip (Thorn Whip) and
+/// weapon fallback (`SCIMITAR` if added later) — the Tempest cleric
+/// wants an enemy adjacent to fire Wrath of the Storm, so closing the
+/// gap sets up both the retaliation zap AND the follow-up cantrip /
+/// weapon swing on the same turn. Distinct from `WAR_CLERIC_TEMPLATE`
+/// (War Priest bonus-action swing + Guided Strike accuracy) and
+/// `LIGHT_CLERIC_TEMPLATE` (Warding Flare + Radiance of the Dawn) —
+/// glyph 'S' (Storm) so tempest-vs-war-vs-light-vs-baseline renders
+/// unambiguously on the map next to baseline 'C', War 'W', and Light
+/// 'L'.
+pub static TEMPEST_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: mirrors the War Cleric / Light Cleric shape
+    // above — clone the baseline Cleric envelope wholesale and layer on
+    // the subclass action + feature tag. The `..CLERIC_TEMPLATE.clone()`
+    // tail picks up the full spell ladder, save profs, stats, and slots
+    // without an N-line field-by-field copy.
+    let mut actions = CLERIC_TEMPLATE.actions.clone();
+    actions.push(&*WRATH_OF_THE_STORM);
+    let mut features = CLERIC_TEMPLATE.features.clone();
+    // Wrath of the Storm charge — once per short rest, refreshed via
+    // `SHORT_REST_FEATURES` alongside the War / Light CDs.
+    features.insert(WRATH_OF_THE_STORM_TAG);
+    CreatureTemplate {
+        name: "Tempest Cleric",
+        glyph: 'S',
         actions,
         features,
         ..CLERIC_TEMPLATE.clone()

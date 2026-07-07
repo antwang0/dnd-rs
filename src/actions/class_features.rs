@@ -84,6 +84,23 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // CD family (Turn the Faithless, Guided Strike, Radiance of the
     // Dawn) — RAW Channel Divinity is once per short rest.
     NATURES_WRATH_TAG,
+    // 5e Tempest Domain Cleric level-1 subclass feature — Wrath of the
+    // Storm. Single-target 2d8 lightning damage burst via DEX save vs
+    // the cleric's WIS-anchored DC. Refreshed on short rest alongside
+    // the other cleric CD family (Guided Strike / Radiance of the Dawn
+    // / Warding Flare) — RAW uses per long rest = WIS mod refreshes
+    // on long rest, collapsed to a single once-per-short-rest charge to
+    // match the CD gating shape.
+    WRATH_OF_THE_STORM_TAG,
+    // 5e Bard **Bardic Inspiration** (level 1) refresh — RAW gates on
+    // level 5's Font of Inspiration to promote the long-rest refresh
+    // to a short-rest one. `ActorInstance::short_rest` walks this
+    // registry AND requires the actor holds `has_passive_feature(tag)`
+    // — for Bardic Inspiration, both the primary tag AND the Font of
+    // Inspiration gate must be on the template. A lv1-4 bard build
+    // (without Font of Inspiration) still has to long-rest to reset
+    // the die; a lv5+ bard with the Font tag refreshes here.
+    BARDIC_INSPIRATION_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -4462,6 +4479,77 @@ pub static COMMANDERS_STRIKE: LazyLock<CommandersStrike> = LazyLock::new(|| Comm
 /// Relentless Endurance.
 pub const INFERNAL_LEGACY_REBUKE_TAG: &str = "tiefling.infernal_legacy_rebuke";
 
+/// Shared "spend a once-per-rest feature charge, roll target save vs the
+/// caster's spellcasting-ability DC, deal Xdy damage of type T with
+/// save-for-half" body for single-target class-feature damage bursts.
+/// Sibling to `resolve_single_target_cd_save_condition` on the class-
+/// feature family — that helper installs a *condition* on a failed save,
+/// this one deals *damage* with a save-for-half fold. Both spend the
+/// feature charge before the save so the once-per-rest cost is paid
+/// whether the target passes or fails.
+///
+/// The save DC is derived from the caster's `spellcasting_ability`
+/// (CHA for tieflings, WIS for clerics), the target rolls with
+/// `save_ability`, and on the save-for-half fold the damage lands via
+/// `save_for_half_damage` — half on save, full on fail. `DealDamage`
+/// then routes through the normal target-side resistance / immunity /
+/// vulnerability pipeline so a fire-immune target still bounces the
+/// tiefling's Infernal Rebuke cleanly per RAW.
+///
+/// Parameters mirror `resolve_single_target_cd_save_condition` where the
+/// shape overlaps:
+///   - `caster_id` — spends `feature_tag` before the save.
+///   - `target_id` — the single target of the save.
+///   - `spellcasting_ability` — anchor for the save DC (8 + prof + mod).
+///   - `save_ability` — the ability the target rolls the save with.
+///   - `dice` — the damage die pool rolled once, halved on save.
+///   - `damage_type` — the damage type of the burst.
+///   - `label` — log prefix ("infernal rebuke" / "wrath of the storm").
+///
+/// Adding a future single-target save-for-half class-feature damage
+/// burst (a hypothetical "Radiant Rebuke" that deals 2d10 radiant via a
+/// CON-DC save, an Aasimar racial variant, etc.) lands as a fresh call
+/// with a distinct (save_ability, dice, damage_type) tuple — no re-
+/// implementation of the spend-tag / roll-DC / roll-damage / save-for-
+/// half dance.
+fn resolve_single_target_burst_save_for_half(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    target_id: usize,
+    feature_tag: &'static str,
+    spellcasting_ability: AbilityScoreType,
+    save_ability: AbilityScoreType,
+    dice: Dice,
+    damage_type: DamageType,
+    label: &'static str,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let Some(caster) = encounter.actors.get(&caster_id) else {
+        return Vec::new();
+    };
+    let dc = caster.spell_save_dc(spellcasting_ability);
+    if let Some(c) = encounter.actors.get_mut(&caster_id) {
+        c.spend_feature(feature_tag);
+    }
+    let (dmg, _) = crate::actions::spells::save_for_half_damage(
+        encounter,
+        caster_id,
+        target_id,
+        save_ability,
+        dc,
+        dice,
+        damage_type,
+        label,
+    );
+    if dmg == 0 {
+        return Vec::new();
+    }
+    vec![Box::new(DealDamage {
+        actor_id: target_id,
+        amount: dmg,
+        damage_type,
+    })]
+}
+
 /// Tiefling Infernal Legacy — Hellish Rebuke (racial flavor). One swing
 /// per long rest of a CHA-based DEX-save burst that deals 3d10 fire
 /// (RAW: "cast hellish rebuke as a 2nd-level spell"). No slot cost —
@@ -4471,6 +4559,13 @@ pub const INFERNAL_LEGACY_REBUKE_TAG: &str = "tiefling.infernal_legacy_rebuke";
 /// have a clean "reactive on being damaged" hook for player-driven
 /// actions, and the action cost keeps the racial useful even when the
 /// tiefling hasn't been hit yet.
+///
+/// Routes through the shared
+/// `resolve_single_target_burst_save_for_half` helper — the
+/// spend-tag / roll-DC / roll-damage / save-for-half dance lives in one
+/// place, and mirrors Wrath of the Storm (Tempest Cleric CD lv1) on the
+/// single-target burst lane with a distinct (save-ability, dice,
+/// damage_type) tuple.
 pub struct InfernalLegacyRebuke {}
 
 impl Action for InfernalLegacyRebuke {
@@ -4511,36 +4606,23 @@ impl Action for InfernalLegacyRebuke {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::types::AbilityScoreType;
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
-        if let Some(c) = encounter.actors.get_mut(&caster_id) {
-            c.spend_feature(INFERNAL_LEGACY_REBUKE_TAG);
-        }
-        // 3d10 fire — matches Hellish Rebuke cast at level 2 (RAW).
-        let (dmg, _) = crate::actions::spells::save_for_half_damage(
+        resolve_single_target_burst_save_for_half(
             encounter,
             caster_id,
             target_id,
+            INFERNAL_LEGACY_REBUKE_TAG,
+            // Tiefling Infernal Legacy is CHA-anchored per RAW.
+            AbilityScoreType::Charisma,
+            // Hellish Rebuke uses a DEX save RAW.
             AbilityScoreType::Dexterity,
-            dc,
+            // 3d10 fire — matches Hellish Rebuke cast at level 2 (RAW).
             Dice::new(3, 10),
             DamageType::Fire,
             "infernal rebuke",
-        );
-        if dmg == 0 {
-            return Vec::new();
-        }
-        vec![Box::new(DealDamage {
-            actor_id: target_id,
-            amount: dmg,
-            damage_type: DamageType::Fire,
-        })]
+        )
     }
 }
 
@@ -5855,3 +5937,168 @@ impl Action for NaturesWrath {
 }
 
 pub static NATURES_WRATH: LazyLock<NaturesWrath> = LazyLock::new(|| NaturesWrath {});
+
+/// 5e Tempest Domain Cleric level-1 subclass feature — **Wrath of the
+/// Storm**. Class-feature tag; refreshed on a short rest via
+/// `SHORT_REST_FEATURES`. RAW: as a reaction when a creature within 5ft
+/// hits you with an attack, roll a DEX save vs the cleric's spell save
+/// DC; on fail the target takes 2d8 lightning OR thunder damage (RAW:
+/// caster's choice per use — we collapse to lightning to keep the log
+/// line stable and let the Thunderbolt Strike lane cleanly compose if
+/// added later). Uses per long rest RAW = WIS mod (min 1), refreshed on
+/// long rest; we collapse to a single once-per-short-rest charge so the
+/// gating stays uniform with the other cleric Channel Divinity charges
+/// (Guided Strike / Radiance of the Dawn / Warding Flare).
+///
+/// Ships as an **Action-cost** attack rather than the RAW reaction —
+/// mirrors the Infernal Rebuke collapse rationale on the Tiefling
+/// racial: the engine doesn't have a clean "reactive on being hit"
+/// hook for player-driven actions, and the action cost keeps the
+/// feature useful even when the cleric hasn't been hit yet. The 5ft
+/// range (2 tiles) matches the RAW "within 5 ft" clause on the
+/// reactive shape.
+///
+/// Sibling to Infernal Rebuke (Tiefling racial single-target damage
+/// burst) on the `resolve_single_target_burst_save_for_half` helper:
+/// same "spend feature charge, roll target save vs the caster's
+/// spellcasting-ability DC, deal Xdy save-for-half" body, differentiated
+/// by the (save-ability, dice, damage_type, spellcasting_ability) tuple
+/// — CHA+3d10+Fire for Infernal Rebuke, WIS+2d8+Lightning for Wrath of
+/// the Storm. Adding a future single-target save-for-half damage burst
+/// (a hypothetical "Radiant Rebuke" Aasimar variant, etc.) drops in as
+/// a fresh call to the shared helper with a distinct tuple.
+pub const WRATH_OF_THE_STORM_TAG: &str = "cleric.wrath_of_the_storm";
+
+/// Wrath of the Storm — Tempest Cleric subclass level-1 feature action.
+/// Once-per-short-rest single-target 2d8 lightning damage burst: the
+/// target (within 5ft, 2 tiles on our 2.5ft grid) rolls a DEX save vs
+/// the cleric's WIS-anchored DC (8 + prof + WIS mod). On save the
+/// target takes half damage; on fail, full damage. Routes through the
+/// shared `resolve_single_target_burst_save_for_half` helper — the
+/// spend + save + roll + damage dance lives in one place, mirrored by
+/// Infernal Rebuke on the same helper.
+///
+/// Range gate (2 tiles = 5ft RAW) matches the RAW reactive shape's
+/// "creature within 5 ft of you that hits you" clause — the tempest
+/// cleric's flavor is a close-quarters retaliation zap, distinct from
+/// Infernal Rebuke's 60ft ranged retort (the RAW Hellish Rebuke's
+/// reaction fires up to 60ft away, not adjacent). Composes cleanly with
+/// the tempest cleric's storm-themed spell picks (Thunderwave, Lightning
+/// Bolt, Call Lightning) — Wrath of the Storm gives the cleric an
+/// adjacent-target damage lane that doesn't burn a spell slot, freeing
+/// the slots for their higher-tier bursts.
+pub struct WrathOfTheStorm {}
+
+impl Action for WrathOfTheStorm {
+    fn name(&self) -> &str {
+        "wrath of the storm"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wots", "wrath-storm", "storm-wrath"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 5ft RAW = 2 tiles on the 2.5ft grid.
+        Some(2)
+    }
+    fn requires_los(&self) -> bool {
+        // RAW: the reaction fires when a creature "hits you with an
+        // attack" — implicitly within reach, so LOS holds naturally.
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Lightning]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Once-per-rest + hostile-target gate. Unlike Intimidating
+        // Presence / Nature's Wrath (target-side condition install), the
+        // burst deals damage and doesn't install a condition on fail —
+        // so there's no "skip-if-already-holds-condition" dedup lane.
+        // Sanity-check the target exists and is hostile / combat-active
+        // so the AI's focus-fire lane doesn't queue the burst against an
+        // ally or a downed target.
+        if !feature_ready(encounter, caster_id, WRATH_OF_THE_STORM_TAG) {
+            return false;
+        }
+        let Some(target_id) = first_target_id(_target_ids) else {
+            return false;
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return false;
+        };
+        target.team() != caster.team() && target.is_combat_active()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        resolve_single_target_burst_save_for_half(
+            encounter,
+            caster_id,
+            target_id,
+            WRATH_OF_THE_STORM_TAG,
+            // Cleric spellcasting ability is WIS — same anchor as every
+            // other cleric CD DC (Turn Undead, Guided Strike, Radiance
+            // of the Dawn, Warding Flare).
+            AbilityScoreType::Wisdom,
+            // DEX save per RAW.
+            AbilityScoreType::Dexterity,
+            // 2d8 lightning — matches the RAW Wrath of the Storm dice.
+            Dice::new(2, 8),
+            DamageType::Lightning,
+            "wrath of the storm",
+        )
+    }
+}
+
+pub static WRATH_OF_THE_STORM: LazyLock<WrathOfTheStorm> =
+    LazyLock::new(|| WrathOfTheStorm {});
+
+/// 5e Bard **Font of Inspiration** (level 5 class feature) tag. Passive
+/// no-action feature: while the holder carries this tag, spent uses of
+/// Bardic Inspiration refresh on a short rest as well as a long rest.
+/// Read at the `SHORT_REST_FEATURES` registry cascade — the
+/// `BARDIC_INSPIRATION_TAG` entry there gates on the short-rest refresh
+/// path via `has_passive_feature(FONT_OF_INSPIRATION_TAG)` inside
+/// `ActorInstance::short_rest`, so a bard without Font of Inspiration
+/// (a lv1-4 bard build) still has to long-rest to reset the die.
+///
+/// Ships as a `has_passive_feature` template flag rather than a
+/// per-rest charge — RAW is "you regain all expended uses when you
+/// finish a short or long rest" from lv5 on, which is a permanent
+/// unlock rather than a resource. Sibling to `CUNNING_ACTION_TAG` /
+/// `VANISH_TAG` on the always-on class-feature lane — both are
+/// permanent passive tags with no per-rest counter.
+///
+/// Ships on the baseline `BARD_TEMPLATE` above its strict RAW level
+/// gate for the same reason Persistent Rage (lv15) ships on the CR-4
+/// baseline barbarian, Improved Divine Smite (lv11) ships on the
+/// CR-1.5 paladin, and Purity of Body (lv10) ships on the CR-1.5 monk
+/// — class templates target a balanced playable level, not lockstep
+/// PHB progression. Composes cleanly with Cutting Words (already once-
+/// per-short-rest) so the bard's two per-rest charges — offensive
+/// (Bardic Inspiration die) and defensive (Cutting Words reduction) —
+/// both refresh on the same short-rest cadence.
+pub const FONT_OF_INSPIRATION_TAG: &str = "bard.font_of_inspiration";
