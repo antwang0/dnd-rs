@@ -1,8 +1,8 @@
 use crate::actions::class_features::{
     CLEANSING_TOUCH, CLEANSING_TOUCH_TAG, DIVINE_SMITE, FANATICAL_FOCUS_TAG,
-    IMPROVED_DIVINE_SMITE_TAG, LAY_ON_HANDS, LAY_ON_HANDS_TAG, SACRED_WEAPON, SACRED_WEAPON_TAG,
-    TURN_THE_FAITHLESS, TURN_THE_FAITHLESS_TAG, UNDYING_SENTINEL_TAG, VOW_OF_ENMITY,
-    VOW_OF_ENMITY_TAG,
+    IMPROVED_DIVINE_SMITE_TAG, LAY_ON_HANDS, LAY_ON_HANDS_TAG, NATURES_WRATH, NATURES_WRATH_TAG,
+    SACRED_WEAPON, SACRED_WEAPON_TAG, TURN_THE_FAITHLESS, TURN_THE_FAITHLESS_TAG,
+    UNDYING_SENTINEL_TAG, VOW_OF_ENMITY, VOW_OF_ENMITY_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GREATSWORD;
@@ -293,8 +293,22 @@ pub static ANCIENTS_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
     //     `take_typed_damage` so a multiclass (half-orc Ancients
     //     paladin) spends the tags in order rather than double-dipping
     //     on the same lethal hit.
+    let mut actions = PALADIN_TEMPLATE.actions.clone();
+    // 5e Ancients Paladin level-3 Channel Divinity — Nature's Wrath.
+    // Single-target 10ft STR-save Restrained install; once per short
+    // rest. Ships alongside the CD family Turn the Faithless (Devotion)
+    // / Guided Strike (War) / Radiance of the Dawn (Light) as the
+    // paladin's per-subclass Channel Divinity pick. The Ancients paladin
+    // trades Turn the Faithless's fey/fiend-only 30ft burst for Nature's
+    // Wrath's single-target 10ft lock — better focus fire on a single
+    // priority target (the paladin's smite loop wants adjacency anyway,
+    // so the shorter range is a wash), worse round-clear on a swarm.
+    actions.push(&*NATURES_WRATH);
     let mut features = PALADIN_TEMPLATE.features.clone();
     features.insert(UNDYING_SENTINEL_TAG);
+    // Nature's Wrath charge — once per short rest, refreshed via
+    // SHORT_REST_FEATURES alongside the Devotion / War / Light CDs.
+    features.insert(NATURES_WRATH_TAG);
     CreatureTemplate {
         name: "Ancients Paladin",
         glyph: 'A',
@@ -312,6 +326,7 @@ pub static ANCIENTS_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         // onto the inherited paladin feature set (Lay on Hands,
         // Sacred Weapon, Cleansing Touch, Improved Divine Smite)
         // rather than clobbering it.
+        actions,
         features,
         ..PALADIN_TEMPLATE.clone()
     }

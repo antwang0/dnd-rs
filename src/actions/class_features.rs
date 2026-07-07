@@ -72,6 +72,18 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // refreshes on short rest, same as Guided Strike / Radiance of the
     // Dawn.
     TURN_THE_FAITHLESS_TAG,
+    // 5e Berserker Barbarian level-10 subclass feature — Intimidating
+    // Presence. Single-target Frighten via WIS save vs the barbarian's
+    // CHA-anchored DC. Refreshed on short rest so a raging Berserker
+    // gets one intimidation press per engagement, matching the cadence
+    // of the paladin CDs above rather than the long-rest Rage clock.
+    INTIMIDATING_PRESENCE_TAG,
+    // 5e Ancients Paladin level-3 Channel Divinity — Nature's Wrath.
+    // Single-target Restrained via STR save vs the paladin's CHA-
+    // anchored DC. Refreshed on short rest alongside the other paladin
+    // CD family (Turn the Faithless, Guided Strike, Radiance of the
+    // Dawn) — RAW Channel Divinity is once per short rest.
+    NATURES_WRATH_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -236,6 +248,52 @@ pub fn feature_prime_ready(
     encounter.actors.get(&caster_id).is_some_and(|a| {
         a.is_combat_active() && a.feature_available(tag) && !a.has_condition(prime)
     })
+}
+
+/// Gating shape for once-per-rest single-target class-feature actions
+/// that install a debuff *on the target* (Intimidating Presence
+/// Frightening a foe, Nature's Wrath Restraining a foe, and any future
+/// single-target save-vs-condition CD action). Returns true when:
+///   - the caster has an unspent `feature_tag` charge (via `feature_ready`),
+///   - `target_ids` carries a resolvable target id,
+///   - the target is hostile to the caster AND combat-active,
+///   - the target does NOT already carry `skip_if_condition` (re-installing
+///     would refresh the timer for no mechanical benefit and burn the
+///     once-per-rest charge).
+///
+/// Sibling to `feature_prime_ready` (which handles the CASTER-side prime
+/// de-dup for bonus-action next-swing primes) — this one covers the
+/// TARGET-side condition de-dup for single-target debuff-installers.
+/// Centralizes the ~10-line "get target / get caster / check hostile /
+/// check combat_active / check no-redup" chain that both new features
+/// (and any future single-target class-feature debuff) share, so
+/// adding a new one lands as a `hostile_target_feature_ready(..., TAG,
+/// COND)` one-liner. Also gives a single chokepoint for future
+/// cross-cutting checks (e.g. "no debuff install through Sanctuary" —
+/// the target-side sanctuary gate that would otherwise need to bounce
+/// through every debuff's validate open-code).
+pub fn hostile_target_feature_ready(
+    encounter: &EncounterInstance,
+    caster_id: usize,
+    target_ids: Option<&Vec<usize>>,
+    feature_tag: &'static str,
+    skip_if_condition: Condition,
+) -> bool {
+    if !feature_ready(encounter, caster_id, feature_tag) {
+        return false;
+    }
+    let Some(target_id) = first_target_id(target_ids) else {
+        return false;
+    };
+    let Some(caster) = encounter.actors.get(&caster_id) else {
+        return false;
+    };
+    let Some(target) = encounter.actors.get(&target_id) else {
+        return false;
+    };
+    target.team() != caster.team()
+        && target.is_combat_active()
+        && !target.has_condition(skip_if_condition)
 }
 
 /// Fighter Second Wind — bonus action; restore 1d10 + level HP. Once per
@@ -5460,3 +5518,340 @@ pub const FANATICAL_FOCUS_TAG: &str = "paladin.fanatical_focus";
 /// type also halves the Aura of Hate bonus, mirroring how Rage /
 /// Dueling / Two-Weapon Fighting fold into the base swing.
 pub const AURA_OF_HATE_TAG: &str = "paladin.aura_of_hate";
+
+/// 5e Berserker Barbarian level-10 subclass feature — **Intimidating
+/// Presence**. Class-feature tag; refreshed on a short rest via
+/// `SHORT_REST_FEATURES`. RAW: as an action, choose a creature within
+/// 30ft that can see or hear the barbarian; the target must succeed on
+/// a Wisdom save (DC 8 + prof + CHA mod) or be Frightened until the
+/// end of the barbarian's next turn. RAW also allows extending the
+/// duration on subsequent turns and includes a 24-hour immunity cap
+/// on saved targets; we collapse both to a fixed 10-round Frightened
+/// timer per install so the debuff shape stays uniform with the
+/// other single-target Frighten installs (Cause Fear, Wrathful
+/// Smite's Wrathful rider, Fear cone) — the short-rest gate keeps the
+/// resource cadence in check without threading a per-target 24-hour
+/// cooldown ledger through actor state.
+///
+/// Sibling to Turn Undead / Turn the Faithless on the shared class-
+/// feature "save-vs-Frightened" family, differentiated by shape:
+///   - Turn Undead / Turn the Faithless are 30ft *radial* bursts with
+///     a creature-type filter (undead / fey / fiend) — Wisdom-saved,
+///     WIS- or CHA-anchored, `resolve_turn_burst` helper.
+///   - Intimidating Presence is a single-target install with no
+///     creature-type filter — Wisdom-saved, CHA-anchored, the
+///     `resolve_single_target_cd_save_condition` helper below.
+/// Adding a future "Cause Fear" class-feature analogue or Ancients
+/// Paladin's Nature's Wrath (below) drops in as a fresh call to the
+/// shared single-target helper with a distinct `(save_ability,
+/// condition)` pair.
+///
+/// Ships on `BERSERKER_BARBARIAN_TEMPLATE` above its strict RAW lv10
+/// gate for the same reason Mindless Rage (lv6) already ships there —
+/// class templates target a balanced playable level, not lockstep PHB
+/// progression. Composes cleanly with the Berserker's raging loop:
+/// the frightened target eats disadvantage on attack rolls (RAW
+/// Frightened clause) while the barbarian's own raging swings still
+/// land unhindered.
+pub const INTIMIDATING_PRESENCE_TAG: &str = "barbarian.intimidating_presence";
+
+/// 5e Ancients Paladin level-3 Channel Divinity — **Nature's Wrath**.
+/// Class-feature tag; refreshed on a short rest via
+/// `SHORT_REST_FEATURES`. RAW: as an action, expend one use of Channel
+/// Divinity to cause spectral vines to spring up and reach for a
+/// creature within 10ft. The target must succeed on a Strength OR
+/// Dexterity save (target's choice) or be Restrained by the vines
+/// until the end of the paladin's next turn. On subsequent turns
+/// the target can re-roll the save at the same DC to end the effect;
+/// we collapse both the target-choice and the re-roll cadence to a
+/// fixed Strength save + 10-round timer per install so the shape
+/// stays uniform with the other Restrained-installing spells
+/// (Entangle, Grasping Vine, Watery Sphere) — targets whose STR is
+/// worse than DEX pay a slightly higher DC than RAW, but the loss
+/// is bounded by the CR-4 barbarian's typical spread on the two.
+///
+/// Sibling to Intimidating Presence (Berserker Barbarian lv10)
+/// above on the `resolve_single_target_cd_save_condition` helper:
+/// same "single target, save-vs-CHA-DC, install condition on fail"
+/// shape, differentiated by the (save-ability, condition) pair
+/// (WIS + Frightened for Intimidating Presence, STR + Restrained
+/// for Nature's Wrath). Distinct from Vow of Enmity (Vengeance
+/// Paladin CD, no-save Sworn install on a single hostile within
+/// 10ft) — Vow of Enmity is an *accuracy* prime for the paladin's
+/// own attacks, while Nature's Wrath is a *lockdown* debuff on the
+/// target.
+///
+/// Ships on `ANCIENTS_PALADIN_TEMPLATE` at its RAW lv3 gate. Pairs
+/// naturally with the paladin's smite family — a Restrained target
+/// eats disadvantage on the STR / DEX save re-roll AND every
+/// paladin swing lands with advantage per the Restrained clause,
+/// stacking a guaranteed-crit-chance window with the paladin's
+/// smite spike-damage lane.
+pub const NATURES_WRATH_TAG: &str = "paladin.natures_wrath";
+
+/// Shared "pick a single target, roll a save vs the caster's spellcasting-
+/// ability DC, install a condition on fail" body for single-target
+/// class-feature actions. Sibling to `resolve_turn_burst` on the
+/// class-feature family — Turn Undead / Turn the Faithless share the
+/// 30ft radial-burst shape, and Intimidating Presence (Berserker
+/// Barbarian lv10) / Nature's Wrath (Ancients Paladin CD lv3) share
+/// the single-target shape.
+///
+/// The feature charge is spent up front (before the save) so the
+/// once-per-rest cost is paid whether the target passes or fails —
+/// mirrors how the Turn burst helpers spend the tag before rolling
+/// each save. The save DC is derived from the caster's
+/// `spellcasting_ability` (CHA for paladins / barbarians), the target
+/// rolls with `save_ability`, and on a failed save `condition` is
+/// installed with `timer`. Aura suppressors and target-side condition
+/// immunity route through the standard `ApplyCondition` chokepoint
+/// (aura-driven suppression in `ApplyCondition::apply` and holder-side
+/// immunity in `add_condition`) so a Restrained-immune Ooze / a
+/// Charmed-immune Undead / an ally standing in an Aura of Devotion
+/// bounces the install cleanly per RAW.
+///
+/// Parameters mirror `resolve_turn_burst` where the shape overlaps:
+///   - `caster_id` — spends `feature_tag` before the save.
+///   - `target_id` — the single target of the save.
+///   - `spellcasting_ability` — anchor for the save DC (8 + prof + mod).
+///   - `save_ability` — the ability the target rolls the save with.
+///   - `condition` / `timer` — installed on a failed save.
+///   - `label` — log prefix ("intimidating presence" / "nature's wrath").
+///
+/// Adding a future single-target save-vs-condition class feature
+/// (a hypothetical "Compelled Retreat" that installs Frightened via
+/// a CHA-DC save, an Ancients paladin "Turn the Faithless" single-
+/// target variant, etc.) lands as a fresh call with a distinct
+/// (save_ability, condition, timer) tuple — no re-implementation of
+/// the spend-tag / roll-DC / on-fail-install dance.
+fn resolve_single_target_cd_save_condition(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    target_id: usize,
+    feature_tag: &'static str,
+    spellcasting_ability: AbilityScoreType,
+    save_ability: AbilityScoreType,
+    condition: Condition,
+    timer: ConditionTimer,
+    label: &'static str,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+        actor.spend_feature(feature_tag);
+    }
+    let Some(caster) = encounter.actors.get(&caster_id) else {
+        return Vec::new();
+    };
+    let dc = caster.spell_save_dc(spellcasting_ability);
+    encounter.log(format!(
+        "  {}: target rolls {:?} save (DC {}).",
+        label, save_ability, dc
+    ));
+    let save = encounter.roll_save(target_id, save_ability, dc);
+    if save.passed() {
+        return Vec::new();
+    }
+    vec![Box::new(ApplyCondition {
+        actor_id: target_id,
+        condition,
+        timer,
+    })]
+}
+
+/// Intimidating Presence — Berserker Barbarian class feature action.
+/// Once-per-short-rest single-target Frighten install: the target
+/// (within 30ft, 12 tiles on our 2.5ft grid) rolls a WIS save vs the
+/// barbarian's CHA-anchored DC (8 + prof + CHA mod). On fail the
+/// target is Frightened for 10 rounds (1 minute RAW). Routes through
+/// the shared `resolve_single_target_cd_save_condition` helper — the
+/// gate + spend + roll + install dance lives in one place, and
+/// mirrors Turn Undead / Turn the Faithless on the burst-side lane.
+///
+/// Range gate (12 tiles = 30ft RAW) matches the RAW range and mirrors
+/// Turn Undead / Turn the Faithless's radius — the shared "30ft
+/// intimidation" mental envelope stays consistent across barbarian /
+/// cleric / paladin fear-installers.
+pub struct IntimidatingPresence {}
+
+impl Action for IntimidatingPresence {
+    fn name(&self) -> &str {
+        "intimidating presence"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ip", "intimidate", "presence"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30ft RAW = 12 tiles on the 2.5ft grid.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        // RAW: "a creature that you can see" — line of sight anchor.
+        // The Deafened / Blinded gate is dropped since the RAW clause
+        // is "see OR hear you", which we treat as always-true for
+        // combat-active targets.
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Once-per-rest + hostile-target + already-Frightened dedup all
+        // fold into the shared `hostile_target_feature_ready` gate. The
+        // Frightened dedup keeps the AI from burning the short-rest
+        // charge on a target that's already Frightened (via Cause Fear,
+        // Turn Undead, Wrathful Smite, a dragon fear cone, etc.).
+        hostile_target_feature_ready(
+            encounter,
+            caster_id,
+            target_ids,
+            INTIMIDATING_PRESENCE_TAG,
+            Condition::Frightened,
+        )
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        resolve_single_target_cd_save_condition(
+            encounter,
+            caster_id,
+            target_id,
+            INTIMIDATING_PRESENCE_TAG,
+            // Barbarian's spellcasting-anchor ability collapses to CHA
+            // per the RAW Intimidating Presence text — the barbarian
+            // isn't a caster, but the DC formula (8 + prof + CHA mod)
+            // reads CHA the same way.
+            AbilityScoreType::Charisma,
+            AbilityScoreType::Wisdom,
+            Condition::Frightened,
+            // 10 rounds = 1 minute — matches Turn Undead / Turn the
+            // Faithless's Frighten window. The RAW "until end of your
+            // next turn" collapses to the standard 1-minute install
+            // since the engine doesn't track the extend-on-subsequent-
+            // turns clause.
+            ConditionTimer::Rounds(10),
+            "intimidating presence",
+        )
+    }
+}
+
+pub static INTIMIDATING_PRESENCE: LazyLock<IntimidatingPresence> =
+    LazyLock::new(|| IntimidatingPresence {});
+
+/// Nature's Wrath — Ancients Paladin Channel Divinity action. Once-
+/// per-short-rest single-target Restrained install: the target
+/// (within 10ft, 4 tiles) rolls a STR save vs the paladin's CHA-
+/// anchored DC (8 + prof + CHA mod). On fail the target is Restrained
+/// for 10 rounds (1 minute — matches the other Restrained-installers
+/// on the paladin / druid families). Routes through the shared
+/// `resolve_single_target_cd_save_condition` helper — same body as
+/// Intimidating Presence with a distinct (save-ability, condition)
+/// pair.
+///
+/// RAW's STR-OR-DEX target choice collapses to a fixed STR save so
+/// the debuff has a consistent save-ability lane; targets with a
+/// significantly better DEX than STR pay a marginally higher DC
+/// than RAW (bounded by the ability spread — a typical CR-4 target
+/// has at most a 4-point gap between STR and DEX).
+///
+/// Range gate (4 tiles = 10ft RAW) matches Vow of Enmity's melee-
+/// commitment envelope on the same paladin chassis — the paladin's
+/// smite loop wants adjacency anyway, so both single-target CDs sit
+/// at the same 10ft window.
+pub struct NaturesWrath {}
+
+impl Action for NaturesWrath {
+    fn name(&self) -> &str {
+        "nature's wrath"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["nw", "wrath", "natures-wrath"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 10ft RAW = 4 tiles on the 2.5ft grid.
+        Some(4)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Same shared gate as Intimidating Presence — once-per-rest
+        // charge + hostile-target + already-Restrained dedup all fold
+        // into `hostile_target_feature_ready`. Restrained dedup keeps
+        // the AI from burning the charge on a target already Restrained
+        // by Entangle, Grasping Vine, Watery Sphere, or a natural grapple.
+        hostile_target_feature_ready(
+            encounter,
+            caster_id,
+            target_ids,
+            NATURES_WRATH_TAG,
+            Condition::Restrained,
+        )
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        resolve_single_target_cd_save_condition(
+            encounter,
+            caster_id,
+            target_id,
+            NATURES_WRATH_TAG,
+            // Paladin spellcasting ability is CHA — same anchor as
+            // Turn the Faithless / Sacred Weapon and every other
+            // paladin CD DC.
+            AbilityScoreType::Charisma,
+            // STR save per RAW's Strength-OR-Dexterity choice
+            // collapsed to Strength (see the tag docs above for
+            // the collapse rationale).
+            AbilityScoreType::Strength,
+            Condition::Restrained,
+            ConditionTimer::Rounds(10),
+            "nature's wrath",
+        )
+    }
+}
+
+pub static NATURES_WRATH: LazyLock<NaturesWrath> = LazyLock::new(|| NaturesWrath {});

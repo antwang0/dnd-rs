@@ -1,8 +1,8 @@
 use crate::actions::action_template::Action;
 use crate::actions::class_features::{
     BEAR_TOTEM_TAG, DIVINE_FURY_TAG, EAGLE_DIVE, EAGLE_TOTEM_TAG, FAST_MOVEMENT_TAG, FRENZY,
-    FRENZY_TAG, MINDLESS_RAGE_TAG, RAGE, RAGE_TAG, RELENTLESS_RAGE_TAG, TIGER_TOTEM_TAG,
-    WOLF_TOTEM_TAG,
+    FRENZY_TAG, INTIMIDATING_PRESENCE, INTIMIDATING_PRESENCE_TAG, MINDLESS_RAGE_TAG, RAGE,
+    RAGE_TAG, RELENTLESS_RAGE_TAG, TIGER_TOTEM_TAG, WOLF_TOTEM_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GREATAXE, RECKLESS_ATTACK};
@@ -302,14 +302,21 @@ pub static TIGER_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock
 pub static BERSERKER_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Subclass-of pattern: clone the baseline Barbarian envelope wholesale
     // (which already ships FRENZY_TAG + FRENZY action) and layer on the
-    // MINDLESS_RAGE_TAG passive. Actions list needs no additions — Mindless
-    // Rage is a pure passive with no active surface, unlike Frenzy which
-    // has the paired `FRENZY` bonus-action swing.
+    // MINDLESS_RAGE_TAG passive plus the Intimidating Presence action +
+    // charge. Mindless Rage is a pure passive with no active surface
+    // (unlike Frenzy which has the paired `FRENZY` bonus-action swing);
+    // Intimidating Presence pairs an action-cost single-target Frighten
+    // install with a short-rest charge, so both the action and the tag
+    // ship together on this subclass template.
+    let mut actions = BARBARIAN_TEMPLATE.actions.clone();
+    actions.push(&*INTIMIDATING_PRESENCE);
     let mut features = BARBARIAN_TEMPLATE.features.clone();
     features.insert(MINDLESS_RAGE_TAG);
+    features.insert(INTIMIDATING_PRESENCE_TAG);
     CreatureTemplate {
         name: "Berserker Barbarian",
         glyph: 'Z',
+        actions,
         features,
         ..BARBARIAN_TEMPLATE.clone()
     }

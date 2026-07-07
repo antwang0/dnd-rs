@@ -159,6 +159,35 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3c''''a. Nature's Wrath — Ancients Paladin Channel Divinity,
+        //          action, once per short rest. Restrains one in-reach
+        //          (4 tiles = 10 ft RAW) hostile via a STR save vs the
+        //          paladin's CHA-anchored DC. Slots next to Vow of Enmity
+        //          on the CD family — same 10ft window, single-target,
+        //          Ancients-picks-Restrain and Vengeance-picks-advantage-
+        //          prime. Restrained gives the paladin advantage on every
+        //          follow-up attack against the target for 10 rounds AND
+        //          zeroes their movement / imposes save-disadvantage —
+        //          harder lock than the Sworn advantage-only prime, at
+        //          the cost of an Action (not bonus action). Sibling
+        //          shape to Intimidating Presence (Berserker) below.
+        if let Some(aei) = try_natures_wrath(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3c''''b. Intimidating Presence — Berserker Barbarian action,
+        //          once per short rest. Frightens one in-reach (12 tiles
+        //          = 30 ft RAW) hostile via a WIS save vs the barbarian's
+        //          CHA-anchored DC. Slots next to Nature's Wrath on the
+        //          class-feature single-target lockdown lane; distinct
+        //          in reach (30ft vs 10ft) and installed condition
+        //          (Frightened vs Restrained). Frightened costs the target
+        //          attack disadvantage against sources of fear — great
+        //          setup for the barbarian's raging swing chain.
+        if let Some(aei) = try_intimidating_presence(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3c'''''. Guided Strike — War Domain Cleric Channel Divinity,
         //          bonus action, once per short rest. Installs the
         //          `GuidedStriking` prime (+10 to next attack roll) on
@@ -3025,26 +3054,35 @@ fn try_divine_smite(
     try_self_action_when_enemy_within(encounter, actor_id, 0, "divine smite")
 }
 
-/// Vengeance Paladin Vow of Enmity — bonus-action Channel Divinity,
-/// once per long rest. Marks one in-reach (4 tiles = 10 ft RAW) hostile
-/// creature so the paladin gets advantage on all subsequent attack rolls
-/// against that target for 10 rounds.
+/// Shared "pick the highest-HP hostile within `range_tiles` and queue
+/// the named single-target class-feature action against them" body.
 ///
-/// Target picker:
-///   - Hostile, combat-active, not already Sworn-by-us (the action's
-///     `custom_validate_input` rechecks this; gating here too keeps the
-///     AI from cycling through dead candidates).
-///   - Within 4 tiles (the action's own reach gate; we mirror it here
-///     so the loop early-exits when no enemy is close enough).
-///   - Highest current HP wins. Beefy targets benefit most from a
-///     guaranteed-advantage swing chain because the Smite primes get
-///     spent more reliably.
-fn try_vow_of_enmity(
+/// Vow of Enmity (Vengeance Paladin CD, 4-tile reach → Sworn install),
+/// Intimidating Presence (Berserker Barbarian lv10, 12-tile reach →
+/// Frightened install), and Nature's Wrath (Ancients Paladin CD,
+/// 4-tile reach → Restrained install) all share the picker shape:
+///   - resolve the named action via `find_action`,
+///   - iterate hostile combat-active actors within `range_tiles`,
+///   - defer no-redup / feature-charge checks to the action's own
+///     `custom_validate_input`,
+///   - pick the highest-HP surviving candidate.
+///
+/// Beefy targets benefit most from a single-target lockdown / accuracy
+/// prime because the paladin/barbarian's follow-up swing chain has more
+/// turns to cash the debuff before the target drops. Factoring the
+/// picker here means the three feature-specific `try_*` shims collapse
+/// to one-line delegations, and a future single-target class-feature
+/// (a hypothetical "Cause Fear at will" for a Warlock invocation, a
+/// druid subclass single-target restraint) drops in as a fresh caller
+/// with a new (action_name, range_tiles) pair.
+fn try_single_target_class_feature_hostile(
     encounter: &EncounterInstance,
     actor_id: usize,
+    action_name: &str,
+    range_tiles: isize,
 ) -> Option<ActionExecutionInfo> {
     let actor = encounter.actors.get(&actor_id)?;
-    let voe = actor.find_action("vow of enmity")?;
+    let action = actor.find_action(action_name)?;
     let my_team = actor.team();
 
     let mut best: Option<(u32, ActionExecutionInfo)> = None;
@@ -3055,16 +3093,16 @@ fn try_vow_of_enmity(
         if target_id == actor_id || target.team() == my_team || !target.is_combat_active() {
             continue;
         }
-        // 4 tiles = 10 ft (RAW reach). Mirror the action's reach gate so
-        // the loop doesn't queue an out-of-range candidate just to have
+        // Range gate mirrors the action's own reach cap so the loop
+        // doesn't queue an out-of-range candidate just to have
         // `validate` reject it later.
         if encounter
             .footprint_distance(actor_id, target_id)
-            .is_none_or(|d| d > 4)
+            .is_none_or(|d| d > range_tiles)
         {
             continue;
         }
-        let aei = ActionExecutionInfo::new(voe, actor_id, Some(vec![target_id]), None, None);
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![target_id]), None, None);
         if !aei.validate(encounter) {
             continue;
         }
@@ -3074,6 +3112,45 @@ fn try_vow_of_enmity(
         }
     }
     best.map(|(_, aei)| aei)
+}
+
+/// Vengeance Paladin Vow of Enmity — bonus-action Channel Divinity,
+/// once per long rest. Marks one in-reach (4 tiles = 10 ft RAW) hostile
+/// creature so the paladin gets advantage on all subsequent attack rolls
+/// against that target for 10 rounds. Highest-HP candidate wins per the
+/// shared picker's beefy-target heuristic — the more swings the vow
+/// survives across, the more Smite primes cash in on advantage.
+fn try_vow_of_enmity(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_single_target_class_feature_hostile(encounter, actor_id, "vow of enmity", 4)
+}
+
+/// Berserker Barbarian Intimidating Presence — action, once per short
+/// rest. Frightens one in-reach (12 tiles = 30 ft RAW) hostile creature
+/// on a failed WIS save vs the barbarian's CHA-anchored DC. Highest-HP
+/// candidate wins per the shared picker — a Frightened boss eats attack
+/// disadvantage for the whole raging window, so beefy targets get the
+/// most swings-lost-to-disadvantage payoff.
+fn try_intimidating_presence(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_single_target_class_feature_hostile(encounter, actor_id, "intimidating presence", 12)
+}
+
+/// Ancients Paladin Nature's Wrath — action Channel Divinity, once per
+/// short rest. Restrains one in-reach (4 tiles = 10 ft RAW) hostile
+/// creature on a failed STR save vs the paladin's CHA-anchored DC. Same
+/// 4-tile reach as Vow of Enmity — both single-target paladin CDs sit
+/// at the same 10ft window so a paladin closing on a boss target lines
+/// up either CD with one melee-approach turn.
+fn try_natures_wrath(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_single_target_class_feature_hostile(encounter, actor_id, "nature's wrath", 4)
 }
 
 // Note: Wholeness of Body (Open Hand Monk lv6) is auto-picked by

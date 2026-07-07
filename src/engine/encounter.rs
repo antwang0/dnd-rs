@@ -49714,4 +49714,283 @@ mod tests {
             "without Persistent Rage: timer stays Rounds(10)"
         );
     }
+
+    /// Intimidating Presence (Berserker Barbarian lv10): the action ships
+    /// on `BERSERKER_BARBARIAN_TEMPLATE` alongside the tag, and the
+    /// baseline Barbarian template does NOT ship it — subclass sanity gate
+    /// so a Berserker-vs-baseline encounter renders the feature only on
+    /// the intended chassis.
+    #[test]
+    fn intimidating_presence_ships_on_berserker_barbarian_only() {
+        use crate::actions::class_features::INTIMIDATING_PRESENCE_TAG;
+        use crate::actors::creatures::barbarians::{
+            BARBARIAN_TEMPLATE, BERSERKER_BARBARIAN_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let bers = e
+            .instantiate_creature(&BERSERKER_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(6, 6), 0, 1)
+            .unwrap();
+        assert!(
+            e.actors[&bers].feature_available(INTIMIDATING_PRESENCE_TAG),
+            "Berserker Barbarian must ship with Intimidating Presence charge"
+        );
+        assert!(
+            e.actors[&bers]
+                .find_action("intimidating presence")
+                .is_some(),
+            "Berserker Barbarian must ship with the Intimidating Presence action"
+        );
+        assert!(
+            !e.actors[&base].feature_available(INTIMIDATING_PRESENCE_TAG),
+            "baseline Barbarian must NOT ship with Intimidating Presence"
+        );
+    }
+
+    /// Intimidating Presence spend + install path: across a seed sweep
+    /// the goblin fails its WIS save vs the Berserker's CHA-anchored DC
+    /// on at least one seed and picks up Frightened. The feature charge
+    /// is spent unconditionally (matches Turn Undead / Turn the
+    /// Faithless — the RAW cost is paid on the action, not on the save
+    /// outcome).
+    #[test]
+    fn intimidating_presence_spends_charge_and_can_frighten_goblin() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{INTIMIDATING_PRESENCE, INTIMIDATING_PRESENCE_TAG};
+        use crate::actors::creatures::barbarians::BERSERKER_BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut goblin_frightened = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let bers = e
+                .instantiate_creature(&BERSERKER_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+                .unwrap();
+            assert!(e.actors[&bers].feature_available(INTIMIDATING_PRESENCE_TAG));
+            let effects =
+                INTIMIDATING_PRESENCE.side_effects(&mut e, bers, Some(&vec![g]), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            // Charge is spent whether the goblin passed or failed the
+            // save — matches the Turn Undead / Turn the Faithless
+            // "action cost paid on cast" cadence.
+            assert!(!e.actors[&bers].feature_available(INTIMIDATING_PRESENCE_TAG));
+            if e.actors[&g].has_condition(Condition::Frightened) {
+                goblin_frightened = true;
+                break;
+            }
+        }
+        assert!(
+            goblin_frightened,
+            "intimidating presence never frightened a goblin across 30 seeds"
+        );
+    }
+
+    /// Intimidating Presence's `custom_validate_input` gates hostile-
+    /// only targets — priming an ally is a wasted charge and the AI
+    /// picker should never queue it.
+    #[test]
+    fn intimidating_presence_rejects_ally_target() {
+        use crate::actions::action_template::{Action, ActionExecutionInfo};
+        use crate::actions::class_features::INTIMIDATING_PRESENCE;
+        use crate::actors::creatures::barbarians::BERSERKER_BARBARIAN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let bers = e
+            .instantiate_creature(&BERSERKER_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&BERSERKER_BARBARIAN_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        let aei =
+            ActionExecutionInfo::new(&*INTIMIDATING_PRESENCE, bers, Some(vec![ally]), None, None);
+        assert!(
+            !aei.validate(&e),
+            "intimidating presence must reject a same-team target"
+        );
+    }
+
+    /// Intimidating Presence's `hostile_target_feature_ready` guard
+    /// rejects an already-Frightened target — re-installing Frightened
+    /// on a foe that Wrathful Smite / Turn Undead / a dragon fear cone
+    /// already put Frightened would refresh the timer for zero
+    /// mechanical gain and burn the once-per-rest charge.
+    #[test]
+    fn intimidating_presence_rejects_already_frightened_target() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::class_features::INTIMIDATING_PRESENCE;
+        use crate::actors::creatures::barbarians::BERSERKER_BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let bers = e
+            .instantiate_creature(&BERSERKER_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        // Pre-install Frightened directly on the goblin.
+        e.actors.get_mut(&g).unwrap().add_condition(
+            Condition::Frightened,
+            ConditionTimer::Rounds(5),
+        );
+        let aei =
+            ActionExecutionInfo::new(&*INTIMIDATING_PRESENCE, bers, Some(vec![g]), None, None);
+        assert!(
+            !aei.validate(&e),
+            "intimidating presence must reject a target that's already Frightened"
+        );
+    }
+
+    /// Nature's Wrath (Ancients Paladin CD lv3): action + tag both ship
+    /// on `ANCIENTS_PALADIN_TEMPLATE`. Baseline `PALADIN_TEMPLATE` /
+    /// Devotion / Vengeance / Oathbreaker do NOT ship it — subclass
+    /// sanity gate.
+    #[test]
+    fn natures_wrath_ships_on_ancients_paladin_only() {
+        use crate::actions::class_features::NATURES_WRATH_TAG;
+        use crate::actors::creatures::paladins::{
+            ANCIENTS_PALADIN_TEMPLATE, DEVOTION_PALADIN_TEMPLATE, PALADIN_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let anc = e
+            .instantiate_creature(&ANCIENTS_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(6, 6), 0, 1)
+            .unwrap();
+        let dev = e
+            .instantiate_creature(&DEVOTION_PALADIN_TEMPLATE, Coordinate::new(10, 6), 0, 2)
+            .unwrap();
+        assert!(
+            e.actors[&anc].feature_available(NATURES_WRATH_TAG),
+            "Ancients Paladin must ship with Nature's Wrath charge"
+        );
+        assert!(
+            e.actors[&anc].find_action("nature's wrath").is_some(),
+            "Ancients Paladin must ship with the Nature's Wrath action"
+        );
+        assert!(
+            !e.actors[&pal].feature_available(NATURES_WRATH_TAG),
+            "baseline Paladin must NOT ship Nature's Wrath"
+        );
+        assert!(
+            !e.actors[&dev].feature_available(NATURES_WRATH_TAG),
+            "Devotion Paladin must NOT ship Nature's Wrath (Devotion carries Turn the Faithless instead)"
+        );
+    }
+
+    /// Nature's Wrath spend + install path: across a seed sweep the
+    /// goblin fails its STR save vs the paladin's CHA-anchored DC on at
+    /// least one seed and picks up Restrained. Charge spent
+    /// unconditionally.
+    #[test]
+    fn natures_wrath_spends_charge_and_can_restrain_goblin() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{NATURES_WRATH, NATURES_WRATH_TAG};
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::ANCIENTS_PALADIN_TEMPLATE;
+        let mut goblin_restrained = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let anc = e
+                .instantiate_creature(&ANCIENTS_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            assert!(e.actors[&anc].feature_available(NATURES_WRATH_TAG));
+            let effects = NATURES_WRATH.side_effects(&mut e, anc, Some(&vec![g]), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            assert!(!e.actors[&anc].feature_available(NATURES_WRATH_TAG));
+            if e.actors[&g].has_condition(Condition::Restrained) {
+                goblin_restrained = true;
+                break;
+            }
+        }
+        assert!(
+            goblin_restrained,
+            "nature's wrath never restrained a goblin across 30 seeds"
+        );
+    }
+
+    /// Nature's Wrath's shared `hostile_target_feature_ready` gate
+    /// rejects an already-Restrained target (Entangle / Grasping Vine
+    /// already up) — same dedup shape as Intimidating Presence's
+    /// Frightened check.
+    #[test]
+    fn natures_wrath_rejects_already_restrained_target() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::class_features::NATURES_WRATH;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::ANCIENTS_PALADIN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let anc = e
+            .instantiate_creature(&ANCIENTS_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        e.actors.get_mut(&g).unwrap().add_condition(
+            Condition::Restrained,
+            ConditionTimer::Rounds(5),
+        );
+        let aei = ActionExecutionInfo::new(&*NATURES_WRATH, anc, Some(vec![g]), None, None);
+        assert!(
+            !aei.validate(&e),
+            "nature's wrath must reject a target that's already Restrained"
+        );
+    }
+
+    /// Nature's Wrath's shared gate also rejects an ally target — same
+    /// hostile-only guard shape as Intimidating Presence.
+    #[test]
+    fn natures_wrath_rejects_ally_target() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::class_features::NATURES_WRATH;
+        use crate::actors::creatures::paladins::ANCIENTS_PALADIN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let anc = e
+            .instantiate_creature(&ANCIENTS_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&ANCIENTS_PALADIN_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        let aei = ActionExecutionInfo::new(&*NATURES_WRATH, anc, Some(vec![ally]), None, None);
+        assert!(
+            !aei.validate(&e),
+            "nature's wrath must reject a same-team target"
+        );
+    }
+
+    /// Both new short-rest class features (Intimidating Presence and
+    /// Nature's Wrath) are registered in the `SHORT_REST_FEATURES`
+    /// cohort so a short rest refreshes the charge alongside the other
+    /// CD family (Turn the Faithless, Guided Strike, Radiance of the
+    /// Dawn, Warding Flare, Fanatical Focus, Dark One's Own Luck).
+    #[test]
+    fn intimidating_presence_and_natures_wrath_short_rest_registered() {
+        use crate::actions::class_features::{
+            INTIMIDATING_PRESENCE_TAG, NATURES_WRATH_TAG, SHORT_REST_FEATURES,
+        };
+        assert!(
+            SHORT_REST_FEATURES.contains(&INTIMIDATING_PRESENCE_TAG),
+            "Intimidating Presence tag must live on SHORT_REST_FEATURES"
+        );
+        assert!(
+            SHORT_REST_FEATURES.contains(&NATURES_WRATH_TAG),
+            "Nature's Wrath tag must live on SHORT_REST_FEATURES"
+        );
+    }
 }
