@@ -1,8 +1,9 @@
 use crate::actions::class_features::{
-    CLEANSING_TOUCH, CLEANSING_TOUCH_TAG, DIVINE_SMITE, FANATICAL_FOCUS_TAG,
-    IMPROVED_DIVINE_SMITE_TAG, LAY_ON_HANDS, LAY_ON_HANDS_TAG, NATURES_WRATH, NATURES_WRATH_TAG,
-    SACRED_WEAPON, SACRED_WEAPON_TAG, TURN_THE_FAITHLESS, TURN_THE_FAITHLESS_TAG,
-    UNDYING_SENTINEL_TAG, VOW_OF_ENMITY, VOW_OF_ENMITY_TAG,
+    ABJURE_ENEMY, ABJURE_ENEMY_TAG, CLEANSING_TOUCH, CLEANSING_TOUCH_TAG, DIVINE_SMITE,
+    FANATICAL_FOCUS_TAG, IMPROVED_DIVINE_SMITE_TAG, LAY_ON_HANDS, LAY_ON_HANDS_TAG, NATURES_WRATH,
+    NATURES_WRATH_TAG, REBUKE_THE_VIOLENT, REBUKE_THE_VIOLENT_TAG, SACRED_WEAPON, SACRED_WEAPON_TAG,
+    TURN_THE_FAITHLESS, TURN_THE_FAITHLESS_TAG, UNDYING_SENTINEL_TAG, VOW_OF_ENMITY,
+    VOW_OF_ENMITY_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GREATSWORD;
@@ -232,10 +233,20 @@ pub static DEVOTION_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
     //     paired action + feature charge; the shared `resolve_turn_burst`
     //     helper drives both this and Turn Undead so save/log rule
     //     changes land once.
+    //   - `REBUKE_THE_VIOLENT_TAG` (lv15 subclass feature): once-per-
+    //     short-rest 30ft single-target 4d10 radiant WIS-save burst.
+    //     Ships above its strict RAW level gate for the same reason
+    //     Nature's Ward / Undying Sentinel (lv15) ship on the CR-1.5
+    //     Ancients paladin — class templates target a balanced
+    //     playable level, not lockstep PHB progression. Rounds out
+    //     the Devotion paladin's CD lane with a damage-burst sibling
+    //     to Turn the Faithless's Frighten-burst.
     let mut actions = PALADIN_TEMPLATE.actions.clone();
     actions.push(&*TURN_THE_FAITHLESS);
+    actions.push(&*REBUKE_THE_VIOLENT);
     let mut features = PALADIN_TEMPLATE.features.clone();
     features.insert(TURN_THE_FAITHLESS_TAG);
+    features.insert(REBUKE_THE_VIOLENT_TAG);
     CreatureTemplate {
         name: "Devotion Paladin",
         glyph: 'D',
@@ -360,8 +371,18 @@ pub static VENGEANCE_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
     // `HUNTER_RANGER_TEMPLATE` and `ASSASSIN_ROGUE_TEMPLATE`.
     let mut actions = PALADIN_TEMPLATE.actions.clone();
     actions.push(&*VOW_OF_ENMITY);
+    // Abjure Enemy (lv3 Vengeance CD): single-target 60ft WIS-save
+    // Frighten install; once per short rest. RAW gives the Vengeance
+    // paladin the CHOICE between Abjure Enemy and Vow of Enmity when
+    // spending a CD charge. We ship both on the template as distinct
+    // per-rest tags so the AI can pick either depending on whether it
+    // wants an attack prime (Vow of Enmity) or a target debuff (Abjure
+    // Enemy). Same short-rest gate as the sibling paladin CDs (Nature's
+    // Wrath / Turn the Faithless / Guided Strike).
+    actions.push(&*ABJURE_ENEMY);
     let mut features = PALADIN_TEMPLATE.features.clone();
     features.insert(VOW_OF_ENMITY_TAG);
+    features.insert(ABJURE_ENEMY_TAG);
     CreatureTemplate {
         name: "Vengeance Paladin",
         glyph: 'V',

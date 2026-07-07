@@ -101,6 +101,21 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // (without Font of Inspiration) still has to long-rest to reset
     // the die; a lv5+ bard with the Font tag refreshes here.
     BARDIC_INSPIRATION_TAG,
+    // 5e Vengeance Paladin level-3 subclass Channel Divinity — Abjure
+    // Enemy. Single-target Frighten via WIS save vs the paladin's
+    // CHA-anchored DC. Refreshed on short rest alongside the other
+    // paladin CD family (Turn the Faithless, Nature's Wrath, Guided
+    // Strike, Radiance of the Dawn) — RAW Channel Divinity is once
+    // per short rest.
+    ABJURE_ENEMY_TAG,
+    // 5e Devotion Paladin level-15 subclass feature — Rebuke the
+    // Violent. Single-target 4d10 radiant damage burst via WIS save
+    // vs the paladin's CHA-anchored DC. Refreshed on short rest to
+    // match the CD gating shape — RAW uses per long rest = CHA mod
+    // refreshes on long rest, collapsed to a single once-per-short-
+    // rest charge to match the sibling Wrath of the Storm / Infernal
+    // Rebuke damage-burst refresh cadence.
+    REBUKE_THE_VIOLENT_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -2928,13 +2943,17 @@ fn resolve_turn_burst(
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
     use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
-    if let Some(actor) = encounter.actors.get_mut(&caster_id) {
-        actor.spend_feature(feature_tag);
-    }
+    let Some(dc) = spend_feature_and_get_dc(
+        encounter,
+        caster_id,
+        feature_tag,
+        spellcasting_ability,
+    ) else {
+        return Vec::new();
+    };
     let Some(caster) = encounter.actors.get(&caster_id) else {
         return Vec::new();
     };
-    let dc = caster.spell_save_dc(spellcasting_ability);
     let caster_loc = caster.location();
     let caster_team = caster.team();
     let caster_size = get_tiles_from_size(caster.size());
@@ -4479,6 +4498,42 @@ pub static COMMANDERS_STRIKE: LazyLock<CommandersStrike> = LazyLock::new(|| Comm
 /// Relentless Endurance.
 pub const INFERNAL_LEGACY_REBUKE_TAG: &str = "tiefling.infernal_legacy_rebuke";
 
+/// Shared "spend the once-per-rest feature charge on the caster, then
+/// return the caster's save DC anchored on `spellcasting_ability`" step.
+/// Returns `None` if the caster is gone (defensive early-out for the
+/// three save-driven CD resolvers below) — callers short-circuit on
+/// `None` and skip the save / damage / condition install.
+///
+/// Centralizes the (spend feature → look up DC) preamble that
+/// `resolve_turn_burst`, `resolve_single_target_cd_save_condition`, and
+/// `resolve_single_target_burst_save_for_half` all previously open-
+/// coded. Uses a single `get_mut` for the spend and a single `get`
+/// for the DC — the two lookups can't collapse to one because
+/// `spend_feature` mutates but `spell_save_dc` reads, and the borrow
+/// checker won't accept an overlapping mut+imm pair. The important
+/// invariant this helper enforces is *ordering*: the charge is spent
+/// BEFORE the DC read, so a target that saves still pays the once-per-
+/// rest cost — RAW for all three of Turn Undead, Intimidating Presence,
+/// Wrath of the Storm, and their siblings.
+///
+/// Sibling to `feature_ready` / `hostile_target_feature_ready` on the
+/// class-feature-plumbing lane: those two check the charge is *there*
+/// (gate), this one spends the charge and gets the DC (effect).
+fn spend_feature_and_get_dc(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    feature_tag: &'static str,
+    spellcasting_ability: AbilityScoreType,
+) -> Option<i32> {
+    if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+        actor.spend_feature(feature_tag);
+    }
+    encounter
+        .actors
+        .get(&caster_id)
+        .map(|c| c.spell_save_dc(spellcasting_ability))
+}
+
 /// Shared "spend a once-per-rest feature charge, roll target save vs the
 /// caster's spellcasting-ability DC, deal Xdy damage of type T with
 /// save-for-half" body for single-target class-feature damage bursts.
@@ -4523,13 +4578,14 @@ fn resolve_single_target_burst_save_for_half(
     damage_type: DamageType,
     label: &'static str,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
-    let Some(caster) = encounter.actors.get(&caster_id) else {
+    let Some(dc) = spend_feature_and_get_dc(
+        encounter,
+        caster_id,
+        feature_tag,
+        spellcasting_ability,
+    ) else {
         return Vec::new();
     };
-    let dc = caster.spell_save_dc(spellcasting_ability);
-    if let Some(c) = encounter.actors.get_mut(&caster_id) {
-        c.spend_feature(feature_tag);
-    }
     let (dmg, _) = crate::actions::spells::save_for_half_damage(
         encounter,
         caster_id,
@@ -5717,13 +5773,14 @@ fn resolve_single_target_cd_save_condition(
     timer: ConditionTimer,
     label: &'static str,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
-    if let Some(actor) = encounter.actors.get_mut(&caster_id) {
-        actor.spend_feature(feature_tag);
-    }
-    let Some(caster) = encounter.actors.get(&caster_id) else {
+    let Some(dc) = spend_feature_and_get_dc(
+        encounter,
+        caster_id,
+        feature_tag,
+        spellcasting_ability,
+    ) else {
         return Vec::new();
     };
-    let dc = caster.spell_save_dc(spellcasting_ability);
     encounter.log(format!(
         "  {}: target rolls {:?} save (DC {}).",
         label, save_ability, dc
@@ -6102,3 +6159,282 @@ pub static WRATH_OF_THE_STORM: LazyLock<WrathOfTheStorm> =
 /// (Bardic Inspiration die) and defensive (Cutting Words reduction) —
 /// both refresh on the same short-rest cadence.
 pub const FONT_OF_INSPIRATION_TAG: &str = "bard.font_of_inspiration";
+
+/// 5e Vengeance Paladin level-3 subclass Channel Divinity — **Abjure
+/// Enemy**. Class-feature tag; refreshed on a short rest via
+/// `SHORT_REST_FEATURES`. RAW: as an action, choose a creature within
+/// 60 ft that you can see; the target must succeed on a Wisdom save vs
+/// the paladin's spell save DC (8 + prof + CHA mod) or be Frightened
+/// AND have its speed reduced to 0 for 1 minute; on save, its speed is
+/// only halved for the same duration. We collapse the twin outcomes to
+/// a single Frightened install on fail (the paladin's smite loop wants
+/// the fear-driven attack-roll disadvantage on the target more than a
+/// clean speed halving — Frightened already implies disadvantage on
+/// attacks against the source, matching the RAW "cannot approach"
+/// intent), matching the shape of Intimidating Presence / Nature's
+/// Wrath / Turn the Faithless on the single-target Frighten family.
+///
+/// Sibling to Vow of Enmity on the Vengeance Paladin lv3 CD lane — RAW
+/// gives the paladin a *choice* between Abjure Enemy (this) and Vow of
+/// Enmity when they spend a CD charge. In our model both live on the
+/// `VENGEANCE_PALADIN_TEMPLATE` as distinct per-rest tags — the AI can
+/// pick either depending on the target: Vow of Enmity primes an
+/// accuracy buff on the paladin's own attacks against a chosen target,
+/// while Abjure Enemy installs a lockdown debuff *on* the target. The
+/// two CDs cover the two lanes (attack prime vs target debuff)
+/// separately rather than being mutually exclusive.
+///
+/// Routes through the shared `resolve_single_target_cd_save_condition`
+/// helper — same body as Intimidating Presence / Nature's Wrath, with a
+/// distinct (save-ability=WIS, condition=Frightened, spellcasting-
+/// ability=CHA) tuple. Sibling to Turn the Faithless (30ft radial fey/
+/// fiend Frighten burst on Devotion paladin) — Abjure Enemy is the
+/// single-target no-creature-type-filter counterpart on the Vengeance
+/// paladin, mirroring how Intimidating Presence covers "any hostile"
+/// on the barbarian side vs Turn Undead's undead-only filter.
+///
+/// Undead / fiends get advantage on the WIS save per RAW ("Fiends and
+/// undead have advantage on this saving throw"); we drop this rider
+/// since the engine doesn't thread an ability-save creature-type
+/// disadvantage lane, and the Vengeance paladin's most-common quarry
+/// is exactly those two types — collapsing the rider matches the
+/// paladin's smite-vs-fiend/undead spike-damage flavor (both smite and
+/// Abjure Enemy fire hardest against the paladin's chosen enemy).
+pub const ABJURE_ENEMY_TAG: &str = "paladin.abjure_enemy";
+
+/// Abjure Enemy — Vengeance Paladin lv3 Channel Divinity action.
+/// Once-per-short-rest single-target Frighten install: the target
+/// (within 60ft, 24 tiles on our 2.5ft grid) rolls a WIS save vs the
+/// paladin's CHA-anchored DC (8 + prof + CHA mod). On fail the target
+/// is Frightened for 10 rounds (1 minute RAW). Routes through the
+/// shared `resolve_single_target_cd_save_condition` helper.
+///
+/// Range gate (24 tiles = 60ft RAW) matches the RAW envelope — the
+/// Vengeance paladin's ranged Frighten reach dwarfs the Ancients
+/// paladin's Nature's Wrath 10ft grab (Restrained install wants
+/// adjacency, Frighten install works at range). Pairs naturally with
+/// the paladin's ranged Bow / Sacred Flame lane — a Frightened target
+/// at 60ft can't approach and eats disadvantage on ranged shots back,
+/// while the paladin keeps distance for a follow-up smite loop after
+/// closing.
+pub struct AbjureEnemy {}
+
+impl Action for AbjureEnemy {
+    fn name(&self) -> &str {
+        "abjure enemy"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ae", "abjure", "abjure-enemy"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60ft RAW = 24 tiles on the 2.5ft grid.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        // RAW: "a creature that you can see" — line of sight anchor.
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Once-per-rest + hostile-target + already-Frightened dedup all
+        // fold into the shared `hostile_target_feature_ready` gate. The
+        // Frightened dedup keeps the AI from burning the short-rest
+        // charge on a target that's already Frightened (via Cause Fear,
+        // Turn Undead, Wrathful Smite, a dragon fear cone, etc.).
+        hostile_target_feature_ready(
+            encounter,
+            caster_id,
+            target_ids,
+            ABJURE_ENEMY_TAG,
+            Condition::Frightened,
+        )
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        resolve_single_target_cd_save_condition(
+            encounter,
+            caster_id,
+            target_id,
+            ABJURE_ENEMY_TAG,
+            // Paladin spellcasting ability is CHA — same anchor as
+            // Turn the Faithless / Sacred Weapon / Nature's Wrath and
+            // every other paladin CD DC.
+            AbilityScoreType::Charisma,
+            // WIS save per RAW.
+            AbilityScoreType::Wisdom,
+            Condition::Frightened,
+            // 10 rounds = 1 minute — matches Turn the Faithless /
+            // Intimidating Presence / Nature's Wrath's install window.
+            ConditionTimer::Rounds(10),
+            "abjure enemy",
+        )
+    }
+}
+
+pub static ABJURE_ENEMY: LazyLock<AbjureEnemy> = LazyLock::new(|| AbjureEnemy {});
+
+/// 5e Devotion Paladin level-15 subclass feature — **Rebuke the
+/// Violent**. Class-feature tag; refreshed on a short rest via
+/// `SHORT_REST_FEATURES`. RAW: as a reaction when a creature within 30
+/// ft deals damage to a creature other than the paladin, the offending
+/// attacker must make a Wisdom save vs the paladin's spell save DC or
+/// take radiant damage equal to the damage they dealt (max 4d10) —
+/// half on save. We collapse the reactive shape to an Action-cost
+/// attack per the same rationale that ships Infernal Rebuke / Wrath of
+/// the Storm as actions (the engine doesn't have a clean "reactive on
+/// ally being damaged" hook for player-driven actions), and we lock
+/// the damage to a flat 4d10 radiant burst rather than mirror the
+/// attacker's most recent damage (the "match the damage dealt" clause
+/// needs a per-attacker last-damage ledger the engine doesn't thread).
+/// Uses per long rest RAW = paladin-CD refresh rate (once per short
+/// rest at level 3, then every use once at high level), collapsed to a
+/// single once-per-short-rest charge to match the CD gating shape.
+///
+/// Sibling to Wrath of the Storm (Tempest Cleric CD lv1) and Infernal
+/// Rebuke (Tiefling racial) on the `resolve_single_target_burst_save_for_half`
+/// helper — same "spend feature charge, roll target save vs the
+/// caster's spellcasting-ability DC, deal Xdy save-for-half" body,
+/// differentiated by the (save-ability, dice, damage_type, spellcasting-
+/// ability) tuple: CHA+4d10+Radiant+WIS-save for Rebuke the Violent,
+/// WIS+2d8+Lightning+DEX-save for Wrath of the Storm, CHA+3d10+Fire+
+/// DEX-save for Infernal Rebuke. Adding a future single-target save-for-
+/// half damage burst drops in as a fresh call with a distinct tuple.
+///
+/// Ships on `DEVOTION_PALADIN_TEMPLATE` above its strict RAW lv15 gate
+/// for the same reason Nature's Ward / Undying Sentinel (lv15 features)
+/// ship on the CR-1.5 Ancients paladin — class templates target a
+/// balanced playable level, not lockstep PHB progression. Composes
+/// cleanly with the Devotion paladin's existing CD (Turn the Faithless
+/// at lv3) — one CD charge lane for target-side Frighten burst, one
+/// for target-side damage burst, both refreshed on a short rest.
+pub const REBUKE_THE_VIOLENT_TAG: &str = "paladin.rebuke_the_violent";
+
+/// Rebuke the Violent — Devotion Paladin lv15 subclass feature action.
+/// Once-per-short-rest single-target 4d10 radiant damage burst: the
+/// target (within 30ft, 12 tiles on our 2.5ft grid) rolls a WIS save
+/// vs the paladin's CHA-anchored DC (8 + prof + CHA mod). On save the
+/// target takes half damage; on fail, full damage. Routes through the
+/// shared `resolve_single_target_burst_save_for_half` helper — the
+/// spend + save + roll + damage dance lives in one place, mirrored by
+/// Wrath of the Storm / Infernal Rebuke on the same helper.
+///
+/// Range gate (12 tiles = 30ft RAW) matches the RAW envelope — the
+/// Devotion paladin's mid-range radiant retort. Pairs naturally with
+/// the paladin's radiant-damage lane (Divine Smite radiant on undead /
+/// fiends, Improved Divine Smite passive +1d8 radiant) — Rebuke the
+/// Violent's 4d10 radiant lands as a slot-free burst that leans into
+/// the same radiant-type advantage the paladin's smite loop already
+/// exploits against fiend / undead opponents.
+pub struct RebukeTheViolent {}
+
+impl Action for RebukeTheViolent {
+    fn name(&self) -> &str {
+        "rebuke the violent"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["rtv", "rebuke", "violent-rebuke"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30ft RAW = 12 tiles on the 2.5ft grid.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        // RAW: the reaction fires when the paladin "can see" the
+        // attacker damaging an ally — LOS holds naturally.
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Radiant]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Once-per-rest + hostile-target gate. Unlike Abjure Enemy
+        // (target-side Frighten install), the burst deals damage and
+        // doesn't install a condition on fail — so there's no
+        // "skip-if-already-holds-condition" dedup lane. Same shape as
+        // Wrath of the Storm / Infernal Rebuke.
+        if !feature_ready(encounter, caster_id, REBUKE_THE_VIOLENT_TAG) {
+            return false;
+        }
+        let Some(target_id) = first_target_id(_target_ids) else {
+            return false;
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return false;
+        };
+        target.team() != caster.team() && target.is_combat_active()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        resolve_single_target_burst_save_for_half(
+            encounter,
+            caster_id,
+            target_id,
+            REBUKE_THE_VIOLENT_TAG,
+            // Paladin spellcasting ability is CHA — same anchor as
+            // every other paladin CD DC.
+            AbilityScoreType::Charisma,
+            // WIS save per RAW ("Wisdom saving throw" on the reactive
+            // shape).
+            AbilityScoreType::Wisdom,
+            // 4d10 radiant — RAW caps the damage at 4d10 for lv15+
+            // Devotion paladins; we lock at the cap since the collapse
+            // to a fixed action-cost drops the "match the damage dealt"
+            // clause.
+            Dice::new(4, 10),
+            DamageType::Radiant,
+            "rebuke the violent",
+        )
+    }
+}
+
+pub static REBUKE_THE_VIOLENT: LazyLock<RebukeTheViolent> =
+    LazyLock::new(|| RebukeTheViolent {});

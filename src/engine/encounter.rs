@@ -50256,4 +50256,332 @@ mod tests {
             "Font of Inspiration must refresh Bardic Inspiration on short rest"
         );
     }
+
+    /// Abjure Enemy (Vengeance Paladin CD lv3): action + tag both ship on
+    /// `VENGEANCE_PALADIN_TEMPLATE`. Baseline / Devotion / Ancients /
+    /// Oathbreaker paladin templates do NOT ship it — subclass sanity
+    /// gate.
+    #[test]
+    fn abjure_enemy_ships_on_vengeance_paladin_only() {
+        use crate::actions::class_features::ABJURE_ENEMY_TAG;
+        use crate::actors::creatures::paladins::{
+            ANCIENTS_PALADIN_TEMPLATE, DEVOTION_PALADIN_TEMPLATE, OATHBREAKER_PALADIN_TEMPLATE,
+            PALADIN_TEMPLATE, VENGEANCE_PALADIN_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let ven = e
+            .instantiate_creature(&VENGEANCE_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(6, 6), 0, 1)
+            .unwrap();
+        let dev = e
+            .instantiate_creature(&DEVOTION_PALADIN_TEMPLATE, Coordinate::new(10, 6), 0, 2)
+            .unwrap();
+        let anc = e
+            .instantiate_creature(&ANCIENTS_PALADIN_TEMPLATE, Coordinate::new(14, 6), 0, 3)
+            .unwrap();
+        let oath = e
+            .instantiate_creature(&OATHBREAKER_PALADIN_TEMPLATE, Coordinate::new(18, 6), 0, 4)
+            .unwrap();
+        assert!(
+            e.actors[&ven].feature_available(ABJURE_ENEMY_TAG),
+            "Vengeance Paladin must ship with Abjure Enemy charge"
+        );
+        assert!(
+            e.actors[&ven].find_action("abjure enemy").is_some(),
+            "Vengeance Paladin must ship with the Abjure Enemy action"
+        );
+        for (id, name) in [
+            (pal, "baseline"),
+            (dev, "Devotion"),
+            (anc, "Ancients"),
+            (oath, "Oathbreaker"),
+        ] {
+            assert!(
+                !e.actors[&id].feature_available(ABJURE_ENEMY_TAG),
+                "{} Paladin must NOT ship Abjure Enemy",
+                name
+            );
+        }
+    }
+
+    /// Abjure Enemy spend + install path: across a seed sweep the goblin
+    /// fails its WIS save vs the paladin's CHA-anchored DC on at least
+    /// one seed and picks up Frightened. Charge spent unconditionally —
+    /// matches the Turn Undead / Intimidating Presence / Nature's Wrath
+    /// "action cost paid on cast" cadence.
+    #[test]
+    fn abjure_enemy_spends_charge_and_can_frighten_goblin() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{ABJURE_ENEMY, ABJURE_ENEMY_TAG};
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::VENGEANCE_PALADIN_TEMPLATE;
+        let mut goblin_frightened = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let ven = e
+                .instantiate_creature(&VENGEANCE_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+                .unwrap();
+            assert!(e.actors[&ven].feature_available(ABJURE_ENEMY_TAG));
+            let effects = ABJURE_ENEMY.side_effects(&mut e, ven, Some(&vec![g]), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            assert!(!e.actors[&ven].feature_available(ABJURE_ENEMY_TAG));
+            if e.actors[&g].has_condition(Condition::Frightened) {
+                goblin_frightened = true;
+                break;
+            }
+        }
+        assert!(
+            goblin_frightened,
+            "abjure enemy never frightened a goblin across 30 seeds"
+        );
+    }
+
+    /// Abjure Enemy's `custom_validate_input` gates hostile-only targets
+    /// — priming an ally is a wasted charge and the AI picker should
+    /// never queue it.
+    #[test]
+    fn abjure_enemy_rejects_ally_target() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::class_features::ABJURE_ENEMY;
+        use crate::actors::creatures::paladins::VENGEANCE_PALADIN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let ven = e
+            .instantiate_creature(&VENGEANCE_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&VENGEANCE_PALADIN_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        let aei = ActionExecutionInfo::new(&*ABJURE_ENEMY, ven, Some(vec![ally]), None, None);
+        assert!(
+            !aei.validate(&e),
+            "abjure enemy must reject a same-team target"
+        );
+    }
+
+    /// Abjure Enemy's shared `hostile_target_feature_ready` gate rejects
+    /// an already-Frightened target (Turn Undead / Cause Fear / a dragon
+    /// fear cone already up) — same dedup shape as Intimidating Presence
+    /// / Nature's Wrath.
+    #[test]
+    fn abjure_enemy_rejects_already_frightened_target() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::class_features::ABJURE_ENEMY;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::VENGEANCE_PALADIN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let ven = e
+            .instantiate_creature(&VENGEANCE_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.actors.get_mut(&g).unwrap().add_condition(
+            Condition::Frightened,
+            ConditionTimer::Rounds(5),
+        );
+        let aei = ActionExecutionInfo::new(&*ABJURE_ENEMY, ven, Some(vec![g]), None, None);
+        assert!(
+            !aei.validate(&e),
+            "abjure enemy must reject a target that's already Frightened"
+        );
+    }
+
+    /// Abjure Enemy's short-rest tag is registered so a short rest
+    /// refreshes the charge alongside the paladin CD family (Turn the
+    /// Faithless / Nature's Wrath / Guided Strike / Radiance of the
+    /// Dawn).
+    #[test]
+    fn abjure_enemy_short_rest_registered() {
+        use crate::actions::class_features::{ABJURE_ENEMY_TAG, SHORT_REST_FEATURES};
+        assert!(
+            SHORT_REST_FEATURES.contains(&ABJURE_ENEMY_TAG),
+            "Abjure Enemy tag must live on SHORT_REST_FEATURES"
+        );
+    }
+
+    /// Abjure Enemy refresh path — after a short rest the Vengeance
+    /// paladin's spent charge is back. Sibling to the Nature's Wrath /
+    /// Wrath of the Storm refresh tests above.
+    #[test]
+    fn abjure_enemy_refreshes_on_short_rest() {
+        use crate::actions::class_features::ABJURE_ENEMY_TAG;
+        use crate::actors::creatures::paladins::VENGEANCE_PALADIN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let ven = e
+            .instantiate_creature(&VENGEANCE_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&ven].feature_available(ABJURE_ENEMY_TAG));
+        e.actors
+            .get_mut(&ven)
+            .unwrap()
+            .spend_feature(ABJURE_ENEMY_TAG);
+        assert!(!e.actors[&ven].feature_available(ABJURE_ENEMY_TAG));
+        let mut roller = crate::engine::dice::FastRandRoller::with_seed(1);
+        e.actors.get_mut(&ven).unwrap().short_rest(&mut roller);
+        assert!(
+            e.actors[&ven].feature_available(ABJURE_ENEMY_TAG),
+            "Abjure Enemy charge must refresh on short rest"
+        );
+    }
+
+    /// Rebuke the Violent (Devotion Paladin lv15 feature): action + tag
+    /// both ship on `DEVOTION_PALADIN_TEMPLATE`. Baseline / Ancients /
+    /// Vengeance / Oathbreaker paladins do NOT ship it — subclass sanity
+    /// gate.
+    #[test]
+    fn rebuke_the_violent_ships_on_devotion_paladin_only() {
+        use crate::actions::class_features::REBUKE_THE_VIOLENT_TAG;
+        use crate::actors::creatures::paladins::{
+            ANCIENTS_PALADIN_TEMPLATE, DEVOTION_PALADIN_TEMPLATE, OATHBREAKER_PALADIN_TEMPLATE,
+            PALADIN_TEMPLATE, VENGEANCE_PALADIN_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let dev = e
+            .instantiate_creature(&DEVOTION_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(6, 6), 0, 1)
+            .unwrap();
+        let ven = e
+            .instantiate_creature(&VENGEANCE_PALADIN_TEMPLATE, Coordinate::new(10, 6), 0, 2)
+            .unwrap();
+        let anc = e
+            .instantiate_creature(&ANCIENTS_PALADIN_TEMPLATE, Coordinate::new(14, 6), 0, 3)
+            .unwrap();
+        let oath = e
+            .instantiate_creature(&OATHBREAKER_PALADIN_TEMPLATE, Coordinate::new(18, 6), 0, 4)
+            .unwrap();
+        assert!(
+            e.actors[&dev].feature_available(REBUKE_THE_VIOLENT_TAG),
+            "Devotion Paladin must ship with Rebuke the Violent charge"
+        );
+        assert!(
+            e.actors[&dev].find_action("rebuke the violent").is_some(),
+            "Devotion Paladin must ship with the Rebuke the Violent action"
+        );
+        for (id, name) in [
+            (pal, "baseline"),
+            (ven, "Vengeance"),
+            (anc, "Ancients"),
+            (oath, "Oathbreaker"),
+        ] {
+            assert!(
+                !e.actors[&id].feature_available(REBUKE_THE_VIOLENT_TAG),
+                "{} Paladin must NOT ship Rebuke the Violent",
+                name
+            );
+        }
+    }
+
+    /// Rebuke the Violent spend + damage path: across a seed sweep the
+    /// goblin takes non-zero radiant damage at least once. Charge spent
+    /// whether the goblin passed or failed the save — matches the Wrath
+    /// of the Storm / Infernal Rebuke "action cost paid on cast" cadence.
+    #[test]
+    fn rebuke_the_violent_spends_charge_and_damages_goblin() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{REBUKE_THE_VIOLENT, REBUKE_THE_VIOLENT_TAG};
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::DEVOTION_PALADIN_TEMPLATE;
+        let mut goblin_damaged = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let dev = e
+                .instantiate_creature(&DEVOTION_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+                .unwrap();
+            let start_hp = e.actors[&g].hitpoints();
+            assert!(e.actors[&dev].feature_available(REBUKE_THE_VIOLENT_TAG));
+            let effects =
+                REBUKE_THE_VIOLENT.side_effects(&mut e, dev, Some(&vec![g]), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            assert!(!e.actors[&dev].feature_available(REBUKE_THE_VIOLENT_TAG));
+            if e.actors[&g].hitpoints() < start_hp {
+                goblin_damaged = true;
+                break;
+            }
+        }
+        assert!(
+            goblin_damaged,
+            "rebuke the violent never damaged a goblin across 30 seeds"
+        );
+    }
+
+    /// Rebuke the Violent's `custom_validate_input` gates hostile-only
+    /// targets — zapping an ally is a wasted charge and the AI picker
+    /// should never queue it.
+    #[test]
+    fn rebuke_the_violent_rejects_ally_target() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::class_features::REBUKE_THE_VIOLENT;
+        use crate::actors::creatures::paladins::DEVOTION_PALADIN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let dev = e
+            .instantiate_creature(&DEVOTION_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&DEVOTION_PALADIN_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        let aei =
+            ActionExecutionInfo::new(&*REBUKE_THE_VIOLENT, dev, Some(vec![ally]), None, None);
+        assert!(
+            !aei.validate(&e),
+            "rebuke the violent must reject a same-team target"
+        );
+    }
+
+    /// Rebuke the Violent's short-rest tag is registered so a short rest
+    /// refreshes the charge alongside the paladin CD family and the
+    /// sibling damage-burst class features (Wrath of the Storm / Infernal
+    /// Rebuke — long-rest sibling).
+    #[test]
+    fn rebuke_the_violent_short_rest_registered() {
+        use crate::actions::class_features::{REBUKE_THE_VIOLENT_TAG, SHORT_REST_FEATURES};
+        assert!(
+            SHORT_REST_FEATURES.contains(&REBUKE_THE_VIOLENT_TAG),
+            "Rebuke the Violent tag must live on SHORT_REST_FEATURES"
+        );
+    }
+
+    /// Rebuke the Violent refresh path — after a short rest the Devotion
+    /// paladin's spent charge is back. Sibling to Wrath of the Storm /
+    /// Abjure Enemy refresh tests above.
+    #[test]
+    fn rebuke_the_violent_refreshes_on_short_rest() {
+        use crate::actions::class_features::REBUKE_THE_VIOLENT_TAG;
+        use crate::actors::creatures::paladins::DEVOTION_PALADIN_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let dev = e
+            .instantiate_creature(&DEVOTION_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&dev].feature_available(REBUKE_THE_VIOLENT_TAG));
+        e.actors
+            .get_mut(&dev)
+            .unwrap()
+            .spend_feature(REBUKE_THE_VIOLENT_TAG);
+        assert!(!e.actors[&dev].feature_available(REBUKE_THE_VIOLENT_TAG));
+        let mut roller = crate::engine::dice::FastRandRoller::with_seed(1);
+        e.actors.get_mut(&dev).unwrap().short_rest(&mut roller);
+        assert!(
+            e.actors[&dev].feature_available(REBUKE_THE_VIOLENT_TAG),
+            "Rebuke the Violent charge must refresh on short rest"
+        );
+    }
 }
