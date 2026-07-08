@@ -1,7 +1,8 @@
 use crate::actions::class_features::{
-    DIVINE_STRIKE, DIVINE_STRIKE_TAG, GUIDED_STRIKE, GUIDED_STRIKE_TAG, PRESERVE_LIFE,
-    PRESERVE_LIFE_TAG, RADIANCE_OF_THE_DAWN, RADIANCE_OF_THE_DAWN_TAG, TURN_UNDEAD, TURN_UNDEAD_TAG,
-    WAR_PRIEST, WAR_PRIEST_TAG, WARDING_FLARE_TAG, WRATH_OF_THE_STORM, WRATH_OF_THE_STORM_TAG,
+    DESTROY_UNDEAD_TAG, DIVINE_STRIKE, DIVINE_STRIKE_TAG, GUIDED_STRIKE, GUIDED_STRIKE_TAG,
+    PRESERVE_LIFE, PRESERVE_LIFE_TAG, RADIANCE_OF_THE_DAWN, RADIANCE_OF_THE_DAWN_TAG, TURN_UNDEAD,
+    TURN_UNDEAD_TAG, WAR_PRIEST, WAR_PRIEST_TAG, WARDING_FLARE_TAG, WRATH_OF_THE_STORM,
+    WRATH_OF_THE_STORM_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
@@ -231,7 +232,24 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         spell_slots_by_level: vec![4, 3, 3, 2, 2, 1, 1, 1, 3],
         // Clerics are proficient in WIS and CHA saves (5e PHB).
         proficient_saves: HashSet::from([AbilityScoreType::Wisdom, AbilityScoreType::Charisma]),
-        features: HashSet::from([TURN_UNDEAD_TAG, DIVINE_STRIKE_TAG, PRESERVE_LIFE_TAG]),
+        // Destroy Undead (RAW cleric lv5 passive) ships on the baseline
+        // cleric so every subclass (War / Light / Tempest / Devotion /
+        // future) inherits the "failed Turn Undead save on a low-CR
+        // undead destroys instead of Frightens" branch without each
+        // subclass template needing to opt in. Ships on the CR-0.25
+        // template above its strict RAW lv5 gate for the same reason
+        // Preserve Life (lv2) and Divine Strike (lv8) do — class
+        // templates target a balanced playable level, not lockstep PHB
+        // progression. Sibling to `TURN_UNDEAD_TAG` (the per-rest
+        // charge that gates the action's availability) — Destroy
+        // Undead is the always-on passive that piggy-backs on Turn
+        // Undead's failed saves.
+        features: HashSet::from([
+            TURN_UNDEAD_TAG,
+            DIVINE_STRIKE_TAG,
+            PRESERVE_LIFE_TAG,
+            DESTROY_UNDEAD_TAG,
+        ]),
         ..CreatureTemplate::defaults()
     }
 });

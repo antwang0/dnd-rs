@@ -116,6 +116,18 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // rest charge to match the sibling Wrath of the Storm / Infernal
     // Rebuke damage-burst refresh cadence.
     REBUKE_THE_VIOLENT_TAG,
+    // 5e Fiend Warlock level-14 subclass capstone — Hurl Through Hell.
+    // Signature single-target teleport-to-hell burst. RAW: once per
+    // long rest; collapsed to a short-rest charge here so it lands on
+    // the Warlock's Pact Magic slot-refresh cadence (RAW warlock slots
+    // themselves refresh on short rest — the CR-4 Fiend Warlock's
+    // capstone-adjacent burst rides the same short-rest lane as the
+    // slot pool it competes with for the action budget). Sibling to
+    // Wrath of the Storm / Rebuke the Violent / Infernal Rebuke on the
+    // single-target burst-save-for-half damage lane, differentiated by
+    // the (save-ability, dice, damage_type, spellcasting_ability)
+    // tuple.
+    HURL_THROUGH_HELL_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -326,6 +338,51 @@ pub fn hostile_target_feature_ready(
     target.team() != caster.team()
         && target.is_combat_active()
         && !target.has_condition(skip_if_condition)
+}
+
+/// Gating shape for once-per-rest single-target class-feature actions
+/// that deal damage on the target with a save-for-half fold (Wrath of
+/// the Storm, Rebuke the Violent, Hurl Through Hell, and any future
+/// single-target save-for-half damage burst). Returns true when:
+///   - the caster has an unspent `feature_tag` charge (via `feature_ready`),
+///   - `target_ids` carries a resolvable target id,
+///   - the target is hostile to the caster AND combat-active.
+///
+/// Sibling to `hostile_target_feature_ready` — that helper covers the
+/// TARGET-side condition de-dup for single-target debuff-installers
+/// (Intimidating Presence Frightening / Nature's Wrath Restraining /
+/// Abjure Enemy Frightening); this one covers the "no lingering
+/// condition, just damage" lane, so the "skip-if-already-holds-
+/// condition" clause is dropped. The two helpers share the same 4-clause
+/// "check feature ready / resolve target / check hostile / check combat-
+/// active" preamble and differ only by that last dedup clause; keeping
+/// them as siblings lets the caller pick the right shape without
+/// threading an `Option<Condition>` through both call sites.
+///
+/// Centralizes the ~10-line "resolve target / check hostile / check
+/// combat-active" chain that Wrath of the Storm / Rebuke the Violent /
+/// Hurl Through Hell all previously open-coded in `custom_validate_input`.
+/// Adding a future single-target save-for-half damage burst class
+/// feature lands as a `hostile_target_burst_ready(..., TAG)` one-liner.
+pub fn hostile_target_burst_ready(
+    encounter: &EncounterInstance,
+    caster_id: usize,
+    target_ids: Option<&Vec<usize>>,
+    feature_tag: &'static str,
+) -> bool {
+    if !feature_ready(encounter, caster_id, feature_tag) {
+        return false;
+    }
+    let Some(target_id) = first_target_id(target_ids) else {
+        return false;
+    };
+    let Some(caster) = encounter.actors.get(&caster_id) else {
+        return false;
+    };
+    let Some(target) = encounter.actors.get(&target_id) else {
+        return false;
+    };
+    target.team() != caster.team() && target.is_combat_active()
 }
 
 /// Fighter Second Wind — bonus action; restore 1d10 + level HP. Once per
@@ -2957,6 +3014,19 @@ fn resolve_turn_burst(
     let caster_loc = caster.location();
     let caster_team = caster.team();
     let caster_size = get_tiles_from_size(caster.size());
+    // Destroy Undead (Cleric lv5 passive) gate — checked once up front
+    // so the per-target branch below is a cheap flag read rather than a
+    // fresh `has_passive_feature` lookup per candidate. The destroy
+    // branch only fires for undead targets at or below the CR ceiling
+    // AND requires the caster to hold the passive tag; the "target
+    // undead" half of the gate is checked inside the loop against the
+    // per-target creature type so a mixed-cohort Turn (a hypothetical
+    // future "Turn any Faithless" that swept both fey AND undead)
+    // would still route the undead half through destroy and the fey
+    // half through Frighten. Safe against `resolve_turn_burst` callers
+    // whose cohort doesn't include undead (e.g. Turn the Faithless
+    // targets fey / fiend only) — the per-target check short-circuits.
+    let destroy_undead = caster.has_passive_feature(DESTROY_UNDEAD_TAG);
     encounter.log(format!(
         "  {}: every affected creature within 30ft saves (DC {}).",
         label, dc
@@ -2990,6 +3060,35 @@ fn resolve_turn_burst(
         let save = encounter.roll_save(id, AbilityScoreType::Wisdom, dc);
         if save.passed() {
             continue;
+        }
+        // Destroy Undead branch: if the caster carries the passive tag
+        // AND the failed-save target is Undead AND its CR is at or
+        // below `DESTROY_UNDEAD_CR_CEILING`, deal HP-matching radiant
+        // damage to kill outright instead of installing Frightened.
+        // Falls back to the standard Frighten install on any gate miss
+        // (non-undead target, above-ceiling CR, cleric without the
+        // passive tag) — the two branches are mutually exclusive per
+        // target, matching RAW's "instead of turned" clause.
+        if destroy_undead {
+            if let Some(target) = encounter.actors.get(&id)
+                && target.creature_type().is_undead()
+                && target.cr() <= DESTROY_UNDEAD_CR_CEILING
+            {
+                let killing_damage = target.hitpoints();
+                encounter.log(format!(
+                    "  {}: destroys undead ({} radiant, CR {} ≤ {}).",
+                    label,
+                    killing_damage,
+                    target.cr(),
+                    DESTROY_UNDEAD_CR_CEILING
+                ));
+                effects.push(Box::new(crate::engine::side_effects::DealDamage {
+                    actor_id: id,
+                    amount: killing_damage,
+                    damage_type: DamageType::Radiant,
+                }));
+                continue;
+            }
         }
         effects.push(Box::new(ApplyCondition {
             actor_id: id,
@@ -6079,26 +6178,12 @@ impl Action for WrathOfTheStorm {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        // Once-per-rest + hostile-target gate. Unlike Intimidating
-        // Presence / Nature's Wrath (target-side condition install), the
-        // burst deals damage and doesn't install a condition on fail —
-        // so there's no "skip-if-already-holds-condition" dedup lane.
-        // Sanity-check the target exists and is hostile / combat-active
-        // so the AI's focus-fire lane doesn't queue the burst against an
-        // ally or a downed target.
-        if !feature_ready(encounter, caster_id, WRATH_OF_THE_STORM_TAG) {
-            return false;
-        }
-        let Some(target_id) = first_target_id(_target_ids) else {
-            return false;
-        };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return false;
-        };
-        let Some(target) = encounter.actors.get(&target_id) else {
-            return false;
-        };
-        target.team() != caster.team() && target.is_combat_active()
+        // Once-per-rest + hostile-target gate via the shared damage-burst
+        // helper. Unlike Intimidating Presence / Nature's Wrath (target-
+        // side condition install), the burst deals damage and doesn't
+        // install a condition on fail — so `hostile_target_burst_ready`
+        // (the no-dedup sibling of `hostile_target_feature_ready`) fits.
+        hostile_target_burst_ready(encounter, caster_id, _target_ids, WRATH_OF_THE_STORM_TAG)
     }
     fn side_effects(
         &self,
@@ -6384,24 +6469,12 @@ impl Action for RebukeTheViolent {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        // Once-per-rest + hostile-target gate. Unlike Abjure Enemy
-        // (target-side Frighten install), the burst deals damage and
-        // doesn't install a condition on fail — so there's no
-        // "skip-if-already-holds-condition" dedup lane. Same shape as
-        // Wrath of the Storm / Infernal Rebuke.
-        if !feature_ready(encounter, caster_id, REBUKE_THE_VIOLENT_TAG) {
-            return false;
-        }
-        let Some(target_id) = first_target_id(_target_ids) else {
-            return false;
-        };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return false;
-        };
-        let Some(target) = encounter.actors.get(&target_id) else {
-            return false;
-        };
-        target.team() != caster.team() && target.is_combat_active()
+        // Once-per-rest + hostile-target gate via the shared damage-burst
+        // helper. Unlike Abjure Enemy (target-side Frighten install), the
+        // burst deals damage and doesn't install a condition on fail — so
+        // `hostile_target_burst_ready` (no target-side condition dedup)
+        // fits, mirroring Wrath of the Storm's gate.
+        hostile_target_burst_ready(encounter, caster_id, _target_ids, REBUKE_THE_VIOLENT_TAG)
     }
     fn side_effects(
         &self,
@@ -6438,3 +6511,198 @@ impl Action for RebukeTheViolent {
 
 pub static REBUKE_THE_VIOLENT: LazyLock<RebukeTheViolent> =
     LazyLock::new(|| RebukeTheViolent {});
+
+/// 5e Fiend Warlock level-14 subclass capstone — **Hurl Through Hell**.
+/// Class-feature tag; refreshed on a short rest via
+/// `SHORT_REST_FEATURES`. RAW: after you hit a creature with an attack,
+/// once per long rest, the target is transported through the lower
+/// planes and returns at the end of your next turn; on return it takes
+/// 10d10 psychic damage (no save — RAW). We collapse to an Action-cost
+/// single-target burst with a CHA save for half so the shape stays
+/// uniform with the sibling save-for-half class-feature damage-burst
+/// family (Wrath of the Storm / Rebuke the Violent / Infernal Rebuke)
+/// and the AI's regular target-picking lane can queue it without
+/// needing a fresh "attack-first-then-fire" hook. RAW's once-per-long-
+/// rest cadence collapses to once-per-short-rest so it lands on the
+/// Warlock's Pact Magic slot-refresh cadence (RAW warlock slots
+/// themselves refresh on a short rest); the burst competes with the
+/// slot pool for the action budget, so sharing the same refresh clock
+/// keeps the cadence uniform.
+///
+/// Sibling to Wrath of the Storm (Tempest Cleric CD lv1) / Rebuke the
+/// Violent (Devotion Paladin lv15) / Infernal Rebuke (Tiefling racial)
+/// on the `resolve_single_target_burst_save_for_half` helper — same
+/// "spend feature charge, roll target save vs the caster's
+/// spellcasting-ability DC, deal Xdy save-for-half" body, differentiated
+/// by the (save-ability, dice, damage_type, spellcasting-ability)
+/// tuple: CHA+10d10+Psychic+CHA-save for Hurl Through Hell (both anchor
+/// on CHA — the warlock's spellcasting ability is CHA, and RAW's
+/// "psychic damage as it reels from the horrific experience" reads as
+/// a CHA/WIL-adjacent trauma resist). Adding a future single-target
+/// save-for-half damage burst drops in as a fresh call with a distinct
+/// tuple.
+///
+/// Ships on `FIEND_WARLOCK_TEMPLATE` (Fiend Patron capstone-adjacent
+/// feature) above its strict RAW lv14 gate for the same reason
+/// Fiendish Resilience (lv10) ships on the CR-4 template — class
+/// templates target a balanced playable level, not lockstep PHB
+/// progression. Composes cleanly with the fiend warlock's fire-heavy
+/// spell kit (Burning Hands / Fireball) — Hurl Through Hell's 10d10
+/// psychic slips past fire-immune targets (devils / demons) that would
+/// no-op the warlock's usual fire cantrips, giving the fiend warlock a
+/// slot-free psychic burst for those specific quarry.
+pub const HURL_THROUGH_HELL_TAG: &str = "warlock.hurl_through_hell";
+
+/// Hurl Through Hell — Fiend Warlock lv14 subclass feature action.
+/// Once-per-short-rest single-target 10d10 psychic damage burst: the
+/// target (within 60ft, 24 tiles on our 2.5ft grid) rolls a CHA save
+/// vs the warlock's CHA-anchored DC (8 + prof + CHA mod). On save the
+/// target takes half damage; on fail, full damage. Routes through the
+/// shared `resolve_single_target_burst_save_for_half` helper — the
+/// spend + save + roll + damage dance lives in one place, mirrored by
+/// Wrath of the Storm / Rebuke the Violent / Infernal Rebuke on the
+/// same helper.
+///
+/// Range gate (24 tiles = 60ft RAW) matches the RAW envelope on the
+/// attack-precondition ("hit a creature with an attack") side — the
+/// warlock's Eldritch Blast reach is 120ft but the fire-blast /
+/// hellish rebuke family sits at the 60ft window. Pairs naturally with
+/// the fiend warlock's slot-driven fire lane (Burning Hands / Fireball)
+/// — Hurl Through Hell adds a psychic burst that slips past fire-
+/// resistant / fire-immune quarry (devils / demons / salamanders /
+/// magmins) that would otherwise no-op the warlock's usual cantrip and
+/// spell picks. Distinct from Dark One's Own Luck (failed-save re-roll
+/// prime, defensive utility) on the Fiend Warlock chassis — this is
+/// the offensive slot-free burst; both refresh on the same short rest
+/// so a Fiend Warlock enters each engagement with one defensive charge
+/// AND one offensive charge in the tank.
+pub struct HurlThroughHell {}
+
+impl Action for HurlThroughHell {
+    fn name(&self) -> &str {
+        "hurl through hell"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["hth", "hurl", "hurl-hell", "hurl-through-hell"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60ft RAW = 24 tiles on the 2.5ft grid.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        // RAW: "after you hit a creature with an attack" — the target
+        // is by definition within LOS at the trigger point.
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Psychic]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Once-per-rest + hostile-target gate via the shared damage-
+        // burst helper — no target-side condition dedup (the burst
+        // deals damage without installing a lingering condition).
+        // Same shape as Wrath of the Storm / Rebuke the Violent.
+        hostile_target_burst_ready(encounter, caster_id, target_ids, HURL_THROUGH_HELL_TAG)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        resolve_single_target_burst_save_for_half(
+            encounter,
+            caster_id,
+            target_id,
+            HURL_THROUGH_HELL_TAG,
+            // Warlock spellcasting ability is CHA — same anchor as
+            // every other warlock save-DC (Eldritch Blast, Hex,
+            // Hellish Rebuke). Sibling to the sacred-weapon-anchored
+            // paladin CDs (Abjure Enemy / Rebuke the Violent) and the
+            // charisma-anchored tiefling racial (Infernal Rebuke).
+            AbilityScoreType::Charisma,
+            // CHA save per RAW: the target resists the psychic trauma
+            // with willpower / charisma rather than reflex or grit —
+            // matches the "reels from its horrific experience" clause
+            // in the RAW text. Distinct from Rebuke the Violent's WIS
+            // save (spiritual retribution) and Wrath of the Storm's
+            // DEX save (reflexive dodge of a lightning bolt).
+            AbilityScoreType::Charisma,
+            // 10d10 psychic — matches the RAW damage die pool.
+            Dice::new(10, 10),
+            DamageType::Psychic,
+            "hurl through hell",
+        )
+    }
+}
+
+pub static HURL_THROUGH_HELL: LazyLock<HurlThroughHell> = LazyLock::new(|| HurlThroughHell {});
+
+/// 5e Cleric level-5 class feature — **Destroy Undead**. Passive
+/// template flag rather than a per-rest charge — RAW is "starting at
+/// 5th level, when an undead fails its saving throw against your Turn
+/// Undead feature, the creature is instantly destroyed if its CR is at
+/// or below a certain threshold." The threshold ramps with cleric
+/// level (CR ½ at lv5, CR 1 at lv8, CR 2 at lv11, CR 3 at lv14, CR 4
+/// at lv17); we collapse to a single threshold (CR 1) that matches the
+/// baseline cleric's target playable-level window (roughly lv5-8).
+///
+/// Ships on the baseline `CLERIC_TEMPLATE` (inheriting onto War /
+/// Light / Tempest / Devotion / any future subclass cleric) as a
+/// passive `has_passive_feature` tag rather than a resource charge —
+/// the trigger fires implicitly on every Turn Undead cast without
+/// costing an extra action or slot. Read inside `resolve_turn_burst`:
+/// when the caster carries this tag AND the failed-save target is
+/// Undead AND its CR ≤ threshold, the target is destroyed (dealt HP-
+/// killing radiant damage) instead of Frightened. Falls back to the
+/// standard Frighten install when any of the three gates fails —
+/// higher-CR undead still get the fear treatment, non-undead never
+/// fire the destroy branch, and a cleric without the passive tag
+/// runs vanilla Turn Undead.
+///
+/// The destroy damage rides as radiant (Turn Undead is a divine
+/// effect and undead commonly carry radiant vulnerability, so a
+/// radiant-typed kill blast reads cleanly) and equals the target's
+/// current HP so the DealDamage pipeline resolves to a clean kill
+/// even against a target with an idiosyncratic resistance profile;
+/// we don't overshoot to `max_hp` (which would trigger the massive-
+/// damage instant-kill lane and needlessly bypass Death Ward /
+/// Undying Sentinel — those are irrelevant against Undead in RAW,
+/// but the codepath stays uniform).
+///
+/// Distinct from the `TURN_UNDEAD_TAG` per-rest charge — that tag
+/// gates the action's availability while `DESTROY_UNDEAD_TAG` gates
+/// the on-fail branch. Both must be present on the caster for the
+/// destroy to fire; a cleric who has spent Turn Undead can't destroy
+/// because they can't Turn. Sibling to `FONT_OF_INSPIRATION_TAG`
+/// (Bard) and `SORCEROUS_RESTORATION_TAG` (Sorcerer) on the always-
+/// on passive-feature lane — permanent unlocks that piggy-back on
+/// another action's effect rather than exposing an action of their
+/// own.
+pub const DESTROY_UNDEAD_TAG: &str = "cleric.destroy_undead";
+
+/// CR threshold for `DESTROY_UNDEAD_TAG` — undead with CR at or below
+/// this ceiling are destroyed outright by a failed Turn Undead save.
+/// Locked at 1.0 to match the baseline cleric's target playable-level
+/// window (roughly lv5-8 on the RAW ramp: CR ½ at lv5, CR 1 at lv8);
+/// the ramp itself collapses to a single value to keep the passive
+/// gate a one-line check inside `resolve_turn_burst`.
+pub const DESTROY_UNDEAD_CR_CEILING: f32 = 1.0;

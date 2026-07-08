@@ -26463,9 +26463,13 @@ mod tests {
         );
     }
 
-    /// Turn Undead frightens undead-proxy enemies (Poison-immune)
-    /// within 30ft, and ignores non-undead (mortal humanoids). Validates
-    /// the proxy-by-poison-immunity logic.
+    /// Turn Undead affects undead-proxy enemies (Poison-immune) within
+    /// 30ft, and ignores non-undead (mortal humanoids). The baseline
+    /// cleric ships with Destroy Undead (`DESTROY_UNDEAD_TAG`) so a
+    /// failed-save low-CR undead is destroyed outright rather than
+    /// Frightened; the test accepts either outcome as evidence the
+    /// zombie was affected, but always requires the non-undead goblin
+    /// to be untouched.
     #[test]
     fn turn_undead_targets_only_undead_proxy() {
         use crate::actions::class_features::{TURN_UNDEAD, TURN_UNDEAD_TAG};
@@ -26475,7 +26479,7 @@ mod tests {
         // Seed-sweep over multiple rolls to find a seed where the zombie
         // fails its save — clerics have WIS 14 (DC 12) and zombies have
         // WIS 6 (-2 mod), so failures are common but not guaranteed.
-        let mut zombie_frightened = false;
+        let mut zombie_affected = false;
         for seed in 0..30 {
             let mut e = ei_with_terrain(20, 20, &[]);
             for _ in 0..seed {
@@ -26497,19 +26501,31 @@ mod tests {
             }
             // Feature consumed unconditionally.
             assert!(!e.actors[&c].feature_available(TURN_UNDEAD_TAG));
-            // Goblin (non-undead-proxy) is never targeted.
+            // Goblin (non-undead-proxy) is never targeted — the
+            // creature-type filter bounces it before the save.
             assert!(
                 !e.actors[&g].has_condition(Condition::Frightened),
                 "non-undead-proxy goblin must not be frightened"
             );
-            if e.actors[&z].has_condition(Condition::Frightened) {
-                zombie_frightened = true;
+            assert!(
+                e.actors[&g].is_combat_active(),
+                "non-undead goblin must not be destroyed by Destroy Undead"
+            );
+            // A failed-save zombie either takes the Frighten install
+            // (RAW Turn Undead) or is destroyed outright (RAW Destroy
+            // Undead, which the baseline cleric passively carries and
+            // triggers on CR ≤ 1 undead). Either outcome counts as
+            // "affected" for this sanity check.
+            if e.actors[&z].has_condition(Condition::Frightened)
+                || !e.actors[&z].is_combat_active()
+            {
+                zombie_affected = true;
                 break;
             }
         }
         assert!(
-            zombie_frightened,
-            "turn undead never frightened a zombie across 30 seeds"
+            zombie_affected,
+            "turn undead never affected a zombie across 30 seeds"
         );
     }
 
@@ -50582,6 +50598,235 @@ mod tests {
         assert!(
             e.actors[&dev].feature_available(REBUKE_THE_VIOLENT_TAG),
             "Rebuke the Violent charge must refresh on short rest"
+        );
+    }
+
+    /// Hurl Through Hell (Fiend Warlock lv14 capstone): action + tag both
+    /// ship on `FIEND_WARLOCK_TEMPLATE` but NOT on the baseline
+    /// `WARLOCK_TEMPLATE`. Subclass sanity gate — same shape as
+    /// Wrath of the Storm / Abjure Enemy / Rebuke the Violent tests.
+    #[test]
+    fn hurl_through_hell_ships_on_fiend_warlock_only() {
+        use crate::actions::class_features::HURL_THROUGH_HELL_TAG;
+        use crate::actors::creatures::warlocks::{FIEND_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE};
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let fiend = e
+            .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(6, 6), 0, 1)
+            .unwrap();
+        assert!(
+            e.actors[&fiend].feature_available(HURL_THROUGH_HELL_TAG),
+            "Fiend Warlock must ship with Hurl Through Hell charge"
+        );
+        assert!(
+            e.actors[&fiend].find_action("hurl through hell").is_some(),
+            "Fiend Warlock must ship with the Hurl Through Hell action"
+        );
+        assert!(
+            !e.actors[&base].feature_available(HURL_THROUGH_HELL_TAG),
+            "baseline Warlock must NOT ship Hurl Through Hell"
+        );
+    }
+
+    /// Hurl Through Hell spend + damage path: across a seed sweep the
+    /// goblin takes non-zero psychic damage at least once. Charge is
+    /// spent whether the goblin passed or failed the save — matches the
+    /// Wrath of the Storm / Rebuke the Violent / Infernal Rebuke
+    /// "action cost paid on cast" cadence.
+    #[test]
+    fn hurl_through_hell_spends_charge_and_damages_goblin() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{HURL_THROUGH_HELL, HURL_THROUGH_HELL_TAG};
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::warlocks::FIEND_WARLOCK_TEMPLATE;
+        let mut goblin_damaged = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let fiend = e
+                .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+                .unwrap();
+            let start_hp = e.actors[&g].hitpoints();
+            assert!(e.actors[&fiend].feature_available(HURL_THROUGH_HELL_TAG));
+            let effects = HURL_THROUGH_HELL.side_effects(&mut e, fiend, Some(&vec![g]), None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            assert!(!e.actors[&fiend].feature_available(HURL_THROUGH_HELL_TAG));
+            if e.actors[&g].hitpoints() < start_hp || !e.actors[&g].is_combat_active() {
+                goblin_damaged = true;
+                break;
+            }
+        }
+        assert!(
+            goblin_damaged,
+            "hurl through hell never damaged a goblin across 30 seeds"
+        );
+    }
+
+    /// Hurl Through Hell's `custom_validate_input` gates hostile-only
+    /// targets via the shared `hostile_target_burst_ready` helper —
+    /// zapping an ally is a wasted charge and the AI picker should
+    /// never queue it. Sibling test to `wrath_of_the_storm_rejects_ally_target` /
+    /// `rebuke_the_violent_rejects_ally_target`.
+    #[test]
+    fn hurl_through_hell_rejects_ally_target() {
+        use crate::actions::action_template::ActionExecutionInfo;
+        use crate::actions::class_features::HURL_THROUGH_HELL;
+        use crate::actors::creatures::warlocks::FIEND_WARLOCK_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let fiend = e
+            .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        let aei =
+            ActionExecutionInfo::new(&*HURL_THROUGH_HELL, fiend, Some(vec![ally]), None, None);
+        assert!(
+            !aei.validate(&e),
+            "hurl through hell must reject a same-team target"
+        );
+    }
+
+    /// Hurl Through Hell's short-rest tag is registered so a short rest
+    /// refreshes the charge alongside the Fiend Warlock's other short-
+    /// rest features (Dark One's Own Luck).
+    #[test]
+    fn hurl_through_hell_short_rest_registered() {
+        use crate::actions::class_features::{HURL_THROUGH_HELL_TAG, SHORT_REST_FEATURES};
+        assert!(
+            SHORT_REST_FEATURES.contains(&HURL_THROUGH_HELL_TAG),
+            "Hurl Through Hell tag must live on SHORT_REST_FEATURES"
+        );
+    }
+
+    /// Hurl Through Hell refresh path — after a short rest the Fiend
+    /// Warlock's spent charge is back. Sibling to the Wrath of the
+    /// Storm / Rebuke the Violent short-rest refresh tests.
+    #[test]
+    fn hurl_through_hell_refreshes_on_short_rest() {
+        use crate::actions::class_features::HURL_THROUGH_HELL_TAG;
+        use crate::actors::creatures::warlocks::FIEND_WARLOCK_TEMPLATE;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let fiend = e
+            .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&fiend].feature_available(HURL_THROUGH_HELL_TAG));
+        e.actors
+            .get_mut(&fiend)
+            .unwrap()
+            .spend_feature(HURL_THROUGH_HELL_TAG);
+        assert!(!e.actors[&fiend].feature_available(HURL_THROUGH_HELL_TAG));
+        let mut roller = crate::engine::dice::FastRandRoller::with_seed(1);
+        e.actors.get_mut(&fiend).unwrap().short_rest(&mut roller);
+        assert!(
+            e.actors[&fiend].feature_available(HURL_THROUGH_HELL_TAG),
+            "Hurl Through Hell charge must refresh on short rest"
+        );
+    }
+
+    /// Destroy Undead (Cleric lv5 passive): ships as a
+    /// `has_passive_feature` tag on the baseline `CLERIC_TEMPLATE` so
+    /// every subclass (War / Light / Tempest) inherits it via
+    /// `..CLERIC_TEMPLATE.clone()`. Non-cleric templates (a paladin, a
+    /// goblin) must NOT ship it — subclass / class sanity gate.
+    #[test]
+    fn destroy_undead_ships_on_all_cleric_templates() {
+        use crate::actions::class_features::DESTROY_UNDEAD_TAG;
+        use crate::actors::creatures::clerics::{
+            CLERIC_TEMPLATE, LIGHT_CLERIC_TEMPLATE, TEMPEST_CLERIC_TEMPLATE, WAR_CLERIC_TEMPLATE,
+        };
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let base = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let war = e
+            .instantiate_creature(&WAR_CLERIC_TEMPLATE, Coordinate::new(6, 6), 0, 1)
+            .unwrap();
+        let light = e
+            .instantiate_creature(&LIGHT_CLERIC_TEMPLATE, Coordinate::new(10, 6), 0, 2)
+            .unwrap();
+        let tempest = e
+            .instantiate_creature(&TEMPEST_CLERIC_TEMPLATE, Coordinate::new(14, 6), 0, 3)
+            .unwrap();
+        let pal = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(18, 6), 0, 4)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 18), 1, 0)
+            .unwrap();
+        for (id, name) in [
+            (base, "baseline"),
+            (war, "War"),
+            (light, "Light"),
+            (tempest, "Tempest"),
+        ] {
+            assert!(
+                e.actors[&id].has_passive_feature(DESTROY_UNDEAD_TAG),
+                "{} Cleric must ship with Destroy Undead passive tag",
+                name
+            );
+        }
+        for (id, name) in [(pal, "Paladin"), (g, "Goblin")] {
+            assert!(
+                !e.actors[&id].has_passive_feature(DESTROY_UNDEAD_TAG),
+                "{} must NOT ship Destroy Undead (cleric-only passive)",
+                name
+            );
+        }
+    }
+
+    /// Destroy Undead destroys a failed-save low-CR undead outright
+    /// rather than installing Frightened. A CR-0.25 zombie is at or
+    /// below the CR ceiling (1.0) so the destroy branch fires on a
+    /// failed save — verified across a seed sweep to sample the failed-
+    /// save path.
+    #[test]
+    fn destroy_undead_kills_low_cr_undead_on_failed_save() {
+        use crate::actions::class_features::TURN_UNDEAD;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        let mut zombie_destroyed = false;
+        for seed in 0..30 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            for _ in 0..seed {
+                let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
+            }
+            let c = e
+                .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let z = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+                .unwrap();
+            let effects = TURN_UNDEAD.side_effects(&mut e, c, None, None, None);
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            if !e.actors[&z].is_combat_active() {
+                // Destroyed — HP dropped to 0 via the radiant kill blast
+                // rather than Frightened, matching RAW's "instead of
+                // Turned" branch on Destroy Undead.
+                assert!(
+                    !e.actors[&z].has_condition(Condition::Frightened),
+                    "destroyed zombie must not also carry Frightened — the two branches are mutually exclusive per target"
+                );
+                zombie_destroyed = true;
+                break;
+            }
+        }
+        assert!(
+            zombie_destroyed,
+            "destroy undead never destroyed a CR-0.25 zombie across 30 seeds"
         );
     }
 }

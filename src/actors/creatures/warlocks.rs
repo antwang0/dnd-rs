@@ -272,23 +272,29 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 /// distinctly on the map next to the baseline warlock 'L'.
 pub static FIEND_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Subclass-of pattern: clone the baseline Warlock envelope wholesale
-    // and layer on the Fiend Patron passives. Actions list needs no
-    // additions — both Fiend Patron features here are pure passives with
-    // no active surface, unlike Hex which has the bonus-action prime.
+    // and layer on the Fiend Patron features:
     //   - `DARK_ONES_BLESSING_TAG` (lv1): passive kill-triggered temp-HP
     //     buffer.
     //   - `DARK_ONES_OWN_LUCK_TAG` (lv6): once-per-short-rest auto-fire
     //     "add 1d10 to a failed save" gate. Registered in
     //     `SHORT_REST_FEATURES` so the charge refreshes alongside the
-    //     other short-rest features on this chassis (no other short-rest
-    //     features on the baseline warlock, but future Warlock EI /
-    //     patron adds fall in the same bucket).
+    //     other short-rest features on this chassis.
+    //   - `HURL_THROUGH_HELL` action + `HURL_THROUGH_HELL_TAG` (lv14
+    //     subclass capstone): once-per-short-rest single-target 60ft
+    //     10d10 psychic damage burst via CHA save for half. Ships
+    //     above its strict RAW lv14 gate for the same reason Fiendish
+    //     Resilience (lv10) does — the CR-4 template targets a
+    //     balanced playable level, not lockstep PHB progression.
+    let mut actions = WARLOCK_TEMPLATE.actions.clone();
+    actions.push(&*crate::actions::class_features::HURL_THROUGH_HELL);
     let mut features = WARLOCK_TEMPLATE.features.clone();
     features.insert(crate::actions::class_features::DARK_ONES_BLESSING_TAG);
     features.insert(crate::actions::class_features::DARK_ONES_OWN_LUCK_TAG);
+    features.insert(crate::actions::class_features::HURL_THROUGH_HELL_TAG);
     CreatureTemplate {
         name: "Fiend Warlock",
         glyph: 'F',
+        actions,
         features,
         // 5e Warlock Fiend Patron **Fiendish Resilience** (level 10) —
         // passive template flag. RAW's rest-cycle "choose one damage
