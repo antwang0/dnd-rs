@@ -362,6 +362,20 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3h'. Zealous Presence — Zealot Barbarian bonus-action ally-
+        //      burst, once per long rest. Blessifies up to 10 allies
+        //      within 60ft (24 tiles). Gated on "at least one other
+        //      combat-active ally within 24 tiles" — a lone-wolf
+        //      zealot doesn't burn the charge to blessify only
+        //      themselves. Slots next to Bardic Inspiration on the
+        //      ally-buff bonus-action lane; distinct in target set
+        //      (burst-of-N vs. single ally) and duration (10 rounds
+        //      vs. Inspired's 10-round Rounds timer that consumes on
+        //      the next attack/save).
+        if let Some(aei) = try_zealous_presence(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3i. Foresight — level-9 single-target ally apex buff. Lay it
         //     on the toughest ally before they engage. Highest priority
         //     of the support-buff lane because the slot is precious.
@@ -3564,6 +3578,27 @@ fn try_bardic_inspiration(
         }
     }
     best.map(|(_, aei)| aei)
+}
+
+/// Zealot Barbarian Zealous Presence — bonus-action ally-burst, once
+/// per long rest. Blessifies up to 10 allies within 60ft (24 tiles).
+/// Gated on "at least one *other* combat-active ally within 24 tiles"
+/// so a lone-wolf zealot doesn't burn the once-per-rest charge to
+/// blessify only themselves — the caster is included in the burst
+/// naturally, but the AI wants at least one teammate to justify the
+/// spend. Sibling shape to `try_bless` on the ally-buff-when-team-
+/// present lane, but for a class-feature charge rather than a
+/// concentration spell.
+fn try_zealous_presence(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    // 60ft RAW = 24 tiles on the 2.5ft grid — matches the spend site
+    // in `ZEALOUS_PRESENCE` and the ally_burst_targets radius.
+    if n_actors_within(encounter, actor_id, 24, true, 1) < 1 {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "zealous presence")
 }
 
 fn try_bless(

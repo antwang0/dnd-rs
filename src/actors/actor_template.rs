@@ -634,6 +634,22 @@ pub struct CreatureTemplate {
     /// barbarian with average DEX still opens the round competitively
     /// against a rogue's DEX-primary initiative.
     pub has_feral_instinct: bool,
+    /// 5e Champion Fighter **Remarkable Athlete** (level 7 subclass
+    /// passive): add half of the holder's proficiency bonus (rounded up)
+    /// to every STR, DEX, or CON check that doesn't already include the
+    /// proficiency bonus. In our engine the only STR/DEX/CON check with
+    /// combat surface is the initiative roll (DEX check RAW), so the
+    /// grant collapses to "+ceil(prof / 2) on initiative rolls" — read
+    /// at `ActorInstance::roll_initiative` next to `has_feral_instinct`
+    /// (which grants advantage on the same roll). The two composers
+    /// stack cleanly: a hypothetical Barbarian-multiclass Champion
+    /// would roll with advantage AND pick up the flat bump on the
+    /// higher of the two rolls. Ships on the CR-3 Champion template
+    /// above its strict RAW level gate for the same reason Survivor
+    /// (lv18) ships there — class templates target a balanced playable
+    /// level, not lockstep PHB progression. Sibling to `has_feral_instinct`
+    /// on the passive-initiative-bonus lane.
+    pub has_remarkable_athlete: bool,
     /// 5e Monk **Diamond Soul** (level 14 passive): proficiency in all
     /// saving throws. The monk's late-game defensive envelope: pairs
     /// with Evasion and Deflect Missiles to make the monk one of the
@@ -1074,6 +1090,7 @@ impl CreatureTemplate {
             has_elusive: false,
             has_natures_ward: false,
             has_feral_instinct: false,
+            has_remarkable_athlete: false,
             has_diamond_soul: false,
             has_slippery_mind: false,
             has_iron_mind: false,
@@ -1449,6 +1466,9 @@ pub struct ActorInstance {
     has_natures_ward: bool,
     /// 5e Barbarian Feral Instinct (level 7). See `CreatureTemplate` docs.
     has_feral_instinct: bool,
+    /// 5e Champion Fighter Remarkable Athlete (level 7). See
+    /// `CreatureTemplate` docs.
+    has_remarkable_athlete: bool,
     /// 5e Monk Diamond Soul (level 14). See `CreatureTemplate` docs.
     has_diamond_soul: bool,
     /// 5e Rogue Slippery Mind (level 15). See `CreatureTemplate` docs.
@@ -1648,6 +1668,7 @@ impl ActorInstance {
             has_elusive: ct.has_elusive,
             has_natures_ward: ct.has_natures_ward,
             has_feral_instinct: ct.has_feral_instinct,
+            has_remarkable_athlete: ct.has_remarkable_athlete,
             has_diamond_soul: ct.has_diamond_soul,
             has_slippery_mind: ct.has_slippery_mind,
             has_iron_mind: ct.has_iron_mind,
@@ -1882,6 +1903,17 @@ impl ActorInstance {
     /// the higher result is kept.
     pub fn has_feral_instinct(&self) -> bool {
         self.has_feral_instinct
+    }
+
+    /// 5e Champion Fighter Remarkable Athlete (level 7): flat
+    /// `ceil(proficiency_bonus / 2)` bump on initiative rolls (the sole
+    /// STR/DEX/CON check with a combat surface in this engine). Read
+    /// by `roll_initiative` next to `has_feral_instinct` — the two
+    /// composers land on the same roll (feral instinct's advantage
+    /// picks the higher d20, remarkable athlete's flat bump is added
+    /// on top of whichever d20 wins).
+    pub fn has_remarkable_athlete(&self) -> bool {
+        self.has_remarkable_athlete
     }
 
     /// 5e Monk Diamond Soul (level 14): proficiency in every saving
@@ -3616,19 +3648,63 @@ impl ActorInstance {
         modifier_from_score(self.dexterity)
     }
 
+    /// True if the actor rolls the initiative d20 with advantage. Read by
+    /// `roll_initiative` — currently only Feral Instinct (Barbarian lv7)
+    /// flips this, but adding a future advantage source (Alert feat's
+    /// pre-2024 variant, Guardian Armor set bonus, etc.) lands here as a
+    /// one-line `|| new_flag` join without touching the roll-body. Sibling
+    /// to `initiative_flat_bonus` on the "passive initiative augment" lane
+    /// — that helper stacks a flat number on the result, this one drops
+    /// the advantage die.
+    pub fn rolls_initiative_with_advantage(&self) -> bool {
+        self.has_feral_instinct
+    }
+
+    /// Flat bonus added to the initiative result *after* the d20 roll and
+    /// DEX modifier. Read by `roll_initiative` alongside
+    /// `rolls_initiative_with_advantage`. Currently sourced from Champion
+    /// Fighter Remarkable Athlete (lv7): +ceil(proficiency_bonus / 2)
+    /// per RAW's "add half your proficiency bonus, rounded up". Adding a
+    /// future flat initiative bonus (Alert feat +5, Rakish Audacity's
+    /// CHA-mod bump, Chef +INT-mod on downtime meals, etc.) lands here
+    /// as an additive one-liner alongside the Remarkable Athlete row,
+    /// keeping the roll-body a two-line compose (advantage die + flat
+    /// bump). Sibling to `rolls_initiative_with_advantage` on the
+    /// "passive initiative augment" lane — that helper flips the roll
+    /// shape (advantage vs. normal), this one stacks a scalar on the
+    /// total.
+    pub fn initiative_flat_bonus(&self) -> i32 {
+        let mut bonus = 0;
+        if self.has_remarkable_athlete {
+            // RAW: "add half your proficiency bonus (rounded up) to
+            // any Strength, Dexterity, or Constitution check you make
+            // that doesn't already use your proficiency bonus." The
+            // engine's only STR/DEX/CON check with a combat surface is
+            // the initiative roll (a DEX check). `(prof + 1) / 2` is
+            // integer ceil(prof/2) — matches PHB Table: prof 2→+1,
+            // prof 3→+2, prof 4→+2, prof 5→+3, prof 6→+3.
+            bonus += (self.proficiency_bonus() + 1) / 2;
+        }
+        bonus
+    }
+
     pub fn roll_initiative(&mut self, roller: &mut impl Roller) {
-        // 5e Barbarian Feral Instinct (level 7): advantage on initiative
-        // rolls. Roll the d20 twice and keep the higher — the classic
-        // "barbarian goes first" tell that lets the raging bruiser open
-        // the round before the enemy caster's fireball lands.
-        let rolled = if self.has_feral_instinct {
+        // Two passive-initiative-augment sources compose on the same
+        // roll: `rolls_initiative_with_advantage` picks the higher of
+        // two d20s (Feral Instinct — Barbarian lv7); then
+        // `initiative_flat_bonus` stacks a scalar bump on top
+        // (Remarkable Athlete — Champion Fighter lv7:
+        // +ceil(prof / 2)). Adding a new source of either shape lands
+        // in the matching helper as a one-line entry without touching
+        // this body.
+        let rolled = if self.rolls_initiative_with_advantage() {
             let a = roller.roll_d20() as i32;
             let b = roller.roll_d20() as i32;
             a.max(b)
         } else {
             roller.roll_d20() as i32
         };
-        self.initiative = Some(rolled + self.initiative_mod());
+        self.initiative = Some(rolled + self.initiative_mod() + self.initiative_flat_bonus());
     }
 
     /// Top-of-turn refresh: movement and action-economy slots regenerate,

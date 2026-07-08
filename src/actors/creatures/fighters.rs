@@ -65,6 +65,23 @@ pub static CHAMPION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 19 or 20 instead of just 20. Read at every attack-roll site
         // via `actor.crit_threshold()`.
         crit_threshold: 19,
+        // 5e Champion subclass level-7 feature — **Remarkable Athlete**.
+        // Passive: add half of the holder's proficiency bonus (rounded
+        // up) to any STR, DEX, or CON check that doesn't already
+        // include the proficiency bonus. In this engine the only
+        // STR/DEX/CON check with a combat surface is the initiative
+        // roll (a DEX check RAW) — the grant collapses to
+        // "+ceil(prof / 2) on initiative rolls", read at
+        // `roll_initiative` via `initiative_flat_bonus`. Ships on the
+        // CR-3 (level-5) Champion template above its strict RAW lv7
+        // level gate for the same reason Survivor (lv18) ships on the
+        // same chassis — class templates target a balanced playable
+        // level, not lockstep PHB progression. Composes cleanly with
+        // Improved Critical (the Champion's headline lv3 tell) — a
+        // Champion who wins initiative reliably opens the round with
+        // the 19-20 crit threshold in play before the enemy's first
+        // swing.
+        has_remarkable_athlete: true,
         // 5e Fighter **Fighting Style: Defense** (lv1 pick): passive +1 AC
         // while wearing armor. RAW "while wearing armor" gate collapses
         // to "always on" since the engine doesn't model armor tiers —

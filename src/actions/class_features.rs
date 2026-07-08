@@ -6814,3 +6814,197 @@ pub const DESTROY_UNDEAD_TAG: &str = "cleric.destroy_undead";
 /// the ramp itself collapses to a single value to keep the passive
 /// gate a one-line check inside `resolve_turn_burst`.
 pub const DESTROY_UNDEAD_CR_CEILING: f32 = 1.0;
+
+/// 5e Zealot Barbarian **Zealous Presence** (subclass level 10).
+/// Once-per-long-rest bonus action: up to 10 allies within 60ft
+/// (24 tiles on the 2.5ft grid) gain the Blessed condition (RAW: "each
+/// creature of your choice within 60 feet of you has advantage on
+/// attack rolls and saving throws until the end of your next turn").
+///
+/// RAW's "advantage on attacks and saves until end of your next turn"
+/// clause collapses to the Blessed condition for 10 rounds (1
+/// minute) — the engine's Blessed models the +1d4 attack / save
+/// bonus from the Bless spell, which is the closest sibling on the
+/// "buff attacks and saves" lane. The over-tuning (advantage →
+/// flat +1d4) is small in practice: any single ally swing that
+/// benefits from the bump is still a step ahead of the un-inspired
+/// baseline; the extended timer approximates the "concentration-free
+/// team buff" flavor of RAW Zealous Presence which lets the raging
+/// zealot lay down a mass buff without eating the concentration slot
+/// that Bless would occupy.
+///
+/// Ships on `ZEALOT_BARBARIAN_TEMPLATE` above the strict RAW lv10
+/// gate — the CR-4 (level-9) baseline is one level shy — for the same
+/// reason Divine Fury (RAW lv3) rides on the same chassis and Iron
+/// Mind (RAW lv7) does: class templates target a balanced playable
+/// level, not lockstep PHB progression.
+///
+/// The Blessed install routes through the standard `ApplyCondition`
+/// chokepoint so aura suppressors, condition immunities, and the
+/// combat-active filter that everything else uses all fire cleanly —
+/// e.g. a downed / non-combat-active ally won't pick up the buff
+/// since `ally_burst_targets` already filters on `is_combat_active`.
+pub const ZEALOUS_PRESENCE_TAG: &str = "barbarian.zealous_presence";
+
+/// Maximum number of allies that can be buffed by a single Zealous
+/// Presence cast. RAW: "up to ten creatures of your choice within 60
+/// feet". Locked at 10 here as a defensive cap so a mass-battle with
+/// dozens of allies doesn't overrun the buff pool — matches PHB.
+pub const ZEALOUS_PRESENCE_MAX_TARGETS: usize = 10;
+
+/// Zealous Presence — Zealot Barbarian class-feature action. Bonus
+/// action, once per long rest. Every combat-active ally (including
+/// the caster) within 24 tiles (60ft RAW) gains the Blessed condition
+/// for 10 rounds (1 minute). Sibling to Bardic Inspiration on the
+/// ally-buff lane, but a *burst* rather than a single-target grant —
+/// where Bardic Inspiration spends one charge to give one ally a
+/// bonus, Zealous Presence spends one charge to blanket the whole
+/// nearby team at once.
+///
+/// Routes through the shared `spend_feature_and_install_ally_burst`
+/// helper so a future ally-burst class-feature buff (a hypothetical
+/// Bard "Song of Freedom" installing Purified, a Cleric CD ally-buff
+/// aura, etc.) drops in as a fresh call with a distinct (feature
+/// tag, condition, timer, radius, max targets) tuple rather than a
+/// hand-rolled `ally_burst_targets → spend_feature → for each →
+/// ApplyCondition` chain.
+pub struct ZealousPresence {}
+
+impl Action for ZealousPresence {
+    fn name(&self) -> &str {
+        "zealous presence"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["zp", "presence", "zealous"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // Self-centered burst — the "target" is the caster themselves;
+        // the burst radius covers the ally cohort. Same shape as
+        // Turn Undead / Radiance of the Dawn (self-centered burst
+        // action) but ally-flavored rather than enemy-flavored.
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        feature_ready(encounter, caster_id, ZEALOUS_PRESENCE_TAG)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        spend_feature_and_install_ally_burst(
+            encounter,
+            caster_id,
+            ZEALOUS_PRESENCE_TAG,
+            // 60ft RAW = 24 tiles on the 2.5ft grid.
+            24,
+            ZEALOUS_PRESENCE_MAX_TARGETS,
+            Condition::Blessed,
+            // 10 rounds (1 minute) — the standard "medium-duration
+            // team buff" window, matching Aura of Purity / Aura of
+            // Vitality / Bardic Inspiration's cadence. RAW's "until
+            // end of your next turn" collapses upward here since
+            // Zealous Presence has no concentration cost — the extra
+            // rounds trade for the RAW-tighter timer.
+            ConditionTimer::Rounds(10),
+            "zealous presence",
+        )
+    }
+}
+
+pub static ZEALOUS_PRESENCE: LazyLock<ZealousPresence> = LazyLock::new(|| ZealousPresence {});
+
+/// Shared "spend a once-per-rest feature charge on the caster, then
+/// install `condition` for `timer` on up to `max_targets` combat-active
+/// allies within `radius` of the caster (including the caster
+/// themselves)" body. Centralizes the shape that Zealous Presence uses
+/// and that a future ally-burst class-feature buff (a hypothetical
+/// Bard "Song of Freedom" burst installing Purified, a Cleric CD ally-
+/// aura, etc.) will use — adding a fresh caller lands as one call with
+/// a distinct (feature tag, condition, timer, radius, max targets)
+/// tuple rather than a hand-rolled `ally_burst_targets → spend_feature
+/// → for each → ApplyCondition` chain.
+///
+/// Uses `ally_burst_targets` for the target sweep — the same helper
+/// Prayer of Healing / Beacon of Hope / Aura of Purity use. Truncates
+/// to `max_targets` after sorting by id so the sort order is stable
+/// and the truncation cut point is deterministic across seed sweeps.
+///
+/// Sibling to `resolve_single_target_cd_save_condition` on the class-
+/// feature condition-install lane — that helper installs a condition
+/// on a *single hostile target* via a save roll, this one installs a
+/// condition on *up to N friendly targets* without a save (RAW ally
+/// buffs don't allow the target to "save" against being buffed).
+/// Sibling to `resolve_single_target_burst_save_for_half` on the
+/// class-feature damage-burst lane — that helper deals save-for-half
+/// damage to one hostile target, this one blanket-buffs allies.
+///
+/// Spends the feature charge before the install loop so a caster with
+/// an unspent charge always pays the cost even if zero allies are in
+/// range — matches the RAW "you use the feature" semantics where the
+/// charge is spent on the action, not on the successful install. A
+/// caller that wants a "no allies in range → skip the spend" gate can
+/// pre-filter via `custom_validate_input` (Zealous Presence currently
+/// doesn't since the caster themselves is always a valid target).
+fn spend_feature_and_install_ally_burst(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    feature_tag: &'static str,
+    radius: isize,
+    max_targets: usize,
+    condition: Condition,
+    timer: ConditionTimer,
+    label: &'static str,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let Some(caster_loc) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
+        return Vec::new();
+    };
+    if let Some(actor) = encounter.actors.get_mut(&caster_id) {
+        actor.spend_feature(feature_tag);
+    }
+    let mut targets = encounter.ally_burst_targets(caster_id, caster_loc, radius);
+    targets.truncate(max_targets);
+    let n = targets.len();
+    encounter.log(format!(
+        "  {}: {} {} rallied with resolve.",
+        label,
+        n,
+        if n == 1 { "ally" } else { "allies" }
+    ));
+    targets
+        .into_iter()
+        .map(|id| {
+            Box::new(ApplyCondition {
+                actor_id: id,
+                condition,
+                timer,
+            }) as Box<dyn ApplicableSideEffect>
+        })
+        .collect()
+}

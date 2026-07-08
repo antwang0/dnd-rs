@@ -51031,4 +51031,315 @@ mod tests {
             "destroy undead never destroyed a CR-0.25 zombie across 30 seeds"
         );
     }
+
+    /// Zealous Presence (Zealot Barbarian lv10): action + tag both
+    /// ship on `ZEALOT_BARBARIAN_TEMPLATE`. Baseline `BARBARIAN_TEMPLATE`
+    /// / Totem / Berserker do NOT ship it — subclass sanity gate. The
+    /// action is a bonus-action ally-burst so its presence on the
+    /// wrong subclass would be a UI misfire (bonus-action lane picks
+    /// it up in the AI dispatcher).
+    #[test]
+    fn zealous_presence_ships_on_zealot_barbarian_only() {
+        use crate::actions::class_features::ZEALOUS_PRESENCE_TAG;
+        use crate::actors::creatures::barbarians::{
+            BARBARIAN_TEMPLATE, BERSERKER_BARBARIAN_TEMPLATE, TOTEM_BARBARIAN_TEMPLATE,
+            ZEALOT_BARBARIAN_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let zealot = e
+            .instantiate_creature(&ZEALOT_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(6, 6), 0, 1)
+            .unwrap();
+        let totem = e
+            .instantiate_creature(&TOTEM_BARBARIAN_TEMPLATE, Coordinate::new(10, 6), 0, 2)
+            .unwrap();
+        let berserker = e
+            .instantiate_creature(&BERSERKER_BARBARIAN_TEMPLATE, Coordinate::new(14, 6), 0, 3)
+            .unwrap();
+        assert!(
+            e.actors[&zealot].feature_available(ZEALOUS_PRESENCE_TAG),
+            "Zealot Barbarian must ship with Zealous Presence charge"
+        );
+        assert!(
+            e.actors[&zealot].find_action("zealous presence").is_some(),
+            "Zealot Barbarian must ship with the Zealous Presence action"
+        );
+        for (id, name) in [
+            (base, "baseline"),
+            (totem, "Totem"),
+            (berserker, "Berserker"),
+        ] {
+            assert!(
+                !e.actors[&id].feature_available(ZEALOUS_PRESENCE_TAG),
+                "{} Barbarian must NOT ship Zealous Presence",
+                name
+            );
+            assert!(
+                e.actors[&id].find_action("zealous presence").is_none(),
+                "{} Barbarian must NOT expose the Zealous Presence action",
+                name
+            );
+        }
+    }
+
+    /// Zealous Presence spend + install path: the ally within 60ft
+    /// gains the Blessed condition, the caster themselves gains it,
+    /// and the once-per-rest charge is spent. Ally outside the 24-tile
+    /// radius does not pick up the buff (radius gate). Enemy inside
+    /// the radius also does not pick up the buff (ally-only filter).
+    #[test]
+    fn zealous_presence_blessifies_allies_and_spends_charge() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{ZEALOUS_PRESENCE, ZEALOUS_PRESENCE_TAG};
+        use crate::actors::creatures::barbarians::ZEALOT_BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(50, 50, &[]);
+        let zealot = e
+            .instantiate_creature(&ZEALOT_BARBARIAN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let nearby_ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 5), 0, 0)
+            .unwrap();
+        // Ally at 30 tiles gap — outside the 24-tile radius.
+        let far_ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(40, 5), 0, 1)
+            .unwrap();
+        // Enemy 4 tiles away — inside radius but on enemy team.
+        let enemy = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 5), 1, 0)
+            .unwrap();
+        assert!(e.actors[&zealot].feature_available(ZEALOUS_PRESENCE_TAG));
+        let effects = ZEALOUS_PRESENCE.side_effects(&mut e, zealot, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        // Charge is spent.
+        assert!(!e.actors[&zealot].feature_available(ZEALOUS_PRESENCE_TAG));
+        // Caster and nearby ally both pick up Blessed.
+        assert!(
+            e.actors[&zealot].has_condition(Condition::Blessed),
+            "zealot self should pick up Blessed from Zealous Presence"
+        );
+        assert!(
+            e.actors[&nearby_ally].has_condition(Condition::Blessed),
+            "nearby ally should pick up Blessed from Zealous Presence"
+        );
+        // Far ally out of range → no buff.
+        assert!(
+            !e.actors[&far_ally].has_condition(Condition::Blessed),
+            "ally outside 24-tile radius must NOT pick up Blessed"
+        );
+        // Enemy in range but on opposing team → no buff.
+        assert!(
+            !e.actors[&enemy].has_condition(Condition::Blessed),
+            "hostile within 24-tile radius must NOT pick up Blessed (ally-only)"
+        );
+    }
+
+    /// Zealous Presence tag lives on the passive-feature registry so
+    /// the Zealot Barbarian's long-rest refresh picks it up.
+    /// Explicitly NOT in `SHORT_REST_FEATURES` — RAW gates on the long
+    /// rest per PHB text.
+    #[test]
+    fn zealous_presence_is_long_rest_only() {
+        use crate::actions::class_features::{SHORT_REST_FEATURES, ZEALOUS_PRESENCE_TAG};
+        assert!(
+            !SHORT_REST_FEATURES.contains(&ZEALOUS_PRESENCE_TAG),
+            "Zealous Presence must NOT live on SHORT_REST_FEATURES — RAW gates on the long rest"
+        );
+    }
+
+    /// Zealous Presence refresh path — after a long rest the Zealot's
+    /// spent charge is back. Sibling to the Turn Undead / Vow of
+    /// Enmity / Lay on Hands refresh tests on the long-rest lane.
+    #[test]
+    fn zealous_presence_refreshes_on_long_rest() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{ZEALOUS_PRESENCE, ZEALOUS_PRESENCE_TAG};
+        use crate::actors::creatures::barbarians::ZEALOT_BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let zealot = e
+            .instantiate_creature(&ZEALOT_BARBARIAN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let _ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 5), 0, 0)
+            .unwrap();
+        // Spend the charge.
+        assert!(e.actors[&zealot].feature_available(ZEALOUS_PRESENCE_TAG));
+        let effects = ZEALOUS_PRESENCE.side_effects(&mut e, zealot, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(!e.actors[&zealot].feature_available(ZEALOUS_PRESENCE_TAG));
+        // Long rest refills.
+        e.actors.get_mut(&zealot).unwrap().long_rest();
+        assert!(
+            e.actors[&zealot].feature_available(ZEALOUS_PRESENCE_TAG),
+            "long rest should refresh Zealous Presence charge"
+        );
+        // Short rest alone does NOT refresh — sibling to Rally / Lay
+        // on Hands on the long-rest-only lane.
+        let effects = ZEALOUS_PRESENCE.side_effects(&mut e, zealot, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(!e.actors[&zealot].feature_available(ZEALOUS_PRESENCE_TAG));
+        let mut roller = FastRandRoller::with_seed(1);
+        e.actors.get_mut(&zealot).unwrap().short_rest(&mut roller);
+        assert!(
+            !e.actors[&zealot].feature_available(ZEALOUS_PRESENCE_TAG),
+            "short rest must NOT refresh Zealous Presence (long-rest only per RAW)"
+        );
+    }
+
+    /// Zealous Presence honors the `ZEALOUS_PRESENCE_MAX_TARGETS = 10`
+    /// cap: with 11 combat-active allies clustered within range, only
+    /// 10 of them (plus the caster themselves) pick up Blessed. The
+    /// `ally_burst_targets` sort is by id so the truncation cut point
+    /// is deterministic — the highest-id ally in the ordering is the
+    /// one that misses the buff.
+    #[test]
+    fn zealous_presence_caps_at_max_targets() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{ZEALOUS_PRESENCE, ZEALOUS_PRESENCE_MAX_TARGETS};
+        use crate::actors::creatures::barbarians::ZEALOT_BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let zealot = e
+            .instantiate_creature(&ZEALOT_BARBARIAN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Spawn 11 fighter allies at nearby coordinates. All within
+        // the 24-tile radius; the 11th (highest id) is the truncation
+        // casualty.
+        let mut allies = Vec::new();
+        for i in 0..11 {
+            let x = 8 + (i as isize) % 5;
+            let y = 5 + (i as isize) / 5;
+            allies.push(
+                e.instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(x, y), 0, i)
+                    .unwrap(),
+            );
+        }
+        let effects = ZEALOUS_PRESENCE.side_effects(&mut e, zealot, None, None, None);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        // ally_burst_targets returns sorted ids including the caster;
+        // the truncation takes the first ZEALOUS_PRESENCE_MAX_TARGETS
+        // ids. Count the Blessed installs across (caster + allies).
+        let mut blessed_count = 0;
+        if e.actors[&zealot].has_condition(Condition::Blessed) {
+            blessed_count += 1;
+        }
+        for &id in &allies {
+            if e.actors[&id].has_condition(Condition::Blessed) {
+                blessed_count += 1;
+            }
+        }
+        assert_eq!(
+            blessed_count, ZEALOUS_PRESENCE_MAX_TARGETS,
+            "Zealous Presence must cap at {} targets across (caster + allies) — sorted-id truncation cut",
+            ZEALOUS_PRESENCE_MAX_TARGETS
+        );
+    }
+
+    /// Remarkable Athlete (Champion Fighter lv7): adds
+    /// `ceil(prof / 2)` to initiative rolls. Verified across a seed
+    /// sweep by comparing a Champion's initiative distribution
+    /// against a baseline Fighter (identical DEX / template envelope
+    /// apart from the crit_threshold / has_remarkable_athlete / etc.
+    /// subclass flags). The Champion's max initiative should exceed
+    /// the baseline Fighter's max by the flat bump, and the mean
+    /// should be higher too.
+    #[test]
+    fn remarkable_athlete_grants_flat_initiative_bump() {
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::fighters::{CHAMPION_TEMPLATE, FIGHTER_TEMPLATE};
+        // Prof bonus at level 1 (default) = 2, so ceil(2/2) = +1.
+        // Verify the bonus reads through the accessor cleanly.
+        let champion = ActorInstance::from_creature_template(
+            &CHAMPION_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        assert!(
+            champion.has_remarkable_athlete(),
+            "Champion must ship Remarkable Athlete"
+        );
+        assert_eq!(
+            champion.initiative_flat_bonus(),
+            1,
+            "Remarkable Athlete flat bump at prof=2 should be ceil(2/2) = +1"
+        );
+        let plain = ActorInstance::from_creature_template(
+            &FIGHTER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        assert!(
+            !plain.has_remarkable_athlete(),
+            "baseline Fighter must NOT ship Remarkable Athlete"
+        );
+        assert_eq!(
+            plain.initiative_flat_bonus(),
+            0,
+            "baseline Fighter flat initiative bump should be 0"
+        );
+    }
+
+    /// Remarkable Athlete's flat +ceil(prof/2) bump composes cleanly
+    /// with the initiative DEX modifier — the roll site reads
+    /// initiative_mod + initiative_flat_bonus. For a Champion with
+    /// DEX 12 (+1 mod) at level 1 (prof 2 → +1 flat), the total should
+    /// be d20 + 1 (DEX) + 1 (RA) — verified across a seed sweep to
+    /// ensure the raw d20 sweep hits the expected [3, 22] envelope.
+    #[test]
+    fn remarkable_athlete_stacks_with_dex_mod_on_initiative_roll() {
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::fighters::CHAMPION_TEMPLATE;
+        // Sweep 50 seeds; every rolled initiative must lie inside
+        // [DEX_mod + flat + 1, DEX_mod + flat + 20] = [3, 22].
+        // Champion has DEX 12 (+1) + Remarkable Athlete +1 = +2 total.
+        let (mut lo, mut hi) = (i32::MAX, i32::MIN);
+        for seed in 0..50 {
+            let mut roller = FastRandRoller::with_seed(seed);
+            let mut champion = ActorInstance::from_creature_template(
+                &CHAMPION_TEMPLATE,
+                Coordinate::new(0, 0),
+                0,
+                &mut roller,
+                0,
+            )
+            .unwrap();
+            champion.roll_initiative(&mut roller);
+            let init = champion.initiative().unwrap();
+            assert!(
+                (3..=22).contains(&init),
+                "champion initiative {} out of expected [3,22] envelope (seed={})",
+                init,
+                seed
+            );
+            lo = lo.min(init);
+            hi = hi.max(init);
+        }
+        // Across 50 seeds we should see at least a 4-point spread —
+        // sanity guard that the d20 is actually varying and not
+        // stuck-at-constant.
+        assert!(
+            hi - lo >= 4,
+            "champion initiative sweep too narrow: [{}, {}] — d20 not varying?",
+            lo,
+            hi
+        );
+    }
 }

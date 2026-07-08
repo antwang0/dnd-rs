@@ -2,7 +2,8 @@ use crate::actions::action_template::Action;
 use crate::actions::class_features::{
     BEAR_TOTEM_TAG, DIVINE_FURY_TAG, EAGLE_DIVE, EAGLE_TOTEM_TAG, FAST_MOVEMENT_TAG, FRENZY,
     FRENZY_TAG, INTIMIDATING_PRESENCE, INTIMIDATING_PRESENCE_TAG, MINDLESS_RAGE_TAG, RAGE,
-    RAGE_TAG, RELENTLESS_RAGE_TAG, TIGER_TOTEM_TAG, WOLF_TOTEM_TAG,
+    RAGE_TAG, RELENTLESS_RAGE_TAG, TIGER_TOTEM_TAG, WOLF_TOTEM_TAG, ZEALOUS_PRESENCE,
+    ZEALOUS_PRESENCE_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GREATAXE, RECKLESS_ATTACK};
@@ -360,9 +361,10 @@ pub static BERSERKER_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
 pub static ZEALOT_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Subclass-of pattern: clone the baseline Barbarian envelope
     // wholesale and layer on the DIVINE_FURY_TAG passive. Actions list
-    // needs no additions — Divine Fury is a pure passive on-hit rider
-    // with no active surface, unlike Frenzy which has the paired
-    // `FRENZY` bonus-action swing.
+    // adds the Zealous Presence bonus-action ally-burst (subclass
+    // lv10) — Divine Fury is a pure passive on-hit rider with no
+    // active surface, unlike Frenzy which has the paired `FRENZY`
+    // bonus-action swing.
     //
     // The Berserker's FRENZY_TAG stays on the inherited feature set
     // (baseline barbarians pick up Frenzy at level 3 in our engine),
@@ -371,11 +373,27 @@ pub static ZEALOT_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
     // since both are passive-flag-driven. If a strict subclass
     // separation is needed later, the baseline can shed FRENZY_TAG
     // from its default feature set.
+    let mut actions = BARBARIAN_TEMPLATE.actions.clone();
+    actions.push(&*ZEALOUS_PRESENCE);
     let mut features = BARBARIAN_TEMPLATE.features.clone();
     features.insert(DIVINE_FURY_TAG);
+    // 5e Zealot Barbarian **Zealous Presence** (subclass level 10):
+    // once-per-long-rest bonus action; up to 10 allies within 60ft
+    // gain Blessed for 10 rounds. Ships on the CR-4 (level-9)
+    // baseline above its strict RAW lv10 gate for the same reason
+    // Divine Fury (RAW lv3) and Iron Mind (RAW lv7) do on the same
+    // chassis — class templates target a balanced playable level,
+    // not lockstep PHB progression. The tag is a long-rest charge
+    // (NOT in `SHORT_REST_FEATURES` — RAW gates on the long rest per
+    // PHB text). Composes cleanly with the zealot's raging kit: the
+    // pre-fight tap-in gives the whole ally cluster a passive attack
+    // /save bump for the opening 10-round window, then the zealot
+    // rages and takes over the melee threat.
+    features.insert(ZEALOUS_PRESENCE_TAG);
     CreatureTemplate {
         name: "Zealot Barbarian",
         glyph: 'X',
+        actions,
         features,
         // 5e Zealot Barbarian Iron Mind (subclass lv7 passive):
         // proficiency in Wisdom saving throws. Mechanically identical
