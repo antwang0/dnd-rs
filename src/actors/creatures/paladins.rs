@@ -1,9 +1,9 @@
 use crate::actions::class_features::{
     ABJURE_ENEMY, ABJURE_ENEMY_TAG, CLEANSING_TOUCH, CLEANSING_TOUCH_TAG, DIVINE_SMITE,
-    FANATICAL_FOCUS_TAG, IMPROVED_DIVINE_SMITE_TAG, LAY_ON_HANDS, LAY_ON_HANDS_TAG, NATURES_WRATH,
-    NATURES_WRATH_TAG, REBUKE_THE_VIOLENT, REBUKE_THE_VIOLENT_TAG, SACRED_WEAPON, SACRED_WEAPON_TAG,
-    TURN_THE_FAITHLESS, TURN_THE_FAITHLESS_TAG, UNDYING_SENTINEL_TAG, VOW_OF_ENMITY,
-    VOW_OF_ENMITY_TAG,
+    DREADFUL_ASPECT, DREADFUL_ASPECT_TAG, FANATICAL_FOCUS_TAG, IMPROVED_DIVINE_SMITE_TAG,
+    LAY_ON_HANDS, LAY_ON_HANDS_TAG, NATURES_WRATH, NATURES_WRATH_TAG, REBUKE_THE_VIOLENT,
+    REBUKE_THE_VIOLENT_TAG, SACRED_WEAPON, SACRED_WEAPON_TAG, TURN_THE_FAITHLESS,
+    TURN_THE_FAITHLESS_TAG, UNDYING_SENTINEL_TAG, VOW_OF_ENMITY, VOW_OF_ENMITY_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GREATSWORD;
@@ -429,15 +429,27 @@ pub static VENGEANCE_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
 /// on the map next to baseline 'P', Devotion 'D', Ancients 'A',
 /// and Vengeance 'V'.
 pub static OATHBREAKER_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    // Layer both subclass features onto the inherited paladin feature
+    // Layer three subclass features onto the inherited paladin feature
     // set (Lay on Hands, Sacred Weapon, Cleansing Touch, Improved
     // Divine Smite) rather than clobbering it. Fanatical Focus is a
     // once-per-short-rest charge — spawning the tag in `features`
     // seeds both `features_remaining` and `features_max` at
     // instantiation, and the `SHORT_REST_FEATURES` registry copies
     // the max back into remaining on short rest.
+    //
+    // Dreadful Aspect (lv3 subclass Channel Divinity) ships as a paired
+    // action + short-rest feature charge — the Oathbreaker's CD-lane
+    // pickup (RAW subclass CD choice: Control Undead or Dreadful
+    // Aspect). Sibling to the other paladin subclass CD picks: Turn
+    // the Faithless (Devotion), Nature's Wrath (Ancients), Abjure
+    // Enemy (Vengeance). Routes through the shared `resolve_turn_burst`
+    // helper with a pass-through creature-type filter — every combat-
+    // active hostile within 30ft rolls the WIS save.
+    let mut actions = PALADIN_TEMPLATE.actions.clone();
+    actions.push(&*DREADFUL_ASPECT);
     let mut features = PALADIN_TEMPLATE.features.clone();
     features.insert(FANATICAL_FOCUS_TAG);
+    features.insert(DREADFUL_ASPECT_TAG);
     CreatureTemplate {
         name: "Oathbreaker Paladin",
         glyph: 'O',
@@ -445,7 +457,9 @@ pub static OATHBREAKER_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
         // `MELEE_CASTER_BUMPS` at every melee swing site.
         has_aura_of_hate: true,
         // Fanatical Focus — once-per-short-rest failed-save reroll.
-        // Layered onto the inherited paladin feature set.
+        // Dreadful Aspect — once-per-short-rest CD action + tag.
+        // Both layered onto the inherited paladin feature set.
+        actions,
         features,
         ..PALADIN_TEMPLATE.clone()
     }

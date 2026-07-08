@@ -46857,6 +46857,61 @@ mod tests {
         assert!(!rogue.is_save_proficient(AbilityScoreType::Charisma));
     }
 
+    /// 5e Zealot Barbarian Iron Mind (subclass lv7): proficient in
+    /// Wisdom saves. Mechanically identical to Slippery Mind — the
+    /// zealot's WIS save flips from a "bad save" (baseline barbarian
+    /// gets STR / CON only) to a "good save", closing the classic
+    /// Hold Person / Command / Dominate lane. Baseline Barbarian
+    /// (no subclass) does NOT get the WIS proficiency — proves the
+    /// gate keys off `has_iron_mind`, not the barbarian chassis.
+    #[test]
+    fn iron_mind_grants_wisdom_save_proficiency() {
+        use crate::actors::creatures::barbarians::{
+            BARBARIAN_TEMPLATE, ZEALOT_BARBARIAN_TEMPLATE,
+        };
+        use crate::engine::types::AbilityScoreType;
+        let zealot = ActorInstance::from_creature_template(
+            &ZEALOT_BARBARIAN_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(1),
+            0,
+        )
+        .unwrap();
+        assert!(
+            zealot.has_iron_mind(),
+            "zealot barbarian should have iron mind"
+        );
+        // WIS: Iron Mind lane (single-ability grant via
+        // FLAG_DRIVEN_SAVE_PROFICIENCIES).
+        assert!(zealot.is_save_proficient(AbilityScoreType::Wisdom));
+        // STR / CON: baseline barbarian save profs — Iron Mind stacks
+        // on top; both should still be proficient.
+        assert!(zealot.is_save_proficient(AbilityScoreType::Strength));
+        assert!(zealot.is_save_proficient(AbilityScoreType::Constitution));
+        // DEX / INT / CHA: neither baseline nor Iron Mind — NOT
+        // proficient. Distinct from Diamond Soul (all six).
+        assert!(!zealot.is_save_proficient(AbilityScoreType::Dexterity));
+        assert!(!zealot.is_save_proficient(AbilityScoreType::Intelligence));
+        assert!(!zealot.is_save_proficient(AbilityScoreType::Charisma));
+
+        // Control: baseline barbarian (no Iron Mind) fails the WIS
+        // check. Same baseline STR / CON pass. Locks the flag gate
+        // against a chassis-only shortcut.
+        let plain = ActorInstance::from_creature_template(
+            &BARBARIAN_TEMPLATE,
+            Coordinate::new(0, 0),
+            1,
+            &mut FastRandRoller::with_seed(1),
+            0,
+        )
+        .unwrap();
+        assert!(!plain.has_iron_mind());
+        assert!(!plain.is_save_proficient(AbilityScoreType::Wisdom));
+        assert!(plain.is_save_proficient(AbilityScoreType::Strength));
+        assert!(plain.is_save_proficient(AbilityScoreType::Constitution));
+    }
+
     /// 5e Paladin Oath of the Ancients Nature's Ward (lv15): passive
     /// self-immunity to Charmed AND Frightened installs. Baseline
     /// paladin doesn't get it — a plain paladin still takes both.
@@ -48835,6 +48890,153 @@ mod tests {
         assert!(
             e.actors[&id].feature_available(FANATICAL_FOCUS_TAG),
             "Fanatical Focus preserved — cohort iteration stopped after Indomitable's reroll landed"
+        );
+    }
+
+    /// 5e Oathbreaker Paladin **Dreadful Aspect** (subclass lv3 CD):
+    /// once-per-short-rest 30ft WIS-save burst → Frightened on fail,
+    /// with NO creature-type filter — every combat-active hostile in
+    /// range rolls the save. Verifies the tag ships on the Oathbreaker
+    /// template and NOT on other paladin subclasses, mirroring the
+    /// per-subclass CD-lane split (Turn the Faithless / Nature's Wrath
+    /// / Abjure Enemy).
+    #[test]
+    fn dreadful_aspect_ships_on_oathbreaker_paladin_only() {
+        use crate::actions::class_features::DREADFUL_ASPECT_TAG;
+        use crate::actors::creatures::paladins::{
+            ANCIENTS_PALADIN_TEMPLATE, DEVOTION_PALADIN_TEMPLATE, OATHBREAKER_PALADIN_TEMPLATE,
+            PALADIN_TEMPLATE, VENGEANCE_PALADIN_TEMPLATE,
+        };
+        assert!(OATHBREAKER_PALADIN_TEMPLATE
+            .features
+            .contains(DREADFUL_ASPECT_TAG));
+        assert!(!PALADIN_TEMPLATE.features.contains(DREADFUL_ASPECT_TAG));
+        assert!(!DEVOTION_PALADIN_TEMPLATE
+            .features
+            .contains(DREADFUL_ASPECT_TAG));
+        assert!(!ANCIENTS_PALADIN_TEMPLATE
+            .features
+            .contains(DREADFUL_ASPECT_TAG));
+        assert!(!VENGEANCE_PALADIN_TEMPLATE
+            .features
+            .contains(DREADFUL_ASPECT_TAG));
+    }
+
+    /// Dreadful Aspect fires on hostiles regardless of creature type
+    /// (no fey/fiend/undead filter — RAW: any creature within 30ft
+    /// that can see the paladin). Uses a humanoid target (goblin)
+    /// that would be OUTSIDE the Turn the Faithless / Turn Undead
+    /// filters — Dreadful Aspect's pass-through closure should still
+    /// pick it up. Also verifies the once-per-short-rest charge is
+    /// spent regardless of the target's save outcome.
+    #[test]
+    fn dreadful_aspect_frightens_humanoid_and_spends_charge() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{DREADFUL_ASPECT, DREADFUL_ASPECT_TAG};
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::OATHBREAKER_PALADIN_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::dice::FastRandRoller;
+
+        let mut saw_frighten = false;
+        // Sweep seeds so at least one lands a failed save — the CHA-14
+        // paladin's DC vs a goblin's WIS-mod-none save should fail
+        // most seeds, but the sweep gives us a deterministic-across-
+        // toolchains signal.
+        for seed in 0..24 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            e.roller = FastRandRoller::with_seed(seed);
+            let paladin = e
+                .instantiate_creature(&OATHBREAKER_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            // Place a HUMANOID (goblin) at 4,4 — inside the 30ft (12
+            // tile) burst. Turn the Faithless would skip it (fey/fiend
+            // filter); Turn Undead would skip it (undead filter);
+            // Dreadful Aspect must catch it.
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+                .unwrap();
+            assert!(e.actors[&paladin].feature_available(DREADFUL_ASPECT_TAG));
+            let effects = DREADFUL_ASPECT.side_effects(&mut e, paladin, None, None, None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            // Charge spent regardless of the goblin's save outcome.
+            assert!(
+                !e.actors[&paladin].feature_available(DREADFUL_ASPECT_TAG),
+                "Dreadful Aspect charge burns on cast, not on fail"
+            );
+            if e.actors[&goblin].has_condition(Condition::Frightened) {
+                saw_frighten = true;
+                break;
+            }
+        }
+        assert!(
+            saw_frighten,
+            "Dreadful Aspect should Frighten a humanoid on at least one seed \
+             — the pass-through creature-type filter must not skip humanoids"
+        );
+    }
+
+    /// Dreadful Aspect skips allies (team filter inside
+    /// `resolve_turn_burst`) — a friendly goblin adjacent to the
+    /// paladin must never pick up Frightened even on a failed save.
+    /// Pins the shared team-filter clause against a hypothetical
+    /// future regression where the pass-through creature-type filter
+    /// gets confused with an "everyone in range" filter.
+    #[test]
+    fn dreadful_aspect_skips_allied_target() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::DREADFUL_ASPECT;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::paladins::OATHBREAKER_PALADIN_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::engine::dice::FastRandRoller;
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        e.roller = FastRandRoller::with_seed(1);
+        let paladin = e
+            .instantiate_creature(&OATHBREAKER_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Ally goblin on team 0 (same team as the paladin).
+        let ally = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let effects = DREADFUL_ASPECT.side_effects(&mut e, paladin, None, None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&ally].has_condition(Condition::Frightened),
+            "ally must never pick up Frightened from Dreadful Aspect"
+        );
+    }
+
+    /// Dreadful Aspect refreshes on a short rest — registered in
+    /// `SHORT_REST_FEATURES` alongside the other paladin CDs (Turn
+    /// the Faithless / Nature's Wrath / Abjure Enemy / Guided Strike
+    /// / Radiance of the Dawn). Spends the charge manually and
+    /// verifies the short rest picks it up.
+    #[test]
+    fn dreadful_aspect_refreshes_on_short_rest() {
+        use crate::actions::class_features::DREADFUL_ASPECT_TAG;
+        use crate::actors::creatures::paladins::OATHBREAKER_PALADIN_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&OATHBREAKER_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .spend_feature(DREADFUL_ASPECT_TAG);
+        assert!(!e.actors[&id].feature_available(DREADFUL_ASPECT_TAG));
+        let mut roller = FastRandRoller::with_seed(0);
+        e.actors.get_mut(&id).unwrap().short_rest(&mut roller);
+        assert!(
+            e.actors[&id].feature_available(DREADFUL_ASPECT_TAG),
+            "short rest must refresh Dreadful Aspect"
         );
     }
 

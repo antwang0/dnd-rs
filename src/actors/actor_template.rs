@@ -245,6 +245,52 @@ const FLAG_DRIVEN_IMMUNITIES: &[FlagDrivenImmunity] = &[
     },
 ];
 
+/// One row in the `FLAG_DRIVEN_SAVE_PROFICIENCIES` cohort — a single
+/// passive-feature flag that grants proficiency in a specific saving
+/// throw ability. Sibling to `FlagDrivenImmunity` on the passive-
+/// feature-flag-driven engine surface. Held as a function-pointer
+/// rather than a field name so a new row can point to any predicate
+/// on the actor (e.g. a future compound gate like Mindless Rage's
+/// `feature-tag && condition-active` shape). All-ability grants
+/// (Monk Diamond Soul, RAW lv14) still short-circuit before this
+/// cohort in `is_save_proficient` since they don't key off a single
+/// ability.
+struct FlagDrivenSaveProficiency {
+    flag: fn(&ActorInstance) -> bool,
+    ability: AbilityScoreType,
+}
+
+/// Flag-driven save-proficiency cohort read by
+/// `ActorInstance::is_save_proficient`. Sibling to
+/// `FLAG_DRIVEN_IMMUNITIES` on the passive-feature-flag-driven engine
+/// surface — each row promotes a single (flag, ability) pair to
+/// "proficient", stacking on top of the actor's explicit
+/// `proficient_saves` set. Adding a future single-ability save
+/// proficiency feature (Warlock Aspect of the Moon, Bard Countercharm,
+/// etc.) lands as one row here without touching the
+/// `is_save_proficient` matcher body.
+///
+/// Distinct from Diamond Soul (Monk lv14, ALL saves) — that grant
+/// short-circuits before this cohort since it doesn't key off a
+/// single ability. Rows in this table are OR'd together with the
+/// per-ability check; any row hit is sufficient.
+const FLAG_DRIVEN_SAVE_PROFICIENCIES: &[FlagDrivenSaveProficiency] = &[
+    // 5e Rogue Slippery Mind (lv15): proficiency in Wisdom saves. The
+    // rogue's anti-Hold Person / anti-Dominate Person capstone.
+    FlagDrivenSaveProficiency {
+        flag: |a| a.has_slippery_mind,
+        ability: AbilityScoreType::Wisdom,
+    },
+    // 5e Zealot Barbarian Iron Mind (subclass lv7): proficiency in
+    // Wisdom saves. Same mechanical grant as Slippery Mind — kept as
+    // a distinct flag so a rogue / zealot-barbarian multiclass would
+    // carry both without conflation.
+    FlagDrivenSaveProficiency {
+        flag: |a| a.has_iron_mind,
+        ability: AbilityScoreType::Wisdom,
+    },
+];
+
 /// Lifecycle state of an actor's hit points. Replaces the previous
 /// `dying: bool` + `stable: bool` pair so the four meaningful states are
 /// type-checked, and the death-save counters are scoped to the only
@@ -610,6 +656,25 @@ pub struct CreatureTemplate {
     /// grant; the rogue's DEX save proficiency comes from the base class,
     /// and Evasion / Uncanny Dodge already cover the DEX-save damage lane.
     pub has_slippery_mind: bool,
+    /// 5e Zealot Barbarian **Iron Mind** (level 7 subclass passive):
+    /// proficiency in Wisdom saving throws. Mechanically identical to
+    /// Slippery Mind — both flip the same is_save_proficient(WIS)
+    /// gate — but exposed as a distinct template flag so the two
+    /// class features don't get conflated (a hypothetical rogue /
+    /// zealot-barbarian multiclass legally carries both by RAW, and
+    /// the two would need to be independently swappable in feature-
+    /// gating tests). Read alongside `has_slippery_mind` via the
+    /// shared `FLAG_DRIVEN_SAVE_PROFICIENCIES` cohort — any hit is
+    /// sufficient. Ships on `ZEALOT_BARBARIAN_TEMPLATE` above its
+    /// strict RAW lv7 gate for the same reason Divine Fury (lv3) does
+    /// on the same chassis — class templates target a balanced
+    /// playable level, not lockstep PHB progression. Composes cleanly
+    /// with the paladin's Aura of Protection (adjacent CHA-bonus on
+    /// every save) and with Danger Sense (DEX-save advantage) — the
+    /// zealot's WIS save is now a good save, so the pincer that used
+    /// to lock a raging barbarian (Hold Person / Command / Dominate)
+    /// no longer reliably lands.
+    pub has_iron_mind: bool,
     /// 5e Half-Orc Savage Attacks: on a critical melee weapon hit, roll
     /// one additional weapon damage die. Mechanically identical to
     /// `brutal_critical_dice = 1` but exposed as a separate flag so the
@@ -1011,6 +1076,7 @@ impl CreatureTemplate {
             has_feral_instinct: false,
             has_diamond_soul: false,
             has_slippery_mind: false,
+            has_iron_mind: false,
             has_savage_attacks: false,
             has_archery_style: false,
             has_defense_style: false,
@@ -1387,6 +1453,9 @@ pub struct ActorInstance {
     has_diamond_soul: bool,
     /// 5e Rogue Slippery Mind (level 15). See `CreatureTemplate` docs.
     has_slippery_mind: bool,
+    /// 5e Zealot Barbarian Iron Mind (subclass level 7). See
+    /// `CreatureTemplate` docs.
+    has_iron_mind: bool,
     /// 5e Half-Orc Savage Attacks. See `CreatureTemplate` docs.
     has_savage_attacks: bool,
     /// 5e Fighting Style: Archery (+2 ranged weapon attack rolls). See
@@ -1581,6 +1650,7 @@ impl ActorInstance {
             has_feral_instinct: ct.has_feral_instinct,
             has_diamond_soul: ct.has_diamond_soul,
             has_slippery_mind: ct.has_slippery_mind,
+            has_iron_mind: ct.has_iron_mind,
             has_savage_attacks: ct.has_savage_attacks,
             has_archery_style: ct.has_archery_style,
             has_defense_style: ct.has_defense_style,
@@ -1826,6 +1896,15 @@ impl ActorInstance {
     /// (single ability, not all six).
     pub fn has_slippery_mind(&self) -> bool {
         self.has_slippery_mind
+    }
+
+    /// 5e Zealot Barbarian Iron Mind (subclass level 7): proficiency in
+    /// Wisdom saves. Read by `is_save_proficient` via the shared
+    /// `FLAG_DRIVEN_SAVE_PROFICIENCIES` cohort alongside `has_slippery_mind`
+    /// — mechanically identical single-ability proficiency grant, kept as
+    /// a distinct flag so the class origin isn't conflated.
+    pub fn has_iron_mind(&self) -> bool {
+        self.has_iron_mind
     }
 
     /// 5e Half-Orc Savage Attacks — adds one extra weapon damage die on a
@@ -2686,15 +2765,23 @@ impl ActorInstance {
         // 5e Monk Diamond Soul (level 14): proficient in every saving
         // throw. Short-circuits the explicit `proficient_saves` set so
         // the monk's late-game envelope doesn't have to enumerate all
-        // six abilities in the template.
+        // six abilities in the template. Kept out of the single-
+        // ability cohort below since it applies to all six.
         if self.has_diamond_soul {
             return true;
         }
-        // 5e Rogue Slippery Mind (level 15): proficient in Wisdom saves.
-        // Narrower than Diamond Soul (single ability, not all six) — the
-        // rogue's anti-Hold Person / anti-Dominate Person capstone.
-        if self.has_slippery_mind && ability == AbilityScoreType::Wisdom {
-            return true;
+        // Single-ability flag-driven save-proficiency grants (Rogue
+        // Slippery Mind lv15 WIS, Zealot Barbarian Iron Mind lv7 WIS,
+        // and any future single-ability class / racial pickup). Each
+        // row keys off a passive-feature closure and a target ability;
+        // any hit is sufficient. Sibling to `FLAG_DRIVEN_IMMUNITIES`
+        // — adding a future single-ability save-proficiency feature
+        // lands as one row in the cohort table above rather than a
+        // new if-branch here.
+        for entry in FLAG_DRIVEN_SAVE_PROFICIENCIES {
+            if entry.ability == ability && (entry.flag)(self) {
+                return true;
+            }
         }
         self.proficient_saves.contains(&ability)
     }

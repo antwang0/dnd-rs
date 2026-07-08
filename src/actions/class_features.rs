@@ -128,6 +128,13 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // the (save-ability, dice, damage_type, spellcasting_ability)
     // tuple.
     HURL_THROUGH_HELL_TAG,
+    // 5e Oathbreaker Paladin level-3 subclass Channel Divinity —
+    // Dreadful Aspect. 30ft WIS-save burst → Frightened on fail; no
+    // creature-type filter (any hostile). Refreshed on short rest to
+    // match the paladin CD family (Turn the Faithless / Nature's
+    // Wrath / Abjure Enemy / Guided Strike / Radiance of the Dawn) —
+    // RAW Channel Divinity is once per short rest.
+    DREADFUL_ASPECT_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -3224,6 +3231,107 @@ impl Action for TurnTheFaithless {
 
 pub static TURN_THE_FAITHLESS: LazyLock<TurnTheFaithless> =
     LazyLock::new(|| TurnTheFaithless {});
+
+/// Class-feature tag for the Oathbreaker Paladin's level-3 subclass
+/// Channel Divinity: **Dreadful Aspect**. Mechanically a sibling of
+/// Turn Undead / Turn the Faithless (30ft WIS-save burst → Frightened
+/// on fail) with the creature-type filter *dropped* — every hostile
+/// within 30ft that fails the WIS save picks up Frightened for 10
+/// rounds (1 minute RAW). Once per short rest; refreshes via
+/// `SHORT_REST_FEATURES`.
+///
+/// The Oathbreaker's "unshakeable dread" tell — where Devotion turns
+/// fey / fiend and vanilla clerics turn undead, the Oathbreaker
+/// projects a raw fear-aura that doesn't care what type its target is.
+/// Distinct from Turn Undead / Turn the Faithless on the CD lane in
+/// two ways:
+///   1. **No creature-type filter** — every combat-active hostile in
+///      range that fails the save picks up Frightened. The Oathbreaker
+///      is the paladin whose Channel Divinity works against a party
+///      of humanoid bandits or a horde of undead alike.
+///   2. **Ability anchor** — CHA-based DC per RAW (all paladin CDs).
+///      Sibling to Turn the Faithless's CHA anchor and distinct from
+///      Turn Undead's WIS anchor (cleric spellcasting ability).
+///
+/// Ships on `OATHBREAKER_PALADIN_TEMPLATE` — sibling to Aura of Hate
+/// (lv7 passive melee damage bump) and Fanatical Focus (lv15 auto-
+/// reroll of a failed save) already on that template. The CR-1.5
+/// template lists the lv3 CD action + short-rest charge alongside the
+/// higher-level subclass features for the same reason every other
+/// paladin subclass template ships its lv3 CD at CR 1.5 (Nature's
+/// Wrath on Ancients, Turn the Faithless on Devotion, Abjure Enemy on
+/// Vengeance) — class templates target a balanced playable level, not
+/// lockstep PHB progression.
+pub const DREADFUL_ASPECT_TAG: &str = "paladin.dreadful_aspect";
+
+/// Dreadful Aspect — Oathbreaker Paladin Channel Divinity, action.
+/// Every combat-active hostile within 30ft (12 tiles) makes a WIS save
+/// vs the paladin's CHA-based DC. On fail, they're Frightened for 10
+/// rounds (1 minute RAW). Once per short rest.
+///
+/// Routes through the shared `resolve_turn_burst` helper — the shape
+/// is identical to Turn Undead / Turn the Faithless (30ft WIS-save
+/// burst → Frightened install) but the creature-type filter is a
+/// pass-through `|_| true` since RAW Dreadful Aspect ignores creature
+/// type. The team-filter and combat-active gates inside
+/// `resolve_turn_burst` still bounce allies and downed enemies, so
+/// only combat-active hostiles roll the save.
+pub struct DreadfulAspect {}
+
+impl Action for DreadfulAspect {
+    fn name(&self) -> &str {
+        "dreadful aspect"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["da", "cd-dread", "dreadful", "dread"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        feature_ready(encounter, caster_id, DREADFUL_ASPECT_TAG)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        resolve_turn_burst(
+            encounter,
+            caster_id,
+            DREADFUL_ASPECT_TAG,
+            // CHA-anchored DC per RAW paladin CD. Sibling to Turn the
+            // Faithless (Devotion CHA) and distinct from Turn Undead
+            // (cleric WIS).
+            AbilityScoreType::Charisma,
+            // No creature-type filter — RAW: any creature within 30ft
+            // that can see the paladin. The team + combat-active
+            // filters inside `resolve_turn_burst` handle the "hostile
+            // and standing" half; the pass-through closure drops the
+            // creature-type gate.
+            |_| true,
+            "dreadful aspect",
+        )
+    }
+}
+
+pub static DREADFUL_ASPECT: LazyLock<DreadfulAspect> = LazyLock::new(|| DreadfulAspect {});
 
 /// Flurry of Blows — Monk bonus action. After the monk takes the Attack
 /// action, they may spend a ki point (modeled as a bonus action — we don't

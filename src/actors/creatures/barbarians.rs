@@ -377,6 +377,25 @@ pub static ZEALOT_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
         name: "Zealot Barbarian",
         glyph: 'X',
         features,
+        // 5e Zealot Barbarian Iron Mind (subclass lv7 passive):
+        // proficiency in Wisdom saving throws. Mechanically identical
+        // to the Rogue's Slippery Mind (lv15) — both flip the same
+        // is_save_proficient(WIS) gate — but exposed as a distinct
+        // template flag so the two subclass features stay
+        // independently swappable in tests and readable in template
+        // diffs. Read via the shared
+        // `FLAG_DRIVEN_SAVE_PROFICIENCIES` cohort next to Slippery
+        // Mind. Ships on the CR-4 (level-9) baseline above its strict
+        // RAW lv7 gate for the same reason Divine Fury (RAW lv3) does
+        // on the same chassis — class templates target a balanced
+        // playable level, not lockstep PHB progression. Composes
+        // cleanly with the paladin's Aura of Protection (adjacent
+        // CHA-bonus stacking on top of the proficiency floor) and
+        // with Danger Sense (DEX-save advantage) — the raging zealot
+        // now shrugs off Hold Person / Command / Dominate the way a
+        // paladin does, closing the barbarian chassis's classic WIS-
+        // lock vulnerability.
+        has_iron_mind: true,
         ..BARBARIAN_TEMPLATE.clone()
     }
 });
