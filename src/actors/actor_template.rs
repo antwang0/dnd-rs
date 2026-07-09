@@ -291,6 +291,86 @@ const FLAG_DRIVEN_SAVE_PROFICIENCIES: &[FlagDrivenSaveProficiency] = &[
     },
 ];
 
+/// One row in the `PASSIVE_FEATURE_SPEED_BONUSES` cohort — a single
+/// passive-feature-driven speed bump. `flag` is any predicate on the
+/// actor (currently: `has_passive_feature(TAG)` for always-on passives,
+/// `has_passive_feature(TAG) && has_condition(Raging)` for rage-gated
+/// totems); when it returns true the row's `bonus_ft` is added to the
+/// actor's walking speed. Held as a function-pointer rather than an
+/// enum tag so a new row can point to any predicate without expanding
+/// a central enum — same shape the `FlagDrivenImmunity` /
+/// `FlagDrivenSaveProficiency` / `PassiveTypedResistance` cohorts
+/// already use for their respective engine surfaces.
+struct PassiveFeatureSpeedBonus {
+    flag: fn(&ActorInstance) -> bool,
+    bonus_ft: f32,
+}
+
+/// Passive-feature-driven speed-bonus cohort read by
+/// `ActorInstance::passive_feature_speed_bonus`. Every row is summed
+/// (with an OR-of-flags predicate); adding a fresh always-on /
+/// rage-gated speed passive lands as a one-line entry here rather than
+/// another `if actor.has_passive_feature(...) { bonus += N; }` branch
+/// in `passive_feature_speed_bonus` or `condition_speed_bonus`.
+///
+/// Sibling to `FLAG_DRIVEN_IMMUNITIES` (condition-immunity),
+/// `FLAG_DRIVEN_SAVE_PROFICIENCIES` (save-proficiency), and
+/// `PASSIVE_TYPED_RESISTANCES` (damage-type resistance) on the
+/// "passive-feature-flag-driven engine surface" pattern — same shape,
+/// different lane.
+///
+/// Entries (in order):
+///   - **Tiger Totem Spirit** (Barbarian Path of the Wild Heart, RAW
+///     lv3): +10 ft **while raging** — the flag composes a condition
+///     check (Raging) with the passive tag so an unraged tiger has no
+///     bonus. Stacks additively with Fast Movement on a raging
+///     barbarian.
+///   - **Elk Totem Spirit** (Barbarian Path of the Totem Warrior, RAW
+///     XGtE lv3): +15 ft **while raging** — same compound gate as
+///     Tiger but a bigger sprint magnitude. Distinct from Tiger only
+///     in the magnitude; the two flags never legally co-occur on a
+///     single subclass build.
+///   - **Fast Movement** (Barbarian lv5): +10 ft always-on (RAW's
+///     "not wearing heavy armor" clause collapses to "always" since
+///     the engine doesn't model armor tiers).
+///   - **Unarmored Movement** (Monk lv2): +10 ft always-on (RAW's
+///     "not wearing armor and no shield" clause collapses to "always"
+///     since the engine doesn't model armor tiers). Read via
+///     `UNARMORED_MOVEMENT_SPEED_BONUS` so the magnitude stays
+///     declarative next to the tag definition.
+///   - **Roving** (Ranger 2024 lv6 optional class feature): +5 ft
+///     always-on. The +5 is smaller than Fast Movement / Unarmored
+///     Movement — rangers kite half a step further, not sprint like
+///     a raging barbarian or a monk.
+const PASSIVE_FEATURE_SPEED_BONUSES: &[PassiveFeatureSpeedBonus] = &[
+    PassiveFeatureSpeedBonus {
+        flag: |a| {
+            a.has_condition(Condition::Raging)
+                && a.has_passive_feature(crate::actions::class_features::TIGER_TOTEM_TAG)
+        },
+        bonus_ft: 10.0,
+    },
+    PassiveFeatureSpeedBonus {
+        flag: |a| {
+            a.has_condition(Condition::Raging)
+                && a.has_passive_feature(crate::actions::class_features::ELK_TOTEM_TAG)
+        },
+        bonus_ft: crate::actions::class_features::ELK_TOTEM_SPEED_BONUS,
+    },
+    PassiveFeatureSpeedBonus {
+        flag: |a| a.has_passive_feature(crate::actions::class_features::FAST_MOVEMENT_TAG),
+        bonus_ft: 10.0,
+    },
+    PassiveFeatureSpeedBonus {
+        flag: |a| a.has_passive_feature(crate::actions::class_features::UNARMORED_MOVEMENT_TAG),
+        bonus_ft: crate::actions::class_features::UNARMORED_MOVEMENT_SPEED_BONUS,
+    },
+    PassiveFeatureSpeedBonus {
+        flag: |a| a.has_passive_feature(crate::actions::class_features::ROVING_TAG),
+        bonus_ft: crate::actions::class_features::ROVING_SPEED_BONUS,
+    },
+];
+
 /// Lifecycle state of an actor's hit points. Replaces the previous
 /// `dying: bool` + `stable: bool` pair so the four meaningful states are
 /// type-checked, and the death-save counters are scoped to the only
@@ -3498,58 +3578,33 @@ impl ActorInstance {
         if self.has_condition(Condition::AshardalonStriding) {
             bonus += 20.0;
         }
-        // Passive-feature-driven speed bumps (Tiger Totem, Fast Movement,
-        // Roving) fold through one shared table so adding a new
-        // always-on / rage-gated speed passive lands as a one-line entry
-        // in `passive_feature_speed_bonus` instead of a fresh
+        // Passive-feature-driven speed bumps (Tiger / Elk Totem, Fast
+        // Movement, Unarmored Movement, Roving) fold through the
+        // shared `PASSIVE_FEATURE_SPEED_BONUSES` table so adding a new
+        // always-on / rage-gated speed passive lands as a one-line
+        // entry in that table rather than a fresh
         // `if actor.has_passive_feature(...) { bonus += N; }` here.
         bonus += self.passive_feature_speed_bonus();
         bonus
     }
 
-    /// Sum of flat speed bonuses granted by passive-feature tags — one
-    /// declarative table so a fresh always-on / rage-gated speed
-    /// passive lands as a one-line entry instead of scattering
-    /// `has_passive_feature(...)` branches through `condition_speed_bonus`.
-    ///
-    /// Current entries:
-    ///   - Tiger Totem Spirit (Barbarian Path of the Wild Heart, RAW
-    ///     lv3): +10 ft **while raging** — the gate combines a condition
-    ///     (Raging) and the passive tag so an unraged tiger has no
-    ///     bonus. Stacks with Fast Movement additively.
-    ///   - Fast Movement (Barbarian lv5): +10 ft always-on (RAW's "not
-    ///     wearing heavy armor" clause collapses to "always" since the
-    ///     engine doesn't model armor tiers).
-    ///   - Roving (Ranger 2024 lv6 optional class feature): +5 ft
-    ///     always-on. The +5 is smaller than Fast Movement's +10 —
-    ///     rangers kite half a step further, not sprint like a raging
-    ///     barbarian.
+    /// Sum of flat speed bonuses granted by passive-feature tags. Walks
+    /// the `PASSIVE_FEATURE_SPEED_BONUSES` cohort — every row's flag is
+    /// evaluated against `self`, and matching rows contribute their
+    /// `bonus_ft` to the total. Adding a fresh always-on / rage-gated
+    /// speed passive lands as a one-line entry in that table rather
+    /// than a new `if actor.has_passive_feature(...) { bonus += N; }`
+    /// branch here.
     ///
     /// Returned in feet so the caller (`condition_speed_bonus`)
     /// composes it with the condition-keyed bumps before the
     /// Haste / Slow multiplicative factor lands in `speed()`.
     fn passive_feature_speed_bonus(&self) -> f32 {
-        use crate::actions::class_features::{
-            FAST_MOVEMENT_TAG, ROVING_SPEED_BONUS, ROVING_TAG, TIGER_TOTEM_TAG,
-        };
-        let mut bonus = 0.0_f32;
-        // Tiger Totem — rage-gated +10 ft. RAW: while raging, walking
-        // speed increases by 10 ft. The condition gate keeps unraged
-        // tiger barbarians at their baseline speed.
-        if self.has_condition(Condition::Raging) && self.has_passive_feature(TIGER_TOTEM_TAG) {
-            bonus += 10.0;
-        }
-        // Fast Movement — always-on +10 ft for barbarians at level 5+.
-        if self.has_passive_feature(FAST_MOVEMENT_TAG) {
-            bonus += 10.0;
-        }
-        // Roving — always-on +5 ft for rangers at level 6+ (2024 PHB
-        // optional class feature). Read via `ROVING_SPEED_BONUS` so the
-        // magnitude stays declarative next to the tag definition.
-        if self.has_passive_feature(ROVING_TAG) {
-            bonus += ROVING_SPEED_BONUS;
-        }
-        bonus
+        PASSIVE_FEATURE_SPEED_BONUSES
+            .iter()
+            .filter(|row| (row.flag)(self))
+            .map(|row| row.bonus_ft)
+            .sum()
     }
 
     pub fn item_save_bonus(&self) -> i32 {

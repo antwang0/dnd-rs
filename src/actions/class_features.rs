@@ -1655,6 +1655,76 @@ pub const TIGER_TOTEM_TAG: &str = "barbarian.tiger_totem";
 ///      raging is +20 ft in total.
 pub const FAST_MOVEMENT_TAG: &str = "barbarian.fast_movement";
 
+/// 5e Monk **Unarmored Movement** (level 2) feature tag. Passive: while
+/// not wearing armor and not wielding a shield, the monk's walking speed
+/// increases by 10 ft. Our engine doesn't model armor tiers on the monk
+/// chassis (`ac` is a flat 15 baked from Unarmored Defense), so the
+/// "not wearing armor and no shield" gate collapses to "always on for a
+/// monk holding the tag" — the same simplification we already apply to
+/// Barbarian Fast Movement's "not wearing heavy armor" clause.
+///
+/// Read at the shared `passive_feature_speed_bonus` chokepoint next to
+/// Fast Movement (Barbarian lv5, +10 ft always-on), Tiger Totem
+/// (Barbarian subclass, +10 ft while raging), and Roving (Ranger 2024
+/// lv6, +5 ft always-on) — one lookup table, one source of truth.
+/// Sibling to Fast Movement on the always-on +10 ft lane and to Roving
+/// on the "always-on passive speed passive on a non-barbarian chassis"
+/// lane.
+///
+/// RAW scales the bump with monk level: +10 ft at lv2, +15 ft at lv6,
+/// +20 ft at lv10, +25 ft at lv14, +30 ft at lv18. We pin to the +10
+/// baseline that a level-2+ monk gets — the CR-1.5 MONK_TEMPLATE
+/// targets a balanced playable level rather than lockstep PHB
+/// progression, matching how Purity of Body (RAW lv10) and Diamond
+/// Soul (RAW lv14) already ride the same template above their strict
+/// gate.
+///
+/// Always-on passive; no per-rest charge and no condition gate. The
+/// tag lives in the actor's `features` pool, not in
+/// `SHORT_REST_FEATURES` / long-rest tables — nothing consumes it and
+/// nothing refreshes it.
+pub const UNARMORED_MOVEMENT_TAG: &str = "monk.unarmored_movement";
+
+/// Flat walking-speed bonus in feet granted by the Unarmored Movement
+/// passive. Pinned to +10 ft (the level-2 baseline) per RAW; exposed
+/// as a constant so the `PASSIVE_FEATURE_SPEED_BONUSES` table stays
+/// declarative rather than scattering magic numbers into the accessor.
+pub const UNARMORED_MOVEMENT_SPEED_BONUS: f32 = 10.0;
+
+/// 5e Barbarian Path of the Totem Warrior — **Elk Totem Spirit** (RAW
+/// XGtE lv3 expansion of the Bear / Wolf / Eagle triad). Passive
+/// subclass feature: while raging, the holder's walking speed
+/// increases by 15 ft. Fifth sibling of Bear (damage envelope), Wolf
+/// (ally-aura), Eagle (bonus-action Dash), Tiger (+10 ft rage
+/// mobility) — the Elk is the pure sprint totem, hitting +15 ft on
+/// the same rage gate that Tiger uses for its +10.
+///
+/// Read at the shared `passive_feature_speed_bonus` chokepoint next
+/// to Tiger Totem (compound gate: `has_condition(Raging) &&
+/// has_passive_feature(...)`) — outside of rage the elk barbarian
+/// has no extra speed. Composes additively with Fast Movement's
+/// always-on +10 ft: a raging elk barbarian at level 5+ opens at +25
+/// ft over the base 30 ft chassis (= 55 ft walking, a full extra
+/// move on the opening round vs. a Tiger totem's +20 stack).
+///
+/// Distinct from Tiger Totem Spirit (also rage-gated) in one way:
+/// **magnitude** — Elk is the bigger sprint (+15 vs. Tiger's +10),
+/// trading off against the Tiger's kit-shape identity in the
+/// codebase's totem lineup. Ships on `ELK_TOTEM_BARBARIAN_TEMPLATE`
+/// via the shared `totem_barbarian_template` helper — one-line entry
+/// alongside Bear / Wolf / Eagle / Tiger just as the helper's
+/// docstring promised.
+pub const ELK_TOTEM_TAG: &str = "barbarian.elk_totem";
+
+/// Flat walking-speed bonus in feet granted by the Elk Totem Spirit
+/// passive while raging. Pinned to +15 ft per RAW (XGtE); exposed as
+/// a constant so the `PASSIVE_FEATURE_SPEED_BONUSES` table stays
+/// declarative rather than scattering magic numbers into the accessor.
+/// Sibling to `ROVING_SPEED_BONUS` (Ranger +5) and
+/// `UNARMORED_MOVEMENT_SPEED_BONUS` (Monk +10) on the "declared
+/// magnitude next to the tag definition" lane.
+pub const ELK_TOTEM_SPEED_BONUS: f32 = 15.0;
+
 /// 5e Monk **Purity of Body** (level 10) feature tag. Passive: the monk
 /// gains immunity to disease and poison (RAW: "your mastery of the ki
 /// flowing through you makes you immune to disease and poison"). Two

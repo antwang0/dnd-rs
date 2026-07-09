@@ -1,7 +1,7 @@
 use crate::actions::class_features::{
     EMPTY_BODY, EMPTY_BODY_TAG, FLURRY_OF_BLOWS, PATIENT_DEFENSE, PURITY_OF_BODY_TAG,
-    STEP_OF_THE_WIND, STILLNESS_OF_MIND, STUNNING_STRIKE, STUNNING_STRIKE_TAG, WHOLENESS_OF_BODY,
-    WHOLENESS_OF_BODY_TAG,
+    STEP_OF_THE_WIND, STILLNESS_OF_MIND, STUNNING_STRIKE, STUNNING_STRIKE_TAG,
+    UNARMORED_MOVEMENT_TAG, WHOLENESS_OF_BODY, WHOLENESS_OF_BODY_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::MONK_UNARMED_STRIKE;
@@ -48,7 +48,15 @@ pub static MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'M',
         ac: 15, // Unarmored Defense baseline (10 + DEX + WIS at +3/+2 = 15).
         hitpoints: "5d8+5".parse().unwrap(),
-        speed: 40., // Unarmored Movement bonus (+10ft at level 2+).
+        // 5e default humanoid walking speed. The RAW Unarmored Movement
+        // +10 ft bump lives on the `UNARMORED_MOVEMENT_TAG` passive-
+        // feature entry below rather than pre-baked into this field —
+        // the `PASSIVE_FEATURE_SPEED_BONUSES` table adds it back so
+        // `speed()` still reads 40 ft, but the feature stays declarative
+        // (visible on template diffs, dial-able via
+        // `grant_feature_for_test`) rather than a magic-number 40 with
+        // a comment.
+        speed: 30.,
         strength: 12,
         dexterity: 16, // primary attack stat
         constitution: 12,
@@ -79,7 +87,20 @@ pub static MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         //     Improved Divine Smite ships on the CR-1.5 paladin — class
         //     templates target a balanced playable level, not lockstep
         //     PHB progression.
-        features: HashSet::from([STUNNING_STRIKE_TAG, PURITY_OF_BODY_TAG, EMPTY_BODY_TAG]),
+        //   - `UNARMORED_MOVEMENT_TAG` (level 2): always-on +10 ft
+        //     walking speed. Read at the shared
+        //     `PASSIVE_FEATURE_SPEED_BONUSES` chokepoint next to Fast
+        //     Movement (Barbarian lv5) — same +10 magnitude, same
+        //     always-on cadence, different class chassis. The Monk's
+        //     `speed` field baseline is 30 ft (the default humanoid
+        //     walking speed) and the tag folds the +10 back through
+        //     the shared table, so `speed()` still reads 40 ft.
+        features: HashSet::from([
+            STUNNING_STRIKE_TAG,
+            PURITY_OF_BODY_TAG,
+            EMPTY_BODY_TAG,
+            UNARMORED_MOVEMENT_TAG,
+        ]),
         has_evasion: true,
         has_deflect_missiles: true,
         has_extra_attack: true,

@@ -1,9 +1,9 @@
 use crate::actions::action_template::Action;
 use crate::actions::class_features::{
-    BEAR_TOTEM_TAG, DIVINE_FURY_TAG, EAGLE_DIVE, EAGLE_TOTEM_TAG, FAST_MOVEMENT_TAG, FRENZY,
-    FRENZY_TAG, INTIMIDATING_PRESENCE, INTIMIDATING_PRESENCE_TAG, MINDLESS_RAGE_TAG, RAGE,
-    RAGE_TAG, RELENTLESS_RAGE_TAG, TIGER_TOTEM_TAG, WOLF_TOTEM_TAG, ZEALOUS_PRESENCE,
-    ZEALOUS_PRESENCE_TAG,
+    BEAR_TOTEM_TAG, DIVINE_FURY_TAG, EAGLE_DIVE, EAGLE_TOTEM_TAG, ELK_TOTEM_TAG,
+    FAST_MOVEMENT_TAG, FRENZY, FRENZY_TAG, INTIMIDATING_PRESENCE, INTIMIDATING_PRESENCE_TAG,
+    MINDLESS_RAGE_TAG, RAGE, RAGE_TAG, RELENTLESS_RAGE_TAG, TIGER_TOTEM_TAG, WOLF_TOTEM_TAG,
+    ZEALOUS_PRESENCE, ZEALOUS_PRESENCE_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GREATAXE, RECKLESS_ATTACK};
@@ -271,6 +271,34 @@ pub static EAGLE_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock
 /// map.
 pub static TIGER_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     totem_barbarian_template("Tiger Totem Barbarian", 'I', TIGER_TOTEM_TAG, &[])
+});
+
+/// Elk Totem Barbarian — Path of the Totem Warrior, **Elk Spirit** flavor
+/// (level 3, XGtE expansion of the RAW PHB Bear / Wolf / Eagle triad).
+/// Sixth sibling of the totem family — Berserker (Frenzy), Bear (damage
+/// envelope), Wolf (ally-aura), Eagle (bonus-action Dash), Tiger
+/// (always-on +10 ft rage mobility), Elk (always-on +15 ft rage
+/// mobility). Same level-9 envelope with the subclass feature swapped
+/// to the bigger sprint totem.
+///
+/// Headline mechanic: **Elk Totem Spirit** — while raging, the elk
+/// barbarian's walking speed increases by 15 ft. Bigger than Tiger's
+/// +10 ft but on the same rage gate; the two totem spirits never
+/// legally co-occur on a single PC (RAW: one totem spirit pick per
+/// barbarian), so the +15 ft magnitude is what distinguishes an Elk
+/// build from a Tiger build in the mechanics-visible sense. Stacks
+/// additively with Fast Movement (Barbarian lv5, +10 ft always-on) on
+/// the shared `PASSIVE_FEATURE_SPEED_BONUSES` table — a raging elk
+/// barbarian at level 5+ opens at 55 ft (30 base + 15 Elk + 10 Fast
+/// Movement), a full extra move on the opening round vs. a Tiger
+/// totem's 50 ft stack.
+///
+/// Glyph 'E' — distinct from 'A' (Eagle) which is the closest phonetic
+/// neighbor, and unused elsewhere in the totem family (Berserker 'Z',
+/// baseline Barbarian 'B', Totem/Bear 'T', Wolf 'W', Eagle 'A', Tiger
+/// 'I', Zealot handled separately).
+pub static ELK_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    totem_barbarian_template("Elk Totem Barbarian", 'E', ELK_TOTEM_TAG, &[])
 });
 
 /// Berserker Barbarian — Path of the Berserker subclass build. Identical

@@ -51562,4 +51562,196 @@ mod tests {
             "Roving + Fast Movement stack additively for +15 ft"
         );
     }
+
+    /// 5e Monk Unarmored Movement (level 2) — passive +10 ft walking
+    /// speed via the shared `PASSIVE_FEATURE_SPEED_BONUSES` table. The
+    /// MONK_TEMPLATE `speed` field is now the default humanoid 30 ft
+    /// baseline; the tag composes back +10 through the table so the
+    /// monk still walks at 40 ft. Verifies the tag ships on the
+    /// baseline template and the accessor reads the composed value.
+    #[test]
+    fn unarmored_movement_grants_monk_flat_speed_bump() {
+        use crate::actions::class_features::UNARMORED_MOVEMENT_TAG;
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::monks::MONK_TEMPLATE;
+        let monk = ActorInstance::from_creature_template(
+            &MONK_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        assert!(
+            monk.has_passive_feature(UNARMORED_MOVEMENT_TAG),
+            "Monk baseline must ship the Unarmored Movement feature tag"
+        );
+        // 5e humanoid speed 30 ft + 10 ft Unarmored Movement = 40 ft.
+        // The rest of the monk template doesn't stack additional speed
+        // bumps (no Fast Movement, no Roving, no rage totem), so the
+        // gap between the 30 ft baseline field and the 40 ft accessor
+        // return is the load-bearing signal.
+        assert_eq!(
+            monk.speed(),
+            40.0,
+            "Monk with Unarmored Movement reads 30 ft (base) + 10 ft (UM) = 40 ft"
+        );
+    }
+
+    /// Unarmored Movement inherits down through the Open Hand Monk
+    /// subclass template via `..MONK_TEMPLATE.clone()` — the tag pool
+    /// copy carries `UNARMORED_MOVEMENT_TAG` so the Open Hand Monk
+    /// also walks at 40 ft. Verifies the subclass-of pattern doesn't
+    /// drop the feature.
+    #[test]
+    fn unarmored_movement_inherits_to_open_hand_monk() {
+        use crate::actions::class_features::UNARMORED_MOVEMENT_TAG;
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::monks::OPEN_HAND_MONK_TEMPLATE;
+        let open_hand = ActorInstance::from_creature_template(
+            &OPEN_HAND_MONK_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        assert!(
+            open_hand.has_passive_feature(UNARMORED_MOVEMENT_TAG),
+            "Open Hand Monk inherits UNARMORED_MOVEMENT_TAG via ..MONK_TEMPLATE.clone()"
+        );
+        assert_eq!(
+            open_hand.speed(),
+            40.0,
+            "Open Hand Monk with inherited Unarmored Movement reads 40 ft"
+        );
+    }
+
+    /// Unarmored Movement stacks additively with the barbarian's Fast
+    /// Movement lane on the shared `PASSIVE_FEATURE_SPEED_BONUSES`
+    /// chokepoint — verified by dialing both tags onto one actor and
+    /// checking the +20 ft delta over the base speed. A hypothetical
+    /// multiclass monk / barbarian would compose cleanly under the
+    /// table.
+    #[test]
+    fn unarmored_movement_stacks_with_fast_movement() {
+        use crate::actions::class_features::{FAST_MOVEMENT_TAG, UNARMORED_MOVEMENT_TAG};
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+        let mut probe = ActorInstance::from_creature_template(
+            &COMMONER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        let base = probe.speed();
+        probe.grant_feature_for_test(UNARMORED_MOVEMENT_TAG);
+        assert_eq!(
+            probe.speed(),
+            base + 10.0,
+            "adding UNARMORED_MOVEMENT_TAG bumps speed by +10 ft"
+        );
+        probe.grant_feature_for_test(FAST_MOVEMENT_TAG);
+        assert_eq!(
+            probe.speed(),
+            base + 20.0,
+            "Unarmored Movement + Fast Movement stack additively for +20 ft"
+        );
+    }
+
+    /// 5e Barbarian Path of the Totem Warrior Elk Totem Spirit (RAW
+    /// XGtE lv3) — passive +15 ft walking speed while raging. Verifies
+    /// the compound gate (Raging + passive tag) composes cleanly: pre-
+    /// rage the bonus is dormant, raging adds the +15 ft, and the
+    /// bonus drops back off when the Raging condition lifts. Same
+    /// shape as `tiger_totem_raging_adds_ten_feet_of_speed`, just a
+    /// bigger magnitude.
+    #[test]
+    fn elk_totem_raging_adds_fifteen_feet_of_speed() {
+        use crate::actions::class_features::RAGE;
+        use crate::actors::creatures::barbarians::ELK_TOTEM_BARBARIAN_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let elk = e
+            .instantiate_creature(&ELK_TOTEM_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base = e.actors[&elk].speed();
+        // Pre-rage: no Elk speed bonus.
+        assert_eq!(e.actors[&elk].speed(), base);
+        let rage_effects = RAGE.side_effects(&mut e, elk, None, None, None);
+        for ef in rage_effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&elk].has_condition(Condition::Raging));
+        // Raging: +15 ft speed from Elk Totem.
+        assert_eq!(e.actors[&elk].speed(), base + 15.0);
+        // Drop the Rage condition: bonus must lift.
+        assert!(e.actors.get_mut(&elk).unwrap().remove_condition(Condition::Raging));
+        assert_eq!(e.actors[&elk].speed(), base);
+    }
+
+    /// Elk Totem Spirit is gated to barbarians who actually hold the
+    /// ELK_TOTEM_TAG passive — a Tiger / Bear / Wolf / Eagle /
+    /// baseline barbarian Raging gets no speed bump from Elk. Verified
+    /// against a Tiger totem barbarian (the closest neighbor —
+    /// rage-gated speed but a different tag / magnitude) to confirm
+    /// the tag-driven predicate doesn't accidentally bleed across
+    /// sibling totems.
+    #[test]
+    fn elk_totem_does_not_grant_speed_to_other_totems() {
+        use crate::actions::class_features::RAGE;
+        use crate::actors::creatures::barbarians::TIGER_TOTEM_BARBARIAN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let tiger = e
+            .instantiate_creature(&TIGER_TOTEM_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base = e.actors[&tiger].speed();
+        let rage_effects = RAGE.side_effects(&mut e, tiger, None, None, None);
+        for ef in rage_effects {
+            ef.apply(&mut e);
+        }
+        // Tiger barbarian Raging gets Tiger's +10 ft but not Elk's +15
+        // — the two rage-gated rows in `PASSIVE_FEATURE_SPEED_BONUSES`
+        // fire independently on their respective tags.
+        assert_eq!(e.actors[&tiger].speed(), base + 10.0);
+    }
+
+    /// Elk Totem Spirit stacks additively with Fast Movement while
+    /// raging on the shared `PASSIVE_FEATURE_SPEED_BONUSES` table —
+    /// verified by dialing both tags onto a commoner (which has no
+    /// rage / totem baseline), enabling Raging, and checking the +25
+    /// ft delta over the base speed (+15 Elk + +10 Fast Movement).
+    /// Composes as expected under the declarative table pattern.
+    #[test]
+    fn elk_totem_stacks_with_fast_movement_while_raging() {
+        use crate::actions::class_features::{ELK_TOTEM_TAG, FAST_MOVEMENT_TAG};
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut probe = ActorInstance::from_creature_template(
+            &COMMONER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        let base = probe.speed();
+        probe.grant_feature_for_test(ELK_TOTEM_TAG);
+        probe.grant_feature_for_test(FAST_MOVEMENT_TAG);
+        // Not raging yet: only Fast Movement's +10 ft fires.
+        assert_eq!(
+            probe.speed(),
+            base + 10.0,
+            "unraged elk with FAST_MOVEMENT_TAG reads +10 only"
+        );
+        probe.add_condition(Condition::Raging, ConditionTimer::Rounds(10));
+        assert_eq!(
+            probe.speed(),
+            base + 25.0,
+            "raging elk + Fast Movement stack additively for +25 ft"
+        );
+    }
 }
