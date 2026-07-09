@@ -1725,6 +1725,92 @@ pub const ELK_TOTEM_TAG: &str = "barbarian.elk_totem";
 /// magnitude next to the tag definition" lane.
 pub const ELK_TOTEM_SPEED_BONUS: f32 = 15.0;
 
+/// 5e Barbarian Path of the Wild Heart — **Wolverine Totem Spirit**
+/// (2024 PHB lv3, sixth totem in the Bear / Wolf / Eagle / Tiger / Elk
+/// / Wolverine lineup). Passive subclass feature: while raging, the
+/// holder's walking speed increases by 10 ft. Fits into the same
+/// rage-gated mobility lane the Tiger totem already occupies — same
+/// compound gate (`has_condition(Raging) && has_passive_feature(...)`)
+/// and same +10 ft magnitude, but a distinct tag / template so a
+/// Tiger-vs-Wolverine encounter renders unambiguously and the two
+/// flags never legally co-occur on a single PC per RAW (one totem
+/// pick per barbarian).
+///
+/// Read at the shared `PASSIVE_FEATURE_SPEED_BONUSES` chokepoint next
+/// to Tiger Totem — the two rows fire independently on their
+/// respective tags so a Tiger barbarian doesn't accidentally pick up
+/// the Wolverine bonus and vice versa. Composes additively with Fast
+/// Movement (Barbarian lv5, +10 ft always-on): a raging Wolverine
+/// barbarian at level 5+ opens at 50 ft (30 base + 10 Wolverine + 10
+/// Fast Movement), matching the Tiger totem's opening sprint.
+///
+/// Ships on `WOLVERINE_TOTEM_BARBARIAN_TEMPLATE` via the shared
+/// `totem_barbarian_template` helper — one-line entry alongside Bear
+/// / Wolf / Eagle / Tiger / Elk, exactly as the helper's docstring
+/// promised. Glyph 'V' — distinct from the other totem glyphs
+/// (Berserker 'Z', baseline Barbarian 'B', Totem/Bear 'T', Wolf 'W',
+/// Eagle 'A', Tiger 'I', Elk 'E', Zealot 'X').
+pub const WOLVERINE_TOTEM_TAG: &str = "barbarian.wolverine_totem";
+
+/// Flat walking-speed bonus in feet granted by the Wolverine Totem
+/// Spirit passive while raging. Pinned to +10 ft per RAW (2024 Wild
+/// Heart Wolverine); exposed as a constant so the
+/// `PASSIVE_FEATURE_SPEED_BONUSES` table stays declarative rather than
+/// scattering magic numbers into the accessor. Same magnitude as
+/// Tiger Totem's rage-gated +10 — the load-bearing distinction
+/// between the two rows is the tag identity, not the number, so a
+/// Tiger barbarian dialing on `WOLVERINE_TOTEM_TAG` (or vice versa)
+/// via `grant_feature_for_test` reads a stacked +20 total, matching
+/// the additive semantics of the table.
+pub const WOLVERINE_TOTEM_SPEED_BONUS: f32 = 10.0;
+
+/// 5e Barbarian Path of the Totem Warrior — **Panther Totem Spirit**
+/// (RAW XGtE lv3 alongside the Elk expansion of the PHB Bear / Wolf /
+/// Eagle triad). Passive subclass feature: while raging, the holder's
+/// walking speed increases by 5 ft. RAW: "You gain a climbing speed
+/// equal to your walking speed." The engine doesn't model climbing as
+/// a distinct movement axis — every non-Wall tile is walked over the
+/// same 2.5-ft grid regardless of vertical geometry — so the
+/// "climbing = walking" clause has no direct combat surface. We
+/// approximate the mobility bump by folding a slim +5 ft flat bonus
+/// through the shared `PASSIVE_FEATURE_SPEED_BONUSES` table: a raging
+/// panther barbarian kites half a step further than a stock rager
+/// without the +10 Tiger / +15 Elk sprint magnitudes, which reads on
+/// the map as the intended "slinky prowler" identity even without a
+/// third-dimensional climb axis to represent.
+///
+/// Read at the shared `PASSIVE_FEATURE_SPEED_BONUSES` chokepoint —
+/// compound gate combining `has_condition(Raging)` AND
+/// `has_passive_feature(PANTHER_TOTEM_TAG)` so outside of rage the
+/// panther barbarian has no extra speed, matching the Tiger / Elk /
+/// Wolverine rage-gate cadence.
+///
+/// Distinct from every other rage-gated totem row in the cohort by
+/// magnitude alone: Panther +5, Tiger +10, Wolverine +10, Elk +15.
+/// The four flags never legally co-occur on a single PC per RAW (one
+/// totem pick per barbarian). Ships on
+/// `PANTHER_TOTEM_BARBARIAN_TEMPLATE` via the shared
+/// `totem_barbarian_template` helper — one-line entry alongside the
+/// other five totems. Glyph 'P' — distinct from every existing totem
+/// glyph (Berserker 'Z', baseline Barbarian 'B', Totem/Bear 'T',
+/// Wolf 'W', Eagle 'A', Tiger 'I', Elk 'E', Wolverine 'V', Zealot
+/// 'X').
+pub const PANTHER_TOTEM_TAG: &str = "barbarian.panther_totem";
+
+/// Flat walking-speed bonus in feet granted by the Panther Totem
+/// Spirit passive while raging. Pinned to +5 ft in this engine —
+/// smaller than every other rage-gated totem (Tiger / Wolverine +10,
+/// Elk +15) to reflect that RAW's XGtE Panther grants climbing speed
+/// only, and the engine surfaces only a fraction of that bump through
+/// the flat-walking-speed lane since there's no 3D terrain to
+/// differentiate. Exposed as a constant so the
+/// `PASSIVE_FEATURE_SPEED_BONUSES` table stays declarative rather
+/// than scattering magic numbers into the accessor. Sibling to
+/// `ROVING_SPEED_BONUS` (Ranger +5) on the +5-ft-bonus lane — same
+/// magnitude, different chassis and different gate (Roving is
+/// always-on, Panther is rage-gated).
+pub const PANTHER_TOTEM_SPEED_BONUS: f32 = 5.0;
+
 /// 5e Monk **Purity of Body** (level 10) feature tag. Passive: the monk
 /// gains immunity to disease and poison (RAW: "your mastery of the ki
 /// flowing through you makes you immune to disease and poison"). Two

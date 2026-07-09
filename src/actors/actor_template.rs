@@ -342,6 +342,17 @@ struct PassiveFeatureSpeedBonus {
 ///     always-on. The +5 is smaller than Fast Movement / Unarmored
 ///     Movement — rangers kite half a step further, not sprint like
 ///     a raging barbarian or a monk.
+///   - **Wolverine Totem Spirit** (Barbarian Path of the Wild Heart
+///     2024 lv3): +10 ft **while raging** — same compound gate as
+///     Tiger / Elk and same +10 magnitude as Tiger, but a distinct
+///     tag so a Tiger-vs-Wolverine encounter renders unambiguously
+///     and the two flags never legally co-occur on a single PC.
+///   - **Panther Totem Spirit** (Barbarian Path of the Totem Warrior
+///     XGtE lv3): +5 ft **while raging** — smallest magnitude in the
+///     rage-gated totem lane (Panther +5, Tiger +10, Wolverine +10,
+///     Elk +15). RAW's "climbing speed equal to walking" clause folds
+///     into a slim flat walking-speed bump since the engine has no 3D
+///     terrain to differentiate the climb axis.
 const PASSIVE_FEATURE_SPEED_BONUSES: &[PassiveFeatureSpeedBonus] = &[
     PassiveFeatureSpeedBonus {
         flag: |a| {
@@ -358,6 +369,20 @@ const PASSIVE_FEATURE_SPEED_BONUSES: &[PassiveFeatureSpeedBonus] = &[
         bonus_ft: crate::actions::class_features::ELK_TOTEM_SPEED_BONUS,
     },
     PassiveFeatureSpeedBonus {
+        flag: |a| {
+            a.has_condition(Condition::Raging)
+                && a.has_passive_feature(crate::actions::class_features::WOLVERINE_TOTEM_TAG)
+        },
+        bonus_ft: crate::actions::class_features::WOLVERINE_TOTEM_SPEED_BONUS,
+    },
+    PassiveFeatureSpeedBonus {
+        flag: |a| {
+            a.has_condition(Condition::Raging)
+                && a.has_passive_feature(crate::actions::class_features::PANTHER_TOTEM_TAG)
+        },
+        bonus_ft: crate::actions::class_features::PANTHER_TOTEM_SPEED_BONUS,
+    },
+    PassiveFeatureSpeedBonus {
         flag: |a| a.has_passive_feature(crate::actions::class_features::FAST_MOVEMENT_TAG),
         bonus_ft: 10.0,
     },
@@ -368,6 +393,75 @@ const PASSIVE_FEATURE_SPEED_BONUSES: &[PassiveFeatureSpeedBonus] = &[
     PassiveFeatureSpeedBonus {
         flag: |a| a.has_passive_feature(crate::actions::class_features::ROVING_TAG),
         bonus_ft: crate::actions::class_features::ROVING_SPEED_BONUS,
+    },
+];
+
+/// One row in the `CONDITION_SPEED_BONUSES` cohort — a single
+/// condition-driven speed bump. `flag` is any predicate on the actor
+/// (usually `has_condition(C)`, occasionally a triple-OR compound like
+/// the Flying / InvestedInWind / OtherworldlyGuised "any-flavor-of-
+/// magic-flight" cohort); when it returns true the row's `bonus_ft`
+/// is added to the actor's walking speed. Sibling to
+/// `PassiveFeatureSpeedBonus` on the "cohort of `(flag_closure,
+/// bonus_ft)` rows" pattern — same shape, different lane
+/// (condition-driven vs. always-on / rage-gated passive-feature-tag-
+/// driven).
+struct ConditionSpeedBonus {
+    flag: fn(&ActorInstance) -> bool,
+    bonus_ft: f32,
+}
+
+/// Condition-driven speed-bonus cohort read by
+/// `ActorInstance::condition_speed_bonus`. Every row is summed (with
+/// an OR-of-flags predicate); adding a fresh condition-driven speed
+/// buff (a hypothetical Wind Walk transmutation, a Boots of Elvenkind
+/// speed rider, a Warding Wind reverse-slow, etc.) lands as a
+/// one-line entry here rather than another
+/// `if self.has_condition(...) { bonus += N; }` branch in
+/// `condition_speed_bonus`.
+///
+/// Sibling to `PASSIVE_FEATURE_SPEED_BONUSES` on the "cohort of
+/// `(flag_closure, bonus_ft)` rows" pattern — the two tables split by
+/// source-of-the-flag: passive-feature tag (there) vs. held condition
+/// (here).
+///
+/// Entries (in order):
+///   - **Fly / Investiture of Wind / Otherworldly Guise**: +60 ft
+///     flying speed. Any one is sufficient (RAW: the three effects
+///     don't stack — they're separate concentration spells the caster
+///     can't both maintain), so the row's flag closure is a triple-OR
+///     rather than three separate rows with matching magnitudes.
+///   - **Spider Climb**: +30 ft. RAW grants a climbing speed equal to
+///     walking speed; the engine doesn't model 3D terrain, so the
+///     bonus surfaces as a flat repositioning boost.
+///   - **Longstrider**: +10 ft (1-hour transmutation buff).
+///   - **Expeditious Retreat**: +30 ft (Dash-as-bonus collapsed to a
+///     flat speed bump, concentration-bound).
+///   - **Ashardalon's Stride** (Fizban's transmutation): +20 ft.
+const CONDITION_SPEED_BONUSES: &[ConditionSpeedBonus] = &[
+    ConditionSpeedBonus {
+        flag: |a| {
+            a.has_condition(Condition::Flying)
+                || a.has_condition(Condition::InvestedInWind)
+                || a.has_condition(Condition::OtherworldlyGuised)
+        },
+        bonus_ft: 60.0,
+    },
+    ConditionSpeedBonus {
+        flag: |a| a.has_condition(Condition::SpiderClimbing),
+        bonus_ft: 30.0,
+    },
+    ConditionSpeedBonus {
+        flag: |a| a.has_condition(Condition::Longstriding),
+        bonus_ft: 10.0,
+    },
+    ConditionSpeedBonus {
+        flag: |a| a.has_condition(Condition::ExpeditiouslyRetreating),
+        bonus_ft: 30.0,
+    },
+    ConditionSpeedBonus {
+        flag: |a| a.has_condition(Condition::AshardalonStriding),
+        bonus_ft: 20.0,
     },
 ];
 
@@ -3539,53 +3633,57 @@ impl ActorInstance {
         raw * factor
     }
 
-    /// Sum of all flat speed bonuses contributed by active conditions. One
-    /// chokepoint so a new speed-buff condition (Longstrider, Expeditious
-    /// Retreat, Fly, Spider Climb, Investiture of Wind, …) lands as a
-    /// one-line entry instead of an ad-hoc branch in `speed()`.
+    /// Sum of all flat speed bonuses contributed by active conditions
+    /// AND passive-feature tags. One chokepoint so a new speed-buff
+    /// source (Longstrider, Expeditious Retreat, Fly, Spider Climb,
+    /// Investiture of Wind, Tiger Totem, Fast Movement, …) lands as a
+    /// one-line entry in the appropriate cohort table
+    /// (`CONDITION_SPEED_BONUSES` for condition-driven,
+    /// `PASSIVE_FEATURE_SPEED_BONUSES` for tag-driven) instead of an
+    /// ad-hoc branch in `speed()`.
     ///
-    /// 5e RAW values:
-    ///   - Fly / Investiture of Wind: +60 ft (flying speed equal to walking)
-    ///   - Spider Climb: +30 ft (climbing speed; we don't model 3D terrain
-    ///     so the bonus surfaces as a flat repositioning boost)
-    ///   - Longstrider: +10 ft (1-hour transmutation buff)
-    ///   - Expeditious Retreat: +30 ft (Dash-as-bonus collapsed to a flat
-    ///     speed bump, concentration-bound)
+    /// Body is a two-line compose of the two cohort helpers. Each
+    /// cohort is summed independently (a matching row contributes its
+    /// `bonus_ft`; misses contribute 0), then the two totals are added
+    /// so a raging Tiger totem barbarian under Longstrider picks up
+    /// +10 (Tiger) + +10 (Longstrider) + Fast Movement's +10 =
+    /// +30 ft over base.
     ///
     /// Returned in feet so it composes with `base_speed` / item bonuses
     /// before the Haste / Slow multiplicative factor in `speed()`.
     pub fn condition_speed_bonus(&self) -> f32 {
-        let mut bonus = 0.0_f32;
-        // Both the Fly spell and Investiture of Wind grant the holder a
-        // 60ft flying speed RAW; the two don't stack — they're separate
-        // concentration spells the caster can't both maintain, but the
-        // gate honors whichever is up.
-        if self.has_condition(Condition::Flying)
-            || self.has_condition(Condition::InvestedInWind)
-            || self.has_condition(Condition::OtherworldlyGuised)
-        {
-            bonus += 60.0;
-        }
-        if self.has_condition(Condition::SpiderClimbing) {
-            bonus += 30.0;
-        }
-        if self.has_condition(Condition::Longstriding) {
-            bonus += 10.0;
-        }
-        if self.has_condition(Condition::ExpeditiouslyRetreating) {
-            bonus += 30.0;
-        }
-        if self.has_condition(Condition::AshardalonStriding) {
-            bonus += 20.0;
-        }
-        // Passive-feature-driven speed bumps (Tiger / Elk Totem, Fast
-        // Movement, Unarmored Movement, Roving) fold through the
-        // shared `PASSIVE_FEATURE_SPEED_BONUSES` table so adding a new
-        // always-on / rage-gated speed passive lands as a one-line
-        // entry in that table rather than a fresh
-        // `if actor.has_passive_feature(...) { bonus += N; }` here.
-        bonus += self.passive_feature_speed_bonus();
-        bonus
+        // Condition-driven speed bumps (Fly / Investiture / Otherworldly
+        // Guise, Spider Climb, Longstrider, Expeditious Retreat,
+        // Ashardalon's Stride) fold through the shared
+        // `CONDITION_SPEED_BONUSES` table so adding a new
+        // condition-driven speed buff lands as a one-line entry
+        // instead of another `if self.has_condition(...) { bonus += N; }`
+        // here.
+        //
+        // Passive-feature-driven speed bumps (Tiger / Elk / Wolverine /
+        // Panther Totem, Fast Movement, Unarmored Movement, Roving)
+        // fold through the sibling `PASSIVE_FEATURE_SPEED_BONUSES`
+        // table for the same reason.
+        self.condition_speed_bonus_from_table() + self.passive_feature_speed_bonus()
+    }
+
+    /// Sum of flat speed bonuses granted by held conditions. Walks the
+    /// `CONDITION_SPEED_BONUSES` cohort — every row's flag is
+    /// evaluated against `self`, and matching rows contribute their
+    /// `bonus_ft` to the total. Adding a fresh condition-driven speed
+    /// buff lands as a one-line entry in that table rather than a new
+    /// `if self.has_condition(...) { bonus += N; }` branch here.
+    ///
+    /// Sibling to `passive_feature_speed_bonus` — both are
+    /// filter-map-sum walks over their respective cohort tables and
+    /// both are composed by `condition_speed_bonus` before the Haste /
+    /// Slow multiplicative factor lands in `speed()`.
+    fn condition_speed_bonus_from_table(&self) -> f32 {
+        CONDITION_SPEED_BONUSES
+            .iter()
+            .filter(|row| (row.flag)(self))
+            .map(|row| row.bonus_ft)
+            .sum()
     }
 
     /// Sum of flat speed bonuses granted by passive-feature tags. Walks

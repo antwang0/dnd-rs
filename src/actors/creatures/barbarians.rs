@@ -2,8 +2,8 @@ use crate::actions::action_template::Action;
 use crate::actions::class_features::{
     BEAR_TOTEM_TAG, DIVINE_FURY_TAG, EAGLE_DIVE, EAGLE_TOTEM_TAG, ELK_TOTEM_TAG,
     FAST_MOVEMENT_TAG, FRENZY, FRENZY_TAG, INTIMIDATING_PRESENCE, INTIMIDATING_PRESENCE_TAG,
-    MINDLESS_RAGE_TAG, RAGE, RAGE_TAG, RELENTLESS_RAGE_TAG, TIGER_TOTEM_TAG, WOLF_TOTEM_TAG,
-    ZEALOUS_PRESENCE, ZEALOUS_PRESENCE_TAG,
+    MINDLESS_RAGE_TAG, PANTHER_TOTEM_TAG, RAGE, RAGE_TAG, RELENTLESS_RAGE_TAG, TIGER_TOTEM_TAG,
+    WOLF_TOTEM_TAG, WOLVERINE_TOTEM_TAG, ZEALOUS_PRESENCE, ZEALOUS_PRESENCE_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GREATAXE, RECKLESS_ATTACK};
@@ -299,6 +299,61 @@ pub static TIGER_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock
 /// 'I', Zealot handled separately).
 pub static ELK_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     totem_barbarian_template("Elk Totem Barbarian", 'E', ELK_TOTEM_TAG, &[])
+});
+
+/// Wolverine Totem Barbarian — Path of the Wild Heart, **Wolverine
+/// Spirit** flavor (level 3, 2024 PHB Path of the Wild Heart lineup
+/// expansion of the RAW XGtE Bear / Wolf / Eagle / Tiger / Elk
+/// roster). Seventh sibling of the totem family — Berserker (Frenzy),
+/// Bear (damage envelope), Wolf (ally-aura), Eagle (bonus-action
+/// Dash), Tiger (rage-gated +10 ft mobility), Elk (rage-gated +15 ft
+/// mobility), Wolverine (rage-gated +10 ft mobility). Same level-9
+/// envelope with the subclass feature swapped to a Tiger-tier speed
+/// bump on a distinct flavor / tag / template.
+///
+/// Headline mechanic: **Wolverine Totem Spirit** — while raging, the
+/// wolverine barbarian's walking speed increases by 10 ft. Matches
+/// Tiger's magnitude but on a distinct tag so a Tiger-vs-Wolverine
+/// encounter renders unambiguously and the two flags never legally
+/// co-occur on a single PC (RAW: one totem spirit pick per
+/// barbarian). Stacks additively with Fast Movement (Barbarian lv5,
+/// +10 ft always-on) on the shared `PASSIVE_FEATURE_SPEED_BONUSES`
+/// table — a raging wolverine barbarian at level 5+ opens at 50 ft
+/// (30 base + 10 Wolverine + 10 Fast Movement), matching the Tiger
+/// stack magnitude but on a different totem chassis.
+///
+/// Glyph 'V' — distinct from every other totem glyph (Berserker 'Z',
+/// baseline Barbarian 'B', Totem/Bear 'T', Wolf 'W', Eagle 'A',
+/// Tiger 'I', Elk 'E', Zealot 'X').
+pub static WOLVERINE_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    totem_barbarian_template("Wolverine Totem Barbarian", 'V', WOLVERINE_TOTEM_TAG, &[])
+});
+
+/// Panther Totem Barbarian — Path of the Totem Warrior, **Panther
+/// Spirit** flavor (level 3, XGtE expansion of the RAW PHB Bear /
+/// Wolf / Eagle triad, sibling of Elk). Eighth totem in the codebase's
+/// full totem roster — Berserker (Frenzy), Bear (damage envelope),
+/// Wolf (ally-aura), Eagle (bonus-action Dash), Tiger (rage-gated
+/// +10 ft mobility), Elk (rage-gated +15 ft mobility), Wolverine
+/// (rage-gated +10 ft mobility, distinct tag), Panther (rage-gated
+/// +5 ft mobility). Same level-9 envelope with the subclass feature
+/// swapped to the slinkiest of the sprint-totem magnitudes.
+///
+/// Headline mechanic: **Panther Totem Spirit** — while raging, the
+/// panther barbarian's walking speed increases by 5 ft. RAW XGtE
+/// grants climbing speed equal to walking speed; the engine folds
+/// that into a smaller flat walking-speed bump since there's no 3D
+/// terrain to differentiate the climb axis. Distinct from every
+/// other rage-gated totem by magnitude alone: Panther +5, Tiger +10,
+/// Wolverine +10, Elk +15. Stacks additively with Fast Movement
+/// (Barbarian lv5, +10 ft always-on): a raging panther barbarian at
+/// level 5+ opens at 45 ft (30 base + 5 Panther + 10 Fast Movement).
+///
+/// Glyph 'P' — distinct from every other totem glyph (Berserker 'Z',
+/// baseline Barbarian 'B', Totem/Bear 'T', Wolf 'W', Eagle 'A',
+/// Tiger 'I', Elk 'E', Wolverine 'V', Zealot 'X').
+pub static PANTHER_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    totem_barbarian_template("Panther Totem Barbarian", 'P', PANTHER_TOTEM_TAG, &[])
 });
 
 /// Berserker Barbarian — Path of the Berserker subclass build. Identical

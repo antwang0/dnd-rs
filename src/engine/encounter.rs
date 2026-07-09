@@ -51754,4 +51754,276 @@ mod tests {
             "raging elk + Fast Movement stack additively for +25 ft"
         );
     }
+
+    /// 5e Barbarian Path of the Wild Heart Wolverine Totem Spirit
+    /// (2024 PHB lv3) — passive +10 ft walking speed while raging.
+    /// Verifies the compound gate (Raging + `WOLVERINE_TOTEM_TAG`)
+    /// composes cleanly: pre-rage the bonus is dormant, raging adds
+    /// the +10 ft, and the bonus drops back off when the Raging
+    /// condition lifts. Same shape as
+    /// `tiger_totem_raging_adds_ten_feet_of_speed` and
+    /// `elk_totem_raging_adds_fifteen_feet_of_speed`, just a distinct
+    /// tag / template on the +10 rage-gated lane.
+    #[test]
+    fn wolverine_totem_raging_adds_ten_feet_of_speed() {
+        use crate::actions::class_features::RAGE;
+        use crate::actors::creatures::barbarians::WOLVERINE_TOTEM_BARBARIAN_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wolverine = e
+            .instantiate_creature(&WOLVERINE_TOTEM_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base = e.actors[&wolverine].speed();
+        // Pre-rage: no Wolverine speed bonus.
+        assert_eq!(e.actors[&wolverine].speed(), base);
+        let rage_effects = RAGE.side_effects(&mut e, wolverine, None, None, None);
+        for ef in rage_effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&wolverine].has_condition(Condition::Raging));
+        // Raging: +10 ft speed from Wolverine Totem.
+        assert_eq!(e.actors[&wolverine].speed(), base + 10.0);
+        // Drop the Rage condition: bonus must lift.
+        assert!(e.actors.get_mut(&wolverine).unwrap().remove_condition(Condition::Raging));
+        assert_eq!(e.actors[&wolverine].speed(), base);
+    }
+
+    /// Wolverine Totem Spirit is gated to barbarians who actually hold
+    /// the `WOLVERINE_TOTEM_TAG` passive — a Tiger / Bear / Wolf /
+    /// Eagle / Elk / baseline barbarian Raging gets no speed bump
+    /// from Wolverine. Verified against an Elk totem barbarian (a
+    /// rage-gated speed totem with a distinct tag / magnitude) to
+    /// confirm the tag-driven predicate doesn't accidentally bleed
+    /// across sibling totems.
+    #[test]
+    fn wolverine_totem_does_not_grant_speed_to_other_totems() {
+        use crate::actions::class_features::RAGE;
+        use crate::actors::creatures::barbarians::ELK_TOTEM_BARBARIAN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let elk = e
+            .instantiate_creature(&ELK_TOTEM_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base = e.actors[&elk].speed();
+        let rage_effects = RAGE.side_effects(&mut e, elk, None, None, None);
+        for ef in rage_effects {
+            ef.apply(&mut e);
+        }
+        // Elk barbarian Raging gets Elk's +15 ft but not Wolverine's
+        // +10 — the rage-gated rows in `PASSIVE_FEATURE_SPEED_BONUSES`
+        // fire independently on their respective tags.
+        assert_eq!(e.actors[&elk].speed(), base + 15.0);
+    }
+
+    /// Wolverine Totem Spirit stacks additively with Fast Movement
+    /// while raging on the shared `PASSIVE_FEATURE_SPEED_BONUSES`
+    /// table — verified by dialing both tags onto a commoner,
+    /// enabling Raging, and checking the +20 ft delta over the base
+    /// speed (+10 Wolverine + +10 Fast Movement). Matches the Tiger
+    /// stack magnitude but on a distinct tag.
+    #[test]
+    fn wolverine_totem_stacks_with_fast_movement_while_raging() {
+        use crate::actions::class_features::{FAST_MOVEMENT_TAG, WOLVERINE_TOTEM_TAG};
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut probe = ActorInstance::from_creature_template(
+            &COMMONER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        let base = probe.speed();
+        probe.grant_feature_for_test(WOLVERINE_TOTEM_TAG);
+        probe.grant_feature_for_test(FAST_MOVEMENT_TAG);
+        // Not raging yet: only Fast Movement's +10 ft fires.
+        assert_eq!(
+            probe.speed(),
+            base + 10.0,
+            "unraged wolverine with FAST_MOVEMENT_TAG reads +10 only"
+        );
+        probe.add_condition(Condition::Raging, ConditionTimer::Rounds(10));
+        assert_eq!(
+            probe.speed(),
+            base + 20.0,
+            "raging wolverine + Fast Movement stack additively for +20 ft"
+        );
+    }
+
+    /// 5e Barbarian Path of the Totem Warrior Panther Totem Spirit
+    /// (XGtE lv3) — passive +5 ft walking speed while raging.
+    /// Verifies the compound gate (Raging + `PANTHER_TOTEM_TAG`)
+    /// composes cleanly: pre-rage the bonus is dormant, raging adds
+    /// the +5 ft, and the bonus drops back off when the Raging
+    /// condition lifts. Same shape as the Tiger / Elk / Wolverine
+    /// rage-gated totem rows but on the smallest magnitude in the
+    /// cohort (Panther +5 vs. Tiger / Wolverine +10 vs. Elk +15).
+    #[test]
+    fn panther_totem_raging_adds_five_feet_of_speed() {
+        use crate::actions::class_features::RAGE;
+        use crate::actors::creatures::barbarians::PANTHER_TOTEM_BARBARIAN_TEMPLATE;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let panther = e
+            .instantiate_creature(&PANTHER_TOTEM_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base = e.actors[&panther].speed();
+        // Pre-rage: no Panther speed bonus.
+        assert_eq!(e.actors[&panther].speed(), base);
+        let rage_effects = RAGE.side_effects(&mut e, panther, None, None, None);
+        for ef in rage_effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&panther].has_condition(Condition::Raging));
+        // Raging: +5 ft speed from Panther Totem.
+        assert_eq!(e.actors[&panther].speed(), base + 5.0);
+        // Drop the Rage condition: bonus must lift.
+        assert!(e.actors.get_mut(&panther).unwrap().remove_condition(Condition::Raging));
+        assert_eq!(e.actors[&panther].speed(), base);
+    }
+
+    /// Panther Totem Spirit stacks additively with Fast Movement
+    /// while raging on the shared `PASSIVE_FEATURE_SPEED_BONUSES`
+    /// table — verified by dialing both tags onto a commoner,
+    /// enabling Raging, and checking the +15 ft delta over the base
+    /// speed (+5 Panther + +10 Fast Movement). Smallest of the
+    /// rage-gated + Fast Movement stack magnitudes: Panther+FM = 15
+    /// vs. Tiger/Wolverine+FM = 20 vs. Elk+FM = 25.
+    #[test]
+    fn panther_totem_stacks_with_fast_movement_while_raging() {
+        use crate::actions::class_features::{FAST_MOVEMENT_TAG, PANTHER_TOTEM_TAG};
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut probe = ActorInstance::from_creature_template(
+            &COMMONER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        let base = probe.speed();
+        probe.grant_feature_for_test(PANTHER_TOTEM_TAG);
+        probe.grant_feature_for_test(FAST_MOVEMENT_TAG);
+        // Not raging yet: only Fast Movement's +10 ft fires.
+        assert_eq!(
+            probe.speed(),
+            base + 10.0,
+            "unraged panther with FAST_MOVEMENT_TAG reads +10 only"
+        );
+        probe.add_condition(Condition::Raging, ConditionTimer::Rounds(10));
+        assert_eq!(
+            probe.speed(),
+            base + 15.0,
+            "raging panther + Fast Movement stack additively for +15 ft"
+        );
+    }
+
+    /// The Fly / Investiture of Wind / Otherworldly Guise triple-OR
+    /// row in `CONDITION_SPEED_BONUSES` grants exactly one +60 ft
+    /// bump regardless of how many of the three conditions are held —
+    /// preserves the original semantics of the pre-refactor
+    /// `condition_speed_bonus` body's single-if triple-OR gate. The
+    /// three effects don't stack RAW (separate concentration spells),
+    /// and the cohort table honors that by folding the three flags
+    /// into one row rather than three rows with matching magnitudes.
+    #[test]
+    fn fly_investiture_and_otherworldly_guise_do_not_stack_speed_bonus() {
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut probe = ActorInstance::from_creature_template(
+            &COMMONER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        let base = probe.speed();
+        probe.add_condition(Condition::Flying, ConditionTimer::Rounds(100));
+        assert_eq!(probe.speed(), base + 60.0, "Flying alone reads +60");
+        probe.add_condition(Condition::InvestedInWind, ConditionTimer::Rounds(100));
+        assert_eq!(
+            probe.speed(),
+            base + 60.0,
+            "Flying + Investiture still reads +60 (triple-OR, one row)"
+        );
+        probe.add_condition(Condition::OtherworldlyGuised, ConditionTimer::Rounds(100));
+        assert_eq!(
+            probe.speed(),
+            base + 60.0,
+            "Flying + Investiture + Otherworldly Guise still reads +60 (triple-OR, one row)"
+        );
+    }
+
+    /// Distinct rows in `CONDITION_SPEED_BONUSES` stack additively —
+    /// Longstrider (+10) and Expeditious Retreat (+30) both fire on a
+    /// commoner with both conditions held, totaling +40 ft over base.
+    /// Composed alongside SpiderClimbing (+30) the total climbs to
+    /// +70. Verifies the sum-and-return semantics of the cohort walk
+    /// isn't accidentally clamped or short-circuited between rows.
+    #[test]
+    fn condition_speed_bonus_rows_stack_additively() {
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut probe = ActorInstance::from_creature_template(
+            &COMMONER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        let base = probe.speed();
+        probe.add_condition(Condition::Longstriding, ConditionTimer::Rounds(100));
+        assert_eq!(probe.speed(), base + 10.0, "Longstrider alone reads +10");
+        probe.add_condition(Condition::ExpeditiouslyRetreating, ConditionTimer::Rounds(100));
+        assert_eq!(
+            probe.speed(),
+            base + 40.0,
+            "Longstrider + Expeditious Retreat stack additively for +40"
+        );
+        probe.add_condition(Condition::SpiderClimbing, ConditionTimer::Rounds(100));
+        assert_eq!(
+            probe.speed(),
+            base + 70.0,
+            "Longstrider + Expeditious Retreat + Spider Climb stack additively for +70"
+        );
+    }
+
+    /// The condition-driven cohort composes cleanly with the
+    /// passive-feature-driven cohort at the shared
+    /// `condition_speed_bonus` chokepoint — verified by dialing a
+    /// `FAST_MOVEMENT_TAG` passive AND a `Longstriding` condition
+    /// onto a single commoner and checking the sum reads +20 ft over
+    /// base (+10 tag + +10 condition). The two tables walk
+    /// independently and the results are added, not max'd — matches
+    /// the pre-refactor behavior.
+    #[test]
+    fn condition_and_passive_feature_speed_bonuses_compose() {
+        use crate::actions::class_features::FAST_MOVEMENT_TAG;
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        let mut probe = ActorInstance::from_creature_template(
+            &COMMONER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        let base = probe.speed();
+        probe.grant_feature_for_test(FAST_MOVEMENT_TAG);
+        probe.add_condition(Condition::Longstriding, ConditionTimer::Rounds(100));
+        assert_eq!(
+            probe.speed(),
+            base + 20.0,
+            "FAST_MOVEMENT_TAG (+10) + Longstriding condition (+10) sum to +20"
+        );
+    }
 }
