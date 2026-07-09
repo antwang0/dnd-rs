@@ -82,6 +82,22 @@ pub static CHAMPION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // the 19-20 crit threshold in play before the enemy's first
         // swing.
         has_remarkable_athlete: true,
+        // 5e Champion Fighter **Superior Critical** (subclass level 15).
+        // Passive: critical hits trigger on 18-20 instead of the Improved
+        // Critical 19-20 window. `crit_threshold()` caps the returned
+        // value at 18 whenever this flag is set, so the field-level
+        // `crit_threshold: 19` above transparently drops to 18 for every
+        // attack-roll site (weapon + spell) without a second field mutation.
+        // Ships on the CR-3 (level-5) Champion template above its strict
+        // RAW lv15 gate for the same reason Survivor (lv18) and
+        // Remarkable Athlete (lv7) already ride here — class templates
+        // target a balanced playable level, not lockstep PHB progression.
+        // Composes cleanly with Improved Critical (the Champion's
+        // headline lv3 tell — same field, just widened) and Brutal
+        // Critical (barbarian rider on `brutal_critical_dice` — a
+        // hypothetical Champion / Barbarian multiclass adds the extra
+        // die on top of every 18-20 crit).
+        has_superior_critical: true,
         // 5e Fighter **Fighting Style: Defense** (lv1 pick): passive +1 AC
         // while wearing armor. RAW "while wearing armor" gate collapses
         // to "always on" since the engine doesn't model armor tiers —

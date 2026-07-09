@@ -10386,9 +10386,13 @@ mod tests {
     }
 
     /// 5e Champion Improved Critical: a fighter built around the
-    /// Champion subclass crits on 19 or 20 instead of just 20. The
-    /// `crit_threshold` field on `CreatureTemplate` carries the value;
-    /// the attack-resolution sites read it via `actor.crit_threshold()`.
+    /// Champion subclass crits on a widened window instead of just 20.
+    /// The `crit_threshold` field on `CreatureTemplate` carries the
+    /// Improved Critical value (19); the newer Superior Critical
+    /// (lv15) flag further caps the effective threshold at 18. The
+    /// current CHAMPION_TEMPLATE ships both — so the accessor lands
+    /// on 18. The `crit_threshold` accessor is the single load-bearing
+    /// surface for the attack-resolution sites (weapon + spell).
     #[test]
     fn champion_crit_threshold_is_nineteen() {
         use crate::actors::creatures::fighters::{CHAMPION_TEMPLATE, FIGHTER_TEMPLATE};
@@ -10399,7 +10403,10 @@ mod tests {
         let fighter = e
             .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
             .unwrap();
-        assert_eq!(e.actors[&champ].crit_threshold(), 19);
+        // Champion has Improved Critical (crit_threshold field = 19)
+        // AND Superior Critical (`has_superior_critical` = true), so
+        // the effective threshold collapses to 18.
+        assert_eq!(e.actors[&champ].crit_threshold(), 18);
         assert_eq!(e.actors[&fighter].crit_threshold(), 20);
     }
 
@@ -51340,6 +51347,219 @@ mod tests {
             "champion initiative sweep too narrow: [{}, {}] — d20 not varying?",
             lo,
             hi
+        );
+    }
+
+    /// Superior Critical (Champion Fighter lv15) caps the crit
+    /// threshold at 18. The Champion template ships this flag alongside
+    /// Improved Critical (`crit_threshold: 19`) — the accessor should
+    /// return `min(19, 18) = 18` for the Champion, while the baseline
+    /// Fighter (no flag) stays at the default `crit_threshold: 20`.
+    #[test]
+    fn superior_critical_drops_champion_crit_threshold_to_18() {
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::fighters::{CHAMPION_TEMPLATE, FIGHTER_TEMPLATE};
+        let champion = ActorInstance::from_creature_template(
+            &CHAMPION_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        assert!(
+            champion.has_superior_critical(),
+            "Champion must ship Superior Critical"
+        );
+        assert_eq!(
+            champion.crit_threshold(),
+            18,
+            "Superior Critical drops the effective crit threshold to 18"
+        );
+        let plain = ActorInstance::from_creature_template(
+            &FIGHTER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        assert!(
+            !plain.has_superior_critical(),
+            "baseline Fighter must NOT ship Superior Critical"
+        );
+        assert_eq!(
+            plain.crit_threshold(),
+            20,
+            "baseline Fighter without Superior Critical stays at threshold 20"
+        );
+    }
+
+    /// A d20 face of 18 must promote to a crit for the Champion (Superior
+    /// Critical) — the encounter-level `crit_threshold(id)` chokepoint
+    /// (used by both weapon swings and spell attacks) reads the actor's
+    /// accessor. Verified by direct comparison since seeded attack
+    /// probes are noisy; the accessor path is the load-bearing surface.
+    #[test]
+    fn superior_critical_fires_encounter_crit_gate_at_18() {
+        use crate::actors::creatures::fighters::{CHAMPION_TEMPLATE, FIGHTER_TEMPLATE};
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let champ = e
+            .instantiate_creature(&CHAMPION_TEMPLATE, Coordinate::new(1, 1), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 1), 0, 0)
+            .unwrap();
+        // Encounter-level accessor returns i32 (unwraps missing→20). A
+        // d20 face of 18 lands >= threshold for the Champion but not
+        // the baseline Fighter — the gate difference is the whole
+        // Superior Critical surface.
+        assert_eq!(
+            e.crit_threshold(champ),
+            18,
+            "Champion crit threshold via encounter accessor = 18"
+        );
+        assert_eq!(
+            e.crit_threshold(baseline),
+            20,
+            "baseline Fighter crit threshold via encounter accessor = 20"
+        );
+        // Sanity: 18 promotes for the champion, 17 doesn't.
+        assert!(
+            18 >= e.crit_threshold(champ),
+            "a d20 of 18 must satisfy the Champion crit gate"
+        );
+        assert!(
+            17 < e.crit_threshold(champ),
+            "a d20 of 17 must NOT satisfy the Champion crit gate — nat-18-only"
+        );
+        // And 18 does NOT promote for the baseline (threshold 20).
+        assert!(
+            18 < e.crit_threshold(baseline),
+            "a d20 of 18 must NOT satisfy the baseline crit gate — nat-20-only"
+        );
+    }
+
+    /// Superior Critical composes cleanly with a non-Champion template
+    /// too: setting the flag on a default-`crit_threshold: 20` chassis
+    /// still drops to 18 (a hypothetical Barbarian who picks it up
+    /// benefits identically to the Champion). Verifies the accessor's
+    /// `min(field, 18)` folds independently of the baseline value.
+    #[test]
+    fn superior_critical_layers_over_default_crit_threshold() {
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        let mut barb = ActorInstance::from_creature_template(
+            &BARBARIAN_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        assert_eq!(
+            barb.crit_threshold(),
+            20,
+            "baseline barbarian without the flag reads the default 20"
+        );
+        barb.set_superior_critical(true);
+        assert_eq!(
+            barb.crit_threshold(),
+            18,
+            "Superior Critical on a default-crit chassis still drops to 18"
+        );
+    }
+
+    /// 5e Ranger Roving (2024 PHB level 6 optional class feature) —
+    /// passive +5 ft walking speed. The Ranger template ships the
+    /// ROVING_TAG feature; the shared `passive_feature_speed_bonus`
+    /// helper adds +5 ft.
+    #[test]
+    fn roving_grants_ranger_flat_speed_bump() {
+        use crate::actions::class_features::ROVING_TAG;
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::rangers::RANGER_TEMPLATE;
+        let ranger = ActorInstance::from_creature_template(
+            &RANGER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        assert!(
+            ranger.has_passive_feature(ROVING_TAG),
+            "Ranger baseline must ship the Roving feature tag"
+        );
+        // 5e default humanoid speed is 30 ft; +5 ft Roving → 35 ft. The
+        // rest of the ranger template doesn't stack additional speed
+        // bumps (no Fast Movement, no Tiger Totem), so the gap between
+        // baseline and Roving is the load-bearing signal.
+        assert_eq!(
+            ranger.speed(),
+            35.0,
+            "Ranger with Roving reads 30 ft (base) + 5 ft (Roving) = 35 ft"
+        );
+    }
+
+    /// Roving inherits down through the Hunter Ranger subclass template
+    /// via `..RANGER_TEMPLATE.clone()` — the tag pool copy carries
+    /// ROVING_TAG so a Hunter Ranger also picks up the +5 ft bump.
+    /// Verifies the subclass-of pattern doesn't drop the feature.
+    #[test]
+    fn roving_inherits_to_hunter_ranger_subclass() {
+        use crate::actions::class_features::ROVING_TAG;
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::rangers::HUNTER_RANGER_TEMPLATE;
+        let hunter = ActorInstance::from_creature_template(
+            &HUNTER_RANGER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        assert!(
+            hunter.has_passive_feature(ROVING_TAG),
+            "Hunter Ranger inherits ROVING_TAG via ..RANGER_TEMPLATE.clone()"
+        );
+        assert_eq!(
+            hunter.speed(),
+            35.0,
+            "Hunter Ranger with inherited Roving reads 35 ft"
+        );
+    }
+
+    /// Roving stacks additively with the barbarian's Fast Movement lane
+    /// on the shared `passive_feature_speed_bonus` chokepoint —
+    /// verified by dialing both tags onto one actor and checking the
+    /// +15 ft delta over the base speed. A future multiclass ranger /
+    /// barbarian would compose cleanly under the table.
+    #[test]
+    fn roving_stacks_with_fast_movement() {
+        use crate::actions::class_features::{FAST_MOVEMENT_TAG, ROVING_TAG};
+        use crate::actors::actor_template::ActorInstance;
+        use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+        let mut probe = ActorInstance::from_creature_template(
+            &COMMONER_TEMPLATE,
+            Coordinate::new(0, 0),
+            0,
+            &mut FastRandRoller::with_seed(0),
+            0,
+        )
+        .unwrap();
+        let base = probe.speed();
+        probe.grant_feature_for_test(ROVING_TAG);
+        assert_eq!(
+            probe.speed(),
+            base + 5.0,
+            "adding ROVING_TAG bumps speed by +5 ft"
+        );
+        probe.grant_feature_for_test(FAST_MOVEMENT_TAG);
+        assert_eq!(
+            probe.speed(),
+            base + 15.0,
+            "Roving + Fast Movement stack additively for +15 ft"
         );
     }
 }

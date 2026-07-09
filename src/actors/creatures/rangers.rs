@@ -1,5 +1,5 @@
 use crate::actions::class_features::{
-    COLOSSUS_SLAYER_TAG, FOE_SLAYER_TAG, MULTIATTACK_DEFENSE_TAG, VANISH, VANISH_TAG,
+    COLOSSUS_SLAYER_TAG, FOE_SLAYER_TAG, MULTIATTACK_DEFENSE_TAG, ROVING_TAG, VANISH, VANISH_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGBOW, SCIMITAR};
@@ -169,7 +169,20 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // above for the full RAW envelope; the tag lives here so a
         // future non-Hunter subclass template (Beast Master, Gloom
         // Stalker, etc.) inherits it for free via `..RANGER_TEMPLATE.clone()`.
-        features: HashSet::from([FOE_SLAYER_TAG, VANISH_TAG]),
+        // 5e Ranger **Roving** (optional class feature, 2024 PHB level 6):
+        // passive +5 ft walking speed (RAW also grants climbing +
+        // swimming speeds matching walking, but only the walking-speed
+        // bump has a combat surface in this engine — climbing / swimming
+        // fold into the same `speed()` accessor with no 3D terrain to
+        // differentiate). Ships on the CR-1 baseline template above its
+        // strict RAW lv6 gate for the same reason Feral Senses (lv18) /
+        // Foe Slayer (lv20) already ride here — class templates target
+        // a balanced playable level, not lockstep PHB progression. Read
+        // at the shared `passive_feature_speed_bonus` chokepoint next to
+        // Barbarian Fast Movement / Tiger Totem — the ranger picks up
+        // +5 ft always-on, half a step further than Fast Movement's
+        // +10 but sibling on the same lane.
+        features: HashSet::from([FOE_SLAYER_TAG, VANISH_TAG, ROVING_TAG]),
         ..CreatureTemplate::defaults()
     }
 });
@@ -232,6 +245,16 @@ pub static HUNTER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
             // gate. Falling back on the baseline copy would leave
             // the paired action gated off silently.
             VANISH_TAG,
+            // 5e Ranger Roving (2024 PHB lv6 optional class feature) —
+            // same "override the whole features set" caveat as Foe
+            // Slayer / Vanish above: re-listed here so the Hunter
+            // Ranger's passive +5 ft walking speed reads through the
+            // `passive_feature_speed_bonus` chokepoint. The subclass
+            // doesn't itself pick up Roving RAW; the tag rides on
+            // baseline Ranger so any subclass (Hunter, future Beast
+            // Master / Gloom Stalker) picks it up when it fully
+            // inherits the baseline features HashSet.
+            ROVING_TAG,
         ]),
         // 5e Hunter Ranger Superior Hunter's Defense (lv15, "Evasion"
         // option): on DEX saves for half damage, take 0 on a pass and

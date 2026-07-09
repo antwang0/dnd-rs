@@ -650,6 +650,29 @@ pub struct CreatureTemplate {
     /// level, not lockstep PHB progression. Sibling to `has_feral_instinct`
     /// on the passive-initiative-bonus lane.
     pub has_remarkable_athlete: bool,
+    /// 5e Champion Fighter **Superior Critical** (subclass level 15):
+    /// critical hits trigger on a d20 result of 18, 19, or 20 instead
+    /// of the Improved Critical 19-20 window. Passive; overrides
+    /// `crit_threshold` to `min(field_value, 18)` when set so a
+    /// Champion who already has Improved Critical (threshold 19) drops
+    /// cleanly to 18. Exposed as a separate flag so the two Champion
+    /// features stay independently readable in template diffs and the
+    /// mechanical intent ("this template layers Superior Critical on
+    /// top of whatever the base crit threshold is") is explicit rather
+    /// than a magic-number crit_threshold: 18 that reads as "why 18?"
+    /// three years later.
+    ///
+    /// Read by `crit_threshold()` — the accessor caps the returned
+    /// value at 18 when this flag is set so every attack-roll site
+    /// (weapon + spell, `resolve_attack_outcome` /
+    /// `spell_attack_outcome`) picks up the drop. Composes cleanly
+    /// with Improved Critical (baseline Champion): setting `crit_threshold:
+    /// 19` on the template AND flipping this flag lands on 18 (the
+    /// lower of the two). Setting the flag on a template with the
+    /// default `crit_threshold: 20` also lands on 18 — a hypothetical
+    /// Barbarian who somehow picks up Superior Critical still
+    /// benefits.
+    pub has_superior_critical: bool,
     /// 5e Monk **Diamond Soul** (level 14 passive): proficiency in all
     /// saving throws. The monk's late-game defensive envelope: pairs
     /// with Evasion and Deflect Missiles to make the monk one of the
@@ -1091,6 +1114,7 @@ impl CreatureTemplate {
             has_natures_ward: false,
             has_feral_instinct: false,
             has_remarkable_athlete: false,
+            has_superior_critical: false,
             has_diamond_soul: false,
             has_slippery_mind: false,
             has_iron_mind: false,
@@ -1469,6 +1493,9 @@ pub struct ActorInstance {
     /// 5e Champion Fighter Remarkable Athlete (level 7). See
     /// `CreatureTemplate` docs.
     has_remarkable_athlete: bool,
+    /// 5e Champion Fighter Superior Critical (subclass level 15). Caps
+    /// `crit_threshold()` at 18 when set. See `CreatureTemplate` docs.
+    has_superior_critical: bool,
     /// 5e Monk Diamond Soul (level 14). See `CreatureTemplate` docs.
     has_diamond_soul: bool,
     /// 5e Rogue Slippery Mind (level 15). See `CreatureTemplate` docs.
@@ -1669,6 +1696,7 @@ impl ActorInstance {
             has_natures_ward: ct.has_natures_ward,
             has_feral_instinct: ct.has_feral_instinct,
             has_remarkable_athlete: ct.has_remarkable_athlete,
+            has_superior_critical: ct.has_superior_critical,
             has_diamond_soul: ct.has_diamond_soul,
             has_slippery_mind: ct.has_slippery_mind,
             has_iron_mind: ct.has_iron_mind,
@@ -2295,8 +2323,38 @@ impl ActorInstance {
     /// Minimum d20 face that promotes the swing to a critical hit
     /// (5e Champion Improved / Superior Critical: 19 or 18). Defaults to
     /// 20 for every other build. Read at every attack-roll site.
+    ///
+    /// `has_superior_critical` (Champion subclass level 15) caps the
+    /// returned value at 18 so a template with Improved Critical
+    /// baseline (`crit_threshold: 19`) drops cleanly to 18 the moment
+    /// the flag flips, and a hypothetical Barbarian who somehow picks
+    /// up Superior Critical (default `crit_threshold: 20`) also lands
+    /// on 18. `min` rather than a hardcoded 18 assignment so a future
+    /// even-wider threshold (a Fighter feat granting 17-20 crits) can
+    /// stack cleanly by lowering `crit_threshold` further without this
+    /// accessor overriding the finer value.
     pub fn crit_threshold(&self) -> u32 {
-        self.crit_threshold
+        if self.has_superior_critical {
+            self.crit_threshold.min(18)
+        } else {
+            self.crit_threshold
+        }
+    }
+
+    /// 5e Champion Fighter Superior Critical (subclass level 15):
+    /// crit threshold drops to 18. Read by `crit_threshold()`.
+    pub fn has_superior_critical(&self) -> bool {
+        self.has_superior_critical
+    }
+
+    /// Test-only setter for the Superior Critical flag. Mirrors
+    /// `set_persistent_rage` / `set_aura_of_hate` on the racial /
+    /// class flag lane — lets tests dial the passive onto any chassis
+    /// to verify the `crit_threshold()` cap folds correctly across
+    /// templates that don't natively ship the flag.
+    #[cfg(test)]
+    pub fn set_superior_critical(&mut self, value: bool) {
+        self.has_superior_critical = value;
     }
 
     /// True if the actor has the Lucky trait / feat. The d20 reroll
@@ -3440,28 +3498,56 @@ impl ActorInstance {
         if self.has_condition(Condition::AshardalonStriding) {
             bonus += 20.0;
         }
-        // 5e Barbarian Path of the Totem Warrior — Tiger Totem Spirit
-        // (2024 PHB Path of the Wild Heart flavor). While raging, the
-        // tiger barbarian's speed increases by 10 ft. Lives next to the
-        // other condition-keyed speed bonuses so a future RAW-aware
-        // refinement (different speeds per movement mode, etc.) lands in
-        // one place. The gate combines a condition (Raging) and a passive
-        // feature flag (TIGER_TOTEM_TAG) — outside of rage the holder
-        // has no extra speed.
-        if self.has_condition(Condition::Raging)
-            && self.has_passive_feature(crate::actions::class_features::TIGER_TOTEM_TAG)
-        {
+        // Passive-feature-driven speed bumps (Tiger Totem, Fast Movement,
+        // Roving) fold through one shared table so adding a new
+        // always-on / rage-gated speed passive lands as a one-line entry
+        // in `passive_feature_speed_bonus` instead of a fresh
+        // `if actor.has_passive_feature(...) { bonus += N; }` here.
+        bonus += self.passive_feature_speed_bonus();
+        bonus
+    }
+
+    /// Sum of flat speed bonuses granted by passive-feature tags — one
+    /// declarative table so a fresh always-on / rage-gated speed
+    /// passive lands as a one-line entry instead of scattering
+    /// `has_passive_feature(...)` branches through `condition_speed_bonus`.
+    ///
+    /// Current entries:
+    ///   - Tiger Totem Spirit (Barbarian Path of the Wild Heart, RAW
+    ///     lv3): +10 ft **while raging** — the gate combines a condition
+    ///     (Raging) and the passive tag so an unraged tiger has no
+    ///     bonus. Stacks with Fast Movement additively.
+    ///   - Fast Movement (Barbarian lv5): +10 ft always-on (RAW's "not
+    ///     wearing heavy armor" clause collapses to "always" since the
+    ///     engine doesn't model armor tiers).
+    ///   - Roving (Ranger 2024 lv6 optional class feature): +5 ft
+    ///     always-on. The +5 is smaller than Fast Movement's +10 —
+    ///     rangers kite half a step further, not sprint like a raging
+    ///     barbarian.
+    ///
+    /// Returned in feet so the caller (`condition_speed_bonus`)
+    /// composes it with the condition-keyed bumps before the
+    /// Haste / Slow multiplicative factor lands in `speed()`.
+    fn passive_feature_speed_bonus(&self) -> f32 {
+        use crate::actions::class_features::{
+            FAST_MOVEMENT_TAG, ROVING_SPEED_BONUS, ROVING_TAG, TIGER_TOTEM_TAG,
+        };
+        let mut bonus = 0.0_f32;
+        // Tiger Totem — rage-gated +10 ft. RAW: while raging, walking
+        // speed increases by 10 ft. The condition gate keeps unraged
+        // tiger barbarians at their baseline speed.
+        if self.has_condition(Condition::Raging) && self.has_passive_feature(TIGER_TOTEM_TAG) {
             bonus += 10.0;
         }
-        // 5e Barbarian **Fast Movement** (level 5). Passive +10 ft speed
-        // for any barbarian holding the FAST_MOVEMENT_TAG. Distinct from
-        // Tiger Totem in that it is *always* on (RAW gates on "not wearing
-        // heavy armor" but our engine doesn't model armor tiers so the
-        // gate collapses to "always on"). Stacks additively on Tiger for
-        // a raging tiger barbarian (+20 total) — RAW allows both to
-        // apply since they come from different features.
-        if self.has_passive_feature(crate::actions::class_features::FAST_MOVEMENT_TAG) {
+        // Fast Movement — always-on +10 ft for barbarians at level 5+.
+        if self.has_passive_feature(FAST_MOVEMENT_TAG) {
             bonus += 10.0;
+        }
+        // Roving — always-on +5 ft for rangers at level 6+ (2024 PHB
+        // optional class feature). Read via `ROVING_SPEED_BONUS` so the
+        // magnitude stays declarative next to the tag definition.
+        if self.has_passive_feature(ROVING_TAG) {
+            bonus += ROVING_SPEED_BONUS;
         }
         bonus
     }

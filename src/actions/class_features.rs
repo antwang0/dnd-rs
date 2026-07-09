@@ -7008,3 +7008,40 @@ fn spend_feature_and_install_ally_burst(
         })
         .collect()
 }
+
+/// 5e Ranger **Roving** (optional class feature, 2024 PHB level 6).
+/// Passive: the ranger's walking speed increases by 5 feet, and they
+/// gain a climbing speed and a swimming speed matching that walking
+/// speed. In this engine only the flat +5 ft walking-speed bump has a
+/// combat surface — climbing / swimming speeds fold into the same
+/// `speed()` accessor (no 3D terrain to differentiate). Read at the
+/// shared `passive_feature_speed_bonus` chokepoint in
+/// `condition_speed_bonus` next to the barbarian's Fast Movement
+/// (+10 ft) and Tiger Totem (+10 ft while raging) — one lookup table,
+/// one source of truth.
+///
+/// Sibling to `FAST_MOVEMENT_TAG` on the always-on passive-speed-bump
+/// lane, but weaker (+5 vs +10) — the ranger doesn't sprint like a
+/// raging barbarian, they just kite half a step further out. Composes
+/// naturally with the ranger's Longstrider self-buff (+10 ft, 1 hour):
+/// a Roving ranger pre-casting Longstrider on themselves opens the
+/// fight at +15 ft over a stock 30-ft baseline (45 ft = 18 tiles on
+/// our 2.5-ft grid), a full extra move on the opening round.
+///
+/// Ships on `RANGER_TEMPLATE` (and inherits to `HUNTER_RANGER_TEMPLATE`
+/// via `..RANGER_TEMPLATE.clone()`) above its strict RAW lv6 level
+/// gate for the same reason Foe Slayer (lv20) and Feral Senses (lv18)
+/// already ride the CR-1 baseline template — class templates target
+/// a balanced playable level, not lockstep PHB progression.
+///
+/// Always-on passive; no per-rest charge and no condition gate. The
+/// tag lives in the actor's `features` pool, not in
+/// `SHORT_REST_FEATURES` / long-rest tables — nothing consumes it and
+/// nothing refreshes it.
+pub const ROVING_TAG: &str = "ranger.roving";
+
+/// Flat walking-speed bonus in feet granted by the Roving passive.
+/// Pinned to +5 ft per RAW; exposed as a constant so the
+/// `passive_feature_speed_bonus` table stays declarative rather than
+/// scattering magic numbers into the accessor.
+pub const ROVING_SPEED_BONUS: f32 = 5.0;
