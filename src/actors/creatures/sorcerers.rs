@@ -569,3 +569,76 @@ pub static DRACONIC_SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         ..SORCERER_TEMPLATE.clone()
     }
 });
+
+/// Storm Sorcerer — Sorcerous Origin **Storm Sorcery** subclass build
+/// (XGtE). Identical envelope to the baseline `SORCERER_TEMPLATE`
+/// (CHA-primary level-9 full-caster, Empowered / Quickened / Heightened
+/// / Twinned / Careful / Distant / Extended / Seeking / Subtle /
+/// Transmuted metamagic, 6 sorcery points, Wild Magic Surge / Bend Luck
+/// / Tides of Chaos / Sorcerous Restoration) with one bloodline feature
+/// layered on: **Heart of the Storm** (Storm Sorcery lv6) — passive
+/// lightning + thunder damage resistance.
+///
+/// Pairs naturally with the sorcerer's existing lightning / thunder
+/// blast list (Chain Lightning / Lightning Bolt / Thunderclap / Thunder
+/// Step / Shatter / Snilloc's Snowball Swarm's cold-analogue lane) — a
+/// Storm Sorcerer casting Lightning Bolt into their own tile no longer
+/// eats a mirror share of their own damage; the resistance folder
+/// halves the self-hit alongside the target-side spread. Distinct from
+/// the Wild Magic baseline (`SORCERER_TEMPLATE`) on the "Wild Magic
+/// Surge / Tides of Chaos / Bend Luck" tell: the Storm Sorcerer keeps
+/// those but adds a persistent defensive lane on top. Distinct from
+/// `DRACONIC_SORCERER_TEMPLATE` on the resistance axis: Draconic covers
+/// Fire, Storm covers Lightning + Thunder — a hypothetical multi-class
+/// carrier stacks both flag closures cleanly under the "one halving per
+/// damage instance" rule (no double-halving on shared types since the
+/// two rows never overlap on a single damage type).
+///
+/// RAW's Storm Sorcery picks up other features not shipped on this
+/// template — **Wind Speaker** (lv1: language / speak-with-air-genasi,
+/// no combat surface), **Tempestuous Magic** (lv1: 10ft bonus-action
+/// fly after casting a lv1+ spell — a per-cast repositioning hook that
+/// needs a trigger wire), the **Heart of the Storm** eruption-on-cast
+/// half (10ft ally-agnostic burst on lv1+ lightning / thunder casts),
+/// **Storm Guide** (lv1: weather control, no combat surface),
+/// **Storm's Fury** (lv14: reaction retaliation burst), and **Wind
+/// Soul** (lv18 capstone: full lightning / thunder immunity + fly
+/// speed). Only the bloodline's lv6 damage-resistance clause has a
+/// mechanical surface on the CR-4 chassis without a spend-side hook,
+/// so we ship that half and leave the rest as future work.
+///
+/// Ships the CR-4 template above the strict RAW lv6 gate for the same
+/// reason `DRACONIC_SORCERER_TEMPLATE` ships Draconic Resilience
+/// (RAW lv6) on its CR-4 chassis — class templates target a balanced
+/// playable level, not lockstep PHB progression. Glyph 'Ω' so the
+/// Storm Sorcerer shows up distinctly on the map next to the baseline
+/// Wild Magic Sorcerer 'S' and the Draconic Sorcerer 'D' — greek
+/// omega for the storm's-fury flavor.
+pub static STORM_SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Sorcerer envelope
+    // wholesale and layer on the Storm Sorcery lv6 feature tag:
+    //   - `HEART_OF_THE_STORM_TAG` (lv6): passive lightning + thunder
+    //     resistance. Tag-based rather than a struct-field flag since
+    //     the shared `PASSIVE_TYPED_RESISTANCES` cohort's slice-of-types
+    //     shape folds both damage types through one row — no need for
+    //     a new `has_heart_of_the_storm: bool` struct field. Read at
+    //     the shared `PASSIVE_TYPED_RESISTANCES` cohort in
+    //     `effective_damage` next to Dwarven / Fiendish / Draconic
+    //     Resilience — same lane, different subclass chassis and
+    //     different damage axis (Lightning + Thunder vs. Poison / Fire).
+    //
+    // The `..base.clone()` tail picks up every other field — actions,
+    // spell slots, sorcery points, save profs, features — without an
+    // N-line field-by-field copy. Same shape as
+    // `UNDYING_WARLOCK_TEMPLATE`'s tag-only subclass build.
+    let mut features = SORCERER_TEMPLATE.features.clone();
+    features.insert(crate::actions::class_features::HEART_OF_THE_STORM_TAG);
+    CreatureTemplate {
+        name: "Storm Sorcerer",
+        // 'Ω' — distinct from baseline sorcerer 'S' and Draconic 'D',
+        // greek omega for the storm's-fury / thunder-omega flavor.
+        glyph: 'Ω',
+        features,
+        ..SORCERER_TEMPLATE.clone()
+    }
+});

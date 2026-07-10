@@ -10900,6 +10900,108 @@ mod tests {
         );
     }
 
+    /// 5e Sorcerer Storm Sorcery **Heart of the Storm** (lv6):
+    /// passive lightning + thunder damage resistance. First user of the
+    /// PASSIVE_TYPED_RESISTANCES cohort's multi-type slice shape — a
+    /// single row folds both damage types through one flag closure.
+    /// Baseline Wild Magic sorcerer eats full lightning / thunder;
+    /// Storm sorcerer halves both.
+    #[test]
+    fn heart_of_the_storm_halves_lightning_and_thunder_damage_on_sorcerer() {
+        use crate::actors::creatures::sorcerers::{
+            SORCERER_TEMPLATE, STORM_SORCERER_TEMPLATE,
+        };
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let storm = e
+            .instantiate_creature(&STORM_SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&storm].has_passive_feature(
+            crate::actions::class_features::HEART_OF_THE_STORM_TAG,
+        ));
+        assert!(!e.actors[&baseline].has_passive_feature(
+            crate::actions::class_features::HEART_OF_THE_STORM_TAG,
+        ));
+        // 20 lightning → 10 (halved) on the Storm sorcerer.
+        assert_eq!(
+            e.actors[&storm].effective_damage(20, DamageType::Lightning),
+            10,
+            "storm sorcerer halves lightning damage"
+        );
+        // 20 thunder → 10 (halved) on the Storm sorcerer.
+        assert_eq!(
+            e.actors[&storm].effective_damage(20, DamageType::Thunder),
+            10,
+            "storm sorcerer halves thunder damage"
+        );
+        // Baseline (Wild Magic) sorcerer eats the full 20 of each type.
+        assert_eq!(
+            e.actors[&baseline].effective_damage(20, DamageType::Lightning),
+            20,
+            "baseline sorcerer takes full lightning damage"
+        );
+        assert_eq!(
+            e.actors[&baseline].effective_damage(20, DamageType::Thunder),
+            20,
+            "baseline sorcerer takes full thunder damage"
+        );
+        // Other damage types still take full damage on the Storm sorcerer
+        // — the RAW subclass grant is scoped to Lightning + Thunder.
+        // Fire / Cold / Poison / Radiant all land as expected.
+        assert_eq!(
+            e.actors[&storm].effective_damage(20, DamageType::Fire),
+            20,
+        );
+        assert_eq!(
+            e.actors[&storm].effective_damage(20, DamageType::Cold),
+            20,
+        );
+        assert_eq!(
+            e.actors[&storm].effective_damage(20, DamageType::Poison),
+            20,
+        );
+        assert_eq!(
+            e.actors[&storm].effective_damage(20, DamageType::Radiant),
+            20,
+        );
+    }
+
+    /// The `has_own_typed_reduction` accessor picks up Heart of the
+    /// Storm on both damage types the multi-type-slice row covers —
+    /// exercises the slice-of-types shape end-to-end at the accessor
+    /// used by the "aura of warding no-ops on top of own resistance"
+    /// gate.
+    #[test]
+    fn heart_of_the_storm_registers_own_typed_reduction_on_both_types() {
+        use crate::actors::creatures::sorcerers::STORM_SORCERER_TEMPLATE;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let storm = e
+            .instantiate_creature(&STORM_SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&storm].has_own_typed_reduction(DamageType::Lightning),
+            "storm sorcerer's Lightning reduction shows up in the own-typed cohort"
+        );
+        assert!(
+            e.actors[&storm].has_own_typed_reduction(DamageType::Thunder),
+            "storm sorcerer's Thunder reduction shows up in the own-typed cohort"
+        );
+        assert!(
+            !e.actors[&storm].has_own_typed_reduction(DamageType::Fire),
+            "fire isn't reduced — cohort row is scoped to lightning + thunder only"
+        );
+        assert!(
+            !e.actors[&storm].has_own_typed_reduction(DamageType::Cold),
+            "cold isn't reduced — cohort row is scoped to lightning + thunder only"
+        );
+    }
+
     /// The `has_own_typed_reduction(Fire)` accessor picks up Draconic
     /// Resilience alongside Fiendish Resilience — both flag rows in
     /// the PASSIVE_TYPED_RESISTANCES cohort surface through the same

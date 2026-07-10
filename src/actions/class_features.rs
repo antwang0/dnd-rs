@@ -1865,6 +1865,44 @@ pub const PURITY_OF_BODY_TAG: &str = "monk.purity_of_body";
 /// even if they also happen to be an Elf.
 pub const ASPECT_OF_THE_MOON_TAG: &str = "warlock.aspect_of_the_moon";
 
+/// 5e Sorcerer Sorcerous Origin — **Storm Sorcery** — **Heart of the
+/// Storm** subclass feature tag (level 6, XGtE). Passive: the sorcerer
+/// gains resistance to both **lightning** AND **thunder** damage. RAW
+/// also grants a burst-on-cast rider (when the sorcerer casts a lv1+
+/// spell that deals lightning or thunder damage, allies of their choice
+/// within 10ft take half-sorcerer-level damage of the sorcerer's chosen
+/// type) — the burst clause has no ship on the CR-4 template yet since
+/// it needs a per-cast trigger wire; the resistance half is the load-
+/// bearing piece and rides here alone.
+///
+/// Read at the shared `PASSIVE_TYPED_RESISTANCES` cohort in
+/// `actor_template.rs` — the row uses the multi-type slice shape to
+/// fold both damage types through one entry rather than two duplicated
+/// flag closures. Sibling row to Fiendish Resilience (fire) and
+/// Draconic Resilience (fire) on the passive typed-resistance lane
+/// — same halving rule, different subclass source and different damage
+/// axis. The two-type coverage is the first user of the cohort's
+/// multi-type slice shape; single-type entries (Dwarven / Fiendish /
+/// Draconic) still ride as one-element slices.
+///
+/// Ships on `STORM_SORCERER_TEMPLATE` — the Sorcerous Origin: Storm
+/// Sorcery subclass template — alongside the baseline Sorcerer envelope
+/// (CHA-primary Sorcery Points, Empowered / Quickened / Heightened /
+/// Twinned / Careful / Distant / Extended / Seeking / Subtle / Transmuted
+/// metamagic, Wild Magic Surge / Tides of Chaos / Bend Luck / Sorcerous
+/// Restoration). Distinct from `DRACONIC_SORCERER_TEMPLATE` on the
+/// resistance axis (Lightning + Thunder vs. Fire) and from the baseline
+/// Wild Magic `SORCERER_TEMPLATE` in that the Storm Sorcerer trades
+/// none of the shared metamagic / feature envelope for the added
+/// passive — the resistance stacks on top of the baseline chassis.
+///
+/// Ships on the CR-4 template above the strict RAW lv6 gate for the
+/// same reason `DRACONIC_SORCERER_TEMPLATE` ships Draconic Resilience
+/// (RAW lv6) and `FIEND_WARLOCK_TEMPLATE` ships Fiendish Resilience
+/// (RAW lv10) — class templates target a balanced playable level, not
+/// lockstep PHB progression.
+pub const HEART_OF_THE_STORM_TAG: &str = "sorcerer.heart_of_the_storm";
+
 /// 5e Fighter Champion — **Survivor** (level 18) feature tag. Passive
 /// at-start-of-turn regen: while combat-active and above 0 HP but at or
 /// below half max HP, the holder regains `5 + CON modifier` HP at the

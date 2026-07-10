@@ -88,12 +88,32 @@ const TYPED_RESISTANCE_CONDITIONS: &[(Condition, &[DamageType])] = &[
     ),
 ];
 
+/// One row in the `PASSIVE_TYPED_RESISTANCES` cohort — a single passive
+/// flag / tag that grants resistance to every damage type in `types`.
+/// The `flag` closure reads a racial / subclass passive-feature accessor
+/// on `ActorInstance` (struct-field flag like `has_dwarven_resilience`
+/// or a tag check like `has_passive_feature(HEART_OF_THE_STORM_TAG)`);
+/// when it returns true the actor takes half damage of every entry in
+/// `types` per the same "one halving per damage instance" rule that
+/// template `damage_modifiers` and the `TYPED_RESISTANCE_CONDITIONS`
+/// cohort honor.
+///
+/// A slice of damage types (rather than a single one) lets a feature
+/// that resists multiple types (Storm Sorcerer Heart of the Storm ->
+/// Lightning + Thunder) land as a single row without duplicating the
+/// flag closure per damage type. Matches the shape of
+/// `FlagDrivenImmunity { flag, suppressed: &'static [Condition] }` on
+/// the sibling passive-immunity lane.
+struct PassiveTypedResistance {
+    flag: fn(&ActorInstance) -> bool,
+    types: &'static [DamageType],
+}
+
 /// Passive-feature-driven typed resistance table read by
-/// `effective_damage` and `has_own_typed_reduction`. Each row is
-/// `(flag_fn, damage_type)` — the flag_fn reads a racial / subclass
-/// passive-feature accessor on `ActorInstance`; when it returns true the
-/// actor takes half damage of `damage_type` per the same "one halving
-/// per damage instance" rule that template `damage_modifiers` and the
+/// `effective_damage` and `has_own_typed_reduction`. Each row is a
+/// `PassiveTypedResistance { flag, types }`; the flag returning true
+/// grants half damage of every listed type per the "one halving per
+/// damage instance" rule that template `damage_modifiers` and the
 /// `TYPED_RESISTANCE_CONDITIONS` cohort honor.
 ///
 /// Sibling to `TYPED_RESISTANCE_CONDITIONS` (condition-driven typed
@@ -127,17 +147,46 @@ const TYPED_RESISTANCE_CONDITIONS: &[(Condition, &[DamageType])] = &[
 ///     but identical damage-pipeline surface; the standard "one
 ///     halving per damage instance" rule caps a hypothetical multi-
 ///     class carrier at a single /2 per Fire hit.
+///   - **Heart of the Storm (Sorcerer Storm Sorcery lv6)**: lightning
+///     AND thunder resistance. RAW gives both types on a single feature
+///     — the multi-type slice on this row folds through as one entry
+///     (rather than two duplicated flag closures) since the row shape
+///     accepts a slice of damage types. The eruption-on-cast half of
+///     RAW (a 10ft ally-agnostic burst when the sorcerer casts a
+///     lightning / thunder spell of lv1+) has no ship on the CR-4
+///     template yet — the resistance clause is the load-bearing half.
 ///
 /// A new passive typed resistance (Circle of the Moon Wild Shape
 /// per-form types, Bladeling's Painful Quills necrotic resistance,
 /// etc.) drops in here as a one-line entry rather than another
 /// hand-rolled `if dt == ... && self.has_...` branch in
 /// `effective_damage`.
-type PassiveTypedResistance = (fn(&ActorInstance) -> bool, DamageType);
 const PASSIVE_TYPED_RESISTANCES: &[PassiveTypedResistance] = &[
-    (|a| a.has_dwarven_resilience, DamageType::Poison),
-    (|a| a.has_fiendish_resilience, DamageType::Fire),
-    (|a| a.has_draconic_resilience, DamageType::Fire),
+    PassiveTypedResistance {
+        flag: |a| a.has_dwarven_resilience,
+        types: &[DamageType::Poison],
+    },
+    PassiveTypedResistance {
+        flag: |a| a.has_fiendish_resilience,
+        types: &[DamageType::Fire],
+    },
+    PassiveTypedResistance {
+        flag: |a| a.has_draconic_resilience,
+        types: &[DamageType::Fire],
+    },
+    // 5e Sorcerer Storm Sorcery **Heart of the Storm** (level 6). RAW
+    // grants resistance to lightning AND thunder damage on the same
+    // subclass feature — the slice-of-types shape folds both types
+    // through a single row. Ships on `STORM_SORCERER_TEMPLATE` above
+    // its strict RAW lv6 gate for the same reason Draconic Resilience
+    // (RAW lv6) ships on `DRACONIC_SORCERER_TEMPLATE` — class templates
+    // target a balanced playable level, not lockstep PHB progression.
+    PassiveTypedResistance {
+        flag: |a| a.has_passive_feature(
+            crate::actions::class_features::HEART_OF_THE_STORM_TAG,
+        ),
+        types: &[DamageType::Lightning, DamageType::Thunder],
+    },
 ];
 
 /// Broad condition-driven immunity table read by `dynamic_immunity_to`.
@@ -3167,7 +3216,7 @@ impl ActorInstance {
     fn has_passive_typed_resistance(&self, dt: DamageType) -> bool {
         PASSIVE_TYPED_RESISTANCES
             .iter()
-            .any(|(flag, ty)| *ty == dt && flag(self))
+            .any(|entry| entry.types.contains(&dt) && (entry.flag)(self))
     }
 
     /// Test-only setter for an actor's per-type damage modifier. Lets tests
