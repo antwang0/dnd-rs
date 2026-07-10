@@ -553,7 +553,7 @@ const PASSIVE_FEATURE_SPEED_BONUSES: &[PassiveFeatureSpeedBonus] = &[
             a.has_condition(Condition::Raging)
                 && a.has_passive_feature(crate::actions::class_features::TIGER_TOTEM_TAG)
         },
-        bonus_ft: 10.0,
+        bonus_ft: crate::actions::class_features::TIGER_TOTEM_SPEED_BONUS,
     },
     PassiveFeatureSpeedBonus {
         flag: |a| {
@@ -578,7 +578,7 @@ const PASSIVE_FEATURE_SPEED_BONUSES: &[PassiveFeatureSpeedBonus] = &[
     },
     PassiveFeatureSpeedBonus {
         flag: |a| a.has_passive_feature(crate::actions::class_features::FAST_MOVEMENT_TAG),
-        bonus_ft: 10.0,
+        bonus_ft: crate::actions::class_features::FAST_MOVEMENT_SPEED_BONUS,
     },
     PassiveFeatureSpeedBonus {
         flag: |a| a.has_passive_feature(crate::actions::class_features::UNARMORED_MOVEMENT_TAG),

@@ -1637,6 +1637,19 @@ pub static EAGLE_DIVE: LazyLock<EagleDive> = LazyLock::new(|| EagleDive {});
 /// outside of rage the tiger barbarian has no extra speed.
 pub const TIGER_TOTEM_TAG: &str = "barbarian.tiger_totem";
 
+/// Flat walking-speed bonus in feet granted by the Tiger Totem Spirit
+/// passive while raging. Pinned to +10 ft per RAW (PHB Path of the Totem
+/// Warrior); exposed as a constant so the
+/// `PASSIVE_FEATURE_SPEED_BONUSES` table stays declarative rather than
+/// scattering magic numbers into the accessor — same shape as the
+/// declared `ELK_TOTEM_SPEED_BONUS` (+15 ft), `WOLVERINE_TOTEM_SPEED_BONUS`
+/// (+10 ft), `PANTHER_TOTEM_SPEED_BONUS` (+5 ft), and
+/// `UNARMORED_MOVEMENT_SPEED_BONUS` (+10 ft) magnitudes for the sibling
+/// speed passives. Same magnitude as Wolverine's rage-gated +10 — the
+/// load-bearing distinction between the two rows is the tag identity,
+/// not the number.
+pub const TIGER_TOTEM_SPEED_BONUS: f32 = 10.0;
+
 /// 5e Barbarian **Fast Movement** (level 5) feature tag. Passive: while
 /// not wearing heavy armor, the barbarian's walking speed increases by
 /// 10 ft. Our engine doesn't model armor tiers so we collapse the
@@ -1654,6 +1667,17 @@ pub const TIGER_TOTEM_TAG: &str = "barbarian.tiger_totem";
 ///      Wolf / Eagle / Berserker barbarians. Tiger + Fast Movement while
 ///      raging is +20 ft in total.
 pub const FAST_MOVEMENT_TAG: &str = "barbarian.fast_movement";
+
+/// Flat walking-speed bonus in feet granted by the Fast Movement class
+/// passive. Pinned to +10 ft per RAW (PHB Barbarian lv5); exposed as a
+/// constant so the `PASSIVE_FEATURE_SPEED_BONUSES` table stays
+/// declarative rather than scattering magic numbers into the accessor.
+/// Sibling to `TIGER_TOTEM_SPEED_BONUS` / `WOLVERINE_TOTEM_SPEED_BONUS`
+/// / `UNARMORED_MOVEMENT_SPEED_BONUS` (all +10 ft) and
+/// `ROVING_SPEED_BONUS` (+5 ft) / `PANTHER_TOTEM_SPEED_BONUS` (+5 ft)
+/// / `ELK_TOTEM_SPEED_BONUS` (+15 ft) on the "declared magnitude next
+/// to the tag definition" lane.
+pub const FAST_MOVEMENT_SPEED_BONUS: f32 = 10.0;
 
 /// 5e Monk **Unarmored Movement** (level 2) feature tag. Passive: while
 /// not wearing armor and not wielding a shield, the monk's walking speed
@@ -1867,13 +1891,18 @@ pub const ASPECT_OF_THE_MOON_TAG: &str = "warlock.aspect_of_the_moon";
 
 /// 5e Sorcerer Sorcerous Origin — **Storm Sorcery** — **Heart of the
 /// Storm** subclass feature tag (level 6, XGtE). Passive: the sorcerer
-/// gains resistance to both **lightning** AND **thunder** damage. RAW
-/// also grants a burst-on-cast rider (when the sorcerer casts a lv1+
-/// spell that deals lightning or thunder damage, allies of their choice
-/// within 10ft take half-sorcerer-level damage of the sorcerer's chosen
-/// type) — the burst clause has no ship on the CR-4 template yet since
-/// it needs a per-cast trigger wire; the resistance half is the load-
-/// bearing piece and rides here alone.
+/// gains resistance to both **lightning** AND **thunder** damage AND
+/// a burst-on-cast eruption rider: when the sorcerer casts a lv1+ spell
+/// that deals lightning or thunder damage, each hostile creature within
+/// 10 ft takes `HEART_OF_THE_STORM_ERUPTION_DAMAGE` damage of the
+/// matching type. Auto-hit, no save — RAW: "half your sorcerer level"
+/// damage (flat magnitude here, see the constant docstring for the
+/// level-mapping rationale).
+///
+/// The eruption clause is wired at
+/// `EncounterInstance::trigger_heart_of_the_storm_eruption` and fires
+/// from the shared `Action::execute` chokepoint — sibling post-cast
+/// trigger to Wild Magic Surge on the same "after the spell" surface.
 ///
 /// Read at the shared `PASSIVE_TYPED_RESISTANCES` cohort in
 /// `actor_template.rs` — the row uses the multi-type slice shape to
@@ -1902,6 +1931,17 @@ pub const ASPECT_OF_THE_MOON_TAG: &str = "warlock.aspect_of_the_moon";
 /// (RAW lv10) — class templates target a balanced playable level, not
 /// lockstep PHB progression.
 pub const HEART_OF_THE_STORM_TAG: &str = "sorcerer.heart_of_the_storm";
+
+/// 5e Sorcerer Storm Sorcery **Heart of the Storm** eruption damage.
+/// RAW: "half your sorcerer level" damage on every eligible eruption.
+/// The engine doesn't track class levels separately from XP-driven
+/// `level`, and the `STORM_SORCERER_TEMPLATE` targets a CR-4 chassis
+/// that represents roughly the RAW lv6 gate — half of 6 rounds to 3.
+/// Kept as a named constant so the eruption trigger, the surface's
+/// docstring, and any future test that pins the magnitude all read
+/// from a single source of truth (same shape as
+/// `UNARMORED_MOVEMENT_SPEED_BONUS` next to `UNARMORED_MOVEMENT_TAG`).
+pub const HEART_OF_THE_STORM_ERUPTION_DAMAGE: u32 = 3;
 
 /// 5e Fighter Champion — **Survivor** (level 18) feature tag. Passive
 /// at-start-of-turn regen: while combat-active and above 0 HP but at or

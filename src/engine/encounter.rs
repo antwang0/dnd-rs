@@ -5234,6 +5234,143 @@ impl EncounterInstance {
         effects
     }
 
+    /// 5e Sorcerer Storm Sorcery **Heart of the Storm** — eruption clause
+    /// (XGtE, RAW lv6). When the sorcerer casts a spell of 1st level or
+    /// higher that deals lightning or thunder damage, a burst of the same
+    /// element ripples out from the caster: each hostile creature within
+    /// 10 ft (2-tile burst radius; the caster is spared) takes
+    /// `HEART_OF_THE_STORM_ERUPTION_DAMAGE` damage. Auto-hit, no save —
+    /// matches RAW's flat "half your sorcerer level" tick (we hardcode
+    /// the value since the engine doesn't track class levels separately
+    /// from XP-driven `level`, and the CR-4 chassis represents ~lv6).
+    ///
+    /// Gates (short-circuit in order):
+    ///   - `spell_level == 0` → cantrips never trigger, matching the RAW
+    ///     "1st level or higher" clause. Cheaper check first so
+    ///     Thunderclap / Shocking Grasp spam doesn't pay for the feature
+    ///     lookup.
+    ///   - caster lacks the `HEART_OF_THE_STORM_TAG` passive feature —
+    ///     opt-in via the Storm Sorcerer template, same shape as the
+    ///     Wild Magic Surge tag gate on the parallel post-cast surface.
+    ///   - `damage_types` doesn't contain Lightning or Thunder — RAW's
+    ///     "deals lightning or thunder damage" clause. Non-storm spells
+    ///     (Fireball, Magic Missile, Charm Person) fall through.
+    ///
+    /// Damage type picks: Lightning if the spell dealt Lightning, else
+    /// Thunder (only reached if the spell dealt Thunder given the gate
+    /// above). RAW lets the sorcerer choose either type; we pick the
+    /// matching type since a Thunder spell erupting as Lightning would
+    /// read as odd on log output.
+    ///
+    /// Symmetric structural sibling to `trigger_wild_magic_surge` — same
+    /// post-cast trigger surface, same feature-tag opt-in, same
+    /// spell-level-gate. Wired at the shared `Action::execute`
+    /// chokepoint next to Wild Magic Surge so both post-cast triggers
+    /// resolve "after the spell" per RAW.
+    pub fn trigger_heart_of_the_storm_eruption(
+        &mut self,
+        caster_id: usize,
+        spell_level: u32,
+        damage_types: &[DamageType],
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::actions::class_features::{
+            HEART_OF_THE_STORM_ERUPTION_DAMAGE, HEART_OF_THE_STORM_TAG,
+        };
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+
+        if spell_level == 0 {
+            return Vec::new();
+        }
+        let has_feature = self
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_passive_feature(HEART_OF_THE_STORM_TAG));
+        if !has_feature {
+            return Vec::new();
+        }
+        let damage_type = if damage_types.contains(&DamageType::Lightning) {
+            DamageType::Lightning
+        } else if damage_types.contains(&DamageType::Thunder) {
+            DamageType::Thunder
+        } else {
+            return Vec::new();
+        };
+        let caster_loc = match self.actors.get(&caster_id) {
+            Some(a) => a.location(),
+            None => return Vec::new(),
+        };
+        let caster_name = self.actor_name(caster_id);
+        const RADIUS: isize = 2;
+        let enemy_ids = self.enemy_burst_targets(caster_id, caster_loc, RADIUS);
+        if enemy_ids.is_empty() {
+            return Vec::new();
+        }
+        self.log(format!(
+            "{}'s heart of the storm erupts ({} {:?} to {} enem{})",
+            caster_name,
+            HEART_OF_THE_STORM_ERUPTION_DAMAGE,
+            damage_type,
+            enemy_ids.len(),
+            if enemy_ids.len() == 1 { "y" } else { "ies" }
+        ));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for id in enemy_ids {
+            effects.push(Box::new(DealDamage {
+                actor_id: id,
+                amount: HEART_OF_THE_STORM_ERUPTION_DAMAGE,
+                damage_type,
+            }));
+        }
+        effects
+    }
+
+    /// Dispatch every post-cast trigger the engine models. Runs each
+    /// registered post-cast hook against `caster_id` with the resolved
+    /// spell context (`spell_level`, `damage_types`) and returns the
+    /// concatenation of side-effects each hook produced. Called once
+    /// from the shared `Action::execute` chokepoint — the single call
+    /// site keeps the trigger dispatch out of every action impl and
+    /// lets a new post-cast trigger drop in as one line of this method
+    /// body rather than another block in `Action::execute`.
+    ///
+    /// Current registry (in fire order):
+    ///   - **Wild Magic Surge** — d20=1 → random effect from the surge
+    ///     table (feature-tag gated on `WILD_MAGIC_SURGE_TAG`; cantrip
+    ///     gated).
+    ///   - **Heart of the Storm eruption** — lightning / thunder cast
+    ///     → 10-ft radius enemy burst (feature-tag gated on
+    ///     `HEART_OF_THE_STORM_TAG`; cantrip gated; damage-type
+    ///     gated).
+    ///
+    /// Each hook is responsible for its own opt-in / short-circuit
+    /// gates and returns an empty vec on a miss. The dispatcher is
+    /// intentionally cheap for the common case (non-caster, non-storm-
+    /// sorcerer, cantrip cast) — every hook's early-out fires before
+    /// any expensive work.
+    ///
+    /// Ordering matters when two hooks could both fire on the same
+    /// cast. Today no hostile combination overlaps (Wild Magic Surge
+    /// lives on the baseline Wild Magic Sorcerer template, Heart of
+    /// the Storm on the Storm Sorcerer template — mutually exclusive
+    /// subclass picks), but the surface is deterministic: the surge
+    /// resolves before the eruption so a hypothetical multi-class
+    /// carrier gets both effects in a stable order.
+    pub fn dispatch_post_cast_triggers(
+        &mut self,
+        caster_id: usize,
+        spell_level: u32,
+        damage_types: &[DamageType],
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        let mut effects = Vec::new();
+        effects.append(&mut self.trigger_wild_magic_surge(caster_id, spell_level));
+        effects.append(&mut self.trigger_heart_of_the_storm_eruption(
+            caster_id,
+            spell_level,
+            damage_types,
+        ));
+        effects
+    }
+
     /// 5e Sanctuary: if `target_id` carries the Sanctuary condition, the
     /// attacker (`attacker_id`) makes a one-shot WIS save. On fail, the
     /// attack is blocked entirely (caller short-circuits the attack roll
@@ -37528,6 +37665,234 @@ mod tests {
             fired,
             trials
         );
+    }
+
+    /// 5e Heart of the Storm eruption: an actor without the
+    /// `HEART_OF_THE_STORM_TAG` passive feature never erupts, regardless
+    /// of the spell's damage type or level. The baseline Wild-Magic
+    /// Sorcerer template lacks the feature — a lightning spell cast at
+    /// lv3 should produce no eruption side-effects.
+    #[test]
+    fn heart_of_the_storm_skips_actor_without_feature() {
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let _zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 3), 1, 0)
+            .unwrap();
+        let effects = e.trigger_heart_of_the_storm_eruption(
+            sorcerer,
+            3,
+            &[DamageType::Lightning],
+        );
+        assert!(
+            effects.is_empty(),
+            "baseline sorcerer erupted — HEART_OF_THE_STORM_TAG gate failed"
+        );
+    }
+
+    /// 5e Heart of the Storm eruption: a cantrip cast (spell_level == 0)
+    /// never triggers, even on a Storm Sorcerer. Matches the RAW "1st
+    /// level or higher" clause and the parallel Wild Magic Surge
+    /// cantrip-gate on the sibling post-cast surface.
+    #[test]
+    fn heart_of_the_storm_skips_cantrip_casts() {
+        use crate::actors::creatures::sorcerers::STORM_SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&STORM_SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let _zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 3), 1, 0)
+            .unwrap();
+        let effects = e.trigger_heart_of_the_storm_eruption(
+            sorcerer,
+            0,
+            &[DamageType::Lightning],
+        );
+        assert!(
+            effects.is_empty(),
+            "storm sorcerer erupted on a cantrip cast — spell_level gate failed"
+        );
+    }
+
+    /// 5e Heart of the Storm eruption: a non-storm damage type (fire /
+    /// cold / force / psychic / physical) doesn't trigger. The eruption
+    /// gates on the spell's declared damage types containing Lightning
+    /// or Thunder — a Fireball cast falls through.
+    #[test]
+    fn heart_of_the_storm_skips_non_storm_damage_types() {
+        use crate::actors::creatures::sorcerers::STORM_SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&STORM_SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let _zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 3), 1, 0)
+            .unwrap();
+        for dt in [
+            DamageType::Fire,
+            DamageType::Cold,
+            DamageType::Force,
+            DamageType::Psychic,
+            DamageType::Bludgeoning,
+        ] {
+            let effects = e.trigger_heart_of_the_storm_eruption(sorcerer, 3, &[dt]);
+            assert!(
+                effects.is_empty(),
+                "storm sorcerer erupted on {:?} — damage-type gate failed",
+                dt
+            );
+        }
+    }
+
+    /// 5e Heart of the Storm eruption: the standard happy path. A Storm
+    /// Sorcerer casts a lv1+ lightning spell; every hostile creature
+    /// inside the 10-ft (2-tile) burst takes a lightning tick. Allies
+    /// are spared by the enemy-only burst filter. The caster's own
+    /// footprint is excluded (allies-agnostic sense: the sorcerer isn't
+    /// their own enemy). Confirms:
+    ///   - one DealDamage side-effect per hostile in range
+    ///   - the damage type matches the cast (Lightning here)
+    ///   - the magnitude equals `HEART_OF_THE_STORM_ERUPTION_DAMAGE`
+    ///   - an out-of-range hostile isn't hit
+    ///   - the log line surfaces the eruption
+    #[test]
+    fn heart_of_the_storm_erupts_on_lightning_cast() {
+        use crate::actions::class_features::HEART_OF_THE_STORM_ERUPTION_DAMAGE;
+        use crate::actors::creatures::sorcerers::STORM_SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let sorcerer = e
+            .instantiate_creature(&STORM_SORCERER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Two zombies inside the 2-tile burst, one well outside it.
+        let in_range_a = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        let in_range_b = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 7), 1, 1)
+            .unwrap();
+        let out_of_range = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(15, 15), 1, 2)
+            .unwrap();
+        // Snapshot HP before applying eruption effects.
+        let hp_a_before = e.actors[&in_range_a].hitpoints();
+        let hp_b_before = e.actors[&in_range_b].hitpoints();
+        let hp_out_before = e.actors[&out_of_range].hitpoints();
+        let hp_caster_before = e.actors[&sorcerer].hitpoints();
+
+        let log_before = e.messages().len();
+        let effects = e.trigger_heart_of_the_storm_eruption(
+            sorcerer,
+            3,
+            &[DamageType::Lightning],
+        );
+        assert_eq!(
+            effects.len(),
+            2,
+            "expected one DealDamage per in-range hostile (got {})",
+            effects.len()
+        );
+        for eff in &effects {
+            eff.apply(&mut e);
+        }
+
+        // Both in-range hostiles took the eruption tick.
+        assert_eq!(
+            e.actors[&in_range_a].hitpoints(),
+            hp_a_before - HEART_OF_THE_STORM_ERUPTION_DAMAGE,
+            "in-range hostile A didn't take the expected eruption damage"
+        );
+        assert_eq!(
+            e.actors[&in_range_b].hitpoints(),
+            hp_b_before - HEART_OF_THE_STORM_ERUPTION_DAMAGE,
+            "in-range hostile B didn't take the expected eruption damage"
+        );
+        // Out-of-range hostile untouched.
+        assert_eq!(
+            e.actors[&out_of_range].hitpoints(),
+            hp_out_before,
+            "out-of-range hostile ate the eruption — burst radius gate failed"
+        );
+        // Caster spared — the eruption targets enemies, not the sorcerer.
+        assert_eq!(
+            e.actors[&sorcerer].hitpoints(),
+            hp_caster_before,
+            "storm sorcerer damaged themselves — enemy-only burst filter failed"
+        );
+        // Log surfaces the eruption at least once.
+        let logged = e.messages()[log_before..]
+            .iter()
+            .any(|m| m.contains("heart of the storm erupts"));
+        assert!(logged, "eruption trigger fired without logging");
+    }
+
+    /// 5e Heart of the Storm eruption: a Thunder spell erupts as Thunder
+    /// (matching type), not Lightning. Confirms the "pick the matching
+    /// damage type" logic — a Thunderclap-tier cast at lv1+ shouldn't
+    /// convert its damage type on eruption.
+    #[test]
+    fn heart_of_the_storm_thunder_cast_erupts_as_thunder() {
+        use crate::actors::creatures::sorcerers::STORM_SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&STORM_SORCERER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let _zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        let log_before = e.messages().len();
+        let effects = e.trigger_heart_of_the_storm_eruption(
+            sorcerer,
+            1,
+            &[DamageType::Thunder],
+        );
+        assert_eq!(effects.len(), 1, "one enemy in range → one damage effect");
+        let logged_thunder = e.messages()[log_before..]
+            .iter()
+            .any(|m| m.contains("Thunder"));
+        let logged_lightning = e.messages()[log_before..]
+            .iter()
+            .any(|m| m.contains("Lightning"));
+        assert!(
+            logged_thunder && !logged_lightning,
+            "thunder cast should erupt as Thunder, not Lightning"
+        );
+    }
+
+    /// 5e Heart of the Storm eruption: no hostiles in range → no
+    /// side-effects and no log spam. The empty-target short-circuit
+    /// keeps the log clean when the sorcerer is casting from safety.
+    #[test]
+    fn heart_of_the_storm_no_enemies_in_range_no_effects() {
+        use crate::actors::creatures::sorcerers::STORM_SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let sorcerer = e
+            .instantiate_creature(&STORM_SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Enemy is far outside the 2-tile burst.
+        let _zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(15, 15), 1, 0)
+            .unwrap();
+        let log_before = e.messages().len();
+        let effects = e.trigger_heart_of_the_storm_eruption(
+            sorcerer,
+            2,
+            &[DamageType::Lightning],
+        );
+        assert!(effects.is_empty(), "no in-range enemies → no eruption effects");
+        let logged = e.messages()[log_before..]
+            .iter()
+            .any(|m| m.contains("heart of the storm"));
+        assert!(!logged, "no eruption should have been logged for empty burst");
     }
 
     /// Scroll of Cure Wounds — touch-range single-target heal. Touch

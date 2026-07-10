@@ -595,17 +595,22 @@ pub static DRACONIC_SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
 /// two rows never overlap on a single damage type).
 ///
 /// RAW's Storm Sorcery picks up other features not shipped on this
-/// template — **Wind Speaker** (lv1: language / speak-with-air-genasi,
-/// no combat surface), **Tempestuous Magic** (lv1: 10ft bonus-action
-/// fly after casting a lv1+ spell — a per-cast repositioning hook that
-/// needs a trigger wire), the **Heart of the Storm** eruption-on-cast
-/// half (10ft ally-agnostic burst on lv1+ lightning / thunder casts),
-/// **Storm Guide** (lv1: weather control, no combat surface),
-/// **Storm's Fury** (lv14: reaction retaliation burst), and **Wind
-/// Soul** (lv18 capstone: full lightning / thunder immunity + fly
-/// speed). Only the bloodline's lv6 damage-resistance clause has a
-/// mechanical surface on the CR-4 chassis without a spend-side hook,
-/// so we ship that half and leave the rest as future work.
+/// template — **Tempestuous Magic** (lv1: 10ft bonus-action fly after
+/// casting a lv1+ spell — a per-cast repositioning hook that needs a
+/// trigger wire), **Storm Guide** (lv1: weather control, no combat
+/// surface), **Storm's Fury** (lv14: reaction retaliation burst), and
+/// **Wind Soul** (lv18 capstone: full lightning / thunder immunity +
+/// fly speed). Shipped on the CR-4 chassis:
+///   - **Wind Speaker** (lv1): the Primordial language addition on
+///     top of Common. Layered on via `languages.insert(Primordial)`
+///     rather than a struct-field flag — no combat surface, dialog-
+///     gate only.
+///   - **Heart of the Storm** (lv6, both halves): passive lightning +
+///     thunder resistance via the `PASSIVE_TYPED_RESISTANCES` cohort
+///     AND the eruption clause (a 10ft radius post-cast burst on
+///     lv1+ lightning / thunder casts, via the `Action::execute`
+///     chokepoint next to Wild Magic Surge).
+/// The remaining features are future work.
 ///
 /// Ships the CR-4 template above the strict RAW lv6 gate for the same
 /// reason `DRACONIC_SORCERER_TEMPLATE` ships Draconic Resilience
@@ -633,12 +638,22 @@ pub static STORM_SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
     // `UNDYING_WARLOCK_TEMPLATE`'s tag-only subclass build.
     let mut features = SORCERER_TEMPLATE.features.clone();
     features.insert(crate::actions::class_features::HEART_OF_THE_STORM_TAG);
+    // 5e Storm Sorcery **Wind Speaker** (lv1): the sorcerer's storm-
+    // attuned lineage grants them the Primordial tongue (Aquan / Auran
+    // / Ignan / Terran dialects share one language slot in the engine).
+    // Layered onto the baseline sorcerer's Common set so the Storm
+    // Sorcerer can parley with elementals from the same Investiture
+    // spell list they cast — thematic pairing, no combat surface
+    // beyond dialog gating.
+    let mut languages = SORCERER_TEMPLATE.languages.clone();
+    languages.insert(Language::Primordial);
     CreatureTemplate {
         name: "Storm Sorcerer",
         // 'Ω' — distinct from baseline sorcerer 'S' and Draconic 'D',
         // greek omega for the storm's-fury / thunder-omega flavor.
         glyph: 'Ω',
         features,
+        languages,
         ..SORCERER_TEMPLATE.clone()
     }
 });

@@ -885,17 +885,24 @@ pub trait Action {
             target_locations,
             overrides,
         );
-        // 5e Wild Magic Sorcerer **Wild Magic Surge**: after a sorcerer
-        // spell of 1st level or higher resolves, the engine rolls a d20;
-        // on a 1, a random effect from the surge table fires. Sniff the
-        // spell-slot level off the resolved cost — cantrips and non-spell
-        // actions have no `SpellSlot` cost entry, which the trigger
-        // function short-circuits on `spell_level == 0`. Surge side-
-        // effects sit between the spell's effects and the cost-consume
-        // effects so the surge resolves "after the spell" per RAW.
+        // Post-cast trigger dispatch: Wild Magic Surge, Heart of the
+        // Storm eruption, and any future post-cast hook all fire from
+        // the encounter-side dispatcher against the resolved spell
+        // context. Sniff the spell-slot level off the resolved cost —
+        // cantrips and non-spell actions have no `SpellSlot` cost
+        // entry (spell_level==0), and each hook's own gate
+        // short-circuits on the non-caster / non-sorcerer / wrong-
+        // damage-type paths. Trigger effects sit between the spell's
+        // effects and the cost-consume effects so they resolve "after
+        // the spell" per RAW.
         let spell_level = crate::engine::side_effects::spell_slot_level(&costs).unwrap_or(0);
-        let mut surge_effects = encounter.trigger_wild_magic_surge(caster_id, spell_level);
-        side_effects.append(&mut surge_effects);
+        let damage_types = self.damage_types();
+        let mut post_cast_effects = encounter.dispatch_post_cast_triggers(
+            caster_id,
+            spell_level,
+            &damage_types,
+        );
+        side_effects.append(&mut post_cast_effects);
         for cost in costs {
             side_effects.push(Box::new(ConsumeResource {
                 actor_id: caster_id,
