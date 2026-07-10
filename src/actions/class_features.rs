@@ -1831,6 +1831,40 @@ pub const PANTHER_TOTEM_SPEED_BONUS: f32 = 5.0;
 /// always-on effect while the monk is alive.
 pub const PURITY_OF_BODY_TAG: &str = "monk.purity_of_body";
 
+/// 5e Warlock Otherworldly Patron — **The Undying** — **Aspect of the
+/// Moon** eldritch invocation (patron-gated Undying pick, SCAG). Passive:
+/// the warlock no longer needs to sleep and can't be forced to sleep by
+/// any means. In this engine that collapses to a single mechanically
+/// visible clause — **immunity to the `Asleep` condition install** —
+/// since natural sleep (long rest) sits outside the combat loop entirely
+/// and every `Asleep` source in the engine routes through the standard
+/// `add_condition(Asleep, …)` chokepoint that `dynamic_immunity_to`
+/// gates on. RAW's "no need to sleep" clause has no mechanical surface
+/// on the combat side — it just means the warlock stays awake during a
+/// party's long rest without spending a hit die, which the engine's
+/// rest lane doesn't model per-actor.
+///
+/// Read at the shared `FLAG_DRIVEN_IMMUNITIES` cohort in `actor_template.rs`
+/// next to Fey Ancestry's Asleep row — same suppressed condition, same
+/// "flag closure returns true → install bounces" wire, different
+/// source (racial Fey Ancestry vs. Undying-patron invocation). The two
+/// rows are OR'd so a Fey-Ancestry Elven Warlock with Aspect of the
+/// Moon carries redundant Asleep immunity, and either flag alone is
+/// sufficient — same OR semantics the Halfling Brave / Nature's Ward /
+/// Mindless Rage rows already use for their respective condition
+/// bounces.
+///
+/// Ships on `UNDYING_WARLOCK_TEMPLATE` — the Otherworldly Patron: The
+/// Undying subclass template — alongside the baseline Warlock envelope
+/// (CHA-primary Pact Magic, Eldritch Blast + Hex + Witch Bolt at will,
+/// Agonizing / Repelling / Eldritch Mind invocations). Distinct
+/// mechanically from Fey Ancestry (RAW: advantage on Charmed saves +
+/// magic can't put you to sleep — Charmed is the load-bearing distinction
+/// on the racial trait) since Aspect of the Moon grants only the sleep
+/// half; a Warlock chassis without the tag still eats a Sleep spell
+/// even if they also happen to be an Elf.
+pub const ASPECT_OF_THE_MOON_TAG: &str = "warlock.aspect_of_the_moon";
+
 /// 5e Fighter Champion — **Survivor** (level 18) feature tag. Passive
 /// at-start-of-turn regen: while combat-active and above 0 HP but at or
 /// below half max HP, the holder regains `5 + CON modifier` HP at the

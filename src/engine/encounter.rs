@@ -1606,17 +1606,6 @@ impl EncounterInstance {
             if actor.has_condition(Condition::Slowed) {
                 mode = mode.combine(RollMode::Disadvantage);
             }
-            // 5e Barbarian Danger Sense (level 2): advantage on DEX
-            // saves against effects you can see, while not blinded,
-            // deafened, or incapacitated.
-            if actor.has_danger_sense()
-                && !actor.has_condition(Condition::Blinded)
-                && !actor.has_condition(Condition::Deafened)
-                && !actor.has_condition(Condition::Incapacitated)
-                && !actor.has_condition(Condition::Stunned)
-            {
-                mode = mode.combine(RollMode::Advantage);
-            }
         }
         // 5e Barbarian Rage: advantage on STR checks / saves while raging.
         // STR-specific so lives outside the blanket table above.
@@ -1638,37 +1627,15 @@ impl EncounterInstance {
         {
             mode = mode.combine(RollMode::Disadvantage);
         }
-        // 5e Magic Resistance: advantage on all saving throws. Carried by
-        // fiends (Balor, Pit Fiend), undead bosses (Lich), and other
-        // magically-attuned creatures. We grant blanket advantage on every
-        // save — the "against spells and magical effects" RAW qualifier is
-        // hard to enforce without a spell-vs-mundane tag on every save
-        // source, and in combat nearly all saves originate from spells.
-        if actor.has_magic_resistance() {
-            mode = mode.combine(RollMode::Advantage);
-        }
-        // 5e Dwarven Resilience: advantage on saving throws against poison.
-        // We don't tag saves by damage / effect type in this engine, so we
-        // approximate by granting the advantage on every CON save — RAW's
-        // poison-save trigger is CON-based, and the false-positive surface
-        // (CON saves vs non-poison effects) is small. Pairs with the
-        // poison-resistance half in `effective_damage`.
-        if matches!(ability, AbilityScoreType::Constitution)
-            && actor.has_dwarven_resilience()
-        {
-            mode = mode.combine(RollMode::Advantage);
-        }
-        // 5e Gnome Cunning: advantage on INT / WIS / CHA saves against
-        // magic. We approximate by granting blanket advantage on those
-        // three saves — most saves in this engine originate from spells,
-        // so the magical-source qualifier rarely matters in practice.
-        if matches!(
-            ability,
-            AbilityScoreType::Intelligence
-                | AbilityScoreType::Wisdom
-                | AbilityScoreType::Charisma
-        ) && actor.has_gnome_cunning()
-        {
+        // Passive-feature-driven save-advantage cohort — Magic Resistance
+        // (all abilities), Dwarven Resilience (CON), Gnome Cunning (INT /
+        // WIS / CHA), Barbarian Danger Sense (DEX with sensory gate) all
+        // live on the shared `FLAG_DRIVEN_SAVE_ADVANTAGES` cohort in
+        // `actor_template.rs`. Adding a new passive save-advantage
+        // feature (a future Land's Stride save rider, an Undying-patron
+        // Aspect of the Sun, etc.) lands as one cohort row rather than
+        // another if-branch here.
+        if actor.has_flag_driven_save_advantage(ability) {
             mode = mode.combine(RollMode::Advantage);
         }
         mode
@@ -10882,6 +10849,83 @@ mod tests {
         );
     }
 
+    /// 5e Sorcerer Draconic Bloodline **Draconic Resilience** (lv6):
+    /// passive fire-damage resistance. Sibling to Fiendish Resilience
+    /// on the same PASSIVE_TYPED_RESISTANCES cohort — different class
+    /// chassis, same damage type. Baseline Wild Magic sorcerer eats
+    /// full fire; Draconic sorcerer halves it.
+    #[test]
+    fn draconic_resilience_halves_fire_damage_on_sorcerer() {
+        use crate::actors::creatures::sorcerers::{
+            DRACONIC_SORCERER_TEMPLATE, SORCERER_TEMPLATE,
+        };
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let draconic = e
+            .instantiate_creature(&DRACONIC_SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&draconic].has_draconic_resilience());
+        assert!(!e.actors[&baseline].has_draconic_resilience());
+        // 20 fire → 10 (halved by draconic resilience) on the Draconic
+        // sorcerer.
+        assert_eq!(
+            e.actors[&draconic].effective_damage(20, DamageType::Fire),
+            10,
+            "draconic sorcerer halves fire damage"
+        );
+        // Baseline (Wild Magic) sorcerer eats the full 20 fire.
+        assert_eq!(
+            e.actors[&baseline].effective_damage(20, DamageType::Fire),
+            20,
+            "baseline sorcerer takes full fire damage"
+        );
+        // Other damage types still take full damage on the Draconic
+        // sorcerer — the RAW bloodline choice is fixed to Fire on this
+        // template. Cold / Poison / Radiant land as expected.
+        assert_eq!(
+            e.actors[&draconic].effective_damage(20, DamageType::Cold),
+            20,
+        );
+        assert_eq!(
+            e.actors[&draconic].effective_damage(20, DamageType::Poison),
+            20,
+        );
+        assert_eq!(
+            e.actors[&draconic].effective_damage(20, DamageType::Radiant),
+            20,
+        );
+    }
+
+    /// The `has_own_typed_reduction(Fire)` accessor picks up Draconic
+    /// Resilience alongside Fiendish Resilience — both flag rows in
+    /// the PASSIVE_TYPED_RESISTANCES cohort surface through the same
+    /// accessor. Locks the "aura of warding no-ops on top of own
+    /// resistance" gate for a hypothetical Draconic Sorcerer / Ancients
+    /// Paladin party — same shape the Fiend Warlock test already
+    /// exercises for Fiendish Resilience.
+    #[test]
+    fn draconic_resilience_registers_own_typed_reduction() {
+        use crate::actors::creatures::sorcerers::DRACONIC_SORCERER_TEMPLATE;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let draconic = e
+            .instantiate_creature(&DRACONIC_SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&draconic].has_own_typed_reduction(DamageType::Fire),
+            "draconic sorcerer's Fire reduction shows up in the own-typed cohort"
+        );
+        assert!(
+            !e.actors[&draconic].has_own_typed_reduction(DamageType::Cold),
+            "cold isn't reduced — cohort is type-scoped"
+        );
+    }
+
     /// 5e Sorcerer Empowered Spell metamagic: priming the condition then
     /// calling `roll_empowered` rerolls dice that came up at 1 or 2 and
     /// consumes the prime. Drive with a deterministic seed sweep to
@@ -12782,6 +12826,107 @@ mod tests {
             .get(&rogue)
             .unwrap()
             .has_condition(Condition::Frightened));
+    }
+
+    /// 5e Warlock Undying Patron **Aspect of the Moon** eldritch
+    /// invocation (SCAG): the warlock no longer needs to sleep and
+    /// can't be forced to sleep by any means. Collapses to Asleep-
+    /// install immunity in the combat engine — the Undying warlock
+    /// silently drops an `Asleep` install (from the Sleep spell, etc.)
+    /// while the baseline warlock picks it up.
+    #[test]
+    fn aspect_of_the_moon_blocks_asleep_install_on_undying_warlock() {
+        use crate::actors::creatures::warlocks::{UNDYING_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE};
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let undying = e
+            .instantiate_creature(&UNDYING_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        // Force-apply Asleep with a long timer. The Undying warlock
+        // silently drops the install; the baseline warlock picks it up.
+        let added_undying = e
+            .actors
+            .get_mut(&undying)
+            .unwrap()
+            .add_condition(Condition::Asleep, ConditionTimer::Rounds(3));
+        let added_baseline = e
+            .actors
+            .get_mut(&baseline)
+            .unwrap()
+            .add_condition(Condition::Asleep, ConditionTimer::Rounds(3));
+        assert!(
+            !added_undying,
+            "Aspect of the Moon should block Asleep install"
+        );
+        assert!(
+            added_baseline,
+            "baseline warlock should pick up Asleep install"
+        );
+        assert!(!e.actors[&undying].has_condition(Condition::Asleep));
+        assert!(e.actors[&baseline].has_condition(Condition::Asleep));
+    }
+
+    /// Aspect of the Moon is Asleep-only — the Undying warlock still
+    /// eats other enchantment conditions (Charmed, Frightened,
+    /// Poisoned) since RAW only calls out sleep. Locks the cohort row's
+    /// `suppressed` list against a "wider immunity" reading.
+    #[test]
+    fn aspect_of_the_moon_does_not_block_other_conditions() {
+        use crate::actors::creatures::warlocks::UNDYING_WARLOCK_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let undying = e
+            .instantiate_creature(&UNDYING_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Charmed / Frightened / Poisoned all land — Aspect of the
+        // Moon only covers Asleep.
+        for cond in [
+            Condition::Charmed,
+            Condition::Frightened,
+            Condition::Poisoned,
+        ] {
+            let added = e
+                .actors
+                .get_mut(&undying)
+                .unwrap()
+                .add_condition(cond, ConditionTimer::Rounds(3));
+            assert!(added, "Aspect of the Moon shouldn't block {:?}", cond);
+            assert!(e.actors[&undying].has_condition(cond));
+        }
+    }
+
+    /// The undying warlock ships the ASPECT_OF_THE_MOON_TAG passive
+    /// feature. Cross-check the tag is registered on the template so
+    /// the FLAG_DRIVEN_IMMUNITIES row fires — a regression here would
+    /// silently drop the immunity if the tag were dropped from the
+    /// features set.
+    #[test]
+    fn undying_warlock_carries_aspect_of_the_moon_tag() {
+        use crate::actions::class_features::ASPECT_OF_THE_MOON_TAG;
+        use crate::actors::creatures::warlocks::{
+            FIEND_WARLOCK_TEMPLATE, UNDYING_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE,
+        };
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let undying = e
+            .instantiate_creature(&UNDYING_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let fiend = e
+            .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(6, 6), 0, 0)
+            .unwrap();
+        assert!(e.actors[&undying].has_passive_feature(ASPECT_OF_THE_MOON_TAG));
+        // The tag is Undying-patron-restricted — neither the baseline
+        // warlock nor the Fiend patron picks it up.
+        assert!(!e.actors[&baseline].has_passive_feature(ASPECT_OF_THE_MOON_TAG));
+        assert!(!e.actors[&fiend].has_passive_feature(ASPECT_OF_THE_MOON_TAG));
     }
 
     /// `effectively_immune_to_condition`: combines template-level and
@@ -35761,6 +35906,143 @@ mod tests {
             crate::engine::dice::RollMode::Advantage,
             "magic resistance should grant advantage on saves"
         );
+    }
+
+    /// The shared `FLAG_DRIVEN_SAVE_ADVANTAGES` cohort — each row's
+    /// closure fires under different (actor, ability) inputs. Validates
+    /// the four load-bearing rows (Magic Resistance, Dwarven Resilience,
+    /// Gnome Cunning, Danger Sense) still resolve identically after
+    /// the refactor from open-coded `if actor.has_...` branches into a
+    /// declarative cohort.
+    #[test]
+    fn flag_driven_save_advantages_cohort_covers_all_flag_lanes() {
+        use crate::actors::creatures::balors::BALOR_TEMPLATE;
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        use crate::actors::creatures::dwarves::DWARF_TEMPLATE;
+        use crate::actors::creatures::gnomes::GNOME_TEMPLATE;
+        use crate::engine::dice::RollMode;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let balor = e
+            .instantiate_creature(&BALOR_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let dwarf = e
+            .instantiate_creature(&DWARF_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        let gnome = e
+            .instantiate_creature(&GNOME_TEMPLATE, Coordinate::new(6, 2), 0, 0)
+            .unwrap();
+        let barb = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(8, 2), 0, 0)
+            .unwrap();
+
+        // Magic Resistance (Balor): advantage on every save.
+        for ab in [
+            AbilityScoreType::Strength,
+            AbilityScoreType::Dexterity,
+            AbilityScoreType::Constitution,
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ] {
+            assert!(
+                e.actors[&balor].has_flag_driven_save_advantage(ab),
+                "balor magic resistance covers {:?}",
+                ab
+            );
+        }
+
+        // Dwarven Resilience (Dwarf): CON-only. Other abilities normal.
+        assert!(
+            e.actors[&dwarf].has_flag_driven_save_advantage(AbilityScoreType::Constitution)
+        );
+        assert!(!e.actors[&dwarf].has_flag_driven_save_advantage(AbilityScoreType::Strength));
+        assert!(!e.actors[&dwarf].has_flag_driven_save_advantage(AbilityScoreType::Wisdom));
+
+        // Gnome Cunning: INT / WIS / CHA. STR / DEX / CON normal.
+        for ab in [
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ] {
+            assert!(e.actors[&gnome].has_flag_driven_save_advantage(ab));
+        }
+        for ab in [
+            AbilityScoreType::Strength,
+            AbilityScoreType::Dexterity,
+            AbilityScoreType::Constitution,
+        ] {
+            assert!(!e.actors[&gnome].has_flag_driven_save_advantage(ab));
+        }
+
+        // Danger Sense (Barbarian): DEX-only, sensory-gated. No suppressive
+        // conditions installed so the compound gate fires cleanly.
+        assert!(
+            e.actors[&barb].has_flag_driven_save_advantage(AbilityScoreType::Dexterity)
+        );
+        assert!(
+            !e.actors[&barb].has_flag_driven_save_advantage(AbilityScoreType::Constitution)
+        );
+
+        // End-to-end: compute_save_mode returns Advantage for each hit.
+        assert_eq!(
+            e.compute_save_mode(balor, AbilityScoreType::Wisdom),
+            RollMode::Advantage,
+            "balor's Magic Resistance still routes through compute_save_mode"
+        );
+        assert_eq!(
+            e.compute_save_mode(dwarf, AbilityScoreType::Constitution),
+            RollMode::Advantage,
+            "dwarf's Dwarven Resilience still routes through compute_save_mode"
+        );
+        assert_eq!(
+            e.compute_save_mode(gnome, AbilityScoreType::Intelligence),
+            RollMode::Advantage,
+            "gnome's Cunning still routes through compute_save_mode"
+        );
+        assert_eq!(
+            e.compute_save_mode(barb, AbilityScoreType::Dexterity),
+            RollMode::Advantage,
+            "barbarian's Danger Sense still routes through compute_save_mode"
+        );
+    }
+
+    /// Danger Sense's compound sensory gate — the cohort row's closure
+    /// checks Blinded / Deafened / Incapacitated / Stunned and drops
+    /// the advantage while any is installed. Locks the refactor
+    /// against a "we only preserved the flag check, not the sensory
+    /// gate" regression.
+    #[test]
+    fn danger_sense_advantage_drops_when_sensory_conditions_installed() {
+        use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        for suppressor in [
+            Condition::Blinded,
+            Condition::Deafened,
+            Condition::Incapacitated,
+            Condition::Stunned,
+        ] {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            let barb = e
+                .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            assert!(
+                e.actors[&barb]
+                    .has_flag_driven_save_advantage(AbilityScoreType::Dexterity),
+                "baseline barbarian gets Danger Sense advantage"
+            );
+            e.actors
+                .get_mut(&barb)
+                .unwrap()
+                .add_condition(suppressor, ConditionTimer::Rounds(3));
+            assert!(
+                !e.actors[&barb]
+                    .has_flag_driven_save_advantage(AbilityScoreType::Dexterity),
+                "Danger Sense advantage should drop under {:?}",
+                suppressor
+            );
+        }
     }
 
     #[test]

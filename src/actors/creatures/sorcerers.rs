@@ -508,3 +508,64 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ..CreatureTemplate::defaults()
     }
 });
+
+/// Draconic Sorcerer — Sorcerous Origin **Draconic Bloodline** subclass
+/// build (PHB). Identical envelope to the baseline `SORCERER_TEMPLATE`
+/// (CHA-primary level-9 full-caster, Empowered / Quickened / Heightened
+/// / Twinned / Careful / Distant / Extended / Seeking / Subtle /
+/// Transmuted metamagic, 6 sorcery points, Wild Magic Surge / Bend Luck
+/// / Tides of Chaos / Sorcerous Restoration) with one bloodline feature
+/// layered on: **Draconic Resilience** (Draconic Bloodline lv6) —
+/// passive fire-damage resistance from the Red / Gold / Brass ancestor
+/// pick.
+///
+/// Pairs naturally with the sorcerer's existing fire-heavy blast list
+/// (Burning Hands / Scorching Ray / Fireball / Wall of Fire / Wall of
+/// Light / Pyrotechnics / Flame Arrows on the Fire lane) — a Draconic
+/// Sorcerer casting Wall of Fire into their own tile no longer eats a
+/// mirror share of their own damage; the resistance folder halves the
+/// self-hit alongside the target-side spread. Distinct from the Wild
+/// Magic baseline (`SORCERER_TEMPLATE`) on the "Wild Magic Surge /
+/// Tides of Chaos / Bend Luck" tell: the Draconic Sorcerer trades the
+/// per-cast d20 surge risk for a persistent defensive lane.
+///
+/// RAW's Draconic Bloodline picks up other features not shipped on this
+/// template — **Draconic Ancestry** (lv1: language / dragon-ancestor
+/// pick, no combat surface), **Draconic Resilience HP boost** (lv1: +1
+/// HP per sorcerer level, folded into the template's `hitpoints` field
+/// baseline rather than a separate flag), **Elemental Affinity** (lv6:
+/// +CHA damage on chosen-type spells; a "typed damage bonus" surface
+/// the engine doesn't yet track per-damage-type), **Dragon Wings**
+/// (lv14: bonus-action flight, no combat surface without 3D terrain),
+/// and **Draconic Presence** (lv18 capstone: CD Frighten aura, a
+/// Sorcery-Points-fueled ally-radius Frighten install). Only the
+/// bloodline's lv6 damage-resistance clause has a mechanical surface
+/// on the CR-4 chassis without a spend-side hook, so we ship that half
+/// and leave the rest as future work.
+///
+/// Ships the CR-4 template above the strict RAW lv6 gate for the same
+/// reason `FIEND_WARLOCK_TEMPLATE` ships Fiendish Resilience (RAW lv10)
+/// on its CR-4 chassis — class templates target a balanced playable
+/// level, not lockstep PHB progression. Glyph 'D' so the Draconic
+/// Sorcerer shows up distinctly on the map next to the baseline Wild
+/// Magic Sorcerer 'S'.
+pub static DRACONIC_SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Sorcerer envelope
+    // wholesale and layer on the Draconic Bloodline features:
+    //   - `has_draconic_resilience` (lv6): passive fire-damage resistance.
+    //     Template-flag lane, no charge. Read at the shared
+    //     `PASSIVE_TYPED_RESISTANCES` cohort in `effective_damage` next
+    //     to Dwarven Resilience / Fiendish Resilience — same lane,
+    //     different class chassis.
+    //
+    // The `..base.clone()` tail picks up every other field — actions,
+    // spell slots, sorcery points, save profs, features — without an
+    // N-line field-by-field copy. Same shape as `FIEND_WARLOCK_TEMPLATE`
+    // and the paladin / rogue / ranger subclass templates.
+    CreatureTemplate {
+        name: "Draconic Sorcerer",
+        glyph: 'D',
+        has_draconic_resilience: true,
+        ..SORCERER_TEMPLATE.clone()
+    }
+});

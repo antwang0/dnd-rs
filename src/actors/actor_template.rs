@@ -116,6 +116,17 @@ const TYPED_RESISTANCE_CONDITIONS: &[(Condition, &[DamageType])] = &[
 ///     any of the ten damage types on short rest" surface later is a
 ///     `Option<DamageType>` swap at this row and a matching short-rest
 ///     hook.
+///   - **Draconic Resilience (Sorcerer Draconic Bloodline lv6)**: fire
+///     resistance. RAW: bloodline-picked damage type matching the
+///     draconic ancestor. Collapsed to a fixed Fire lock on the same
+///     shape as Fiendish Resilience — thematic for the Red / Gold /
+///     Brass ancestor picks that lean into the sorcerer's fire-heavy
+///     spell list (Burning Hands / Scorching Ray / Fireball as natural
+///     pickups). Sibling row to Fiendish Resilience on the same damage
+///     type — distinct source (Sorcerer bloodline vs. Warlock patron)
+///     but identical damage-pipeline surface; the standard "one
+///     halving per damage instance" rule caps a hypothetical multi-
+///     class carrier at a single /2 per Fire hit.
 ///
 /// A new passive typed resistance (Circle of the Moon Wild Shape
 /// per-form types, Bladeling's Painful Quills necrotic resistance,
@@ -126,6 +137,7 @@ type PassiveTypedResistance = (fn(&ActorInstance) -> bool, DamageType);
 const PASSIVE_TYPED_RESISTANCES: &[PassiveTypedResistance] = &[
     (|a| a.has_dwarven_resilience, DamageType::Poison),
     (|a| a.has_fiendish_resilience, DamageType::Fire),
+    (|a| a.has_draconic_resilience, DamageType::Fire),
 ];
 
 /// Broad condition-driven immunity table read by `dynamic_immunity_to`.
@@ -211,6 +223,20 @@ const FLAG_DRIVEN_IMMUNITIES: &[FlagDrivenImmunity] = &[
         flag: |a| a.has_fey_ancestry,
         suppressed: &[Condition::Charmed, Condition::Asleep],
     },
+    // 5e Warlock Undying Patron **Aspect of the Moon** eldritch
+    // invocation (SCAG): the warlock no longer needs to sleep and can't
+    // be forced to sleep by any means. Collapses to a single
+    // `Asleep`-install bounce here — natural sleep sits outside the
+    // combat loop. Sibling row to Fey Ancestry on the `Asleep`-immunity
+    // lane: either flag alone suffices, both together are redundant
+    // (an Elven Undying Warlock stacks the two rows cleanly under the
+    // OR-of-cohort-hits semantics `dynamic_immunity_to` already honors).
+    FlagDrivenImmunity {
+        flag: |a| a.has_passive_feature(
+            crate::actions::class_features::ASPECT_OF_THE_MOON_TAG,
+        ),
+        suppressed: &[Condition::Asleep],
+    },
     // 5e Paladin Oath of the Ancients Nature's Ward (lv15 capstone):
     // immunity to Charmed AND Frightened installs. The two-condition
     // grant folds through one row; a single flag drives both bounces.
@@ -288,6 +314,125 @@ const FLAG_DRIVEN_SAVE_PROFICIENCIES: &[FlagDrivenSaveProficiency] = &[
     FlagDrivenSaveProficiency {
         flag: |a| a.has_iron_mind,
         ability: AbilityScoreType::Wisdom,
+    },
+];
+
+/// One row in the `FLAG_DRIVEN_SAVE_ADVANTAGES` cohort — a single
+/// passive-feature-driven advantage on saving throws. `flag` is a
+/// closure over `(&ActorInstance, AbilityScoreType)` so a row can gate
+/// on the specific ability being saved (Dwarven Resilience → CON only,
+/// Gnome Cunning → INT/WIS/CHA only), on a blanket grant (Magic
+/// Resistance → all abilities), or on a compound gate involving other
+/// conditions (Barbarian Danger Sense → DEX only AND not
+/// Blinded/Deafened/Incapacitated/Stunned). Held as a function-pointer
+/// rather than a `(field_name, ability_filter)` struct so a new row
+/// can compose an arbitrary predicate without expanding a central
+/// filter enum — same shape the `FlagDrivenImmunity` /
+/// `FlagDrivenSaveProficiency` / `PassiveTypedResistance` cohorts
+/// already use for their respective engine surfaces.
+///
+/// Sibling to `FLAG_DRIVEN_SAVE_PROFICIENCIES` on the passive-feature-
+/// flag-driven engine surface — that cohort promotes an ability to
+/// "proficient" (adds prof bonus to the roll total), this cohort
+/// promotes the roll SHAPE to advantage (2d20 kept high). The two
+/// stack cleanly: a hypothetical Wisdom-save cast against an Iron-Mind
+/// / Magic-Resistant chassis rolls 2d20 keep-high AND adds proficiency
+/// bonus — both cohorts fire independently on their respective ability
+/// gates.
+struct FlagDrivenSaveAdvantage {
+    flag: fn(&ActorInstance, AbilityScoreType) -> bool,
+}
+
+/// Flag-driven save-advantage cohort read by
+/// `EncounterInstance::compute_save_mode`. Every row's flag is called
+/// once per save with the actor + rolled-ability pair; any hit combines
+/// `RollMode::Advantage` into the save mode. Sibling to
+/// `FLAG_DRIVEN_SAVE_PROFICIENCIES` on the "passive-feature-flag-driven
+/// save modifier" pattern — same closure shape, different roll axis
+/// (roll mode vs. proficiency-bonus contribution).
+///
+/// Entries (in order):
+///   - **Magic Resistance** (Balor / Pit Fiend / Lich / Rakshasa /
+///     Solar racial): advantage on every save. RAW's "against spells
+///     and magical effects" qualifier collapses to blanket advantage
+///     since the engine doesn't tag save sources as spell / mundane —
+///     the false-positive surface is small (nearly every combat save
+///     originates from a spell effect).
+///   - **Dwarven Resilience** (Dwarf racial): advantage on CON saves.
+///     RAW's poison-save qualifier collapses to blanket CON-save
+///     advantage since the poison-save trigger is CON-based and the
+///     false-positive surface (CON saves vs non-poison effects) is
+///     small.
+///   - **Gnome Cunning** (Rock / Forest / Deep Gnome racial): advantage
+///     on INT/WIS/CHA saves. RAW's "against magic" qualifier collapses
+///     to blanket advantage on the three abilities — most saves in
+///     this engine originate from spells.
+///   - **Barbarian Danger Sense** (lv2): advantage on DEX saves against
+///     effects the barbarian can see, while not blinded / deafened /
+///     incapacitated / stunned. The compound sensory gate rides
+///     inside the closure so the cohort row is a single entry rather
+///     than a pre-cohort if-branch with three inline `!has_condition`
+///     tails.
+///
+/// Adding a future passive save-advantage feature (a hypothetical
+/// Aspect of the Sun on the Undying Warlock lane, a Ranger Land's
+/// Stride save-advantage rider, etc.) lands as a one-line entry here
+/// rather than another `if actor.has_...` branch scattered through
+/// `compute_save_mode`.
+///
+/// Danger Sense's compound gate on Condition::Blinded / Deafened /
+/// Incapacitated / Stunned lives inside the row's closure so the
+/// cohort table stays declarative and the `compute_save_mode` body
+/// collapses to a single filter-any pass over the cohort. All-ability
+/// blanket rows (Magic Resistance) still ride the same closure shape
+/// with a `_` ability wildcard.
+const FLAG_DRIVEN_SAVE_ADVANTAGES: &[FlagDrivenSaveAdvantage] = &[
+    // 5e Magic Resistance: advantage on all saving throws. Carried by
+    // fiends (Balor, Pit Fiend), undead bosses (Lich), and other
+    // magically-attuned creatures. We grant blanket advantage on every
+    // save — see the cohort docstring for the RAW-qualifier collapse
+    // rationale.
+    FlagDrivenSaveAdvantage {
+        flag: |a, _| a.has_magic_resistance(),
+    },
+    // 5e Dwarven Resilience: advantage on CON saves (RAW: vs poison
+    // specifically; collapses to blanket CON-save advantage — see the
+    // cohort docstring). Pairs with the poison-resistance half in
+    // `effective_damage` via the `PASSIVE_TYPED_RESISTANCES` cohort.
+    FlagDrivenSaveAdvantage {
+        flag: |a, ability| {
+            matches!(ability, AbilityScoreType::Constitution) && a.has_dwarven_resilience()
+        },
+    },
+    // 5e Gnome Cunning: advantage on INT / WIS / CHA saves (RAW: vs
+    // magic specifically; collapses to blanket three-ability advantage
+    // — see the cohort docstring).
+    FlagDrivenSaveAdvantage {
+        flag: |a, ability| {
+            matches!(
+                ability,
+                AbilityScoreType::Intelligence
+                    | AbilityScoreType::Wisdom
+                    | AbilityScoreType::Charisma
+            ) && a.has_gnome_cunning()
+        },
+    },
+    // 5e Barbarian Danger Sense (level 2): advantage on DEX saves
+    // against effects you can see, while not blinded, deafened, or
+    // incapacitated. The compound gate (four sensory conditions
+    // suppress the advantage) rides inside this closure so the cohort
+    // row stays a single declarative entry — Stunned is included
+    // alongside Incapacitated per RAW since Stunned implicitly
+    // Incapacitates.
+    FlagDrivenSaveAdvantage {
+        flag: |a, ability| {
+            matches!(ability, AbilityScoreType::Dexterity)
+                && a.has_danger_sense()
+                && !a.has_condition(Condition::Blinded)
+                && !a.has_condition(Condition::Deafened)
+                && !a.has_condition(Condition::Incapacitated)
+                && !a.has_condition(Condition::Stunned)
+        },
     },
 ];
 
@@ -1145,6 +1290,39 @@ pub struct CreatureTemplate {
     /// `Option<DamageType>` swap at the cohort row plus a short-rest
     /// hook — no signature changes upstream.
     pub has_fiendish_resilience: bool,
+    /// 5e Sorcerer Draconic Bloodline **Draconic Resilience** (level 6).
+    /// Passive template flag: the sorcerer has resistance to the damage
+    /// type associated with their draconic ancestry. RAW gives the
+    /// sorcerer a bloodline-picked damage type — we collapse the choice
+    /// to a fixed Fire lock (Red / Gold / Brass ancestor flavor, the
+    /// most iconic sorcerer bloodline picks) so the flag is a single
+    /// template pick without a mutable "picked type" slot on
+    /// `ActorInstance`. Thematic for the Draconic Bloodline's fire-
+    /// heavy identity (Burning Hands / Scorching Ray / Fireball as
+    /// natural pickups on the sorcerer chassis) and it drops the need
+    /// for a per-ancestor branch on `PASSIVE_TYPED_RESISTANCES`.
+    ///
+    /// Read at the `effective_damage` chokepoint via the shared
+    /// `PASSIVE_TYPED_RESISTANCES` cohort — same lane as Dwarven
+    /// Resilience's poison-halving half and Fiendish Resilience's fire-
+    /// halving half. Ships on `DRACONIC_SORCERER_TEMPLATE` above the
+    /// strict RAW lv6 gate for the same reason Fiendish Resilience
+    /// (RAW lv10) rides on `FIEND_WARLOCK_TEMPLATE` above its strict
+    /// gate — class templates target a balanced playable level, not
+    /// lockstep PHB progression. Distinct from `has_fiendish_resilience`
+    /// on the "fire resistance" lane — same magnitude, same damage
+    /// type, different class chassis, so a hypothetical Fiend Warlock /
+    /// Draconic Sorcerer multiclass carries both flags cleanly but the
+    /// standard "one halving per damage instance" rule caps the total
+    /// at a single /2 per Fire hit (the resistance folder never double-
+    /// halves the same damage roll).
+    ///
+    /// Adding a "choose any of the ten damage types on bloodline pick"
+    /// surface later is a `has_draconic_resilience: bool` →
+    /// `draconic_resilience_type: Option<DamageType>` swap at this row,
+    /// the cohort entry, and the accessor; no signature changes upstream
+    /// on `effective_damage`.
+    pub has_draconic_resilience: bool,
     /// 5e Gnome Cunning (Rock / Forest / Deep Gnome racial): advantage on
     /// Intelligence, Wisdom, and Charisma saving throws against magic.
     /// We don't tag saves by "magic vs mundane" in this engine, so we
@@ -1308,6 +1486,7 @@ impl CreatureTemplate {
             has_persistent_rage: false,
             has_dwarven_resilience: false,
             has_fiendish_resilience: false,
+            has_draconic_resilience: false,
             has_gnome_cunning: false,
             draconic_ancestry: None,
             sorcery_points: 0,
@@ -1725,6 +1904,10 @@ pub struct ActorInstance {
     /// 5e Warlock Fiend Patron Fiendish Resilience (level 10). Passive
     /// fire-damage resistance. See `CreatureTemplate` docs.
     has_fiendish_resilience: bool,
+    /// 5e Sorcerer Draconic Bloodline Draconic Resilience (level 6).
+    /// Passive fire-damage resistance (bloodline choice collapsed to
+    /// Fire). See `CreatureTemplate` docs.
+    has_draconic_resilience: bool,
     /// 5e Gnome Cunning. See `CreatureTemplate` docs.
     has_gnome_cunning: bool,
     /// 5e Dragonborn Draconic Ancestry damage type, if any. Drives the
@@ -1890,6 +2073,7 @@ impl ActorInstance {
             has_persistent_rage: ct.has_persistent_rage,
             has_dwarven_resilience: ct.has_dwarven_resilience,
             has_fiendish_resilience: ct.has_fiendish_resilience,
+            has_draconic_resilience: ct.has_draconic_resilience,
             has_gnome_cunning: ct.has_gnome_cunning,
             draconic_ancestry: ct.draconic_ancestry,
             sorcery_points: ct.sorcery_points,
@@ -2370,6 +2554,20 @@ impl ActorInstance {
     /// for the rationale.
     pub fn has_fiendish_resilience(&self) -> bool {
         self.has_fiendish_resilience
+    }
+
+    /// 5e Sorcerer Draconic Bloodline **Draconic Resilience** (level 6)
+    /// — passive fire-damage resistance. Read by `effective_damage`
+    /// (resistance clause via `PASSIVE_TYPED_RESISTANCES`). RAW's
+    /// bloodline choice of damage type is collapsed to a fixed Fire
+    /// lock on this flag — see `CreatureTemplate::has_draconic_resilience`
+    /// for the rationale. Sibling accessor to
+    /// `has_fiendish_resilience` on the passive-fire-resistance lane;
+    /// each flag is a distinct class-source pick so a hypothetical
+    /// Fiend Warlock / Draconic Sorcerer multiclass carries both flags
+    /// cleanly.
+    pub fn has_draconic_resilience(&self) -> bool {
+        self.has_draconic_resilience
     }
 
     /// 5e Gnome Cunning — advantage on INT / WIS / CHA saves vs magic.
@@ -3048,6 +3246,26 @@ impl ActorInstance {
             }
         }
         self.proficient_saves.contains(&ability)
+    }
+
+    /// True if any passive-feature-driven save-advantage row in the
+    /// shared `FLAG_DRIVEN_SAVE_ADVANTAGES` cohort fires for the given
+    /// ability on this actor. Walked by `compute_save_mode` as a single
+    /// filter-any pass over the cohort so the caller composes the
+    /// advantage bit with the other save-mode flags (condition-driven
+    /// disadvantage, Dodge, Haste / Slow, Feeblemind, Rage-on-STR)
+    /// without an if-branch chain in the encounter body.
+    ///
+    /// Sibling to `is_save_proficient` on the "single accessor that
+    /// walks a class-feature cohort" pattern — that one folds
+    /// `FLAG_DRIVEN_SAVE_PROFICIENCIES`, this one folds
+    /// `FLAG_DRIVEN_SAVE_ADVANTAGES`. Both are OR-of-rows filter passes
+    /// so adding a fresh feature is a one-line cohort entry, not a
+    /// touch on this method or the encounter body.
+    pub fn has_flag_driven_save_advantage(&self, ability: AbilityScoreType) -> bool {
+        FLAG_DRIVEN_SAVE_ADVANTAGES
+            .iter()
+            .any(|entry| (entry.flag)(self, ability))
     }
 
     /// True if this actor is proficient in the given skill (i.e. adds

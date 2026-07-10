@@ -317,3 +317,48 @@ pub static FIEND_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
     }
 });
 
+/// Undying Warlock — Otherworldly Patron **The Undying** subclass build
+/// (SCAG). Identical envelope to the baseline `WARLOCK_TEMPLATE`
+/// (CHA-primary half-caster with Pact Magic, Eldritch Blast + Hex +
+/// Witch Bolt at will, Agonizing / Repelling / Eldritch Mind
+/// invocations) with one patron-flavored eldritch invocation layered
+/// on: **Aspect of the Moon** (Undying-patron-restricted invocation) —
+/// passive: the warlock no longer needs to sleep and can't be forced to
+/// sleep by any means.
+///
+/// The signature "you can't put me under" tell — where a baseline
+/// Warlock eats a Sleep spell (5e enchantment; installs the `Asleep`
+/// condition on a failed save), the Undying Warlock just shrugs it off
+/// while the Aspect of the Moon flag holds. Read at the shared
+/// `FLAG_DRIVEN_IMMUNITIES` cohort in `actor_template.rs` next to Fey
+/// Ancestry's Asleep row — same "install bounces" wire, different
+/// source (racial trait vs. patron-gated invocation).
+///
+/// Distinct from `FIEND_WARLOCK_TEMPLATE` (Dark One's Blessing +
+/// Dark One's Own Luck + Fiendish Resilience — the fiery kill-focused
+/// build) and `WARLOCK_TEMPLATE` (patron-less baseline). RAW's Undying
+/// patron picks up an expanded spell list (False Life / Spare the
+/// Dying / Blindness/Deafness / Feign Death / Bestow Curse / Speak with
+/// Dead / Aura of Life / Death Ward / Contagion / Legend Lore) — the
+/// baseline template's spell list already covers most of the overlap
+/// (Blindness at lv2, Bestow Curse at lv3) so we don't re-add the whole
+/// spell list here; the subclass tell is the passive Asleep immunity.
+/// Glyph 'U' so the Undying warlock shows up distinctly on the map
+/// next to baseline warlock 'L' and Fiend warlock 'F'.
+pub static UNDYING_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Warlock envelope wholesale
+    // and layer on the one Undying patron feature — Aspect of the Moon
+    // via the `ASPECT_OF_THE_MOON_TAG` passive-feature tag. The
+    // `..base.clone()` tail picks up every other field — stats, spell
+    // slots, save profs, invocation-driven cantrips — without an N-line
+    // field-by-field copy. Same shape as `FIEND_WARLOCK_TEMPLATE` and
+    // the paladin / rogue / ranger subclass templates.
+    let mut features = WARLOCK_TEMPLATE.features.clone();
+    features.insert(crate::actions::class_features::ASPECT_OF_THE_MOON_TAG);
+    CreatureTemplate {
+        name: "Undying Warlock",
+        glyph: 'U',
+        features,
+        ..WARLOCK_TEMPLATE.clone()
+    }
+});
