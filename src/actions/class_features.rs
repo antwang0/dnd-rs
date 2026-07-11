@@ -135,6 +135,14 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // Wrath / Abjure Enemy / Guided Strike / Radiance of the Dawn) —
     // RAW Channel Divinity is once per short rest.
     DREADFUL_ASPECT_TAG,
+    // 5e Divine Soul Sorcerer level-1 subclass feature — Favored by
+    // the Gods. Auto-fire "add 2d4 to a failed save" gate. RAW:
+    // refreshes on a short or long rest — sibling to Dark One's Own
+    // Luck (Fiend Warlock lv6, +1d10) on the same failed-save
+    // add-die recovery lane, differentiated by the die pool
+    // (2d4 avg +5 vs 1d10 avg +5.5) and the source chassis (Sorcerer
+    // subclass vs. Warlock subclass).
+    FAVORED_BY_THE_GODS_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -5421,6 +5429,51 @@ pub const DARK_ONES_BLESSING_TAG: &str = "warlock.dark_ones_blessing";
 /// on short rest. Add this tag to a warlock template's `features`
 /// set to install it (ships on `FIEND_WARLOCK_TEMPLATE`).
 pub const DARK_ONES_OWN_LUCK_TAG: &str = "warlock.dark_ones_own_luck";
+
+/// 5e Sorcerer — Sorcerous Origin **Divine Soul** (XGtE), level-1
+/// feature **Favored by the Gods**. Auto-fire once-per-short-rest
+/// gate: when the holder fails a saving throw, spend the charge to
+/// add 2d4 to the failing total. If the boosted total meets or
+/// beats the DC, the save becomes a Pass. RAW: "If you fail a
+/// saving throw or miss with an attack roll, you can roll 2d4 and
+/// add it to the total, possibly changing the outcome... Once you
+/// use this feature, you can't use it again until you finish a
+/// short or long rest."
+///
+/// Sibling to Dark One's Own Luck (Fiend Warlock lv6) on the shared
+/// `FAILED_SAVE_ADD_DIE_SOURCES` cohort — same "add die to failed
+/// save total" shape, differentiated by the die pool:
+///   - **Dark One's Own Luck** adds 1d10 (avg +5.5).
+///   - **Favored by the Gods** adds 2d4 (avg +5.0, tight variance
+///     — 2..=8 vs. 1..=10). The narrower spread makes FBTG more
+///     reliable at rescuing mid-DC misses where the +5 is enough
+///     but blunts the ceiling on low-d20-roll rescue.
+///
+/// Distinct in shape from Fanatical Focus (Oathbreaker Paladin
+/// lv15) on the failed-save recovery lane: FBTG keeps the d20 and
+/// adds dice; Fanatical Focus rerolls the d20 with the same
+/// modifier. A hypothetical Divine Soul Sorcerer / Oathbreaker
+/// Paladin multiclass burns FBTG first (add-die cohort runs before
+/// reroll cohort at the save chokepoint) — matches the RAW gate:
+/// FBTG's RAW trigger "before or after making the attack roll or
+/// saving throw" fires at initial-roll time, ahead of the reroll
+/// lane's "when you fail" trigger.
+///
+/// RAW also covers the "miss with an attack roll" lane; we narrow
+/// to saves for the same reason Dark One's Own Luck (RAW: any
+/// ability check or saving throw) narrows to saves — the save
+/// chokepoint has a single well-defined reroll / add-die surface;
+/// the attack-roll miss surface would need a separate wire in
+/// `resolve_attack_outcome`. Same simplification pattern as DOOL.
+///
+/// Fires at the shared save chokepoint
+/// (`EncounterInstance::roll_save_with_extra_mode`) via the shared
+/// `FAILED_SAVE_ADD_DIE_SOURCES` cohort loop. Refreshes via
+/// `SHORT_REST_FEATURES` — the tag lands on `features_max` for the
+/// holder and `features_remaining` refills on short rest. Add this
+/// tag to a sorcerer template's `features` set to install it (ships
+/// on `DIVINE_SOUL_SORCERER_TEMPLATE`).
+pub const FAVORED_BY_THE_GODS_TAG: &str = "sorcerer.favored_by_the_gods";
 
 /// 5e Wild Magic Sorcerer **Tides of Chaos** feature tag. Once per long
 /// rest charge — the sorcerer leans into the chaos of their bloodline to

@@ -751,3 +751,85 @@ pub static ABERRANT_MIND_SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLoc
         ..SORCERER_TEMPLATE.clone()
     }
 });
+
+/// Divine Soul Sorcerer — Sorcerous Origin **Divine Soul** subclass
+/// build (XGtE). Identical envelope to the baseline `SORCERER_TEMPLATE`
+/// (CHA-primary level-9 full-caster, Empowered / Quickened / Heightened
+/// / Twinned / Careful / Distant / Extended / Seeking / Subtle /
+/// Transmuted metamagic, 6 sorcery points, Wild Magic Surge / Bend Luck
+/// / Tides of Chaos / Sorcerous Restoration) with one subclass feature
+/// layered on: **Favored by the Gods** (Divine Soul lv1) — auto-fire
+/// once-per-short-rest "add 2d4 to a failed save total" gate.
+///
+/// Sibling to `FIEND_WARLOCK_TEMPLATE` on the failed-save recovery
+/// axis: both templates ship an add-die cohort entry (DOOL +1d10 for
+/// the Fiend Warlock, FBTG +2d4 for the Divine Soul Sorcerer). The
+/// two never legally co-occur on a single build since the sorcerer
+/// picks one Sorcerous Origin — but a hypothetical Fiend Warlock /
+/// Divine Soul Sorcerer multi-class stacks the two cohort rows
+/// cleanly under the shared `FAILED_SAVE_ADD_DIE_SOURCES` "at most
+/// one add-die per save" semantics: the first-listed source (DOOL)
+/// fires first, and only if its charge is spent AND its boosted
+/// total still fails does the second source (FBTG) get a shot on a
+/// later save (both refresh on short rest, not per-save).
+///
+/// Distinct from the Wild Magic baseline (`SORCERER_TEMPLATE`) on
+/// the "Wild Magic Surge / Tides of Chaos / Bend Luck" tell: the
+/// Divine Soul Sorcerer keeps those but adds a persistent
+/// failed-save safety net on top. Distinct from
+/// `DRACONIC_SORCERER_TEMPLATE` (fire resistance),
+/// `STORM_SORCERER_TEMPLATE` (lightning + thunder resistance +
+/// eruption), and `ABERRANT_MIND_SORCERER_TEMPLATE` (psychic
+/// resistance + Charmed / Frightened immunity) — none of the three
+/// prior subclasses touch the failed-save recovery lane, so a
+/// hypothetical multi-Origin carrier stacks Divine Soul's FBTG
+/// cleanly beside any of the others without overlap.
+///
+/// RAW's Divine Soul picks up other features not shipped on this
+/// template — **Divine Magic** (lv1: expanded spell list drawing
+/// from the Cleric list — Bless / Cure Wounds / Guiding Bolt /
+/// Spiritual Weapon / etc.; RAW's cleric-spell access is currently
+/// approximated by the sorcerer's existing roster), **Empowered
+/// Healing** (lv6: spend 1 SP to reroll healing dice; healing
+/// dice-reroll surface not yet wired), **Otherworldly Wings**
+/// (lv14: bonus-action flight, no combat surface without 3D
+/// terrain), and **Unearthly Recovery** (lv18 capstone: bonus
+/// action heal for half max HP; a per-rest heal well). Only the
+/// lv1 Favored by the Gods passive has a mechanical surface on the
+/// CR-4 chassis that plugs cleanly into the shared save-recovery
+/// cohort, so we ship that half and leave the rest as future work.
+///
+/// Glyph 'V' so the Divine Soul Sorcerer shows up distinctly on
+/// the map next to the baseline Wild Magic Sorcerer 'S', the
+/// Draconic Sorcerer 'D', the Storm Sorcerer 'Ω', and the
+/// Aberrant Mind Sorcerer 'Ψ' — 'V' for "divine / vessel" flavor
+/// (the sorcerer as a vessel for divine power).
+pub static DIVINE_SOUL_SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Sorcerer envelope
+    // wholesale and layer on the Divine Soul lv1 feature tag:
+    //   - `FAVORED_BY_THE_GODS_TAG` (lv1): once-per-short-rest
+    //     auto-fire "add 2d4 to a failed save total" gate. Ships in
+    //     `SHORT_REST_FEATURES` so the charge refreshes alongside
+    //     Dark One's Own Luck / Fanatical Focus / etc. on the
+    //     failed-save recovery lane; fired at the shared save
+    //     chokepoint via the `FAILED_SAVE_ADD_DIE_SOURCES` cohort
+    //     next to Dark One's Own Luck.
+    //
+    // The `..base.clone()` tail picks up every other field — actions,
+    // spell slots, sorcery points, save profs, features — without an
+    // N-line field-by-field copy. Same shape as
+    // `STORM_SORCERER_TEMPLATE`'s tag-only subclass build (Heart of
+    // the Storm) and `ABERRANT_MIND_SORCERER_TEMPLATE`'s tag-only
+    // subclass build (Psychic Defenses).
+    let mut features = SORCERER_TEMPLATE.features.clone();
+    features.insert(crate::actions::class_features::FAVORED_BY_THE_GODS_TAG);
+    CreatureTemplate {
+        name: "Divine Soul Sorcerer",
+        // 'V' — distinct from baseline sorcerer 'S', Draconic 'D',
+        // Storm 'Ω', and Aberrant Mind 'Ψ', 'V' for the "divine
+        // vessel" flavor.
+        glyph: 'V',
+        features,
+        ..SORCERER_TEMPLATE.clone()
+    }
+});

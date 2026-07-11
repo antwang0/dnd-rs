@@ -559,6 +559,101 @@ const FAILED_SAVE_REROLL_SOURCES: &[FailedSaveRerollSource] = &[
     },
 ];
 
+/// A single "add die(s) to the failing save total" source read at
+/// `roll_save_with_extra_mode` after the initial roll lands on a
+/// `Fail`. Sibling shape to `FailedSaveRerollSource` on the shared
+/// failed-save recovery lane, distinct in mechanic: the reroll cohort
+/// spins a fresh d20, this cohort keeps the initial d20 and adds a
+/// die pool to the total. A failed d20(3) that the reroll cohort
+/// rerolls to another 3 stays failed; the same d20(3) that the
+/// add-die cohort boosts picks up the extra pool (avg +5-ish) and
+/// pushes past most mid-DC saves.
+///
+/// Each entry's `consume` closure returns true iff its per-rest
+/// charge was spent — the caller then rolls `dice`, logs it with
+/// `label`, and returns immediately if the boosted total meets or
+/// beats the DC. Consumption fires only when the initial roll
+/// failed AND no earlier source in the table has already granted a
+/// pass, so a hypothetical Divine Soul Sorcerer / Fiend Warlock
+/// multiclass burns FBTG's 2d4 (RAW gate: fires at initial-roll
+/// time) before DOOL's 1d10 in table order. All fires happen before
+/// the reroll cohort — RAW's "after seeing the initial roll but
+/// before any of the roll's effects occur" gate for both DOOL and
+/// FBTG places them ahead of any reroll surface.
+struct FailedSaveAddDieSource {
+    /// Log-friendly tag ("dark one's own luck", "favored by the
+    /// gods"). Appears in the "  {}: +{} = {} vs DC {} — pass/fail"
+    /// line.
+    label: &'static str,
+    /// Die pool added to the initial d20 + modifier + extra total.
+    /// A `Dice { count, faces }` value read at cohort-iteration time
+    /// so each entry can pick its own die shape (1d10 for DOOL, 2d4
+    /// for Favored by the Gods).
+    dice: Dice,
+    /// Attempts to spend this source's per-rest charge on the
+    /// failing actor. Returns true on a successful spend (the boost
+    /// fires); false when the charge was unavailable (spent
+    /// Dark One's Own Luck / Favored by the Gods, etc.).
+    consume: fn(&mut crate::actors::actor_template::ActorInstance) -> bool,
+}
+
+/// Ordered cohort of "add die(s) to a failed save total" sources,
+/// read by `roll_save_with_extra_mode` after the initial d20 lands
+/// on a fail and BEFORE the reroll cohort — RAW's "after seeing the
+/// initial roll but before any of the roll's effects occur" gate
+/// for both entries places them at initial-roll time. Iteration
+/// stops as soon as one source's boost produces a `Pass`, so at
+/// most one source burns its charge per save.
+///
+/// Order: entries are consulted in listed order; on a multiclass
+/// holding multiple sources, the first-listed one fires first. Both
+/// current entries are once-per-short-rest auto-fire — either order
+/// is defensible.
+///
+/// Entries:
+///   - **Dark One's Own Luck** (Fiend Warlock lv6): +1d10 (avg
+///     +5.5). Ships on `FIEND_WARLOCK_TEMPLATE` via
+///     `DARK_ONES_OWN_LUCK_TAG`. Sibling to Fanatical Focus on the
+///     failed-save recovery lane but distinct in shape (add-die vs.
+///     reroll).
+///   - **Favored by the Gods** (Divine Soul Sorcerer lv1, XGtE):
+///     +2d4 (avg +5.0). Ships on `DIVINE_SOUL_SORCERER_TEMPLATE`
+///     via `FAVORED_BY_THE_GODS_TAG`. Same add-die shape as DOOL
+///     with a tighter die pool (2..=8 vs. 1..=10).
+///
+/// A new failed-save add-die source (a hypothetical "Reroll +Nd4"
+/// feat, a future Peace Cleric Balm of the Summer Court on the
+/// attack-roll lane collapsed to a save-side add-die) drops in as a
+/// new entry with its own `(label, dice, consume)` triple.
+const FAILED_SAVE_ADD_DIE_SOURCES: &[FailedSaveAddDieSource] = &[
+    FailedSaveAddDieSource {
+        label: "dark one's own luck",
+        dice: Dice::new(1, 10),
+        consume: |a| {
+            use crate::actions::class_features::DARK_ONES_OWN_LUCK_TAG;
+            if a.feature_available(DARK_ONES_OWN_LUCK_TAG) {
+                a.spend_feature(DARK_ONES_OWN_LUCK_TAG);
+                true
+            } else {
+                false
+            }
+        },
+    },
+    FailedSaveAddDieSource {
+        label: "favored by the gods",
+        dice: Dice::new(2, 4),
+        consume: |a| {
+            use crate::actions::class_features::FAVORED_BY_THE_GODS_TAG;
+            if a.feature_available(FAVORED_BY_THE_GODS_TAG) {
+                a.spend_feature(FAVORED_BY_THE_GODS_TAG);
+                true
+            } else {
+                false
+            }
+        },
+    },
+];
+
 pub enum StackElementEntry {
     SideEffect(Box<dyn ApplicableSideEffect>),
     Action(Box<ActionExecutionInfo>),
@@ -1978,48 +2073,64 @@ impl EncounterInstance {
         {
             a.remove_condition(Condition::Inspired);
         }
-        // 5e Fiend Warlock Dark One's Own Luck (lv6, once per short
-        // rest): auto-fire "add 1d10 to the failing total" gate. RAW
-        // gates on "after seeing the initial roll but before any of the
+        // 5e "add die(s) to the failing save total" cohort — Fiend
+        // Warlock Dark One's Own Luck (lv6, +1d10) and Divine Soul
+        // Sorcerer Favored by the Gods (XGtE lv1, +2d4). RAW gates
+        // on "after seeing the initial roll but before any of the
         // roll's effects occur" — fires on the initial d20's fail
-        // *before* the reroll cohort so the +1d10 stacks on the d20 the
-        // holder just saw. If the boosted total meets or beats the DC
-        // the save flips to a Pass and returns immediately; otherwise
-        // the reroll cohort still gets a shot at a fresh d20.
+        // *before* the reroll cohort so the added dice stack on the
+        // d20 the holder just saw. Iteration stops as soon as one
+        // source's boost produces a `Pass` (at most one add-die
+        // charge burns per save); a failed boost still lets the
+        // reroll cohort below take a shot at a fresh d20. On a
+        // multiclass carrier the first-listed source fires first;
+        // both current entries are once-per-short-rest auto-fire so
+        // either order is defensible.
         //
-        // Distinct from the reroll cohort in shape: DOOL keeps the d20
-        // and adds a die, so a d20(3) that Fanatical Focus rerolls to
-        // another 3 stays failed, while the same d20(3) that DOOL
-        // boosts picks up +1d10 (avg +5.5) and pushes past most
-        // mid-DC saves.
-        let dool_ready = !outcome.passed()
-            && self.actors.get(&actor_id).is_some_and(|a| {
-                a.feature_available(crate::actions::class_features::DARK_ONES_OWN_LUCK_TAG)
-            });
-        if dool_ready {
-            if let Some(actor) = self.actors.get_mut(&actor_id) {
-                actor.spend_feature(crate::actions::class_features::DARK_ONES_OWN_LUCK_TAG);
-            }
-            let bonus = self.roll(&Dice::new(1, 10));
-            let bonus_total = raw as i32 + modifier + extra + bonus as i32;
-            let bonus_outcome = if bonus_total >= dc {
-                SaveOutcome::Pass
-            } else {
-                SaveOutcome::Fail
-            };
-            self.log(format!(
-                "  dark one's own luck: +1d10({}) = {} vs DC {} \u{2014} {}",
-                bonus,
-                bonus_total,
-                dc,
-                if bonus_outcome.passed() {
-                    "pass"
-                } else {
-                    "fail"
+        // Distinct from the reroll cohort in shape: this cohort
+        // keeps the d20 and adds dice, so a d20(3) that Fanatical
+        // Focus rerolls to another 3 stays failed, while the same
+        // d20(3) that DOOL boosts picks up +1d10 (avg +5.5) and
+        // pushes past most mid-DC saves.
+        if !outcome.passed() {
+            let mut boosted_pass: Option<SaveOutcome> = None;
+            for source in FAILED_SAVE_ADD_DIE_SOURCES {
+                let Some(actor) = self.actors.get_mut(&actor_id) else { break; };
+                if !(source.consume)(actor) {
+                    continue;
                 }
-            ));
-            if bonus_outcome.passed() {
-                return bonus_outcome;
+                let bonus = self.roll(&source.dice);
+                let bonus_total = raw as i32 + modifier + extra + bonus as i32;
+                let bonus_outcome = if bonus_total >= dc {
+                    SaveOutcome::Pass
+                } else {
+                    SaveOutcome::Fail
+                };
+                self.log(format!(
+                    "  {}: +{}({}) = {} vs DC {} \u{2014} {}",
+                    source.label,
+                    source.dice,
+                    bonus,
+                    bonus_total,
+                    dc,
+                    if bonus_outcome.passed() {
+                        "pass"
+                    } else {
+                        "fail"
+                    }
+                ));
+                if bonus_outcome.passed() {
+                    boosted_pass = Some(bonus_outcome);
+                    break;
+                }
+                // A failed boost from this source doesn't cascade
+                // into the next add-die source — RAW's "you can use
+                // this feature to add" fires once per save. Fall
+                // through to the reroll cohort below.
+                break;
+            }
+            if let Some(pass) = boosted_pass {
+                return pass;
             }
         }
         // 5e Fighter Indomitable + Oathbreaker Paladin Fanatical
@@ -50555,6 +50666,162 @@ mod tests {
                 charge_burnt,
             );
         }
+    }
+
+    /// Favored by the Gods ships on the Divine Soul Sorcerer template
+    /// with an unspent charge — the tag is on `features_max` at
+    /// instantiation so the charge starts available and the short-rest
+    /// refresh path fires. Distinct from the baseline `SORCERER_TEMPLATE`
+    /// which doesn't carry the subclass tag.
+    #[test]
+    fn favored_by_the_gods_ships_on_divine_soul_sorcerer_template() {
+        use crate::actions::class_features::FAVORED_BY_THE_GODS_TAG;
+        use crate::actors::creatures::sorcerers::{
+            DIVINE_SOUL_SORCERER_TEMPLATE, SORCERER_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let ds = e
+            .instantiate_creature(&DIVINE_SOUL_SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let base = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&ds].feature_available(FAVORED_BY_THE_GODS_TAG),
+            "Divine Soul Sorcerer ships FAVORED_BY_THE_GODS_TAG"
+        );
+        assert!(
+            !e.actors[&base].feature_available(FAVORED_BY_THE_GODS_TAG),
+            "baseline Sorcerer doesn't ship FAVORED_BY_THE_GODS_TAG (subclass feature)"
+        );
+    }
+
+    /// FBTG spends its charge on the first failed save while the tag
+    /// is unspent. Pins the "auto-fire on fail" semantic through the
+    /// shared `FAILED_SAVE_ADD_DIE_SOURCES` cohort — the save site
+    /// sees the fail, spends the tag, and reads a fresh 2d4 into the
+    /// total.
+    #[test]
+    fn favored_by_the_gods_spends_charge_on_failed_save() {
+        use crate::actions::class_features::FAVORED_BY_THE_GODS_TAG;
+        use crate::actors::creatures::sorcerers::DIVINE_SOUL_SORCERER_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        e.roller = FastRandRoller::with_seed(42);
+        let id = e
+            .instantiate_creature(&DIVINE_SOUL_SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&id].feature_available(FAVORED_BY_THE_GODS_TAG),
+            "FBTG charge starts full"
+        );
+        // Force the save to fail: DC 100 is unreachable on any d20 +
+        // modifier + 2d4 bonus envelope, so FBTG fires (spending the
+        // charge) but doesn't pass.
+        let _ = e.roll_save(id, AbilityScoreType::Wisdom, 100);
+        assert!(
+            !e.actors[&id].feature_available(FAVORED_BY_THE_GODS_TAG),
+            "FBTG tag spent after first failed save"
+        );
+    }
+
+    /// FBTG doesn't fire on a passing save — the tag stays untouched.
+    /// Sibling to `dark_ones_own_luck_does_not_fire_on_passing_save`
+    /// on the shared add-die cohort.
+    #[test]
+    fn favored_by_the_gods_does_not_fire_on_passing_save() {
+        use crate::actions::class_features::FAVORED_BY_THE_GODS_TAG;
+        use crate::actors::creatures::sorcerers::DIVINE_SOUL_SORCERER_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        e.roller = FastRandRoller::with_seed(9);
+        let id = e
+            .instantiate_creature(&DIVINE_SOUL_SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let outcome = e.roll_save(id, AbilityScoreType::Constitution, 0);
+        assert!(outcome.passed(), "DC 0 must pass");
+        assert!(
+            e.actors[&id].feature_available(FAVORED_BY_THE_GODS_TAG),
+            "FBTG charge must NOT burn on a passing save"
+        );
+    }
+
+    /// FBTG refreshes on a short rest — the tag is in
+    /// `SHORT_REST_FEATURES` so spending, resting, and re-checking pins
+    /// the refresh path. Sibling to `dark_ones_own_luck_refreshes_on_short_rest`.
+    #[test]
+    fn favored_by_the_gods_refreshes_on_short_rest() {
+        use crate::actions::class_features::FAVORED_BY_THE_GODS_TAG;
+        use crate::actors::creatures::sorcerers::DIVINE_SOUL_SORCERER_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        use crate::engine::types::AbilityScoreType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        e.roller = FastRandRoller::with_seed(11);
+        let id = e
+            .instantiate_creature(&DIVINE_SOUL_SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Burn the charge.
+        let _ = e.roll_save(id, AbilityScoreType::Wisdom, 100);
+        assert!(!e.actors[&id].feature_available(FAVORED_BY_THE_GODS_TAG));
+        let mut roller = FastRandRoller::with_seed(0);
+        e.actors.get_mut(&id).unwrap().short_rest(&mut roller);
+        assert!(
+            e.actors[&id].feature_available(FAVORED_BY_THE_GODS_TAG),
+            "short rest must refresh FBTG"
+        );
+    }
+
+    /// FBTG can flip a marginal failing save to a pass: uses the same
+    /// seed-sweep sentinel shape as the DOOL variant. The invariant:
+    /// if the outer save passed AND the charge is intact, the initial
+    /// d20 alone cleared the DC (regression sentinel — the failure
+    /// shape "save passes but charge burnt without a boost being
+    /// needed" would be the regression).
+    #[test]
+    fn favored_by_the_gods_boost_can_convert_fail_to_pass() {
+        use crate::actions::class_features::FAVORED_BY_THE_GODS_TAG;
+        use crate::actors::creatures::sorcerers::DIVINE_SOUL_SORCERER_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        use crate::engine::types::AbilityScoreType;
+
+        for seed in 0u64..64 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            e.roller = FastRandRoller::with_seed(seed);
+            let id = e
+                .instantiate_creature(&DIVINE_SOUL_SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let dc = 15;
+            let outcome = e.roll_save(id, AbilityScoreType::Wisdom, dc);
+            let charge_left = e.actors[&id].feature_available(FAVORED_BY_THE_GODS_TAG);
+            let charge_burnt = !charge_left;
+            let passed = outcome.passed();
+            assert!(
+                (passed && !charge_burnt) || charge_burnt,
+                "seed {}: inconsistent FBTG outcome (passed={} charge_burnt={})",
+                seed,
+                passed,
+                charge_burnt,
+            );
+        }
+    }
+
+    /// FBTG is registered in `SHORT_REST_FEATURES` — the cohort-list
+    /// registration is what drives the short-rest refresh, so its
+    /// absence would silently regress the refresh path even if the
+    /// tag were still on the template. Sibling of the parallel
+    /// short-rest registration guard on FANATICAL_FOCUS_TAG.
+    #[test]
+    fn favored_by_the_gods_registered_in_short_rest_features() {
+        use crate::actions::class_features::{FAVORED_BY_THE_GODS_TAG, SHORT_REST_FEATURES};
+        assert!(
+            SHORT_REST_FEATURES.contains(&FAVORED_BY_THE_GODS_TAG),
+            "FBTG must ride the short-rest refresh cohort"
+        );
     }
 
     /// Turn the Faithless ships on the Devotion Paladin template with
