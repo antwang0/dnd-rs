@@ -625,6 +625,91 @@ struct FailedSaveAddDieSource {
 /// feat, a future Peace Cleric Balm of the Summer Court on the
 /// attack-roll lane collapsed to a save-side add-die) drops in as a
 /// new entry with its own `(label, dice, consume)` triple.
+/// Cohort row shape for a target-side reactive per-rest feature that,
+/// on an incoming attack roll against the holder, spends the holder's
+/// reaction + a `feature_available(tag)` charge to impose disadvantage
+/// on the swing. Rows carry only their identifying tag + gating
+/// parameters; the shared gate + spend + log body lives in
+/// `EncounterInstance::try_apply_reactive_disadvantage_source` so a new
+/// sibling drops in as a fresh row rather than a new method.
+///
+/// Rows differ on two axes:
+///   - `range_tiles`: `Some(n)` gates on footprint-Chebyshev distance
+///     (n tiles); `None` skips the range gate entirely (RAW: no range
+///     cap on the feature). Warding Flare's 30ft RAW cap → `Some(12)`
+///     on the 2.5ft grid; Entropic Ward's un-ranged RAW → `None`.
+///   - `requires_sight`: `true` gates on `viewer_can_see(target,
+///     attacker)` (folds the Blinded clause AND the illusion-piercing
+///     concealment clause); `false` skips the sight gate entirely.
+///     Warding Flare's RAW "when a creature you can see" → `true`;
+///     Entropic Ward's un-sighted RAW (the patron's tie transcends
+///     line-of-sight) → `false`.
+///
+/// Both current entries are once-per-short-rest — the `SHORT_REST_FEATURES`
+/// registry refreshes them on the same cadence, so ordering only
+/// matters when a multiclass carries both flags on one turn (the
+/// first-listed row fires first, mirroring
+/// `FAILED_SAVE_ADD_DIE_SOURCES` ordering).
+struct ReactiveDisadvantageSource {
+    /// Feature tag for the row — read via `has_passive_feature(tag)`
+    /// (installed on template) and `feature_available(tag)` /
+    /// `spend_feature(tag)` (the per-rest charge lane). Appears in the
+    /// log line as the row's identity: "warding flare: ..." or
+    /// "entropic ward: ...".
+    tag: &'static str,
+    /// Log-friendly label ("warding flare", "entropic ward"). Distinct
+    /// from `tag` because tags carry a `class.feature` namespace prefix
+    /// ("cleric.warding_flare") that would be noisy in the combat log.
+    log_label: &'static str,
+    /// `Some(n)` if the row gates on footprint-Chebyshev distance ≤ n
+    /// tiles between target and attacker; `None` if the row has no
+    /// range gate.
+    range_tiles: Option<isize>,
+    /// `true` if the row gates on `viewer_can_see(target, attacker)`
+    /// (the shared sight helper folding Blinded + illusion-piercing);
+    /// `false` if the row has no sight gate.
+    requires_sight: bool,
+}
+
+/// Ordered cohort of "target-side reactive per-rest features that
+/// impose disadvantage on an incoming attack roll" sources, walked by
+/// `EncounterInstance::apply_reactive_attack_disadvantage` at the two
+/// attack chokepoints (weapon in `engine::attack::resolve_attack`, spell
+/// in `spell_attack_outcome`). Iteration stops as soon as one source
+/// fires, so at most one per-rest charge burns per incoming attack —
+/// mirrors the "at most one add-die per save" ordering semantics on
+/// `FAILED_SAVE_ADD_DIE_SOURCES`.
+///
+/// Order: entries are consulted in listed order. On a multiclass
+/// holding multiple sources, the first-listed one fires first. Both
+/// current entries are once-per-short-rest; the multiclass ordering
+/// pick is defensible either way.
+///
+/// Entries:
+///   - **Warding Flare** (Light Cleric lv1): 30ft range,
+///     `requires_sight: true`. Ships on `LIGHT_CLERIC_TEMPLATE` via
+///     `WARDING_FLARE_TAG`.
+///   - **Entropic Ward** (Great Old One Warlock lv6): no range gate,
+///     `requires_sight: false`. Ships on
+///     `GREAT_OLD_ONE_WARLOCK_TEMPLATE` via `ENTROPIC_WARD_TAG`.
+///
+/// A new sibling drops in as a fresh row with its own `(tag,
+/// log_label, range_tiles, requires_sight)` quadruple.
+const REACTIVE_ATTACK_DISADVANTAGE_SOURCES: &[ReactiveDisadvantageSource] = &[
+    ReactiveDisadvantageSource {
+        tag: crate::actions::class_features::WARDING_FLARE_TAG,
+        log_label: "warding flare",
+        range_tiles: Some(12),
+        requires_sight: true,
+    },
+    ReactiveDisadvantageSource {
+        tag: crate::actions::class_features::ENTROPIC_WARD_TAG,
+        log_label: "entropic ward",
+        range_tiles: None,
+        requires_sight: false,
+    },
+];
+
 const FAILED_SAVE_ADD_DIE_SOURCES: &[FailedSaveAddDieSource] = &[
     FailedSaveAddDieSource {
         label: "dark one's own luck",
@@ -5637,19 +5722,134 @@ impl EncounterInstance {
     /// (`resolve_attack`) and spell attacks (`spell_attack_outcome`) so
     /// the flare fires uniformly against any attack roll — RAW says
     /// "attack roll" without a weapon-only qualifier.
+    ///
+    /// Post-cohort refactor: this is now a compat wrapper that filters
+    /// the shared `REACTIVE_ATTACK_DISADVANTAGE_SOURCES` cohort down to
+    /// the Warding Flare row so unit tests can pin the row's gates
+    /// (range, sight, charge, reaction) in isolation. Production call
+    /// sites should reach for `apply_reactive_attack_disadvantage`
+    /// (which walks the full cohort — Warding Flare AND Entropic Ward
+    /// AND any future sibling — in one iterator).
     pub fn apply_warding_flare_disadvantage(
         &mut self,
         target_id: usize,
         attacker_id: usize,
     ) -> bool {
         use crate::actions::class_features::WARDING_FLARE_TAG;
+        for source in REACTIVE_ATTACK_DISADVANTAGE_SOURCES {
+            if source.tag == WARDING_FLARE_TAG {
+                return self.try_apply_reactive_disadvantage_source(
+                    target_id,
+                    attacker_id,
+                    source,
+                );
+            }
+        }
+        false
+    }
+
+    /// 5e Great Old One Warlock **Entropic Ward** (lv6 subclass): when
+    /// a creature attacks the warlock, the warlock can spend their
+    /// reaction + the once-per-short-rest charge to impose disadvantage
+    /// on the attack roll. Unlike Warding Flare, RAW carries no range
+    /// or sight gate — the patron's telepathic tie reads the attacker's
+    /// intent regardless of distance or vision.
+    ///
+    /// Returns `true` when the ward fires — the caller should combine
+    /// `Disadvantage` into the attack mode. Returns `false` when the
+    /// gate fails (no charge, no reaction, downed).
+    ///
+    /// Post-cohort refactor: this is now a compat wrapper that filters
+    /// the shared `REACTIVE_ATTACK_DISADVANTAGE_SOURCES` cohort down to
+    /// the Entropic Ward row so unit tests can pin the row's gates
+    /// (charge, reaction — but *not* range or sight) in isolation.
+    /// Production call sites should reach for
+    /// `apply_reactive_attack_disadvantage` (which walks the full
+    /// cohort in one iterator).
+    ///
+    /// The RAW "if the attack misses, your next attack against the
+    /// target has advantage before the end of your next turn" bonus
+    /// rider is left as future work — the disadvantage-on-incoming
+    /// half is the load-bearing tell; the bonus rider needs a new
+    /// target-side one-shot condition tied to the attacker id.
+    pub fn apply_entropic_ward_disadvantage(
+        &mut self,
+        target_id: usize,
+        attacker_id: usize,
+    ) -> bool {
+        use crate::actions::class_features::ENTROPIC_WARD_TAG;
+        for source in REACTIVE_ATTACK_DISADVANTAGE_SOURCES {
+            if source.tag == ENTROPIC_WARD_TAG {
+                return self.try_apply_reactive_disadvantage_source(
+                    target_id,
+                    attacker_id,
+                    source,
+                );
+            }
+        }
+        false
+    }
+
+    /// Walk the shared `REACTIVE_ATTACK_DISADVANTAGE_SOURCES` cohort
+    /// (target-side reactive per-rest disadvantage-imposing features:
+    /// Warding Flare, Entropic Ward, and any future sibling) and fire
+    /// the first row whose gate passes. Returns `true` on the first
+    /// firing (the caller should combine `Disadvantage` into the attack
+    /// mode); returns `false` when no row fires.
+    ///
+    /// Ordering: entries are consulted in listed order. Iteration stops
+    /// as soon as one source fires so at most one per-rest charge burns
+    /// per incoming attack — mirrors the "at most one add-die per save"
+    /// semantics on the `FAILED_SAVE_ADD_DIE_SOURCES` cohort. A
+    /// hypothetical Light Cleric / Great Old One Warlock multiclass
+    /// therefore burns Warding Flare first (listed first) on a swing
+    /// within 30ft that the cleric can see; if either range or sight
+    /// gate closes, Entropic Ward (no range, no sight gate) still
+    /// fires as a fallback.
+    ///
+    /// Called from the two attack chokepoints:
+    ///   - `engine::attack::resolve_attack` for weapon swings.
+    ///   - `spell_attack_outcome` in `actions/spells.rs` for spell
+    ///     attacks.
+    ///
+    /// Both call sites pre-check `mode != RollMode::Disadvantage` to
+    /// skip a wasted charge burn when the swing was already at
+    /// disadvantage from a Protection / long-range / other source.
+    pub fn apply_reactive_attack_disadvantage(
+        &mut self,
+        target_id: usize,
+        attacker_id: usize,
+    ) -> bool {
+        for source in REACTIVE_ATTACK_DISADVANTAGE_SOURCES {
+            if self.try_apply_reactive_disadvantage_source(target_id, attacker_id, source) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Common gate + spend + log body for a single
+    /// `ReactiveDisadvantageSource` row. Returns `true` when the gate
+    /// passes and the reaction + per-rest charge are spent. Returns
+    /// `false` when any gate fails (no tag, no charge, no reaction,
+    /// downed; failing sight gate if the row requires it; failing
+    /// range gate if the row carries one). Factored out so both the
+    /// cohort-walking `apply_reactive_attack_disadvantage` AND the
+    /// row-scoped compat wrappers (`apply_warding_flare_disadvantage`,
+    /// `apply_entropic_ward_disadvantage`) share one gate implementation
+    /// and one log-format shape.
+    fn try_apply_reactive_disadvantage_source(
+        &mut self,
+        target_id: usize,
+        attacker_id: usize,
+        source: &ReactiveDisadvantageSource,
+    ) -> bool {
         use crate::engine::side_effects::Resource;
-        const WARDING_FLARE_RANGE_TILES: isize = 12;
         let Some(target) = self.actors.get(&target_id) else {
             return false;
         };
-        if !target.has_passive_feature(WARDING_FLARE_TAG)
-            || !target.feature_available(WARDING_FLARE_TAG)
+        if !target.has_passive_feature(source.tag)
+            || !target.feature_available(source.tag)
             || !target.can_consume_resource(Resource::Reaction)
             || !target.is_combat_active()
         {
@@ -5657,16 +5857,21 @@ impl EncounterInstance {
         }
         // RAW "when a creature you can see..." gate — routes through the
         // shared `viewer_can_see` helper so both the Blinded clause AND
-        // the "attacker is illusion-concealed and the cleric doesn't
-        // pierce" clause land in one lookup. Pre-refactor this only
-        // checked `!Blinded`, letting an Invisible attacker still draw
-        // the flare charge even though RAW the cleric can't see them.
-        if !self.viewer_can_see(target_id, attacker_id) {
+        // the "attacker is illusion-concealed and the target doesn't
+        // pierce" clause land in one lookup. Sight gate is per-row:
+        // Warding Flare requires it (RAW: "when a creature you can
+        // see"); Entropic Ward does not (RAW: the patron's ward reads
+        // the attacker's intent regardless of sight).
+        if source.requires_sight && !self.viewer_can_see(target_id, attacker_id) {
             return false;
         }
-        if self
-            .footprint_distance(target_id, attacker_id)
-            .is_none_or(|d| d > WARDING_FLARE_RANGE_TILES)
+        // Optional range gate — Warding Flare's 30ft cap collapses to
+        // 12 tiles (2.5ft grid); Entropic Ward's RAW is un-ranged and
+        // rides `None`.
+        if let Some(range) = source.range_tiles
+            && self
+                .footprint_distance(target_id, attacker_id)
+                .is_none_or(|d| d > range)
         {
             return false;
         }
@@ -5678,7 +5883,7 @@ impl EncounterInstance {
                 Some(a) => a,
                 None => return false,
             };
-            target.spend_feature(WARDING_FLARE_TAG);
+            target.spend_feature(source.tag);
             target.consume_resource(Resource::Reaction);
             let tn = target.name().to_string();
             let an = self
@@ -5689,8 +5894,8 @@ impl EncounterInstance {
             (tn, an)
         };
         self.log(format!(
-            "  warding flare: {} flares a burst of light, imposing disadvantage on {}'s attack",
-            target_name, attacker_name
+            "  {}: {} imposes disadvantage on {}'s attack",
+            source.log_label, target_name, attacker_name
         ));
         true
     }
@@ -49253,6 +49458,291 @@ mod tests {
         assert!(
             e.actors[&cleric].feature_available(WARDING_FLARE_TAG),
             "short rest should refresh the warding flare charge"
+        );
+    }
+
+    /// Entropic Ward (Great Old One Warlock lv6): the passive charge
+    /// lives on the `GREAT_OLD_ONE_WARLOCK_TEMPLATE`,
+    /// `apply_entropic_ward_disadvantage` fires with an unspent
+    /// reaction + charge, spends both, and reports the disadvantage
+    /// via its bool return. Verifies the charge / reaction gates close
+    /// the door once spent — mirrors the Warding Flare unit test on
+    /// the shared cohort.
+    #[test]
+    fn entropic_ward_fires_and_spends_reaction_and_charge() {
+        use crate::actions::class_features::ENTROPIC_WARD_TAG;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::warlocks::GREAT_OLD_ONE_WARLOCK_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let warlock = e
+            .instantiate_creature(&GREAT_OLD_ONE_WARLOCK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Enemy adjacent — Entropic Ward has NO range gate but works
+        // at any distance; this test just checks the base fire.
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        assert!(e.actors[&warlock].has_passive_feature(ENTROPIC_WARD_TAG));
+        assert!(e.actors[&warlock].feature_available(ENTROPIC_WARD_TAG));
+        assert!(e.actors[&warlock].can_consume_resource(Resource::Reaction));
+        // First trigger fires: returns true, spends the charge +
+        // reaction.
+        assert!(e.apply_entropic_ward_disadvantage(warlock, goblin));
+        assert!(
+            !e.actors[&warlock].feature_available(ENTROPIC_WARD_TAG),
+            "entropic ward charge should be spent"
+        );
+        assert!(
+            !e.actors[&warlock].can_consume_resource(Resource::Reaction),
+            "entropic ward should burn the reaction"
+        );
+        // Second trigger bounces: no charge left.
+        assert!(!e.apply_entropic_ward_disadvantage(warlock, goblin));
+    }
+
+    /// Entropic Ward has NO range gate (RAW: no "must be within
+    /// XXft" clause — the patron's telepathic tie reaches anywhere).
+    /// A far attacker still draws the ward — locks the
+    /// `range_tiles: None` cohort row against a drift where a future
+    /// change accidentally added a Warding-Flare-style 30ft cap.
+    #[test]
+    fn entropic_ward_fires_at_any_range() {
+        use crate::actions::class_features::ENTROPIC_WARD_TAG;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::warlocks::GREAT_OLD_ONE_WARLOCK_TEMPLATE;
+        let mut e = ei_with_terrain(60, 60, &[]);
+        let warlock = e
+            .instantiate_creature(&GREAT_OLD_ONE_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Attacker 50+ tiles away — Warding Flare would bounce; the
+        // Entropic Ward row rides `range_tiles: None` and still fires.
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(55, 2), 1, 0)
+            .unwrap();
+        assert!(e.apply_entropic_ward_disadvantage(warlock, goblin));
+        assert!(
+            !e.actors[&warlock].feature_available(ENTROPIC_WARD_TAG),
+            "long-range attacker should still spend the entropic ward charge"
+        );
+    }
+
+    /// Entropic Ward has NO sight gate (RAW: the patron's ward hums
+    /// regardless of sight). A Blinded warlock still fires the ward —
+    /// locks the `requires_sight: false` cohort row against a drift
+    /// where a future change accidentally added a Warding-Flare-style
+    /// sight gate. Distinct from Warding Flare which bounces on
+    /// Blinded (`warding_flare_skips_when_cleric_blinded`).
+    #[test]
+    fn entropic_ward_fires_even_when_warlock_blinded() {
+        use crate::actions::class_features::ENTROPIC_WARD_TAG;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::warlocks::GREAT_OLD_ONE_WARLOCK_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let warlock = e
+            .instantiate_creature(&GREAT_OLD_ONE_WARLOCK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&warlock)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Rounds(3));
+        assert!(e.apply_entropic_ward_disadvantage(warlock, goblin));
+        assert!(
+            !e.actors[&warlock].feature_available(ENTROPIC_WARD_TAG),
+            "blinded warlock should still spend the ward charge (no sight gate)"
+        );
+    }
+
+    /// Entropic Ward has NO sight gate — an invisible attacker still
+    /// draws the ward because the patron reads their intent regardless
+    /// of the warlock's line-of-sight. Distinct from Warding Flare
+    /// which bounces on an invisible attacker
+    /// (`warding_flare_skips_when_attacker_invisible_and_cleric_cannot_pierce`).
+    #[test]
+    fn entropic_ward_fires_against_invisible_attacker() {
+        use crate::actions::class_features::ENTROPIC_WARD_TAG;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::warlocks::GREAT_OLD_ONE_WARLOCK_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let warlock = e
+            .instantiate_creature(&GREAT_OLD_ONE_WARLOCK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&goblin)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Rounds(10));
+        assert!(e.apply_entropic_ward_disadvantage(warlock, goblin));
+        assert!(
+            !e.actors[&warlock].feature_available(ENTROPIC_WARD_TAG),
+            "invisible attacker should still spend the ward charge (no sight gate)"
+        );
+    }
+
+    /// Baseline warlocks (patron-less baseline `WARLOCK_TEMPLATE`,
+    /// Fiend, Undying) MUST NOT ship the Entropic Ward tag — the
+    /// template drift check that keeps the subclass feature
+    /// exclusively on `GREAT_OLD_ONE_WARLOCK_TEMPLATE`. Mirrors the
+    /// `undying_warlock_carries_aspect_of_the_moon_tag` test on the
+    /// shared "subclass-only tag lands only on the subclass template"
+    /// pattern.
+    #[test]
+    fn entropic_ward_lands_only_on_great_old_one_warlock() {
+        use crate::actions::class_features::ENTROPIC_WARD_TAG;
+        use crate::actors::creatures::warlocks::{
+            FIEND_WARLOCK_TEMPLATE, GREAT_OLD_ONE_WARLOCK_TEMPLATE, UNDYING_WARLOCK_TEMPLATE,
+            WARLOCK_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let baseline = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(1, 1), 0, 0)
+            .unwrap();
+        let fiend = e
+            .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(3, 1), 0, 1)
+            .unwrap();
+        let undying = e
+            .instantiate_creature(&UNDYING_WARLOCK_TEMPLATE, Coordinate::new(5, 1), 0, 2)
+            .unwrap();
+        let goo = e
+            .instantiate_creature(&GREAT_OLD_ONE_WARLOCK_TEMPLATE, Coordinate::new(7, 1), 0, 3)
+            .unwrap();
+        assert!(
+            !e.actors[&baseline].has_passive_feature(ENTROPIC_WARD_TAG),
+            "baseline warlock must not ship entropic ward"
+        );
+        assert!(
+            !e.actors[&fiend].has_passive_feature(ENTROPIC_WARD_TAG),
+            "fiend warlock must not ship entropic ward"
+        );
+        assert!(
+            !e.actors[&undying].has_passive_feature(ENTROPIC_WARD_TAG),
+            "undying warlock must not ship entropic ward"
+        );
+        assert!(
+            e.actors[&goo].has_passive_feature(ENTROPIC_WARD_TAG),
+            "great old one warlock ships entropic ward"
+        );
+        assert!(
+            e.actors[&goo].feature_available(ENTROPIC_WARD_TAG),
+            "great old one warlock's entropic ward charge is available at instantiation"
+        );
+    }
+
+    /// Entropic Ward refreshes on a short rest via the shared
+    /// `SHORT_REST_FEATURES` registry. After a spend + short_rest the
+    /// charge is back. Mirrors the Warding Flare refresh test
+    /// (`warding_flare_refreshes_on_short_rest`) on the shared
+    /// short-rest-refresh lane.
+    #[test]
+    fn entropic_ward_refreshes_on_short_rest() {
+        use crate::actions::class_features::ENTROPIC_WARD_TAG;
+        use crate::actors::creatures::warlocks::GREAT_OLD_ONE_WARLOCK_TEMPLATE;
+        use crate::engine::dice::FastRandRoller;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let warlock = e
+            .instantiate_creature(&GREAT_OLD_ONE_WARLOCK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&warlock)
+            .unwrap()
+            .spend_feature(ENTROPIC_WARD_TAG);
+        assert!(!e.actors[&warlock].feature_available(ENTROPIC_WARD_TAG));
+        let mut r = FastRandRoller::with_seed(1);
+        e.actors.get_mut(&warlock).unwrap().short_rest(&mut r);
+        assert!(
+            e.actors[&warlock].feature_available(ENTROPIC_WARD_TAG),
+            "short rest should refresh the entropic ward charge"
+        );
+    }
+
+    /// End-to-end: a goblin swinging a scimitar at a Great Old One
+    /// Warlock triggers Entropic Ward — the log records the ward, the
+    /// charge is spent, and the attack log records the disadvantage.
+    /// This verifies the wire-in inside
+    /// `engine::attack::resolve_attack` alongside the standalone
+    /// `apply_entropic_ward_disadvantage` unit test — mirrors
+    /// `warding_flare_fires_through_actual_attack` on the sibling
+    /// entry in the shared cohort.
+    #[test]
+    fn entropic_ward_fires_through_actual_attack() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::ENTROPIC_WARD_TAG;
+        use crate::actions::monster_attacks::SCIMITAR;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::warlocks::GREAT_OLD_ONE_WARLOCK_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let warlock = e
+            .instantiate_creature(&GREAT_OLD_ONE_WARLOCK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        assert!(e.actors[&warlock].feature_available(ENTROPIC_WARD_TAG));
+        let log_before = e.messages().len();
+        let action: &dyn Action = &SCIMITAR;
+        let effects = action.side_effects(&mut e, goblin, Some(&vec![warlock]), None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        // Entropic Ward fires: the log records it, the charge is spent.
+        let warded = e.messages()[log_before..]
+            .iter()
+            .any(|m| m.contains("entropic ward"));
+        assert!(warded, "entropic ward should fire during the attack");
+        assert!(
+            !e.actors[&warlock].feature_available(ENTROPIC_WARD_TAG),
+            "entropic ward charge should be spent after the attack"
+        );
+    }
+
+    /// Cohort ordering: with BOTH Warding Flare AND Entropic Ward on
+    /// one actor (a hypothetical Light Cleric / Great Old One Warlock
+    /// multiclass — approximated here by manually installing both
+    /// tags), the first-listed row in
+    /// `REACTIVE_ATTACK_DISADVANTAGE_SOURCES` (Warding Flare) fires
+    /// first and burns only its own charge. The second (Entropic
+    /// Ward) stays intact for a follow-up round — locks the "at most
+    /// one per-rest charge per incoming attack" ordering semantics
+    /// on the cohort iterator.
+    #[test]
+    fn reactive_disadvantage_cohort_fires_first_row_only() {
+        use crate::actions::class_features::{ENTROPIC_WARD_TAG, WARDING_FLARE_TAG};
+        use crate::actors::creatures::clerics::LIGHT_CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let cleric = e
+            .instantiate_creature(&LIGHT_CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        // Multiclass approximation: layer Entropic Ward onto the Light
+        // Cleric (who already has Warding Flare on template) — locks
+        // the cohort ordering without needing a real dual-feature
+        // template. Same shape as the Half-Orc Relentless Endurance
+        // + Ancients Paladin Undying Sentinel multiclass fixture used
+        // to pin `LETHAL_DAMAGE_ABSORBER_FEATURES` ordering.
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .grant_feature_for_test(ENTROPIC_WARD_TAG);
+        assert!(e.actors[&cleric].feature_available(WARDING_FLARE_TAG));
+        assert!(e.actors[&cleric].feature_available(ENTROPIC_WARD_TAG));
+        // Fire the cohort iterator: Warding Flare (first-listed) fires,
+        // Entropic Ward (second) does NOT.
+        assert!(e.apply_reactive_attack_disadvantage(cleric, goblin));
+        assert!(
+            !e.actors[&cleric].feature_available(WARDING_FLARE_TAG),
+            "warding flare (first cohort row) should be spent"
+        );
+        assert!(
+            e.actors[&cleric].feature_available(ENTROPIC_WARD_TAG),
+            "entropic ward (second cohort row) should still be available"
         );
     }
 

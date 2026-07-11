@@ -134,18 +134,24 @@ fn spell_attack_outcome(
     // consumed exactly once (matching weapon-attack semantics in
     // resolve_attack).
     let mut mode = encounter.attack_mode_with_riders(caster_id, target_id, is_melee, true);
-    // 5e Light Domain Cleric **Warding Flare** (lv1 subclass): mirrored
-    // from the weapon-attack path in `engine::attack::resolve_attack`
-    // since RAW's "attack roll" trigger applies to spell attacks too.
-    // The target may spend their reaction + per-rest charge to impose
+    // 5e target-side reactive per-rest disadvantage-imposing features
+    // (Light Domain Cleric Warding Flare lv1, Great Old One Warlock
+    // Entropic Ward lv6, and any future sibling): mirrored from the
+    // weapon-attack path in `engine::attack::resolve_attack` since
+    // RAW's "attack roll" trigger applies to spell attacks too. The
+    // target may spend their reaction + per-rest charge to impose
     // disadvantage on this spell attack roll. Layered here (after
     // `attack_mode_with_riders`) so any advantage the spell attack
     // picked up from Help / Bless / Hidden still combines cleanly with
-    // the flare disadvantage via `RollMode::combine`. Skipped when
-    // the mode is already disadvantage (a wasted flare charge would
-    // provide no additional tax).
+    // the reactive disadvantage via `RollMode::combine`. Skipped when
+    // the mode is already disadvantage (a wasted per-rest charge would
+    // provide no additional tax). Routes through the shared
+    // `REACTIVE_ATTACK_DISADVANTAGE_SOURCES` cohort so a hypothetical
+    // Light Cleric / Great Old One Warlock multiclass burns at most
+    // one charge per incoming spell attack — iteration stops on first
+    // firing.
     if mode != crate::engine::dice::RollMode::Disadvantage
-        && encounter.apply_warding_flare_disadvantage(target_id, caster_id)
+        && encounter.apply_reactive_attack_disadvantage(target_id, caster_id)
     {
         mode = mode.combine(crate::engine::dice::RollMode::Disadvantage);
     }

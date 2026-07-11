@@ -143,6 +143,14 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // (2d4 avg +5 vs 1d10 avg +5.5) and the source chassis (Sorcerer
     // subclass vs. Warlock subclass).
     FAVORED_BY_THE_GODS_TAG,
+    // 5e Great Old One Warlock level-6 subclass feature — Entropic
+    // Ward. Reactive per-rest disadvantage on an incoming attack roll
+    // against the warlock. RAW: refreshes on short or long rest —
+    // sibling on the shared "reactive per-rest disadvantage on an
+    // incoming attack roll" lane with Warding Flare (Light Cleric
+    // lv1) but with an unlimited range (no 30ft cap): the warlock's
+    // patron reads the attacker's mind anywhere on the battlefield.
+    ENTROPIC_WARD_TAG,
 ];
 
 /// Battle Master maneuver tags. RAW: maneuvers cost superiority dice
@@ -5394,6 +5402,63 @@ pub const ELDRITCH_MIND_TAG: &str = "warlock.eldritch_mind";
 /// `WARLOCK_TEMPLATE` (Patron is a subclass pick); rides on the
 /// dedicated `FIEND_WARLOCK_TEMPLATE`.
 pub const DARK_ONES_BLESSING_TAG: &str = "warlock.dark_ones_blessing";
+
+/// 5e Warlock — Otherworldly Patron **The Great Old One**, level-6
+/// subclass feature **Entropic Ward**. Reactive per-rest gate: when a
+/// creature makes an attack roll against the warlock, the warlock may
+/// spend their reaction + the once-per-short-rest charge to impose
+/// disadvantage on that attack roll. RAW: "As a reaction when a
+/// creature makes an attack roll against you, you can impose
+/// disadvantage on that roll. If the attack misses you, your next
+/// attack roll against the creature has advantage if you make it
+/// before the end of your next turn. Once you use this feature, you
+/// can't use it again until you finish a short or long rest."
+///
+/// Sibling on the shared **reactive per-rest disadvantage on an
+/// incoming attack roll** lane with Warding Flare (Light Cleric
+/// lv1); both flow through the shared
+/// `REACTIVE_ATTACK_DISADVANTAGE_SOURCES` cohort at the attack
+/// chokepoint via `EncounterInstance::apply_reactive_attack_disadvantage`.
+/// Distinct in shape from Bend Luck (Wild Magic Sorcerer lv6, cost
+/// 2 SP + reaction, subtracts 1d4 from the attacker's total instead
+/// of imposing disadvantage) and from Uncanny Dodge (Rogue lv5,
+/// halves damage instead of imposing disadvantage).
+///
+/// **Range**: RAW gates only on "a creature makes an attack roll
+/// against you" — no 30ft "must be within" cap the way Warding Flare
+/// carries. The patron's telepathic tie reaches anywhere on the
+/// battlefield; the ward reads the attacker's intent regardless of
+/// distance. Encoded on the cohort row as `range_tiles: None`
+/// (vs. `Some(12)` for Warding Flare's 30ft cap).
+///
+/// **Sight gate**: RAW does NOT require the warlock to see the
+/// attacker — "the ward hums against your skin when hostile intent
+/// stirs, even from beyond your sight". We elide the
+/// `viewer_can_see` gate on this row (vs. Warding Flare which
+/// requires it) via the `requires_sight: false` flag on the cohort
+/// row. Rides the shared cohort helper uniformly with its sight-gated
+/// siblings so the two features stay one iterator apart, not two
+/// forks in the attack-resolution code.
+///
+/// **The bonus advantage-on-miss half is left as future work.** RAW's
+/// "if the attack misses you, your next attack roll against the
+/// creature has advantage" is a target-side one-shot rider tied to a
+/// specific attacker id, which would need a new `EntropicWardAdvantage`
+/// condition or a `pending_advantage_against_id` slot on the warlock.
+/// The disadvantage-on-incoming half is the load-bearing tell — the
+/// bonus rider is left for a future nudge, mirroring how Storm
+/// Sorcery's "eruption on cast" half was staged behind Heart of the
+/// Storm's resistance clause.
+///
+/// Fires at the shared attack chokepoint in
+/// `EncounterInstance::apply_reactive_attack_disadvantage` (called
+/// from `resolve_attack` for weapon attacks and `spell_attack_outcome`
+/// for spell attacks). Refreshes via `SHORT_REST_FEATURES` — the tag
+/// lands on `features_max` for the holder and `features_remaining`
+/// refills on short rest. Add this tag to a warlock template's
+/// `features` set to install it (ships on
+/// `GREAT_OLD_ONE_WARLOCK_TEMPLATE`).
+pub const ENTROPIC_WARD_TAG: &str = "warlock.entropic_ward";
 
 /// 5e Warlock — Otherworldly Patron **The Fiend**, level-6 feature
 /// **Dark One's Own Luck**. Auto-fire once-per-short-rest gate: when

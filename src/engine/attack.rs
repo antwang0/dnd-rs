@@ -241,17 +241,22 @@ pub fn resolve_attack_outcome(
             "  protection: attack against target imposed disadvantage (protector's reaction spent)",
         );
     }
-    // 5e Light Domain Cleric Warding Flare (lv1 subclass): the target may
-    // spend their reaction (+ per-rest charge) to impose disadvantage on
-    // this attack roll. Wired here rather than inside `compute_attack_mode`
-    // because the reaction spend + log needs `&mut encounter`. RAW is
-    // "any attack roll" — no weapon-only qualifier — so the same helper
-    // fires on spell attacks via `spell_attack_outcome`. Layered AFTER
-    // Protection so a target with both an adjacent Protection ally AND
-    // a self-carried Warding Flare doesn't waste the flare charge when
-    // Protection already handled the tax.
+    // 5e target-side reactive per-rest disadvantage-imposing features
+    // (Light Domain Cleric Warding Flare lv1, Great Old One Warlock
+    // Entropic Ward lv6, and any future sibling). Wired here rather
+    // than inside `compute_attack_mode` because the reaction spend +
+    // log needs `&mut encounter`. RAW is "any attack roll" — no
+    // weapon-only qualifier — so the same helper fires on spell
+    // attacks via `spell_attack_outcome`. Layered AFTER Protection so
+    // a target with both an adjacent Protection ally AND a
+    // self-carried Warding Flare / Entropic Ward doesn't waste the
+    // per-rest charge when Protection already handled the tax. Routes
+    // through the shared `REACTIVE_ATTACK_DISADVANTAGE_SOURCES`
+    // cohort so a hypothetical Light Cleric / Great Old One Warlock
+    // multiclass burns at most one per-rest charge per incoming
+    // attack — iteration stops on first firing.
     if mode != crate::engine::dice::RollMode::Disadvantage
-        && encounter.apply_warding_flare_disadvantage(p.target_id, p.caster_id)
+        && encounter.apply_reactive_attack_disadvantage(p.target_id, p.caster_id)
     {
         mode = mode.combine(crate::engine::dice::RollMode::Disadvantage);
     }

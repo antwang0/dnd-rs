@@ -362,3 +362,85 @@ pub static UNDYING_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         ..WARLOCK_TEMPLATE.clone()
     }
 });
+
+/// Great Old One Warlock — Otherworldly Patron **The Great Old One**
+/// subclass build (PHB). Identical envelope to the baseline
+/// `WARLOCK_TEMPLATE` (CHA-primary half-caster with Pact Magic,
+/// Eldritch Blast + Hex + Witch Bolt at will, Agonizing / Repelling /
+/// Eldritch Mind invocations) with one subclass feature layered on:
+/// **Entropic Ward** (Great Old One lv6) — once-per-short-rest
+/// reactive disadvantage on an incoming attack roll against the
+/// warlock.
+///
+/// The signature "the patron's mind reads the attacker's intent"
+/// tell — where a baseline Warlock eats an attack roll clean, the
+/// Great Old One Warlock leans on their patron's alien awareness to
+/// force a re-roll-with-the-lower-die on the swing. Ships as a
+/// passive charge on the template; the trigger fires automatically at
+/// the attack chokepoint (`resolve_attack` for weapon swings and
+/// `spell_attack_outcome` for spell attacks) via
+/// `EncounterInstance::apply_reactive_attack_disadvantage`, which
+/// walks the shared `REACTIVE_ATTACK_DISADVANTAGE_SOURCES` cohort
+/// (Warding Flare's sibling entry rides the same iterator).
+///
+/// Sibling on the reactive-per-rest-disadvantage lane to Warding
+/// Flare (`LIGHT_CLERIC_TEMPLATE`) but distinct on two axes:
+///   1. **Range** — Warding Flare's RAW 30ft "must be within" cap
+///      collapses to 12 tiles; Entropic Ward has NO range gate (RAW:
+///      the patron's telepathic tie reaches anywhere).
+///   2. **Sight** — Warding Flare gates on "you can see the
+///      attacker" (routes through `viewer_can_see`); Entropic Ward
+///      does NOT (RAW: the ward hums against your skin regardless of
+///      sight).
+/// A hypothetical Light Cleric / Great Old One Warlock multiclass
+/// would carry BOTH cohort rows; the iterator returns after the
+/// first firing so at most one per-rest charge burns per incoming
+/// attack, matching the "at most one add-die per save" ordering
+/// semantics on the failed-save recovery cohort.
+///
+/// Distinct from `FIEND_WARLOCK_TEMPLATE` (Dark One's Blessing +
+/// Dark One's Own Luck + Fiendish Resilience — the fiery kill-focused
+/// build), `UNDYING_WARLOCK_TEMPLATE` (Aspect of the Moon — the
+/// insomniac's build), and `WARLOCK_TEMPLATE` (patron-less baseline).
+/// RAW's Great Old One patron picks up other features not shipped
+/// on this template — **Awakened Mind** (lv1: telepathy within 30ft;
+/// no combat surface without a communication mechanic),
+/// **Whispers of the Grave** (lv10: cast Speak with Dead at will;
+/// out-of-combat), and **Create Thrall** (lv14 capstone: touch a
+/// humanoid to install permanent Charmed; a one-shot ritual with no
+/// clean combat surface). Only the lv6 Entropic Ward has a
+/// mechanical surface on the CR-4 chassis that plugs cleanly into
+/// the shared reactive-attack-disadvantage cohort, so we ship that
+/// half and leave the rest as future work.
+///
+/// Ships the CR-4 template above the strict RAW lv6 gate for the
+/// same reason `FIEND_WARLOCK_TEMPLATE` ships Fiendish Resilience
+/// (RAW lv10) and `DRACONIC_SORCERER_TEMPLATE` ships Draconic
+/// Resilience (RAW lv6): class templates target a balanced playable
+/// level, not lockstep PHB progression.
+///
+/// Glyph 'O' — distinct from baseline warlock 'L', Fiend warlock
+/// 'F', and Undying warlock 'U'; 'O' for the alien "Old One" flavor
+/// (the sorcerer as a channel for the patron's incomprehensible
+/// awareness).
+pub static GREAT_OLD_ONE_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Warlock envelope wholesale
+    // and layer on the one Great Old One patron feature — Entropic
+    // Ward via the `ENTROPIC_WARD_TAG` passive-feature tag registered
+    // in `SHORT_REST_FEATURES`. The `..base.clone()` tail picks up
+    // every other field — stats, spell slots, save profs, invocation-
+    // driven cantrips — without an N-line field-by-field copy. Same
+    // shape as `UNDYING_WARLOCK_TEMPLATE`'s tag-only subclass build
+    // (Aspect of the Moon) and the sorcerer / paladin / rogue /
+    // ranger subclass templates.
+    let mut features = WARLOCK_TEMPLATE.features.clone();
+    features.insert(crate::actions::class_features::ENTROPIC_WARD_TAG);
+    CreatureTemplate {
+        name: "Great Old One Warlock",
+        // 'O' — distinct from baseline warlock 'L', Fiend 'F', and
+        // Undying 'U'; 'O' for the alien "Old One" flavor.
+        glyph: 'O',
+        features,
+        ..WARLOCK_TEMPLATE.clone()
+    }
+});
