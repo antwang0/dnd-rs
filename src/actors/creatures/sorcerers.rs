@@ -657,3 +657,97 @@ pub static STORM_SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         ..SORCERER_TEMPLATE.clone()
     }
 });
+
+/// Aberrant Mind Sorcerer — Sorcerous Origin **Aberrant Mind** subclass
+/// build (TCE). Identical envelope to the baseline `SORCERER_TEMPLATE`
+/// (CHA-primary level-9 full-caster, Empowered / Quickened / Heightened
+/// / Twinned / Careful / Distant / Extended / Seeking / Subtle /
+/// Transmuted metamagic, 6 sorcery points, Wild Magic Surge / Bend Luck
+/// / Tides of Chaos / Sorcerous Restoration) with one subclass feature
+/// layered on: **Psychic Defenses** (Aberrant Mind lv14) — passive
+/// psychic damage resistance AND passive Charmed / Frightened install
+/// immunity.
+///
+/// Pairs naturally with the sorcerer's existing psychic-blast list
+/// (Mind Spike / Psychic Lance / Psychic Scream / Weird on the psychic
+/// lane) — an Aberrant Mind casting Psychic Scream into their own tile
+/// no longer eats a mirror share of their own damage; the resistance
+/// folder halves the self-hit alongside the target-side spread. The
+/// Charmed / Frightened install immunity locks the aberrant sorcerer
+/// out of most enchantment / fear presses — Charm Person, Fear, Hold
+/// Person, and the various Frightened-installer bursts (Dreadful
+/// Aspect, Wrath of the Storm rider) all bounce off the immunity
+/// cohort's `FLAG_DRIVEN_IMMUNITIES` row.
+///
+/// Distinct from the Wild Magic baseline (`SORCERER_TEMPLATE`) on the
+/// "Wild Magic Surge / Tides of Chaos / Bend Luck" tell: the Aberrant
+/// Mind Sorcerer keeps those but adds a persistent defensive lane on
+/// top. Distinct from `DRACONIC_SORCERER_TEMPLATE` on the resistance
+/// axis (Psychic vs. Fire) and from `STORM_SORCERER_TEMPLATE` on the
+/// resistance axis (Psychic vs. Lightning + Thunder) — a hypothetical
+/// multi-Origin carrier stacks all three passive-resistance flag
+/// closures cleanly under the "one halving per damage instance" rule
+/// since the three subclass-picked resistance sets never overlap on a
+/// single damage type. Distinct from Nature's Ward (Ancients Paladin
+/// lv15) on the same Charmed + Frightened immunity lane: same
+/// suppressed conditions, different chassis (Sorcerer subclass vs.
+/// Paladin subclass) and different source flag — either row alone
+/// suffices, both together are redundant (a hypothetical Ancients
+/// Paladin / Aberrant Mind Sorcerer multi-class stacks the two rows
+/// cleanly under the OR-of-cohort-hits semantics `dynamic_immunity_to`
+/// already honors).
+///
+/// RAW's Aberrant Mind picks up other features not shipped on this
+/// template — **Telepathic Speech** (lv1: 30ft telepathy, no combat
+/// surface), **Psionic Spells** (lv1: subclass-only expanded spell
+/// list, currently folded into the shared sorcerer roster since the
+/// Mind Sliver / Mind Spike / Detect Thoughts / Calm Emotions / etc.
+/// entries are already available on the baseline chassis via the
+/// shared spells module), **Psionic Sorcery** (lv6: cast Psionic
+/// Spells for reduced-cost SP with no material / verbal / somatic
+/// components — needs a per-spell prime gate not yet wired), and
+/// **Warping Implosion** (lv18 capstone: teleport + force burst — an
+/// SP-fueled apex burst). Only the lv14 Psychic Defenses passive has
+/// a mechanical surface on the CR-4 chassis without a spend-side
+/// hook, so we ship that half and leave the rest as future work.
+///
+/// Ships the CR-4 template above the strict RAW lv14 gate for the
+/// same reason `DRACONIC_SORCERER_TEMPLATE` ships Draconic Resilience
+/// (RAW lv6) and `STORM_SORCERER_TEMPLATE` ships Heart of the Storm
+/// (RAW lv6) on their CR-4 chassis — class templates target a balanced
+/// playable level, not lockstep PHB progression. Glyph 'Ψ' so the
+/// Aberrant Mind Sorcerer shows up distinctly on the map next to the
+/// baseline Wild Magic Sorcerer 'S', the Draconic Sorcerer 'D', and
+/// the Storm Sorcerer 'Ω' — greek psi for the psionic / psychic
+/// flavor.
+pub static ABERRANT_MIND_SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Sorcerer envelope
+    // wholesale and layer on the Aberrant Mind lv14 feature tag:
+    //   - `PSYCHIC_DEFENSES_TAG` (lv14): passive psychic resistance +
+    //     Charmed / Frightened install immunity. Tag-based rather than a
+    //     struct-field flag since the shared cohort tables
+    //     (`PASSIVE_TYPED_RESISTANCES` + `FLAG_DRIVEN_IMMUNITIES`) both
+    //     fold one tag through one row apiece — no need for a new
+    //     `has_psychic_defenses: bool` struct field. Read at the shared
+    //     `PASSIVE_TYPED_RESISTANCES` cohort in `effective_damage` next
+    //     to Heart of the Storm's lightning + thunder row, and at the
+    //     shared `FLAG_DRIVEN_IMMUNITIES` cohort in `dynamic_immunity_to`
+    //     next to Nature's Ward's Charmed + Frightened row.
+    //
+    // The `..base.clone()` tail picks up every other field — actions,
+    // spell slots, sorcery points, save profs, features — without an
+    // N-line field-by-field copy. Same shape as
+    // `STORM_SORCERER_TEMPLATE`'s tag-only subclass build (Heart of
+    // the Storm) and `UNDYING_WARLOCK_TEMPLATE`'s tag-only subclass
+    // build (Aspect of the Moon).
+    let mut features = SORCERER_TEMPLATE.features.clone();
+    features.insert(crate::actions::class_features::PSYCHIC_DEFENSES_TAG);
+    CreatureTemplate {
+        name: "Aberrant Mind Sorcerer",
+        // 'Ψ' — distinct from baseline sorcerer 'S', Draconic 'D', and
+        // Storm 'Ω', greek psi for the psionic / psychic flavor.
+        glyph: 'Ψ',
+        features,
+        ..SORCERER_TEMPLATE.clone()
+    }
+});

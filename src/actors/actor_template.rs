@@ -187,6 +187,78 @@ const PASSIVE_TYPED_RESISTANCES: &[PassiveTypedResistance] = &[
         ),
         types: &[DamageType::Lightning, DamageType::Thunder],
     },
+    // 5e Sorcerer Aberrant Mind **Psychic Defenses** (level 14, TCE).
+    // RAW grants resistance to psychic damage AND advantage on saves
+    // vs. Charmed / Frightened. The resistance clause lands here; the
+    // Charmed / Frightened install-immunity clause (RAW's advantage-
+    // on-save collapsed to immunity for the same reason Halfling Brave
+    // does) lands as a companion row on `FLAG_DRIVEN_IMMUNITIES` below.
+    // Ships on `ABERRANT_MIND_SORCERER_TEMPLATE` above its strict RAW
+    // lv14 gate for the same reason Heart of the Storm (RAW lv6) ships
+    // on `STORM_SORCERER_TEMPLATE` — class templates target a balanced
+    // playable level, not lockstep PHB progression.
+    PassiveTypedResistance {
+        flag: |a| a.has_passive_feature(
+            crate::actions::class_features::PSYCHIC_DEFENSES_TAG,
+        ),
+        types: &[DamageType::Psychic],
+    },
+];
+
+/// One row in the `PASSIVE_TYPED_IMMUNITIES` cohort — a single passive
+/// flag / tag that grants **immunity** (not resistance) to every damage
+/// type in `types`. Immunity short-circuits the damage pipeline before
+/// any halving; the flag closure reads a racial / subclass passive-
+/// feature accessor on `ActorInstance` the same way `PassiveTypedResistance`
+/// does on the sibling resistance lane.
+///
+/// A slice of damage types (rather than a single one) lets a hypothetical
+/// multi-type immunity feature (a future Bladeling's Painful Quills
+/// necrotic + slashing immunity, an Elemental Adept multi-type immunity)
+/// land as a single row without duplicating the flag closure per
+/// damage type. Matches the shape of `PassiveTypedResistance { flag,
+/// types }` on the sibling passive-resistance lane and
+/// `FlagDrivenImmunity { flag, suppressed }` on the passive-condition-
+/// immunity lane — same "flag closure + slice of the affected axis"
+/// declarative-table pattern.
+struct PassiveTypedImmunity {
+    flag: fn(&ActorInstance) -> bool,
+    types: &'static [DamageType],
+}
+
+/// Passive-feature-driven typed **immunity** table read by
+/// `is_immune_to_damage_type`. Each row is a `PassiveTypedImmunity
+/// { flag, types }`; the flag returning true short-circuits the damage
+/// pipeline to zero on any damage instance of a listed type.
+///
+/// Sibling to `PASSIVE_TYPED_RESISTANCES` on the passive-feature-flag
+/// lane (that cohort halves damage, this cohort zeroes it); sibling to
+/// `TYPED_IMMUNITY_CONDITIONS` on the "damage-type immunity" surface
+/// (that cohort keys off held conditions like Mind Blank / Silence /
+/// Petrified, this cohort keys off always-on template flags). The two
+/// immunity lanes are OR'd — any hit is sufficient to zero the damage
+/// instance.
+///
+/// Entries:
+///   - **Purity of Body (Monk lv10)**: poison-damage immunity. Sibling
+///     to the Petrified condition's poison-immunity row on
+///     `TYPED_IMMUNITY_CONDITIONS` — same suppressed type, different
+///     source (Monk passive vs. condition-held). The Poisoned-condition
+///     half lives on `FLAG_DRIVEN_IMMUNITIES` next to Petrified's
+///     Poisoned bounce.
+///
+/// A new passive typed immunity (Bladeling's Painful Quills necrotic
+/// immunity, a hypothetical Iron Body monk necrotic immunity, etc.)
+/// drops in here as a one-line entry rather than another hand-rolled
+/// `dt == ... && self.has_passive_feature(...)` branch in
+/// `is_immune_to_damage_type`.
+const PASSIVE_TYPED_IMMUNITIES: &[PassiveTypedImmunity] = &[
+    PassiveTypedImmunity {
+        flag: |a| a.has_passive_feature(
+            crate::actions::class_features::PURITY_OF_BODY_TAG,
+        ),
+        types: &[DamageType::Poison],
+    },
 ];
 
 /// Broad condition-driven immunity table read by `dynamic_immunity_to`.
@@ -316,6 +388,25 @@ const FLAG_DRIVEN_IMMUNITIES: &[FlagDrivenImmunity] = &[
             a.has_passive_feature(crate::actions::class_features::MINDLESS_RAGE_TAG)
                 && a.has_condition(Condition::Raging)
         },
+        suppressed: &[Condition::Charmed, Condition::Frightened],
+    },
+    // 5e Sorcerer Aberrant Mind **Psychic Defenses** (lv14, TCE):
+    // immunity to Charmed AND Frightened installs. RAW grants advantage
+    // on saves vs. those two conditions; collapsed to install-immunity
+    // for the same reason Halfling Brave (advantage vs. Frightened) and
+    // Fey Ancestry (advantage vs. Charmed) collapse — the engine
+    // doesn't tag saves by what condition they defend against. Sibling
+    // to Nature's Ward (Ancients Paladin lv15) on the same Charmed +
+    // Frightened suppression lane — same suppressed set, different
+    // chassis and different source flag; the two rows are OR'd so a
+    // hypothetical Ancients Paladin / Aberrant Mind Sorcerer multi-
+    // class stacks them cleanly under the OR-of-cohort-hits semantics.
+    // The damage-resistance half (psychic) lives on the sibling
+    // `PASSIVE_TYPED_RESISTANCES` row above.
+    FlagDrivenImmunity {
+        flag: |a| a.has_passive_feature(
+            crate::actions::class_features::PSYCHIC_DEFENSES_TAG,
+        ),
         suppressed: &[Condition::Charmed, Condition::Frightened],
     },
 ];
@@ -3118,8 +3209,11 @@ impl ActorInstance {
     ///      — Mind Blank / Silence / Purified etc.).
     ///   3. Item-granted immunity (Periapt of Proof against Poison,
     ///      Ring of Mind Shielding, etc.).
-    ///   4. Class-feature typed immunity — Monk Purity of Body pins
-    ///      Poison damage to zero.
+    ///   4. Passive-feature-driven typed immunity
+    ///      (`PASSIVE_TYPED_IMMUNITIES` — Monk Purity of Body pins
+    ///      Poison damage to zero; future racial / subclass
+    ///      typed-immunity features drop in as a one-line cohort
+    ///      entry).
     ///
     /// Shared read chokepoint for `effective_damage` (which uses it as
     /// its top-of-pipeline immunity short-circuit) and any external
@@ -3132,10 +3226,23 @@ impl ActorInstance {
             Some(DamageModifier::Immunity)
         ) || self.has_condition_immunity(dt)
             || self.item_immunity_to_damage(dt)
-            || (dt == DamageType::Poison
-                && self.has_passive_feature(
-                    crate::actions::class_features::PURITY_OF_BODY_TAG,
-                ))
+            || self.has_passive_typed_immunity(dt)
+    }
+
+    /// True iff the actor holds any passive-feature-driven typed
+    /// immunity to damage of type `dt`. Walks the shared
+    /// `PASSIVE_TYPED_IMMUNITIES` cohort — each row is
+    /// `PassiveTypedImmunity { flag, types }`. Read by
+    /// `is_immune_to_damage_type` (folds into the immunity short-
+    /// circuit at the top of `effective_damage`). A new passive typed
+    /// immunity drops in as a one-line cohort entry rather than
+    /// another hand-rolled `dt == ... && self.has_passive_feature(...)`
+    /// branch here. Sibling to `has_passive_typed_resistance` on the
+    /// resistance lane — same walk shape, different cohort table.
+    fn has_passive_typed_immunity(&self, dt: DamageType) -> bool {
+        PASSIVE_TYPED_IMMUNITIES
+            .iter()
+            .any(|entry| entry.types.contains(&dt) && (entry.flag)(self))
     }
 
     /// True iff the actor holds a condition that grants resistance to

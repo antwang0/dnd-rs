@@ -11165,6 +11165,147 @@ mod tests {
         );
     }
 
+    /// 5e Sorcerer Aberrant Mind **Psychic Defenses** (lv14): passive
+    /// psychic damage resistance. Baseline Wild Magic sorcerer eats
+    /// full psychic; Aberrant Mind sorcerer halves it. Companion to
+    /// `psychic_defenses_grants_charm_and_frighten_immunity` on the
+    /// condition-immunity half of the same tag.
+    #[test]
+    fn psychic_defenses_halves_psychic_damage_on_sorcerer() {
+        use crate::actors::creatures::sorcerers::{
+            ABERRANT_MIND_SORCERER_TEMPLATE, SORCERER_TEMPLATE,
+        };
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let aberrant = e
+            .instantiate_creature(&ABERRANT_MIND_SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&aberrant].has_passive_feature(
+            crate::actions::class_features::PSYCHIC_DEFENSES_TAG,
+        ));
+        assert!(!e.actors[&baseline].has_passive_feature(
+            crate::actions::class_features::PSYCHIC_DEFENSES_TAG,
+        ));
+        // 20 psychic → 10 (halved) on the Aberrant Mind sorcerer.
+        assert_eq!(
+            e.actors[&aberrant].effective_damage(20, DamageType::Psychic),
+            10,
+            "aberrant mind sorcerer halves psychic damage"
+        );
+        // Baseline (Wild Magic) sorcerer eats the full 20 psychic.
+        assert_eq!(
+            e.actors[&baseline].effective_damage(20, DamageType::Psychic),
+            20,
+            "baseline sorcerer takes full psychic damage"
+        );
+        // Other damage types still take full damage on the Aberrant
+        // Mind sorcerer — the RAW subclass grant is scoped to Psychic.
+        assert_eq!(
+            e.actors[&aberrant].effective_damage(20, DamageType::Fire),
+            20,
+        );
+        assert_eq!(
+            e.actors[&aberrant].effective_damage(20, DamageType::Lightning),
+            20,
+        );
+        assert_eq!(
+            e.actors[&aberrant].effective_damage(20, DamageType::Thunder),
+            20,
+        );
+    }
+
+    /// 5e Sorcerer Aberrant Mind **Psychic Defenses** (lv14): passive
+    /// self-immunity to Charmed AND Frightened installs. Baseline Wild
+    /// Magic sorcerer eats both; Aberrant Mind sorcerer bounces both.
+    /// Companion to `psychic_defenses_halves_psychic_damage_on_sorcerer`
+    /// on the damage-resistance half of the same tag.
+    #[test]
+    fn psychic_defenses_grants_charm_and_frighten_immunity() {
+        use crate::actors::creatures::sorcerers::{
+            ABERRANT_MIND_SORCERER_TEMPLATE, SORCERER_TEMPLATE,
+        };
+        use crate::conditions::ConditionTimer;
+        use crate::engine::side_effects::{ApplicableSideEffect, ApplyCondition};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let aberrant = e
+            .instantiate_creature(&ABERRANT_MIND_SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(12, 12), 1, 0)
+            .unwrap();
+        // Aberrant Mind sorcerer: both Charmed and Frightened bounce.
+        ApplyCondition {
+            actor_id: aberrant,
+            condition: Condition::Charmed,
+            timer: ConditionTimer::Rounds(3),
+        }
+        .apply(&mut e);
+        assert!(
+            !e.actors[&aberrant].has_condition(Condition::Charmed),
+            "aberrant mind sorcerer bounces Charmed install"
+        );
+        ApplyCondition {
+            actor_id: aberrant,
+            condition: Condition::Frightened,
+            timer: ConditionTimer::Rounds(3),
+        }
+        .apply(&mut e);
+        assert!(
+            !e.actors[&aberrant].has_condition(Condition::Frightened),
+            "aberrant mind sorcerer bounces Frightened install"
+        );
+        // Baseline sorcerer eats both — no Psychic Defenses tag.
+        ApplyCondition {
+            actor_id: baseline,
+            condition: Condition::Charmed,
+            timer: ConditionTimer::Rounds(3),
+        }
+        .apply(&mut e);
+        assert!(
+            e.actors[&baseline].has_condition(Condition::Charmed),
+            "baseline sorcerer catches Charmed install"
+        );
+        ApplyCondition {
+            actor_id: baseline,
+            condition: Condition::Frightened,
+            timer: ConditionTimer::Rounds(3),
+        }
+        .apply(&mut e);
+        assert!(
+            e.actors[&baseline].has_condition(Condition::Frightened),
+            "baseline sorcerer catches Frightened install"
+        );
+    }
+
+    /// The `has_own_typed_reduction(Psychic)` accessor picks up
+    /// Psychic Defenses through the same PASSIVE_TYPED_RESISTANCES
+    /// cohort as Heart of the Storm / Draconic Resilience — locks the
+    /// "aura of warding no-ops on top of own resistance" gate for the
+    /// Aberrant Mind Sorcerer chassis.
+    #[test]
+    fn psychic_defenses_registers_own_typed_reduction() {
+        use crate::actors::creatures::sorcerers::ABERRANT_MIND_SORCERER_TEMPLATE;
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let aberrant = e
+            .instantiate_creature(&ABERRANT_MIND_SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&aberrant].has_own_typed_reduction(DamageType::Psychic),
+            "aberrant mind sorcerer's Psychic reduction shows up in the own-typed cohort"
+        );
+        assert!(
+            !e.actors[&aberrant].has_own_typed_reduction(DamageType::Fire),
+            "fire isn't reduced — cohort is type-scoped"
+        );
+    }
+
     /// 5e Sorcerer Empowered Spell metamagic: priming the condition then
     /// calling `roll_empowered` rerolls dice that came up at 1 or 2 and
     /// consumes the prime. Drive with a deterministic seed sweep to
@@ -47284,6 +47425,58 @@ mod tests {
         // Non-poison damage is unaffected — the tag only fires on Poison.
         assert_eq!(actor.effective_damage(20, DamageType::Fire), 20);
         assert_eq!(actor.effective_damage(20, DamageType::Slashing), 20);
+    }
+
+    /// Purity of Body's poison-damage immunity flows through the shared
+    /// `is_immune_to_damage_type` chokepoint — the accessor short-
+    /// circuits to true for a monk on Poison and false on every other
+    /// damage type. Locks the promotion of the previous ad-hoc
+    /// `dt == Poison && has_passive_feature(PURITY_OF_BODY_TAG)` gate
+    /// in `is_immune_to_damage_type` into a proper
+    /// `PASSIVE_TYPED_IMMUNITIES` cohort row — end-to-end behavior
+    /// stays identical while the surface promotes from a one-off
+    /// branch to a declarative table entry (so a future racial /
+    /// subclass typed-immunity feature drops in as one line rather
+    /// than another inline gate). Sibling to
+    /// `heart_of_the_storm_registers_own_typed_reduction_on_both_types`
+    /// on the parallel `PASSIVE_TYPED_RESISTANCES` cohort.
+    #[test]
+    fn purity_of_body_is_immune_to_damage_type_matches_effective_damage() {
+        use crate::actors::creatures::monks::MONK_TEMPLATE;
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let m = e
+            .instantiate_creature(&MONK_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let actor = e.actors.get(&m).unwrap();
+        // Cohort row surfaces through the shared immunity accessor —
+        // the exact chokepoint every damage-type immunity rider reads.
+        assert!(
+            actor.is_immune_to_damage_type(DamageType::Poison),
+            "monk is poison-immune via the PASSIVE_TYPED_IMMUNITIES cohort"
+        );
+        // Every other type falls through — the row is type-scoped to
+        // Poison and there's no blanket-immunity source on the monk.
+        for dt in [
+            DamageType::Fire,
+            DamageType::Cold,
+            DamageType::Lightning,
+            DamageType::Thunder,
+            DamageType::Necrotic,
+            DamageType::Radiant,
+            DamageType::Force,
+            DamageType::Psychic,
+            DamageType::Acid,
+            DamageType::Bludgeoning,
+            DamageType::Piercing,
+            DamageType::Slashing,
+        ] {
+            assert!(
+                !actor.is_immune_to_damage_type(dt),
+                "monk is not immune to {:?} — cohort row is type-scoped to Poison",
+                dt
+            );
+        }
     }
 
     /// Aura of Devotion (Devotion Paladin lv7): Charmed installs bounce

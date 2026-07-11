@@ -1943,6 +1943,60 @@ pub const HEART_OF_THE_STORM_TAG: &str = "sorcerer.heart_of_the_storm";
 /// `UNARMORED_MOVEMENT_SPEED_BONUS` next to `UNARMORED_MOVEMENT_TAG`).
 pub const HEART_OF_THE_STORM_ERUPTION_DAMAGE: u32 = 3;
 
+/// 5e Sorcerer Sorcerous Origin — **Aberrant Mind** — **Psychic
+/// Defenses** subclass feature tag (level 14, TCE). Passive: the
+/// sorcerer's aberrant mind grants two mechanically visible clauses on
+/// one feature:
+///   1. **Resistance to psychic damage** — folds through the shared
+///      `PASSIVE_TYPED_RESISTANCES` cohort in `actor_template.rs` next
+///      to Heart of the Storm's lightning + thunder row. Same halving
+///      rule, different subclass source and different damage axis
+///      (Psychic vs. Lightning + Thunder / Fire / Poison).
+///   2. **Immunity to `Charmed` AND `Frightened` install** — folds
+///      through the shared `FLAG_DRIVEN_IMMUNITIES` cohort next to
+///      Nature's Ward's Charmed + Frightened row. RAW's "advantage on
+///      saves against being charmed or frightened" collapses to
+///      immunity for the same reason Halfling Brave's advantage-vs-
+///      Frightened clause does — the engine doesn't tag saves by what
+///      condition they defend against, so approximating the
+///      advantage-on-save clause as install-immunity is the cleanest
+///      surface. Same shape as the sibling Nature's Ward (paladin
+///      lv15 capstone) row on the Charmed + Frightened trio.
+///
+/// Sibling to `HEART_OF_THE_STORM_TAG` on the Sorcerous Origin subclass
+/// passive lane — same "one feature tag drives one cohort row"
+/// declarative-table pattern. Distinct on the damage axis (Psychic vs.
+/// Lightning + Thunder) and the condition axis (Charmed / Frightened
+/// vs. no-condition-clause). The two subclass features never legally
+/// co-occur on a single build since the sorcerer picks one Sorcerous
+/// Origin.
+///
+/// Ships on `ABERRANT_MIND_SORCERER_TEMPLATE` — the Sorcerous Origin:
+/// Aberrant Mind subclass template — alongside the baseline Sorcerer
+/// envelope (CHA-primary Sorcery Points, Empowered / Quickened /
+/// Heightened / Twinned / Careful / Distant / Extended / Seeking /
+/// Subtle / Transmuted metamagic, Wild Magic Surge / Tides of Chaos /
+/// Bend Luck / Sorcerous Restoration).
+///
+/// Ships on the CR-4 template above the strict RAW lv14 gate for the
+/// same reason `STORM_SORCERER_TEMPLATE` ships Heart of the Storm
+/// (RAW lv6) and `DRACONIC_SORCERER_TEMPLATE` ships Draconic
+/// Resilience (RAW lv6) on their CR-4 chassis — class templates
+/// target a balanced playable level, not lockstep PHB progression.
+///
+/// RAW's Aberrant Mind picks up other features not shipped on this
+/// template — **Telepathic Speech** (lv1: 30ft telepathy, no combat
+/// surface), **Psionic Spells** (lv1: subclass-only expanded spell
+/// list, currently folded into the shared sorcerer roster), **Psionic
+/// Sorcery** (lv6: cast Psionic Spells for 0 material / verbal /
+/// somatic + reduced SP cost — needs a per-spell prime gate not yet
+/// wired), and **Warping Implosion** (lv18 capstone: teleport +
+/// force burst — an SP-fueled apex burst). The passive lv14
+/// resistance + immunity trio is the cleanest CR-4-appropriate
+/// mechanical surface without a spend-side hook, so we ship that
+/// half and leave the rest as future work.
+pub const PSYCHIC_DEFENSES_TAG: &str = "sorcerer.psychic_defenses";
+
 /// 5e Fighter Champion — **Survivor** (level 18) feature tag. Passive
 /// at-start-of-turn regen: while combat-active and above 0 HP but at or
 /// below half max HP, the holder regains `5 + CON modifier` HP at the
