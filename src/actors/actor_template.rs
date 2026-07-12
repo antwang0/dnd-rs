@@ -409,6 +409,27 @@ const FLAG_DRIVEN_IMMUNITIES: &[FlagDrivenImmunity] = &[
         ),
         suppressed: &[Condition::Charmed, Condition::Frightened],
     },
+    // 5e Warlock Archfey Patron **Beguiling Defenses** (lv10, PHB):
+    // immunity to Charmed installs. Sibling to Fey Ancestry on the
+    // exact same Charmed-suppression lane — same suppressed set (a
+    // single-element slice), different source (racial Fey Ancestry vs.
+    // Archfey-patron subclass feature); the two rows are OR'd so a
+    // Fey-Ancestry Elven Archfey Warlock carries redundant Charmed
+    // immunity, and either flag alone is sufficient. Distinct from
+    // Psychic Defenses (Aberrant Mind Sorcerer lv14) on the condition
+    // axis — Beguiling Defenses covers only Charmed (RAW-exact, since
+    // the reaction charm-back clause presumes the warlock stays lucid),
+    // while Psychic Defenses covers both Charmed AND Frightened. Ships
+    // on `ARCHFEY_WARLOCK_TEMPLATE` above its strict RAW lv10 gate for
+    // the same reason Entropic Ward (RAW lv6) ships on
+    // `GREAT_OLD_ONE_WARLOCK_TEMPLATE` — class templates target a
+    // balanced playable level, not lockstep PHB progression.
+    FlagDrivenImmunity {
+        flag: |a| a.has_passive_feature(
+            crate::actions::class_features::BEGUILING_DEFENSES_TAG,
+        ),
+        suppressed: &[Condition::Charmed],
+    },
 ];
 
 /// One row in the `FLAG_DRIVEN_SAVE_PROFICIENCIES` cohort — a single

@@ -1905,6 +1905,52 @@ pub const PURITY_OF_BODY_TAG: &str = "monk.purity_of_body";
 /// even if they also happen to be an Elf.
 pub const ASPECT_OF_THE_MOON_TAG: &str = "warlock.aspect_of_the_moon";
 
+/// 5e Warlock Otherworldly Patron — **The Archfey** — **Beguiling
+/// Defenses** subclass feature tag (level 10, PHB). Passive: the warlock
+/// is immune to being **Charmed**. RAW also grants a reaction that lets
+/// the warlock charm-back a would-be charmer for 1 minute on a failed
+/// WIS save (psychic damage rider), but the reaction half has no clean
+/// combat surface without a save-triggered reaction framework; we ship
+/// the Charmed install-immunity half, which is the mechanical load-
+/// bearing clause on the passive lane.
+///
+/// Read at the shared `FLAG_DRIVEN_IMMUNITIES` cohort in
+/// `actor_template.rs` next to Fey Ancestry's Charmed row — same
+/// suppressed condition, same "flag closure returns true → install
+/// bounces" wire, different source (Elven / Half-Elven / Drow racial
+/// Fey Ancestry vs. Archfey-patron subclass feature). The two rows are
+/// OR'd so a Fey-Ancestry Elven Archfey Warlock carries redundant
+/// Charmed immunity, and either flag alone is sufficient — same OR
+/// semantics the Halfling Brave / Nature's Ward / Aspect of the Moon
+/// rows already use for their respective condition bounces.
+///
+/// Distinct from `PSYCHIC_DEFENSES_TAG` (Aberrant Mind Sorcerer lv14,
+/// Charmed + Frightened) on the condition axis: Beguiling Defenses
+/// covers only Charmed (RAW-exact — the Archfey warlock's charm-back
+/// clause presumes the warlock stays lucid, so the RAW immunity is
+/// scoped to Charmed alone) while Psychic Defenses covers both. A
+/// hypothetical Archfey Warlock / Aberrant Mind Sorcerer multi-class
+/// would carry both rows, but the OR-of-cohort-hits semantics means
+/// either alone bounces the Charmed install.
+///
+/// Ships on `ARCHFEY_WARLOCK_TEMPLATE` — the Otherworldly Patron: The
+/// Archfey subclass template — alongside the baseline Warlock envelope
+/// (CHA-primary Pact Magic, Eldritch Blast + Hex + Witch Bolt at will,
+/// Agonizing / Repelling / Eldritch Mind invocations). Distinct from
+/// `FIEND_WARLOCK_TEMPLATE` (Dark One's Blessing + Dark One's Own Luck
+/// + Fiendish Resilience — the fiery kill-focused build),
+/// `UNDYING_WARLOCK_TEMPLATE` (Aspect of the Moon — the insomniac's
+/// build), `GREAT_OLD_ONE_WARLOCK_TEMPLATE` (Entropic Ward — the
+/// alien-awareness reactive build), and the baseline
+/// `WARLOCK_TEMPLATE` (patron-less baseline).
+///
+/// Ships on the CR-4 template above the strict RAW lv10 gate for the
+/// same reason `FIEND_WARLOCK_TEMPLATE` ships Fiendish Resilience
+/// (RAW lv10) and `GREAT_OLD_ONE_WARLOCK_TEMPLATE` ships Entropic Ward
+/// (RAW lv6): class templates target a balanced playable level, not
+/// lockstep PHB progression.
+pub const BEGUILING_DEFENSES_TAG: &str = "warlock.beguiling_defenses";
+
 /// 5e Sorcerer Sorcerous Origin — **Storm Sorcery** — **Heart of the
 /// Storm** subclass feature tag (level 6, XGtE). Passive: the sorcerer
 /// gains resistance to both **lightning** AND **thunder** damage AND

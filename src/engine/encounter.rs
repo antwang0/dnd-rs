@@ -53860,4 +53860,163 @@ mod tests {
             "cohort's tag-based spend should consume the Favored by the Gods charge on a failed save"
         );
     }
+
+    /// 5e Warlock Archfey Patron **Beguiling Defenses** (lv10): passive
+    /// self-immunity to `Charmed` installs. Baseline warlock eats the
+    /// install; Archfey warlock bounces it. `Frightened` (out of scope
+    /// for the Archfey patron's Beguiling Defenses — Psychic Defenses
+    /// on the Aberrant Mind sorcerer covers both, but Archfey covers
+    /// only Charmed RAW) still installs normally on the Archfey chassis.
+    /// Locks the FLAG_DRIVEN_IMMUNITIES cohort row wire-through from
+    /// `has_passive_feature(BEGUILING_DEFENSES_TAG)` to the shared
+    /// `dynamic_immunity_to` install-bounce site.
+    #[test]
+    fn beguiling_defenses_bounces_charmed_install_only() {
+        use crate::actors::creatures::warlocks::{ARCHFEY_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE};
+        use crate::conditions::ConditionTimer;
+        use crate::engine::side_effects::{ApplicableSideEffect, ApplyCondition};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let archfey = e
+            .instantiate_creature(&ARCHFEY_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(12, 12), 1, 0)
+            .unwrap();
+        // Archfey warlock: Charmed install bounces.
+        ApplyCondition {
+            actor_id: archfey,
+            condition: Condition::Charmed,
+            timer: ConditionTimer::Rounds(3),
+        }
+        .apply(&mut e);
+        assert!(
+            !e.actors[&archfey].has_condition(Condition::Charmed),
+            "archfey warlock bounces Charmed install via Beguiling Defenses"
+        );
+        // Frightened still installs on the Archfey chassis — RAW-scoped
+        // to Charmed only, unlike the Aberrant Mind sorcerer's Psychic
+        // Defenses (both Charmed AND Frightened).
+        ApplyCondition {
+            actor_id: archfey,
+            condition: Condition::Frightened,
+            timer: ConditionTimer::Rounds(3),
+        }
+        .apply(&mut e);
+        assert!(
+            e.actors[&archfey].has_condition(Condition::Frightened),
+            "archfey warlock still catches Frightened install — Beguiling Defenses is Charmed-only"
+        );
+        // Baseline warlock eats both — no Beguiling Defenses tag.
+        ApplyCondition {
+            actor_id: baseline,
+            condition: Condition::Charmed,
+            timer: ConditionTimer::Rounds(3),
+        }
+        .apply(&mut e);
+        assert!(
+            e.actors[&baseline].has_condition(Condition::Charmed),
+            "baseline warlock catches Charmed install"
+        );
+    }
+
+    /// Template drift check: only the Archfey Warlock ships the
+    /// `BEGUILING_DEFENSES_TAG` passive feature. The baseline / Fiend /
+    /// Undying / Great Old One warlock chassis do NOT carry the tag —
+    /// keeps the subclass tell scoped to the Archfey chassis so a future
+    /// regression (e.g., accidental tag insertion on `WARLOCK_TEMPLATE`
+    /// bleeding into every subclass build via the `..base.clone()`
+    /// tail) is caught here.
+    #[test]
+    fn beguiling_defenses_lands_only_on_archfey_warlock() {
+        use crate::actions::class_features::BEGUILING_DEFENSES_TAG;
+        use crate::actors::creatures::warlocks::{
+            ARCHFEY_WARLOCK_TEMPLATE, FIEND_WARLOCK_TEMPLATE, GREAT_OLD_ONE_WARLOCK_TEMPLATE,
+            UNDYING_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let baseline = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(1, 1), 0, 0)
+            .unwrap();
+        let fiend = e
+            .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(3, 1), 0, 0)
+            .unwrap();
+        let undying = e
+            .instantiate_creature(&UNDYING_WARLOCK_TEMPLATE, Coordinate::new(5, 1), 0, 0)
+            .unwrap();
+        let great_old_one = e
+            .instantiate_creature(&GREAT_OLD_ONE_WARLOCK_TEMPLATE, Coordinate::new(7, 1), 0, 0)
+            .unwrap();
+        let archfey = e
+            .instantiate_creature(&ARCHFEY_WARLOCK_TEMPLATE, Coordinate::new(9, 1), 0, 0)
+            .unwrap();
+        // Only the Archfey warlock ships the tag.
+        assert!(e.actors[&archfey].has_passive_feature(BEGUILING_DEFENSES_TAG));
+        assert!(!e.actors[&baseline].has_passive_feature(BEGUILING_DEFENSES_TAG));
+        assert!(!e.actors[&fiend].has_passive_feature(BEGUILING_DEFENSES_TAG));
+        assert!(!e.actors[&undying].has_passive_feature(BEGUILING_DEFENSES_TAG));
+        assert!(!e.actors[&great_old_one].has_passive_feature(BEGUILING_DEFENSES_TAG));
+    }
+
+    /// Sanity: the Archfey Warlock inherits the baseline Warlock envelope
+    /// through the `..WARLOCK_TEMPLATE.clone()` tail — Eldritch Blast's
+    /// signature invocations (Agonizing / Repelling / Eldritch Mind) all
+    /// carry through, alongside the subclass-only Beguiling Defenses
+    /// tag. Guards against a regression where a subclass template's
+    /// explicit `features` builder drops the baseline invocation set on
+    /// its way to inserting the new tag.
+    #[test]
+    fn archfey_warlock_inherits_baseline_warlock_features() {
+        use crate::actions::class_features::{
+            AGONIZING_BLAST_TAG, BEGUILING_DEFENSES_TAG, ELDRITCH_MIND_TAG, REPELLING_BLAST_TAG,
+        };
+        use crate::actors::creatures::warlocks::ARCHFEY_WARLOCK_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let archfey = e
+            .instantiate_creature(&ARCHFEY_WARLOCK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Baseline invocations still carry through the clone.
+        assert!(e.actors[&archfey].has_passive_feature(AGONIZING_BLAST_TAG));
+        assert!(e.actors[&archfey].has_passive_feature(REPELLING_BLAST_TAG));
+        assert!(e.actors[&archfey].has_passive_feature(ELDRITCH_MIND_TAG));
+        // Subclass tag lands on top.
+        assert!(e.actors[&archfey].has_passive_feature(BEGUILING_DEFENSES_TAG));
+    }
+
+    /// FLAG_DRIVEN_IMMUNITIES cohort wire-through: a Drow (Fey Ancestry
+    /// racial, no Beguiling Defenses tag) still bounces Charmed installs
+    /// through the sibling Fey Ancestry row on the same cohort. This is
+    /// the "the two rows are OR'd — either flag alone suffices" sanity
+    /// check documented in the Beguiling Defenses row's rationale
+    /// comment; regressions on the OR-of-cohort-hits semantics (say, a
+    /// refactor that changes the cohort walk to AND the rows) would
+    /// land here.
+    #[test]
+    fn fey_ancestry_still_bounces_charmed_without_beguiling_defenses() {
+        use crate::actions::class_features::BEGUILING_DEFENSES_TAG;
+        use crate::actors::creatures::drow::DROW_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::engine::side_effects::{ApplicableSideEffect, ApplyCondition};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let drow = e
+            .instantiate_creature(&DROW_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Precondition: the drow chassis does NOT ship Beguiling
+        // Defenses (it's a Warlock subclass tag, not a racial trait) —
+        // so any Charmed bounce here rides on the Fey Ancestry row
+        // alone, exercising the "sibling row is an independent hit"
+        // arm of the OR-of-cohort-hits semantics.
+        assert!(!e.actors[&drow].has_passive_feature(BEGUILING_DEFENSES_TAG));
+        ApplyCondition {
+            actor_id: drow,
+            condition: Condition::Charmed,
+            timer: ConditionTimer::Rounds(3),
+        }
+        .apply(&mut e);
+        assert!(
+            !e.actors[&drow].has_condition(Condition::Charmed),
+            "Fey Ancestry alone bounces Charmed install — sibling row on the FLAG_DRIVEN_IMMUNITIES cohort still fires without Beguiling Defenses"
+        );
+    }
 }

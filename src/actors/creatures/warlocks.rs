@@ -444,3 +444,93 @@ pub static GREAT_OLD_ONE_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock
         ..WARLOCK_TEMPLATE.clone()
     }
 });
+
+/// Archfey Warlock — Otherworldly Patron **The Archfey** subclass build
+/// (PHB). Identical envelope to the baseline `WARLOCK_TEMPLATE`
+/// (CHA-primary half-caster with Pact Magic, Eldritch Blast + Hex +
+/// Witch Bolt at will, Agonizing / Repelling / Eldritch Mind
+/// invocations) with one subclass feature layered on: **Beguiling
+/// Defenses** (Archfey lv10) — passive immunity to being **Charmed**.
+///
+/// The signature "the fey court's whispers can't take root" tell —
+/// where a baseline Warlock eats a Charm Person save-fail (5e
+/// enchantment; installs the `Charmed` condition), the Archfey Warlock
+/// simply bounces the install while the Beguiling Defenses flag holds.
+/// Ships as a passive tag on the template; the immunity fires
+/// automatically at every `Charmed` install chokepoint via the shared
+/// `FLAG_DRIVEN_IMMUNITIES` cohort's slice-of-conditions row (Fey
+/// Ancestry's Charmed row is the sibling entry — same suppressed
+/// condition, different source).
+///
+/// Sibling on the passive-condition-immunity lane to:
+///   - **Fey Ancestry** (Elven / Half-Elven / Drow racial): Charmed
+///     bounce, same condition, different source (racial trait vs.
+///     patron-gated subclass feature). A Fey-Ancestry Elven Archfey
+///     Warlock stacks the two rows redundantly under the OR-of-
+///     cohort-hits semantics — either flag alone bounces the install.
+///   - **Psychic Defenses** (Aberrant Mind Sorcerer lv14): Charmed +
+///     Frightened bounce, distinct on the condition axis (Beguiling
+///     Defenses covers only Charmed — RAW-exact, since the reaction
+///     charm-back clause presumes the warlock stays lucid). A
+///     hypothetical Archfey Warlock / Aberrant Mind Sorcerer would
+///     carry both rows; either alone bounces the Charmed install, and
+///     only Psychic Defenses bounces the Frightened install.
+///   - **Nature's Ward** (Ancients Paladin lv15): Charmed + Frightened
+///     bounce, same disparity as Psychic Defenses on the Frightened
+///     axis.
+///   - **Aspect of the Moon** (Undying Warlock patron invocation):
+///     Asleep bounce, distinct condition entirely; the two Warlock
+///     subclass tags never legally co-occur on a single build since
+///     the warlock picks one Otherworldly Patron.
+///
+/// Distinct from `FIEND_WARLOCK_TEMPLATE` (Dark One's Blessing + Dark
+/// One's Own Luck + Fiendish Resilience — the fiery kill-focused
+/// build), `UNDYING_WARLOCK_TEMPLATE` (Aspect of the Moon — the
+/// insomniac's build), `GREAT_OLD_ONE_WARLOCK_TEMPLATE` (Entropic
+/// Ward — the alien-awareness reactive build), and `WARLOCK_TEMPLATE`
+/// (patron-less baseline). RAW's Archfey patron picks up other
+/// features not shipped on this template — **Fey Presence** (lv1: CD
+/// 10ft-cube Charmed OR Frightened burst; a Channel-Divinity-shaped
+/// burst-save-with-condition-rider we could ship as an action but not
+/// yet), **Misty Escape** (lv6: reaction on-damage teleport +
+/// invisibility; a reaction-triggered self-move-and-condition-install
+/// that needs the reaction framework), **Dark Delirium** (lv14
+/// capstone: single-target 1min Charmed OR Frightened install; a
+/// spend-slot-driven CC lane). Only the lv10 Beguiling Defenses has a
+/// mechanical surface on the CR-4 chassis that plugs cleanly into the
+/// shared passive-condition-immunity cohort, so we ship that half and
+/// leave the rest as future work.
+///
+/// Ships the CR-4 template above the strict RAW lv10 gate for the
+/// same reason `FIEND_WARLOCK_TEMPLATE` ships Fiendish Resilience
+/// (RAW lv10) and `GREAT_OLD_ONE_WARLOCK_TEMPLATE` ships Entropic
+/// Ward (RAW lv6): class templates target a balanced playable level,
+/// not lockstep PHB progression.
+///
+/// Glyph 'A' — distinct from baseline warlock 'L', Fiend warlock 'F',
+/// Undying warlock 'U', and Great Old One warlock 'O'; 'A' for the
+/// "Archfey" identity (the warlock as a court-linked emissary of a
+/// fey monarch's whimsy).
+pub static ARCHFEY_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Warlock envelope wholesale
+    // and layer on the one Archfey patron feature — Beguiling Defenses
+    // via the `BEGUILING_DEFENSES_TAG` passive-feature tag. The
+    // `..base.clone()` tail picks up every other field — stats, spell
+    // slots, save profs, invocation-driven cantrips — without an N-line
+    // field-by-field copy. Same shape as
+    // `GREAT_OLD_ONE_WARLOCK_TEMPLATE`'s tag-only subclass build
+    // (Entropic Ward), `UNDYING_WARLOCK_TEMPLATE`'s tag-only subclass
+    // build (Aspect of the Moon), and the sorcerer / paladin / rogue /
+    // ranger subclass templates.
+    let mut features = WARLOCK_TEMPLATE.features.clone();
+    features.insert(crate::actions::class_features::BEGUILING_DEFENSES_TAG);
+    CreatureTemplate {
+        name: "Archfey Warlock",
+        // 'A' — distinct from baseline warlock 'L', Fiend 'F',
+        // Undying 'U', and Great Old One 'O'; 'A' for the "Archfey"
+        // identity.
+        glyph: 'A',
+        features,
+        ..WARLOCK_TEMPLATE.clone()
+    }
+});
