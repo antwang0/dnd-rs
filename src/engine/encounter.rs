@@ -547,15 +547,12 @@ const FAILED_SAVE_REROLL_SOURCES: &[FailedSaveRerollSource] = &[
     },
     FailedSaveRerollSource {
         label: "fanatical focus",
-        consume: |a| {
-            use crate::actions::class_features::FANATICAL_FOCUS_TAG;
-            if a.feature_available(FANATICAL_FOCUS_TAG) {
-                a.spend_feature(FANATICAL_FOCUS_TAG);
-                true
-            } else {
-                false
-            }
-        },
+        // `spend_feature` already returns true iff the tag was
+        // present (HashSet::remove semantics), so the previous
+        // check-then-spend body collapses to the one-line call —
+        // sibling of the `spend_feature(source.tag)` call in the
+        // add-die cohort's loop body.
+        consume: |a| a.spend_feature(crate::actions::class_features::FANATICAL_FOCUS_TAG),
     },
 ];
 
@@ -569,32 +566,46 @@ const FAILED_SAVE_REROLL_SOURCES: &[FailedSaveRerollSource] = &[
 /// add-die cohort boosts picks up the extra pool (avg +5-ish) and
 /// pushes past most mid-DC saves.
 ///
-/// Each entry's `consume` closure returns true iff its per-rest
-/// charge was spent — the caller then rolls `dice`, logs it with
-/// `label`, and returns immediately if the boosted total meets or
-/// beats the DC. Consumption fires only when the initial roll
-/// failed AND no earlier source in the table has already granted a
-/// pass, so a hypothetical Divine Soul Sorcerer / Fiend Warlock
-/// multiclass burns FBTG's 2d4 (RAW gate: fires at initial-roll
-/// time) before DOOL's 1d10 in table order. All fires happen before
-/// the reroll cohort — RAW's "after seeing the initial roll but
-/// before any of the roll's effects occur" gate for both DOOL and
-/// FBTG places them ahead of any reroll surface.
+/// Each entry's `tag` is spent at the failing actor via
+/// `ActorInstance::spend_feature`, which returns true iff the
+/// per-rest charge was actually consumed (HashSet::remove semantics —
+/// no separate `feature_available` check needed). On a successful
+/// spend the caller rolls `dice`, logs it with `label`, and returns
+/// immediately if the boosted total meets or beats the DC.
+/// Consumption fires only when the initial roll failed AND no earlier
+/// source in the table has already granted a pass, so a hypothetical
+/// Divine Soul Sorcerer / Fiend Warlock multiclass burns DOOL's
+/// 1d10 (first-listed) before FBTG's 2d4 in table order. All fires
+/// happen before the reroll cohort — RAW's "after seeing the initial
+/// roll but before any of the roll's effects occur" gate for both
+/// DOOL and FBTG places them ahead of any reroll surface.
+///
+/// Pre-cleanup this row carried a `consume: fn(&mut ActorInstance) ->
+/// bool` closure that open-coded the "check feature_available, then
+/// spend_feature, return whether it fired" 5-line pattern per row.
+/// The check-then-spend was redundant — `spend_feature` already
+/// returns a bool from HashSet::remove semantics — so both rows
+/// collapsed to the same 1-line closure. Promoted here to a bare
+/// `tag: &'static str` so the row shape mirrors
+/// `ReactiveDisadvantageSource` (tag + gating parameters) and future
+/// tag-driven add-die sources land as a `(label, tag, dice)` triple.
 struct FailedSaveAddDieSource {
-    /// Log-friendly tag ("dark one's own luck", "favored by the
+    /// Log-friendly label ("dark one's own luck", "favored by the
     /// gods"). Appears in the "  {}: +{} = {} vs DC {} — pass/fail"
-    /// line.
+    /// line. Distinct from `tag` because tags carry a `class.feature`
+    /// namespace prefix ("warlock.dark_ones_own_luck") that would be
+    /// noisy in the combat log.
     label: &'static str,
+    /// Feature tag read via `spend_feature(tag)` on the failing actor
+    /// — returns true iff the per-rest charge was consumed. Sibling
+    /// shape to `ReactiveDisadvantageSource::tag` on the "tag +
+    /// gating parameters" row pattern.
+    tag: &'static str,
     /// Die pool added to the initial d20 + modifier + extra total.
     /// A `Dice { count, faces }` value read at cohort-iteration time
     /// so each entry can pick its own die shape (1d10 for DOOL, 2d4
     /// for Favored by the Gods).
     dice: Dice,
-    /// Attempts to spend this source's per-rest charge on the
-    /// failing actor. Returns true on a successful spend (the boost
-    /// fires); false when the charge was unavailable (spent
-    /// Dark One's Own Luck / Favored by the Gods, etc.).
-    consume: fn(&mut crate::actors::actor_template::ActorInstance) -> bool,
 }
 
 /// Ordered cohort of "add die(s) to a failed save total" sources,
@@ -713,29 +724,13 @@ const REACTIVE_ATTACK_DISADVANTAGE_SOURCES: &[ReactiveDisadvantageSource] = &[
 const FAILED_SAVE_ADD_DIE_SOURCES: &[FailedSaveAddDieSource] = &[
     FailedSaveAddDieSource {
         label: "dark one's own luck",
+        tag: crate::actions::class_features::DARK_ONES_OWN_LUCK_TAG,
         dice: Dice::new(1, 10),
-        consume: |a| {
-            use crate::actions::class_features::DARK_ONES_OWN_LUCK_TAG;
-            if a.feature_available(DARK_ONES_OWN_LUCK_TAG) {
-                a.spend_feature(DARK_ONES_OWN_LUCK_TAG);
-                true
-            } else {
-                false
-            }
-        },
     },
     FailedSaveAddDieSource {
         label: "favored by the gods",
+        tag: crate::actions::class_features::FAVORED_BY_THE_GODS_TAG,
         dice: Dice::new(2, 4),
-        consume: |a| {
-            use crate::actions::class_features::FAVORED_BY_THE_GODS_TAG;
-            if a.feature_available(FAVORED_BY_THE_GODS_TAG) {
-                a.spend_feature(FAVORED_BY_THE_GODS_TAG);
-                true
-            } else {
-                false
-            }
-        },
     },
 ];
 
@@ -2181,7 +2176,14 @@ impl EncounterInstance {
             let mut boosted_pass: Option<SaveOutcome> = None;
             for source in FAILED_SAVE_ADD_DIE_SOURCES {
                 let Some(actor) = self.actors.get_mut(&actor_id) else { break; };
-                if !(source.consume)(actor) {
+                // `spend_feature` returns true iff the per-rest charge
+                // was actually consumed (HashSet::remove semantics), so
+                // no separate `feature_available` check is needed —
+                // an unspent tag on the actor is exactly the pass-gate
+                // case here. Pre-cleanup this ran through a per-row
+                // `consume` closure that open-coded the same
+                // check-then-spend body per row.
+                if !actor.spend_feature(source.tag) {
                     continue;
                 }
                 let bonus = self.roll(&source.dice);
@@ -53723,6 +53725,139 @@ mod tests {
             probe.speed(),
             base + 20.0,
             "FAST_MOVEMENT_TAG (+10) + Longstriding condition (+10) sum to +20"
+        );
+    }
+
+    /// Valor Bard (College of Valor subclass): the subclass flips
+    /// `has_extra_attack: true` while the baseline bard's flag stays
+    /// off. Template drift check locks Extra Attack exclusively on the
+    /// Valor Bard chassis — a hypothetical future Lore Bard subclass
+    /// must NOT accidentally pick up the extra swing through a bad
+    /// clone. Mirrors the
+    /// `entropic_ward_lands_only_on_great_old_one_warlock` shape on
+    /// the "subclass-only flag lands only on the subclass template"
+    /// pattern.
+    #[test]
+    fn extra_attack_lands_only_on_valor_bard() {
+        use crate::actors::creatures::bards::{BARD_TEMPLATE, VALOR_BARD_TEMPLATE};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let baseline = e
+            .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(1, 1), 0, 0)
+            .unwrap();
+        let valor = e
+            .instantiate_creature(&VALOR_BARD_TEMPLATE, Coordinate::new(3, 1), 0, 1)
+            .unwrap();
+        assert!(
+            !e.actors[&baseline].has_extra_attack(),
+            "baseline bard must not ship extra attack"
+        );
+        assert!(
+            e.actors[&valor].has_extra_attack(),
+            "valor bard ships extra attack"
+        );
+    }
+
+    /// Valor Bard inherits the baseline bard's per-rest feature
+    /// charges (Bardic Inspiration + Cutting Words + Font of
+    /// Inspiration) through the `..BARD_TEMPLATE.clone()` tail so the
+    /// subclass build stays a strict superset of the baseline —
+    /// mirrors the sanity check `great_old_one_warlock_ships_baseline_slots`
+    /// pattern on the "subclass template preserves baseline feature
+    /// set" lane.
+    #[test]
+    fn valor_bard_inherits_baseline_bard_features() {
+        use crate::actions::class_features::{
+            BARDIC_INSPIRATION_TAG, CUTTING_WORDS_TAG, FONT_OF_INSPIRATION_TAG,
+        };
+        use crate::actors::creatures::bards::VALOR_BARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let valor = e
+            .instantiate_creature(&VALOR_BARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        assert!(e.actors[&valor].has_passive_feature(BARDIC_INSPIRATION_TAG));
+        assert!(e.actors[&valor].has_passive_feature(CUTTING_WORDS_TAG));
+        assert!(e.actors[&valor].has_passive_feature(FONT_OF_INSPIRATION_TAG));
+        assert!(e.actors[&valor].feature_available(BARDIC_INSPIRATION_TAG));
+        assert!(e.actors[&valor].feature_available(CUTTING_WORDS_TAG));
+    }
+
+    /// End-to-end: a Valor Bard swinging a scimitar on an Action-cost
+    /// swing chains a second scimitar swing via
+    /// `maybe_chain_extra_attack` — the log records the "Extra Attack:"
+    /// marker, mirroring the Fighter / Barbarian / Paladin extra-attack
+    /// wire-in tests. Locks the wire-through from `has_extra_attack:
+    /// true` on the template to the `SimpleWeapon` Action-cost chain
+    /// gate in `monster_attacks.rs`.
+    #[test]
+    fn valor_bard_scimitar_chains_extra_attack() {
+        use crate::actions::action_template::Action;
+        use crate::actions::monster_attacks::SCIMITAR;
+        use crate::actors::creatures::bards::VALOR_BARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let bard = e
+            .instantiate_creature(&VALOR_BARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Foe adjacent so the scimitar's melee reach is trivially
+        // satisfied. Team 1 = hostile.
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        let log_before = e.messages().len();
+        let action: &dyn Action = &SCIMITAR;
+        let effects = action.side_effects(&mut e, bard, Some(&vec![goblin]), None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        // The extra-attack chain logs "  Extra Attack:" before the
+        // second swing resolves — locks the wire-in through the
+        // shared `maybe_chain_extra_attack` helper.
+        let chained = e.messages()[log_before..]
+            .iter()
+            .any(|m| m.contains("Extra Attack"));
+        assert!(
+            chained,
+            "valor bard's scimitar should chain an Extra Attack on Action-cost swings"
+        );
+    }
+
+    /// FAILED_SAVE_ADD_DIE_SOURCES cohort cleanup: with the cohort row
+    /// simplified from a `consume: fn(&mut ActorInstance) -> bool`
+    /// closure to a bare `tag: &'static str`, the tag-based
+    /// `spend_feature` semantics still fire cleanly end-to-end. A
+    /// Divine Soul Sorcerer holding an unspent Favored by the Gods
+    /// charge on a failed save picks up +2d4 (avg +5) from the cohort
+    /// and the charge lands spent — locks the wire-through of the
+    /// tag-based row shape into `roll_save_with_extra_mode`.
+    #[test]
+    fn add_die_cohort_spends_tag_directly() {
+        use crate::actions::class_features::FAVORED_BY_THE_GODS_TAG;
+        use crate::actors::creatures::sorcerers::DIVINE_SOUL_SORCERER_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sorcerer = e
+            .instantiate_creature(&DIVINE_SOUL_SORCERER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // The cohort promotes the row to a `tag` field; the loop body
+        // calls `spend_feature(source.tag)` directly. Verifying the
+        // template still ships the tag (pre-condition for the cohort
+        // to fire the tag-based branch).
+        assert!(e.actors[&sorcerer].feature_available(FAVORED_BY_THE_GODS_TAG));
+        // A high-DC WIS save on a low-WIS caster forces a fail with
+        // high probability; the cohort's boost consumes the charge.
+        // The concrete pass/fail outcome depends on the die roll, but
+        // the FBTG charge should be consumed after any failing initial
+        // roll — verify by rolling many saves at a DC so high the
+        // initial roll always fails.
+        let dc = 40;
+        let _ = e.roll_save_with_extra_mode(
+            sorcerer,
+            crate::engine::types::AbilityScoreType::Wisdom,
+            dc,
+            RollMode::Normal,
+        );
+        assert!(
+            !e.actors[&sorcerer].feature_available(FAVORED_BY_THE_GODS_TAG),
+            "cohort's tag-based spend should consume the Favored by the Gods charge on a failed save"
         );
     }
 }

@@ -145,3 +145,52 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ..CreatureTemplate::defaults()
     }
 });
+
+/// College of Valor Bard — subclass build. Identical envelope to the
+/// baseline `BARD_TEMPLATE` (level-7 build, CHA-primary full caster,
+/// Bardic Inspiration / Cutting Words / Font of Inspiration, Compulsion
+/// capstone slot) with one subclass feature layered on: **Extra Attack**
+/// (Valor subclass level 6) — an Action-cost scimitar swing chains a
+/// second scimitar swing on the same Action via the shared
+/// `maybe_chain_extra_attack` helper. The `has_extra_attack: true` flag
+/// on this template is the sole mechanical differentiator between the
+/// baseline Bard and the Valor Bard — every other field (spell slots,
+/// stats, actions, features) inherits through the `..BARD_TEMPLATE.clone()`
+/// tail.
+///
+/// Pairs naturally with the bard's existing support kit: the Valor
+/// bard sits in melee range with a scimitar between spell casts (twice
+/// per Action) while Bardic Inspiration primes an ally's next roll —
+/// the RAW "combat bard" tell. Distinct from the future College of Lore
+/// bard (Peerless Skill + Additional Magical Secrets — the intelligence-
+/// flavored support build). The Valor bard's extra swing composes cleanly
+/// with the shared caster-side damage bumps in `MELEE_CASTER_BUMPS` (a
+/// Two-Weapon Fighting valor bard picks up +STR mod on both scimitar
+/// swings) and every rider that fires on hit.
+///
+/// Ships the CR-2 template above the strict RAW level-6 gate for the
+/// same reason `FIEND_WARLOCK_TEMPLATE` ships Fiendish Resilience
+/// (RAW lv10) and `DRACONIC_SORCERER_TEMPLATE` ships Draconic
+/// Resilience (RAW lv6): class templates target a balanced playable
+/// level, not lockstep PHB progression.
+///
+/// Glyph 'V' — distinct from baseline bard 'B'; 'V' for "Valor" and
+/// aligns with the Vengeance Paladin glyph on the "combat-flavored
+/// subclass sharing the letter 'V'" pattern (both templates share the
+/// combat-heavy flavor; the color / team gates disambiguate them in
+/// combat).
+pub static VALOR_BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Bard envelope wholesale
+    // and flip `has_extra_attack: true`. The `..BARD_TEMPLATE.clone()`
+    // tail picks up every other field — spell slots, stats, actions,
+    // Bardic Inspiration / Cutting Words / Font of Inspiration
+    // features — without an N-line field-by-field copy. Same shape as
+    // `HUNTER_RANGER_TEMPLATE` / `ASSASSIN_ROGUE_TEMPLATE` /
+    // `GREAT_OLD_ONE_WARLOCK_TEMPLATE`'s subclass build.
+    CreatureTemplate {
+        name: "Valor Bard",
+        glyph: 'V',
+        has_extra_attack: true,
+        ..BARD_TEMPLATE.clone()
+    }
+});
