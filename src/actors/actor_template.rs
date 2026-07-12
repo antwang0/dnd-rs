@@ -27,19 +27,48 @@ const BLANKET_RESISTANCE_CONDITIONS: &[Condition] = &[
     Condition::Petrified,
 ];
 
-/// Conditions whose presence grants damage-type immunity. Each row is
-/// `(condition, &[damage types zeroed])`. Read by
+/// One row in the `TYPED_IMMUNITY_CONDITIONS` cohort — a single held
+/// condition whose presence grants outright immunity to every damage
+/// type in `types`. Sibling to `PassiveTypedImmunity { flag, types }`
+/// on the passive-feature-flag lane — same "{ source, affected slice }"
+/// shape, different source axis (`source: Condition` here vs.
+/// `flag: fn(&ActorInstance) -> bool` on the passive-feature sibling).
+/// A slice of damage types (rather than a single one) lets a hypothetical
+/// multi-type immunity condition (a future Overwhelmed-with-Silence
+/// thunder + force lane, an Elemental-Absorbing sorcerer buff) land as
+/// a single row without duplicating the source condition per damage
+/// type. Matches the shape of `FlagDrivenImmunity { flag, suppressed }`
+/// on the condition-immunity lane — same "{ source, slice of the
+/// affected axis }" declarative-table pattern.
+struct ConditionDrivenTypedImmunity {
+    source: Condition,
+    types: &'static [DamageType],
+}
+
+/// Conditions whose presence grants damage-type immunity. Read by
 /// `has_condition_immunity` so adding a new "condition X makes you
 /// immune to damage type Y" rider lands as a one-line entry instead of
 /// another `if dt == ... && self.has_condition(...)` branch in
 /// `effective_damage`. The Mind Blank → psychic and Silenced → thunder
 /// immunities both live here.
-const TYPED_IMMUNITY_CONDITIONS: &[(Condition, &[DamageType])] = &[
+///
+/// Sibling to `PASSIVE_TYPED_IMMUNITIES` on the passive-feature-flag
+/// lane (that cohort keys off always-on template flags, this cohort
+/// keys off held conditions like Mind Blank / Silenced / Petrified).
+/// The two immunity lanes are OR'd via `is_immune_to_damage_type` — any
+/// hit is sufficient to zero the damage instance.
+const TYPED_IMMUNITY_CONDITIONS: &[ConditionDrivenTypedImmunity] = &[
     // 5e Mind Blank: psychic-damage immunity for the duration.
-    (Condition::MindBlanked, &[DamageType::Psychic]),
+    ConditionDrivenTypedImmunity {
+        source: Condition::MindBlanked,
+        types: &[DamageType::Psychic],
+    },
     // 5e Silence: any creature entirely inside the silence sphere is
     // immune to thunder damage (the magical hush absorbs sonic effects).
-    (Condition::Silenced, &[DamageType::Thunder]),
+    ConditionDrivenTypedImmunity {
+        source: Condition::Silenced,
+        types: &[DamageType::Thunder],
+    },
     // 5e Petrified: "The creature is immune to poison and disease,
     // although a poison or disease already in its system is suspended,
     // not neutralized." The Petrified condition is on
@@ -51,41 +80,75 @@ const TYPED_IMMUNITY_CONDITIONS: &[(Condition, &[DamageType])] = &[
     // in `dynamic_immunity_to(Poisoned)` so a creature turned to
     // stone is also immune to a fresh `Poisoned` condition install
     // RAW.
-    (Condition::Petrified, &[DamageType::Poison]),
+    ConditionDrivenTypedImmunity {
+        source: Condition::Petrified,
+        types: &[DamageType::Poison],
+    },
 ];
 
+/// One row in the `TYPED_RESISTANCE_CONDITIONS` cohort — a single held
+/// condition whose presence grants resistance (half damage) to every
+/// damage type in `types`. Sibling to `PassiveTypedResistance
+/// { flag, types }` on the passive-feature-flag lane — same
+/// "{ source, affected slice }" shape, different source axis
+/// (`source: Condition` here vs. `flag: fn(&ActorInstance) -> bool`
+/// on the passive-feature sibling). A slice of damage types (rather
+/// than a single one) folds a multi-type resistance condition
+/// (Investiture of Stone → physical trio, Otherworldly Guise → radiant
+/// + poison) through one row rather than duplicating the source
+/// condition per damage type.
+struct ConditionDrivenTypedResistance {
+    source: Condition,
+    types: &'static [DamageType],
+}
+
 /// Conditions whose resistance only applies to a curated damage-type
-/// subset. Each row is `(condition, &[damage types resisted])`. Read by
-/// `has_condition_resistance` so a new Investiture-style buff lands as a
-/// one-line entry without touching the damage-pipeline code.
-const TYPED_RESISTANCE_CONDITIONS: &[(Condition, &[DamageType])] = &[
-    (Condition::InvestedInFlame, &[DamageType::Fire]),
-    (Condition::InvestedInIce, &[DamageType::Cold]),
-    (
-        Condition::InvestedInStone,
-        &[
+/// subset. Read by `has_condition_resistance` so a new Investiture-
+/// style buff lands as a one-line entry without touching the damage-
+/// pipeline code.
+///
+/// Sibling to `PASSIVE_TYPED_RESISTANCES` on the passive-feature-flag
+/// lane (that cohort keys off always-on template flags like Dwarven /
+/// Fiendish / Draconic / Heart-of-the-Storm / Psychic Defenses /
+/// Radiant Soul, this cohort keys off held conditions like
+/// Investiture of Flame / Purified / Raging / Otherworldly Guise).
+const TYPED_RESISTANCE_CONDITIONS: &[ConditionDrivenTypedResistance] = &[
+    ConditionDrivenTypedResistance {
+        source: Condition::InvestedInFlame,
+        types: &[DamageType::Fire],
+    },
+    ConditionDrivenTypedResistance {
+        source: Condition::InvestedInIce,
+        types: &[DamageType::Cold],
+    },
+    ConditionDrivenTypedResistance {
+        source: Condition::InvestedInStone,
+        types: &[
             DamageType::Bludgeoning,
             DamageType::Piercing,
             DamageType::Slashing,
         ],
-    ),
-    (Condition::Purified, &[DamageType::Poison]),
-    (
-        Condition::Raging,
-        &[
+    },
+    ConditionDrivenTypedResistance {
+        source: Condition::Purified,
+        types: &[DamageType::Poison],
+    },
+    ConditionDrivenTypedResistance {
+        source: Condition::Raging,
+        types: &[
             DamageType::Bludgeoning,
             DamageType::Piercing,
             DamageType::Slashing,
         ],
-    ),
+    },
     // 5e Tasha's Otherworldly Guise (celestial flavor): radiant + poison
     // resistance from the divine-aligned form. Folded into the same lane
     // as the other typed-resistance buffs so the damage pipeline halves
     // both incoming radiant and incoming poison damage cleanly.
-    (
-        Condition::OtherworldlyGuised,
-        &[DamageType::Radiant, DamageType::Poison],
-    ),
+    ConditionDrivenTypedResistance {
+        source: Condition::OtherworldlyGuised,
+        types: &[DamageType::Radiant, DamageType::Poison],
+    },
 ];
 
 /// One row in the `PASSIVE_TYPED_RESISTANCES` cohort — a single passive
@@ -203,6 +266,26 @@ const PASSIVE_TYPED_RESISTANCES: &[PassiveTypedResistance] = &[
         ),
         types: &[DamageType::Psychic],
     },
+    // 5e Warlock Celestial Patron **Radiant Soul** (level 6, XGtE). RAW
+    // grants resistance to radiant damage on the Otherworldly Patron:
+    // The Celestial subclass. Sibling row to Fiendish Resilience (Fire)
+    // and Draconic Resilience (Fire) on the "typed resistance from a
+    // patron / bloodline" lane — same halving rule, different damage
+    // axis (Radiant vs. Fire), and to Heart of the Storm (Lightning +
+    // Thunder) / Psychic Defenses (Psychic) on the "one feature tag
+    // drives one cohort row" pattern. The +CHA-mod-to-radiant-or-fire
+    // damage rider half of RAW is left as future work; the resistance
+    // clause is the load-bearing defensive half and rides here alone.
+    // Ships on `CELESTIAL_WARLOCK_TEMPLATE` above its strict RAW lv6
+    // gate for the same reason `ARCHFEY_WARLOCK_TEMPLATE` ships
+    // Beguiling Defenses (RAW lv10) — class templates target a
+    // balanced playable level, not lockstep PHB progression.
+    PassiveTypedResistance {
+        flag: |a| a.has_passive_feature(
+            crate::actions::class_features::RADIANT_SOUL_TAG,
+        ),
+        types: &[DamageType::Radiant],
+    },
 ];
 
 /// One row in the `PASSIVE_TYPED_IMMUNITIES` cohort — a single passive
@@ -261,6 +344,22 @@ const PASSIVE_TYPED_IMMUNITIES: &[PassiveTypedImmunity] = &[
     },
 ];
 
+/// One row in the `CONDITION_DRIVEN_IMMUNITIES` cohort — a single held
+/// condition whose presence grants immunity to every condition in
+/// `suppressed`. Sibling to `FlagDrivenImmunity { flag, suppressed }`
+/// on the passive-feature-flag lane — same "{ source, suppressed
+/// slice }" shape, different source axis (`source: Condition` here vs.
+/// `flag: fn(&ActorInstance) -> bool` on the passive-feature sibling).
+/// A slice of suppressed conditions (rather than a single one) folds
+/// a multi-condition immunity buff (Purified / Otherworldly Guise
+/// → Frightened + Charmed + Poisoned, Footloose → Paralyzed +
+/// Restrained + Grappled) through one row rather than duplicating the
+/// source condition per suppressed condition.
+struct ConditionDrivenConditionImmunity {
+    source: Condition,
+    suppressed: &'static [Condition],
+}
+
 /// Broad condition-driven immunity table read by `dynamic_immunity_to`.
 /// Each row pairs a source condition with the set of downstream condition
 /// installs it suppresses. Purified / Otherworldly Guise both grant the
@@ -269,44 +368,61 @@ const PASSIVE_TYPED_IMMUNITIES: &[PassiveTypedImmunity] = &[
 /// future broad-immunity buff (a Purified-of-Fear cantrip, a Sanctuary-
 /// tier ward, etc.) lands as one row instead of an inlined `||` clause
 /// duplicated across every affected condition's arm.
-const CONDITION_DRIVEN_IMMUNITIES: &[(Condition, &[Condition])] = &[
+///
+/// Sibling to `FLAG_DRIVEN_IMMUNITIES` on the passive-feature-flag
+/// lane (that cohort keys off always-on template flags like Fey
+/// Ancestry / Nature's Ward / Beguiling Defenses, this cohort keys
+/// off held conditions like Heroism / Mind Blank / Petrified /
+/// Purified / Otherworldly Guise / Footloose). The two immunity
+/// lanes are OR'd via `dynamic_immunity_to` — any hit is sufficient
+/// to bounce the condition install.
+const CONDITION_DRIVEN_IMMUNITIES: &[ConditionDrivenConditionImmunity] = &[
     // 5e Heroism: immune to Frightened for the duration.
-    (Condition::Heroic, &[Condition::Frightened]),
+    ConditionDrivenConditionImmunity {
+        source: Condition::Heroic,
+        suppressed: &[Condition::Frightened],
+    },
     // 5e Mind Blank: immune to Charmed.
-    (Condition::MindBlanked, &[Condition::Charmed]),
+    ConditionDrivenConditionImmunity {
+        source: Condition::MindBlanked,
+        suppressed: &[Condition::Charmed],
+    },
     // 5e Petrified: immune to poison / disease — the Poisoned-condition
     // half. Damage-type half lives on `TYPED_IMMUNITY_CONDITIONS`.
-    (Condition::Petrified, &[Condition::Poisoned]),
+    ConditionDrivenConditionImmunity {
+        source: Condition::Petrified,
+        suppressed: &[Condition::Poisoned],
+    },
     // 5e Aura of Purity install rider: immune to Charmed, Frightened,
     // and Poisoned for the duration.
-    (
-        Condition::Purified,
-        &[
+    ConditionDrivenConditionImmunity {
+        source: Condition::Purified,
+        suppressed: &[
             Condition::Frightened,
             Condition::Charmed,
             Condition::Poisoned,
         ],
-    ),
+    },
     // 5e Tasha's Otherworldly Guise (celestial flavor): immune to the
     // same trio as Purified for the duration.
-    (
-        Condition::OtherworldlyGuised,
-        &[
+    ConditionDrivenConditionImmunity {
+        source: Condition::OtherworldlyGuised,
+        suppressed: &[
             Condition::Frightened,
             Condition::Charmed,
             Condition::Poisoned,
         ],
-    ),
+    },
     // 5e Freedom of Movement (Footloose install): immune to magical
     // movement restraint — Paralyzed / Restrained / Grappled.
-    (
-        Condition::Footloose,
-        &[
+    ConditionDrivenConditionImmunity {
+        source: Condition::Footloose,
+        suppressed: &[
             Condition::Paralyzed,
             Condition::Restrained,
             Condition::Grappled,
         ],
-    ),
+    },
 ];
 
 /// Row of `FLAG_DRIVEN_IMMUNITIES`. `flag` reads a racial / subclass
@@ -3214,13 +3330,15 @@ impl ActorInstance {
 
     /// True iff the actor holds a condition that grants outright immunity
     /// to damage of type `dt`. Walks `TYPED_IMMUNITY_CONDITIONS` — each
-    /// row pairs a condition with the damage types it zeroes. Currently
-    /// covers Mind Blank (psychic) and Silence (thunder); a new immunity
-    /// rider adds a one-line tuple entry.
+    /// row is `ConditionDrivenTypedImmunity { source, types }` and
+    /// pairs a source condition with the damage types it zeroes.
+    /// Currently covers Mind Blank (psychic), Silence (thunder), and
+    /// Petrified (poison); a new immunity rider adds a one-line
+    /// struct-literal entry.
     pub fn has_condition_immunity(&self, dt: DamageType) -> bool {
         TYPED_IMMUNITY_CONDITIONS
             .iter()
-            .any(|(c, types)| self.has_condition(*c) && types.contains(&dt))
+            .any(|row| self.has_condition(row.source) && row.types.contains(&dt))
     }
 
     /// True iff the actor is immune to damage of type `dt` from ANY
@@ -3298,8 +3416,8 @@ impl ActorInstance {
         {
             return true;
         }
-        TYPED_RESISTANCE_CONDITIONS.iter().any(|(c, types)| {
-            self.has_condition(*c) && types.contains(&dt)
+        TYPED_RESISTANCE_CONDITIONS.iter().any(|row| {
+            self.has_condition(row.source) && row.types.contains(&dt)
         })
     }
 
@@ -3540,9 +3658,14 @@ impl ActorInstance {
         // `CONDITION_DRIVEN_IMMUNITIES` table whose suppression set
         // covers `c` grants immunity. Adding a new broad-immunity buff
         // (a future Sanctuary-tier ward, etc.) lands as one row in the
-        // table without touching this method.
-        if CONDITION_DRIVEN_IMMUNITIES.iter().any(|(source, suppressed)| {
-            suppressed.contains(&c) && self.has_condition(*source)
+        // table without touching this method. Each row is
+        // `ConditionDrivenConditionImmunity { source, suppressed }` —
+        // the struct-row shape mirrors the sibling `FlagDrivenImmunity
+        // { flag, suppressed }` cohort walked immediately below, so
+        // both immunity lanes share the same "{ source, suppressed
+        // slice }" declarative-table pattern end-to-end.
+        if CONDITION_DRIVEN_IMMUNITIES.iter().any(|row| {
+            row.suppressed.contains(&c) && self.has_condition(row.source)
         }) {
             return true;
         }

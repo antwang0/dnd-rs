@@ -54019,4 +54019,244 @@ mod tests {
             "Fey Ancestry alone bounces Charmed install — sibling row on the FLAG_DRIVEN_IMMUNITIES cohort still fires without Beguiling Defenses"
         );
     }
+
+    /// 5e Warlock Celestial Patron **Radiant Soul** (lv6): passive radiant
+    /// damage resistance. Baseline Warlock eats full radiant; Celestial
+    /// Warlock halves the incoming hit. Other damage types (Fire / Cold /
+    /// Poison / Necrotic) land at full magnitude — the RAW subclass grant
+    /// is scoped to Radiant alone even though the sibling +CHA-mod
+    /// damage-boost clause covers both fire and radiant (that clause is
+    /// left as future work; only the passive resistance rides on the
+    /// CR-4 chassis). Locks the `PASSIVE_TYPED_RESISTANCES` cohort row
+    /// wire-through from `has_passive_feature(RADIANT_SOUL_TAG)` to the
+    /// shared `effective_damage` halving site.
+    #[test]
+    fn radiant_soul_halves_radiant_damage_on_celestial_warlock() {
+        use crate::actors::creatures::warlocks::{CELESTIAL_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let celestial = e
+            .instantiate_creature(&CELESTIAL_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&celestial].has_passive_feature(
+            crate::actions::class_features::RADIANT_SOUL_TAG,
+        ));
+        assert!(!e.actors[&baseline].has_passive_feature(
+            crate::actions::class_features::RADIANT_SOUL_TAG,
+        ));
+        // 20 radiant → 10 (halved by Radiant Soul) on the Celestial
+        // Warlock.
+        assert_eq!(
+            e.actors[&celestial].effective_damage(20, DamageType::Radiant),
+            10,
+            "celestial warlock halves radiant damage"
+        );
+        // Baseline warlock eats the full 20 radiant.
+        assert_eq!(
+            e.actors[&baseline].effective_damage(20, DamageType::Radiant),
+            20,
+            "baseline warlock takes full radiant damage"
+        );
+        // Other damage types still take full damage on the Celestial
+        // Warlock — the RAW subclass grant is scoped to Radiant. Fire
+        // (the sibling half of the +CHA-mod damage-boost clause) still
+        // lands full; Cold / Poison / Necrotic all pass through
+        // unchanged.
+        assert_eq!(
+            e.actors[&celestial].effective_damage(20, DamageType::Fire),
+            20,
+        );
+        assert_eq!(
+            e.actors[&celestial].effective_damage(20, DamageType::Cold),
+            20,
+        );
+        assert_eq!(
+            e.actors[&celestial].effective_damage(20, DamageType::Poison),
+            20,
+        );
+        assert_eq!(
+            e.actors[&celestial].effective_damage(20, DamageType::Necrotic),
+            20,
+        );
+    }
+
+    /// Radiant Soul plugs into `has_own_typed_reduction(Radiant)` — the
+    /// "does this actor already scale this type?" gate used by Aura of
+    /// Warding to enforce the "one halving per damage instance" rule.
+    /// Locks the shared read chokepoint so a hypothetical Celestial
+    /// Warlock / Ancients Paladin party sees the aura no-op cleanly on
+    /// radiant hits (the /2 already fires via Radiant Soul; the aura
+    /// would otherwise stack a second /2 for /4 unless
+    /// `has_own_typed_reduction` picked it up here). Sibling to the
+    /// Draconic Resilience registration test on the same helper.
+    #[test]
+    fn radiant_soul_registers_own_typed_reduction_for_radiant() {
+        use crate::actors::creatures::warlocks::{CELESTIAL_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let celestial = e
+            .instantiate_creature(&CELESTIAL_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        // Celestial warlock's Radiant Soul flag registers as an own
+        // typed reduction on the Radiant lane so aura-style stacking
+        // no-ops.
+        assert!(
+            e.actors[&celestial].has_own_typed_reduction(DamageType::Radiant),
+            "Radiant Soul registers as own typed reduction on Radiant"
+        );
+        // Baseline warlock without the tag has no own reduction on
+        // Radiant — aura stacking would apply cleanly.
+        assert!(
+            !e.actors[&baseline].has_own_typed_reduction(DamageType::Radiant),
+            "baseline warlock has no own radiant reduction"
+        );
+    }
+
+    /// Template drift check: only the Celestial Warlock ships the
+    /// `RADIANT_SOUL_TAG` passive feature. The baseline / Fiend / Undying
+    /// / Great Old One / Archfey warlock chassis do NOT carry the tag —
+    /// keeps the subclass tell scoped to the Celestial chassis so a
+    /// future regression (e.g., accidental tag insertion on
+    /// `WARLOCK_TEMPLATE` bleeding into every subclass build via the
+    /// `..base.clone()` tail) is caught here.
+    #[test]
+    fn radiant_soul_lands_only_on_celestial_warlock() {
+        use crate::actions::class_features::RADIANT_SOUL_TAG;
+        use crate::actors::creatures::warlocks::{
+            ARCHFEY_WARLOCK_TEMPLATE, CELESTIAL_WARLOCK_TEMPLATE, FIEND_WARLOCK_TEMPLATE,
+            GREAT_OLD_ONE_WARLOCK_TEMPLATE, UNDYING_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let baseline = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(1, 1), 0, 0)
+            .unwrap();
+        let fiend = e
+            .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(3, 1), 0, 0)
+            .unwrap();
+        let undying = e
+            .instantiate_creature(&UNDYING_WARLOCK_TEMPLATE, Coordinate::new(5, 1), 0, 0)
+            .unwrap();
+        let great_old_one = e
+            .instantiate_creature(&GREAT_OLD_ONE_WARLOCK_TEMPLATE, Coordinate::new(7, 1), 0, 0)
+            .unwrap();
+        let archfey = e
+            .instantiate_creature(&ARCHFEY_WARLOCK_TEMPLATE, Coordinate::new(9, 1), 0, 0)
+            .unwrap();
+        let celestial = e
+            .instantiate_creature(&CELESTIAL_WARLOCK_TEMPLATE, Coordinate::new(11, 1), 0, 0)
+            .unwrap();
+        // Only the Celestial warlock ships the tag.
+        assert!(e.actors[&celestial].has_passive_feature(RADIANT_SOUL_TAG));
+        assert!(!e.actors[&baseline].has_passive_feature(RADIANT_SOUL_TAG));
+        assert!(!e.actors[&fiend].has_passive_feature(RADIANT_SOUL_TAG));
+        assert!(!e.actors[&undying].has_passive_feature(RADIANT_SOUL_TAG));
+        assert!(!e.actors[&great_old_one].has_passive_feature(RADIANT_SOUL_TAG));
+        assert!(!e.actors[&archfey].has_passive_feature(RADIANT_SOUL_TAG));
+    }
+
+    /// Sanity: the Celestial Warlock inherits the baseline Warlock
+    /// envelope through the `..WARLOCK_TEMPLATE.clone()` tail — Eldritch
+    /// Blast's signature invocations (Agonizing / Repelling / Eldritch
+    /// Mind) all carry through, alongside the subclass-only Radiant
+    /// Soul tag. Guards against a regression where the subclass
+    /// template's explicit `features` builder drops the baseline
+    /// invocation set on its way to inserting the new tag.
+    #[test]
+    fn celestial_warlock_inherits_baseline_warlock_features() {
+        use crate::actions::class_features::{
+            AGONIZING_BLAST_TAG, ELDRITCH_MIND_TAG, RADIANT_SOUL_TAG, REPELLING_BLAST_TAG,
+        };
+        use crate::actors::creatures::warlocks::CELESTIAL_WARLOCK_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let celestial = e
+            .instantiate_creature(&CELESTIAL_WARLOCK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Baseline invocations still carry through the clone.
+        assert!(e.actors[&celestial].has_passive_feature(AGONIZING_BLAST_TAG));
+        assert!(e.actors[&celestial].has_passive_feature(REPELLING_BLAST_TAG));
+        assert!(e.actors[&celestial].has_passive_feature(ELDRITCH_MIND_TAG));
+        // Subclass tag lands on top.
+        assert!(e.actors[&celestial].has_passive_feature(RADIANT_SOUL_TAG));
+    }
+
+    /// Cohort-shape refactor sanity: after promoting
+    /// `TYPED_IMMUNITY_CONDITIONS` / `TYPED_RESISTANCE_CONDITIONS` /
+    /// `CONDITION_DRIVEN_IMMUNITIES` from `&[(Condition, &[X])]` tuple
+    /// rows to `{ source, types|suppressed }` struct rows, every
+    /// existing row still fires identically. Locks the three cohort
+    /// walks against a mis-mapping regression by exercising one row
+    /// from each lane end-to-end:
+    ///   - `TYPED_IMMUNITY_CONDITIONS`: MindBlanked → psychic-damage
+    ///     zero;
+    ///   - `TYPED_RESISTANCE_CONDITIONS`: InvestedInFlame → fire-damage
+    ///     halved;
+    ///   - `CONDITION_DRIVEN_IMMUNITIES`: Heroic → Frightened install
+    ///     bounces.
+    #[test]
+    fn condition_driven_cohorts_preserve_behavior_after_struct_shape_refactor() {
+        use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::engine::side_effects::{ApplicableSideEffect, ApplyCondition};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let a = e
+            .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+
+        // TYPED_IMMUNITY_CONDITIONS row: MindBlanked → immunity to psychic.
+        e.actors.get_mut(&a).unwrap().add_condition(
+            Condition::MindBlanked,
+            ConditionTimer::Rounds(3),
+        );
+        assert_eq!(
+            e.actors[&a].effective_damage(20, DamageType::Psychic),
+            0,
+            "MindBlanked zeroes psychic damage via the promoted TYPED_IMMUNITY_CONDITIONS cohort row"
+        );
+        e.actors
+            .get_mut(&a)
+            .unwrap()
+            .remove_condition(Condition::MindBlanked);
+
+        // TYPED_RESISTANCE_CONDITIONS row: InvestedInFlame → fire halved.
+        e.actors.get_mut(&a).unwrap().add_condition(
+            Condition::InvestedInFlame,
+            ConditionTimer::Rounds(3),
+        );
+        assert_eq!(
+            e.actors[&a].effective_damage(20, DamageType::Fire),
+            10,
+            "InvestedInFlame halves fire damage via the promoted TYPED_RESISTANCE_CONDITIONS cohort row"
+        );
+        e.actors
+            .get_mut(&a)
+            .unwrap()
+            .remove_condition(Condition::InvestedInFlame);
+
+        // CONDITION_DRIVEN_IMMUNITIES row: Heroic → Frightened install
+        // bounces.
+        e.actors
+            .get_mut(&a)
+            .unwrap()
+            .add_condition(Condition::Heroic, ConditionTimer::Rounds(3));
+        ApplyCondition {
+            actor_id: a,
+            condition: Condition::Frightened,
+            timer: ConditionTimer::Rounds(3),
+        }
+        .apply(&mut e);
+        assert!(
+            !e.actors[&a].has_condition(Condition::Frightened),
+            "Heroic bounces Frightened install via the promoted CONDITION_DRIVEN_IMMUNITIES cohort row"
+        );
+    }
 }

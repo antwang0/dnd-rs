@@ -534,3 +534,88 @@ pub static ARCHFEY_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         ..WARLOCK_TEMPLATE.clone()
     }
 });
+
+/// Celestial Warlock — Otherworldly Patron **The Celestial** subclass
+/// build (XGtE). Identical envelope to the baseline `WARLOCK_TEMPLATE`
+/// (CHA-primary half-caster with Pact Magic, Eldritch Blast + Hex +
+/// Witch Bolt at will, Agonizing / Repelling / Eldritch Mind
+/// invocations) with one subclass feature layered on: **Radiant Soul**
+/// (Celestial lv6) — passive **resistance to radiant damage**.
+///
+/// The signature "the celestial patron's light shrouds you" tell —
+/// where a baseline Warlock eats a Guiding Bolt / Sacred Flame /
+/// Sunburst hit clean, the Celestial Warlock halves the incoming
+/// radiant damage. Read at the shared `PASSIVE_TYPED_RESISTANCES`
+/// cohort in `actor_template.rs` next to Fiendish Resilience's fire-
+/// halving half — same lane, different patron flavor and different
+/// damage axis. Pairs naturally with a party's radiant-heavy blast
+/// list (Guiding Bolt from a companion Cleric, Sunburst from a party
+/// Wizard, Sacred Flame overspill) — a Celestial Warlock caught in
+/// their party's own AoE radiant burst walks out with half the friendly-
+/// fire tax a baseline Warlock would eat.
+///
+/// Sibling on the passive typed-resistance patron lane to:
+///   - **Fiendish Resilience** (Fiend Warlock lv10): Fire, RAW-scoped
+///     to the patron's fire flavor. Distinct on the damage axis (Fire
+///     vs. Radiant) — a hypothetical multi-patron carrier stacks both
+///     flag closures cleanly under the "one halving per damage
+///     instance" rule since the two rows never overlap on a single
+///     damage type. The two Otherworldly Patron picks never legally
+///     co-occur on a single build (RAW: one patron per warlock), so
+///     the distinct-axis composition matters only for cross-template
+///     invariants, not for a lawful PC build.
+///
+/// Sibling on the Otherworldly Patron subclass lane to `FIEND_WARLOCK_TEMPLATE`
+/// (Dark One's Blessing + Dark One's Own Luck + Fiendish Resilience —
+/// the fiery kill-focused build), `UNDYING_WARLOCK_TEMPLATE` (Aspect
+/// of the Moon — the insomniac's build), `GREAT_OLD_ONE_WARLOCK_TEMPLATE`
+/// (Entropic Ward — the alien-awareness reactive build), and
+/// `ARCHFEY_WARLOCK_TEMPLATE` (Beguiling Defenses — the Charmed-bounce
+/// build). RAW's Celestial patron picks up other features not shipped
+/// on this template — **Bonus Cantrips** (lv1: Light + Sacred Flame
+/// added; Sacred Flame lands cleanly on the shared spell list, Light
+/// has no combat surface without a per-tile illumination model),
+/// **Healing Light** (lv1: bonus-action pool of d6 healing dice — a
+/// per-rest healing well that needs a new resource lane), **Celestial
+/// Resilience** (lv10: temp HP to self + party on short rest —
+/// short-rest heal buffer), and **Searing Vengeance** (lv14 capstone:
+/// reactive burst on downed-ally trigger). Only the lv6 Radiant Soul
+/// passive has a mechanical surface on the CR-4 chassis that plugs
+/// cleanly into the shared passive typed-resistance cohort, so we
+/// ship that half and leave the rest as future work.
+///
+/// Ships the CR-4 template above the strict RAW lv6 gate for the
+/// same reason `FIEND_WARLOCK_TEMPLATE` ships Fiendish Resilience
+/// (RAW lv10), `GREAT_OLD_ONE_WARLOCK_TEMPLATE` ships Entropic Ward
+/// (RAW lv6), and `ARCHFEY_WARLOCK_TEMPLATE` ships Beguiling
+/// Defenses (RAW lv10): class templates target a balanced playable
+/// level, not lockstep PHB progression.
+///
+/// Glyph 'C' — distinct from baseline warlock 'L', Fiend warlock 'F',
+/// Undying warlock 'U', Great Old One warlock 'O', and Archfey
+/// warlock 'A'; 'C' for the "Celestial" identity (the warlock as a
+/// mortal channel for celestial radiance).
+pub static CELESTIAL_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Warlock envelope wholesale
+    // and layer on the one Celestial patron feature — Radiant Soul via
+    // the `RADIANT_SOUL_TAG` passive-feature tag. The `..base.clone()`
+    // tail picks up every other field — stats, spell slots, save profs,
+    // invocation-driven cantrips — without an N-line field-by-field
+    // copy. Same shape as `ARCHFEY_WARLOCK_TEMPLATE`'s tag-only
+    // subclass build (Beguiling Defenses),
+    // `GREAT_OLD_ONE_WARLOCK_TEMPLATE`'s tag-only subclass build
+    // (Entropic Ward), `UNDYING_WARLOCK_TEMPLATE`'s tag-only subclass
+    // build (Aspect of the Moon), and the sorcerer / paladin / rogue /
+    // ranger subclass templates.
+    let mut features = WARLOCK_TEMPLATE.features.clone();
+    features.insert(crate::actions::class_features::RADIANT_SOUL_TAG);
+    CreatureTemplate {
+        name: "Celestial Warlock",
+        // 'C' — distinct from baseline warlock 'L', Fiend 'F',
+        // Undying 'U', Great Old One 'O', and Archfey 'A'; 'C' for
+        // the "Celestial" identity.
+        glyph: 'C',
+        features,
+        ..WARLOCK_TEMPLATE.clone()
+    }
+});

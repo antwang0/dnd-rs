@@ -1951,6 +1951,61 @@ pub const ASPECT_OF_THE_MOON_TAG: &str = "warlock.aspect_of_the_moon";
 /// lockstep PHB progression.
 pub const BEGUILING_DEFENSES_TAG: &str = "warlock.beguiling_defenses";
 
+/// 5e Warlock Otherworldly Patron — **The Celestial** — **Radiant Soul**
+/// subclass feature tag (level 6, XGtE). Passive: the warlock's
+/// celestial-linked soul carries two mechanically distinct RAW clauses;
+/// only the load-bearing defensive half ships on the CR-4 chassis.
+///   1. **Resistance to radiant damage** — folds through the shared
+///      `PASSIVE_TYPED_RESISTANCES` cohort in `actor_template.rs` next
+///      to Heart of the Storm's lightning + thunder row and Psychic
+///      Defenses' psychic row. Single-type slice (Radiant only) —
+///      distinct from Heart of the Storm on the multi-type slice
+///      shape; the RAW subclass grant is scoped to radiant alone even
+///      though the sibling damage-boost clause (see clause 2) covers
+///      both fire and radiant.
+///   2. **+CHA-mod damage rider on radiant / fire spells** — RAW: when
+///      the warlock casts a spell that deals radiant or fire damage
+///      they add their CHA mod to one damage roll of that spell. This
+///      is a per-cast damage-boost hook that needs a per-spell prime
+///      wire; not yet on the CR-4 chassis. Left as future work — the
+///      resistance clause is the load-bearing defensive half and rides
+///      here alone, matching the way Heart of the Storm ships its
+///      passive resistance without the eruption-on-cast clause on
+///      earlier chassis iterations.
+///
+/// Sibling to `HEART_OF_THE_STORM_TAG` / `PSYCHIC_DEFENSES_TAG` on the
+/// Otherworldly Patron / Sorcerous Origin subclass passive lane —
+/// same "one feature tag drives one cohort row" declarative-table
+/// pattern. Distinct on the damage axis (Radiant vs. Lightning +
+/// Thunder / Psychic / Fire) and the source chassis (Warlock patron
+/// vs. Sorcerer bloodline). Distinct from Fiendish Resilience (Fiend
+/// Warlock lv10 fire) on the "typed resistance from an Otherworldly
+/// Patron" lane — Fiend covers fire, Celestial covers radiant, so a
+/// hypothetical multi-patron carrier stacks the two flag closures
+/// cleanly under the "one halving per damage instance" rule since the
+/// two rows never overlap on a single damage type.
+///
+/// Ships on `CELESTIAL_WARLOCK_TEMPLATE` — the Otherworldly Patron:
+/// The Celestial subclass template — alongside the baseline Warlock
+/// envelope (CHA-primary half-caster with Pact Magic, Eldritch Blast
+/// + Hex + Witch Bolt at will, Agonizing / Repelling / Eldritch Mind
+/// invocations). Distinct from `FIEND_WARLOCK_TEMPLATE` (Dark One's
+/// Blessing + Dark One's Own Luck + Fiendish Resilience — the fiery
+/// kill-focused build), `UNDYING_WARLOCK_TEMPLATE` (Aspect of the
+/// Moon — the insomniac's build), `GREAT_OLD_ONE_WARLOCK_TEMPLATE`
+/// (Entropic Ward — the alien-awareness reactive build),
+/// `ARCHFEY_WARLOCK_TEMPLATE` (Beguiling Defenses — the Charmed-
+/// bounce build), and the baseline `WARLOCK_TEMPLATE` (patron-less
+/// baseline).
+///
+/// Ships on the CR-4 template above the strict RAW lv6 gate for the
+/// same reason `FIEND_WARLOCK_TEMPLATE` ships Fiendish Resilience
+/// (RAW lv10), `GREAT_OLD_ONE_WARLOCK_TEMPLATE` ships Entropic Ward
+/// (RAW lv6), and `ARCHFEY_WARLOCK_TEMPLATE` ships Beguiling
+/// Defenses (RAW lv10): class templates target a balanced playable
+/// level, not lockstep PHB progression.
+pub const RADIANT_SOUL_TAG: &str = "warlock.radiant_soul";
+
 /// 5e Sorcerer Sorcerous Origin — **Storm Sorcery** — **Heart of the
 /// Storm** subclass feature tag (level 6, XGtE). Passive: the sorcerer
 /// gains resistance to both **lightning** AND **thunder** damage AND
