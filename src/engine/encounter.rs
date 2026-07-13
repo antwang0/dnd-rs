@@ -24949,6 +24949,100 @@ mod tests {
         );
     }
 
+    /// Cohort-shape refactor sanity: after promoting the six-branch
+    /// if-chain in `condition_ac_bonus` into the shared
+    /// `CONDITION_AC_BONUSES` cohort table, every source-condition
+    /// row still contributes its expected signed delta identically to
+    /// the pre-cleanup inline branch. Locks the promoted cohort
+    /// against a mis-mapping regression by exercising every row:
+    ///   - ShieldOfFaith → +2
+    ///   - Shielded → +5
+    ///   - Hasted → +2
+    ///   - Slowed → -2 (only debuff-side row)
+    ///   - WardingBonded → +1
+    ///   - OtherworldlyGuised → +2
+    /// Plus the empty (no conditions) and stacking (Shield of Faith +
+    /// Shielded → +7) cases so the filter-map-sum walk shape is
+    /// exercised end-to-end.
+    ///
+    /// Sibling to `rage_gated_broad_resistances_cohort_matches_prior_inline_behavior`
+    /// on the "cohort-shape refactor sanity" lane — same test intent
+    /// (lock the pre-cleanup vs. post-cleanup behavior equivalence),
+    /// different cohort (AC bonuses here vs. broad resistances there).
+    #[test]
+    fn condition_ac_bonuses_cohort_matches_prior_inline_behavior() {
+        use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let a = e
+            .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Empty baseline — no AC-bump conditions held.
+        assert_eq!(e.actors[&a].condition_ac_bonus(), 0);
+
+        // Each row's magnitude, in isolation. Each iteration installs
+        // one condition, checks the delta, then removes it to reset
+        // for the next iteration.
+        let rows: &[(Condition, i32)] = &[
+            (Condition::ShieldOfFaith, 2),
+            (Condition::Shielded, 5),
+            (Condition::Hasted, 2),
+            (Condition::Slowed, -2),
+            (Condition::WardingBonded, 1),
+            (Condition::OtherworldlyGuised, 2),
+        ];
+        for (cond, expected) in rows {
+            e.actors
+                .get_mut(&a)
+                .unwrap()
+                .add_condition(*cond, ConditionTimer::Rounds(5));
+            assert_eq!(
+                e.actors[&a].condition_ac_bonus(),
+                *expected,
+                "{:?} should contribute {} AC in isolation",
+                cond,
+                expected
+            );
+            e.actors.get_mut(&a).unwrap().remove_condition(*cond);
+            assert_eq!(e.actors[&a].condition_ac_bonus(), 0);
+        }
+
+        // Vertical stacking: Shield of Faith (+2) + Shielded (+5) →
+        // +7 (both buff-side rows fire, deltas sum).
+        e.actors
+            .get_mut(&a)
+            .unwrap()
+            .add_condition(Condition::ShieldOfFaith, ConditionTimer::Rounds(5));
+        e.actors
+            .get_mut(&a)
+            .unwrap()
+            .add_condition(Condition::Shielded, ConditionTimer::Rounds(5));
+        assert_eq!(e.actors[&a].condition_ac_bonus(), 7);
+
+        // Horizontal (buff + debuff) stacking: Hasted (+2) + Slowed
+        // (-2) → 0. Load-bearing check that the signed delta pattern
+        // lets a debuff-side row (Slowed) sit on the same cohort as
+        // the buff-side rows without a separate cohort.
+        e.actors
+            .get_mut(&a)
+            .unwrap()
+            .remove_condition(Condition::ShieldOfFaith);
+        e.actors
+            .get_mut(&a)
+            .unwrap()
+            .remove_condition(Condition::Shielded);
+        e.actors
+            .get_mut(&a)
+            .unwrap()
+            .add_condition(Condition::Hasted, ConditionTimer::Rounds(5));
+        e.actors
+            .get_mut(&a)
+            .unwrap()
+            .add_condition(Condition::Slowed, ConditionTimer::Rounds(5));
+        assert_eq!(e.actors[&a].condition_ac_bonus(), 0);
+    }
+
     /// Wolf Totem Spirit (Barbarian Path of the Totem Warrior, alt-flavor):
     /// while raging, allies have advantage on melee attacks against any
     /// enemy footprint-adjacent to the wolf totem barbarian. Probes the
@@ -54446,6 +54540,199 @@ mod tests {
         assert!(e.actors[&marid].has_passive_feature(ELDRITCH_MIND_TAG));
         // Subclass tag lands on top.
         assert!(e.actors[&marid].has_passive_feature(ELEMENTAL_GIFT_TAG));
+    }
+
+    /// 5e Warlock Genie (Dao) Patron **Elemental Gift** (lv6, TCE):
+    /// passive bludgeoning damage resistance. Baseline Warlock eats full
+    /// bludgeoning; Dao Warlock halves the incoming hit. Other damage
+    /// types (Cold / Fire / Radiant / Poison / Piercing / Slashing) land
+    /// at full magnitude — the RAW Dao variant grant is scoped to
+    /// bludgeoning alone. Locks the `PASSIVE_TYPED_RESISTANCES` cohort
+    /// row wire-through from `has_passive_feature(DAO_ELEMENTAL_GIFT_TAG)`
+    /// to the shared `effective_damage` halving site. Sibling test to
+    /// `elemental_gift_halves_cold_damage_on_marid_warlock` on the
+    /// "typed resistance from an Otherworldly Patron (Genie kind)" lane
+    /// — same halving-vs-full assertion shape, different damage axis
+    /// (Bludgeoning vs. Cold) and different genie flavor.
+    #[test]
+    fn dao_elemental_gift_halves_bludgeoning_damage_on_dao_warlock() {
+        use crate::actors::creatures::warlocks::{DAO_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let dao = e
+            .instantiate_creature(&DAO_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&dao].has_passive_feature(
+            crate::actions::class_features::DAO_ELEMENTAL_GIFT_TAG,
+        ));
+        assert!(!e.actors[&baseline].has_passive_feature(
+            crate::actions::class_features::DAO_ELEMENTAL_GIFT_TAG,
+        ));
+        // 20 bludgeoning → 10 (halved by Dao Elemental Gift).
+        assert_eq!(
+            e.actors[&dao].effective_damage(20, DamageType::Bludgeoning),
+            10,
+            "dao warlock halves bludgeoning damage"
+        );
+        // Baseline warlock eats the full 20 bludgeoning.
+        assert_eq!(
+            e.actors[&baseline].effective_damage(20, DamageType::Bludgeoning),
+            20,
+            "baseline warlock takes full bludgeoning damage"
+        );
+        // Other damage types still take full damage on the Dao Warlock —
+        // the RAW subclass grant is scoped to Bludgeoning. Cold, Fire,
+        // Radiant, Poison, Piercing, and Slashing all pass through
+        // unchanged; the patron-lane siblings (Marid Cold / Radiant Soul /
+        // Fiendish Resilience) cover those types on their respective
+        // subclass chassis, not here.
+        assert_eq!(
+            e.actors[&dao].effective_damage(20, DamageType::Cold),
+            20,
+        );
+        assert_eq!(
+            e.actors[&dao].effective_damage(20, DamageType::Fire),
+            20,
+        );
+        assert_eq!(
+            e.actors[&dao].effective_damage(20, DamageType::Radiant),
+            20,
+        );
+        assert_eq!(
+            e.actors[&dao].effective_damage(20, DamageType::Piercing),
+            20,
+        );
+        assert_eq!(
+            e.actors[&dao].effective_damage(20, DamageType::Slashing),
+            20,
+        );
+    }
+
+    /// Dao Elemental Gift plugs into `has_own_typed_reduction(Bludgeoning)`
+    /// — the "does this actor already scale this type?" gate used by
+    /// Aura of Warding to enforce the "one halving per damage instance"
+    /// rule. Locks the shared read chokepoint so a hypothetical Dao
+    /// Warlock / Ancients Paladin party sees the aura no-op cleanly on
+    /// bludgeoning hits (the /2 already fires via Elemental Gift; the
+    /// aura would otherwise stack a second /2 for /4 unless
+    /// `has_own_typed_reduction` picked it up here). Sibling to the
+    /// Marid Elemental Gift / Radiant Soul / Draconic Resilience
+    /// registration tests on the same helper.
+    #[test]
+    fn dao_elemental_gift_registers_own_typed_reduction_for_bludgeoning() {
+        use crate::actors::creatures::warlocks::{DAO_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let dao = e
+            .instantiate_creature(&DAO_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        // Dao warlock's Elemental Gift flag registers as an own typed
+        // reduction on the Bludgeoning lane so aura-style stacking
+        // no-ops.
+        assert!(
+            e.actors[&dao].has_own_typed_reduction(DamageType::Bludgeoning),
+            "Dao Elemental Gift registers as own typed reduction on Bludgeoning"
+        );
+        // Baseline warlock without the tag has no own reduction on
+        // Bludgeoning — aura stacking would apply cleanly.
+        assert!(
+            !e.actors[&baseline].has_own_typed_reduction(DamageType::Bludgeoning),
+            "baseline warlock has no own bludgeoning reduction"
+        );
+    }
+
+    /// Template drift check: only the Dao Warlock ships the
+    /// `DAO_ELEMENTAL_GIFT_TAG` passive feature. The baseline / Fiend /
+    /// Undying / Great Old One / Archfey / Celestial / Marid warlock
+    /// chassis do NOT carry the tag — keeps the subclass tell scoped to
+    /// the Dao chassis so a future regression (e.g., accidental tag
+    /// insertion on `WARLOCK_TEMPLATE` bleeding into every subclass
+    /// build via the `..base.clone()` tail) is caught here. Sibling to
+    /// `elemental_gift_lands_only_on_marid_warlock` on the same
+    /// "single-subclass-tag ownership" lock — and mirror-locks the two
+    /// genie-variant tags never crossing chassis (the Dao and Marid
+    /// tags each ride only their own subclass chassis).
+    #[test]
+    fn dao_elemental_gift_lands_only_on_dao_warlock() {
+        use crate::actions::class_features::{DAO_ELEMENTAL_GIFT_TAG, ELEMENTAL_GIFT_TAG};
+        use crate::actors::creatures::warlocks::{
+            ARCHFEY_WARLOCK_TEMPLATE, CELESTIAL_WARLOCK_TEMPLATE, DAO_WARLOCK_TEMPLATE,
+            FIEND_WARLOCK_TEMPLATE, GREAT_OLD_ONE_WARLOCK_TEMPLATE, MARID_WARLOCK_TEMPLATE,
+            UNDYING_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(30, 15, &[]);
+        let baseline = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(1, 1), 0, 0)
+            .unwrap();
+        let fiend = e
+            .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(3, 1), 0, 0)
+            .unwrap();
+        let undying = e
+            .instantiate_creature(&UNDYING_WARLOCK_TEMPLATE, Coordinate::new(5, 1), 0, 0)
+            .unwrap();
+        let great_old_one = e
+            .instantiate_creature(&GREAT_OLD_ONE_WARLOCK_TEMPLATE, Coordinate::new(7, 1), 0, 0)
+            .unwrap();
+        let archfey = e
+            .instantiate_creature(&ARCHFEY_WARLOCK_TEMPLATE, Coordinate::new(9, 1), 0, 0)
+            .unwrap();
+        let celestial = e
+            .instantiate_creature(&CELESTIAL_WARLOCK_TEMPLATE, Coordinate::new(11, 1), 0, 0)
+            .unwrap();
+        let marid = e
+            .instantiate_creature(&MARID_WARLOCK_TEMPLATE, Coordinate::new(13, 1), 0, 0)
+            .unwrap();
+        let dao = e
+            .instantiate_creature(&DAO_WARLOCK_TEMPLATE, Coordinate::new(15, 1), 0, 0)
+            .unwrap();
+        // Only the Dao warlock ships the Dao tag.
+        assert!(e.actors[&dao].has_passive_feature(DAO_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&baseline].has_passive_feature(DAO_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&fiend].has_passive_feature(DAO_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&undying].has_passive_feature(DAO_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&great_old_one].has_passive_feature(DAO_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&archfey].has_passive_feature(DAO_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&celestial].has_passive_feature(DAO_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&marid].has_passive_feature(DAO_ELEMENTAL_GIFT_TAG));
+        // And the Marid tag doesn't bleed onto the Dao chassis — the
+        // two genie-variant tags each ride only their own subclass
+        // build.
+        assert!(!e.actors[&dao].has_passive_feature(ELEMENTAL_GIFT_TAG));
+    }
+
+    /// Sanity: the Dao Warlock inherits the baseline Warlock envelope
+    /// through the `..WARLOCK_TEMPLATE.clone()` tail — Eldritch Blast's
+    /// signature invocations (Agonizing / Repelling / Eldritch Mind)
+    /// all carry through, alongside the subclass-only Dao Elemental
+    /// Gift tag. Guards against a regression where the subclass
+    /// template's explicit `features` builder drops the baseline
+    /// invocation set on its way to inserting the new tag. Sibling to
+    /// `marid_warlock_inherits_baseline_warlock_features` on the same
+    /// clone-and-layer lock.
+    #[test]
+    fn dao_warlock_inherits_baseline_warlock_features() {
+        use crate::actions::class_features::{
+            AGONIZING_BLAST_TAG, DAO_ELEMENTAL_GIFT_TAG, ELDRITCH_MIND_TAG, REPELLING_BLAST_TAG,
+        };
+        use crate::actors::creatures::warlocks::DAO_WARLOCK_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let dao = e
+            .instantiate_creature(&DAO_WARLOCK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Baseline invocations still carry through the clone.
+        assert!(e.actors[&dao].has_passive_feature(AGONIZING_BLAST_TAG));
+        assert!(e.actors[&dao].has_passive_feature(REPELLING_BLAST_TAG));
+        assert!(e.actors[&dao].has_passive_feature(ELDRITCH_MIND_TAG));
+        // Subclass tag lands on top.
+        assert!(e.actors[&dao].has_passive_feature(DAO_ELEMENTAL_GIFT_TAG));
     }
 
     /// Cohort-shape refactor sanity: after promoting

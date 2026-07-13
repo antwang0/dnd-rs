@@ -293,8 +293,34 @@ struct PassiveTypedResistance {
 ///     (rather than two duplicated flag closures) since the row shape
 ///     accepts a slice of damage types. The eruption-on-cast half of
 ///     RAW (a 10ft ally-agnostic burst when the sorcerer casts a
-///     lightning / thunder spell of lv1+) has no ship on the CR-4
-///     template yet — the resistance clause is the load-bearing half.
+///     lightning / thunder spell of lv1+) rides on
+///     `EncounterInstance::trigger_heart_of_the_storm_eruption` — the
+///     resistance clause is the passive half; the eruption clause is
+///     the active half.
+///   - **Psychic Defenses (Sorcerer Aberrant Mind lv14, TCE)**: psychic
+///     resistance. RAW pairs the resistance with advantage on saves
+///     vs. Charmed / Frightened — the advantage-on-save half collapses
+///     to install-immunity and lives on `FLAG_DRIVEN_IMMUNITIES` (the
+///     same "advantage-on-save collapses to install-immunity" pattern
+///     Halfling Brave uses on that cohort).
+///   - **Radiant Soul (Warlock Celestial Patron lv6, XGtE)**: radiant
+///     resistance. RAW also grants a +CHA-mod damage rider on radiant /
+///     fire spells; that clause is a per-cast damage-boost hook not yet
+///     wired, so this row ships only the load-bearing defensive half.
+///   - **Elemental Gift (Warlock Genie Marid Patron lv6, TCE)**: cold
+///     resistance. RAW's Elemental Gift picks a damage type based on
+///     the warlock's chosen genie kind; the Marid variant covers Cold.
+///     Sibling to the Dao variant below on the "typed resistance from
+///     an Otherworldly Patron (Genie kind)" lane.
+///   - **Elemental Gift (Warlock Genie Dao Patron lv6, TCE)**:
+///     bludgeoning resistance. First user of the Bludgeoning slot on
+///     the passive typed-resistance lane — the physical damage trio
+///     (Bludgeoning / Piercing / Slashing) was uncovered by any
+///     passive typed-resistance cohort row until this entry landed.
+///     Sibling to the Marid variant above on the "typed resistance
+///     from an Otherworldly Patron (Genie kind)" lane; the two never
+///     legally co-occur on a single build (RAW: one genie kind per
+///     warlock).
 ///
 /// A new passive typed resistance (Circle of the Moon Wild Shape
 /// per-form types, Bladeling's Painful Quills necrotic resistance,
@@ -381,6 +407,28 @@ const PASSIVE_TYPED_RESISTANCES: &[PassiveTypedResistance] = &[
             crate::actions::class_features::ELEMENTAL_GIFT_TAG,
         ),
         types: &[DamageType::Cold],
+    },
+    // 5e Warlock Genie (Dao) Patron **Elemental Gift** (level 6, TCE).
+    // RAW grants a per-genie-kind damage-type resistance; the Dao
+    // variant covers **bludgeoning** — the dao's earth-flavored patron
+    // hardens the warlock against blunt-force hits. First user of the
+    // Bludgeoning slot on the passive typed-resistance lane (Fiendish /
+    // Draconic own Fire, Heart of the Storm owns Lightning + Thunder,
+    // Psychic Defenses owns Psychic, Radiant Soul owns Radiant, and
+    // Marid's Elemental Gift owns Cold; Bludgeoning was uncovered on
+    // the passive-typed-resistance cohort until this row landed).
+    // Sibling row to the Marid variant on the "typed resistance from an
+    // Otherworldly Patron (Genie kind)" lane — same halving rule,
+    // different patron flavor and different damage axis. Ships on
+    // `DAO_WARLOCK_TEMPLATE` above its strict RAW lv6 gate for the
+    // same reason `MARID_WARLOCK_TEMPLATE` ships Elemental Gift (RAW
+    // lv6) — class templates target a balanced playable level, not
+    // lockstep PHB progression.
+    PassiveTypedResistance {
+        flag: |a| a.has_passive_feature(
+            crate::actions::class_features::DAO_ELEMENTAL_GIFT_TAG,
+        ),
+        types: &[DamageType::Bludgeoning],
     },
 ];
 
@@ -980,6 +1028,116 @@ const CONDITION_SPEED_BONUSES: &[ConditionSpeedBonus] = &[
     ConditionSpeedBonus {
         flag: |a| a.has_condition(Condition::AshardalonStriding),
         bonus_ft: 20.0,
+    },
+];
+
+/// One row in the `CONDITION_AC_BONUSES` cohort — a single condition
+/// whose presence contributes a flat AC delta to the holder. Sibling to
+/// `ConditionSpeedBonus { flag, bonus_ft }` on the "cohort of `(source
+/// closure / condition, magnitude)` rows" pattern — same declarative
+/// shape, different lane (AC delta vs. speed delta) and different unit
+/// (integer AC points vs. feet). The delta is signed so a debuff-side
+/// entry (Slowed → -2 AC) sits on the same table as the buff-side
+/// entries without a separate cohort.
+struct ConditionAcBonus {
+    /// Source condition whose presence gates the row. Every AC-bump
+    /// buff currently uses a plain single-condition gate, so this is
+    /// a bare `Condition` rather than a closure — the shape stays
+    /// symmetric with `ConditionDrivenTypedResistance { source, types
+    /// }` and `ConditionDrivenConditionImmunity { source, suppressed
+    /// }` on the "single-condition source" cohort lane. A future
+    /// compound-gate buff (a hypothetical "+2 AC while Raging and
+    /// Concentrating") would either widen this row to a `flag`
+    /// closure (matching `ConditionSpeedBonus`) or land as a new
+    /// sibling cohort with the compound predicate — the shape is
+    /// deliberately narrower here than on the speed cohort to keep
+    /// the common single-condition case a bare row.
+    source: Condition,
+    /// Signed AC delta contributed while `source` is held. Positive
+    /// for a buff (Shield of Faith +2, Shielded +5, Hasted +2,
+    /// WardingBonded +1, OtherworldlyGuised +2); negative for a
+    /// debuff (Slowed -2). Read by `condition_ac_bonus` as a plain
+    /// integer sum so vertical stacking (Shield of Faith + Shielded +
+    /// Hasted → +9 AC) folds through the same walk as horizontal
+    /// stacking (Hasted + Slowed → 0 AC — the two riders cancel).
+    bonus: i32,
+}
+
+/// Condition-driven AC-bonus cohort read by
+/// `ActorInstance::condition_ac_bonus`. Every row's `bonus` is summed
+/// (signed) when the row's `source` condition is held; the resulting
+/// delta is added on top of `armor_class`'s post-floor base. Adding a
+/// fresh condition-driven AC bump (a hypothetical Sanctuary +4 AC on
+/// the caster, a Blur-adjacent visual-obscurement AC bump, etc.)
+/// lands as a one-line entry here rather than another
+/// `if self.has_condition(...) { bonus += N; }` branch in
+/// `condition_ac_bonus`.
+///
+/// Sibling to `CONDITION_SPEED_BONUSES` on the "cohort of `(source,
+/// magnitude)` rows" pattern — the two tables split by affected axis:
+/// AC delta here vs. speed delta there. Sibling to
+/// `TYPED_RESISTANCE_CONDITIONS` / `CONDITION_DRIVEN_IMMUNITIES` on
+/// the "single-condition source" cohort lane — same `source:
+/// Condition` row shape, different affected axis (AC points vs.
+/// damage-type resistance vs. condition-install immunity).
+///
+/// Entries (order doesn't affect the summed total; grouped by
+/// buff-vs-debuff flavor for readability):
+///   - **Shield of Faith** (`ShieldOfFaith`, +2 AC): the lv1 Cleric /
+///     Paladin abjuration; concentration-bound. Sibling on the "spell-
+///     installed AC buff" lane to Shield / Mage Armor / Barkskin but
+///     the latter three flow through `ac_floor` / a template flag rather
+///     than a flat bonus.
+///   - **Shield** (`Shielded`, +5 AC): the Wizard / Sorcerer / Warlock
+///     lv1 reaction spell; installs the `Shielded` condition until
+///     start of the caster's next turn. RAW value.
+///   - **Haste** (`Hasted`, +2 AC): the Wizard / Sorcerer lv3
+///     transmutation; concentration-bound. Pairs with the +30 ft speed
+///     bump handled elsewhere (Haste's speed clause folds into the
+///     `Flying` / `InvestedInWind` / speed-doubling accessors rather
+///     than this cohort).
+///   - **Slow** (`Slowed`, -2 AC): the Wizard / Sorcerer lv3
+///     transmutation debuff — RAW imposes -2 AC on the target for the
+///     duration. The only debuff-side row on this cohort; the signed
+///     delta pattern lets it ride the same table as the +2 / +5 buff
+///     rows.
+///   - **Warding Bond** (`WardingBonded`, +1 AC): the Cleric /
+///     Paladin lv2 abjuration; installs the `WardingBonded` condition
+///     on the bonded ally. RAW grants +1 AC AND +1 saves AND resistance
+///     to all damage AND mirror damage — the +1 AC clause lives here,
+///     the +1 save clause on the sibling `condition_save_bonus` /
+///     future `CONDITION_SAVE_BONUSES` cohort, the resistance and
+///     mirror-damage clauses on their own lanes.
+///   - **Otherworldly Guise** (`OtherworldlyGuised`, +2 AC): the
+///     Warlock lv6 self-buff (Tasha's Otherworldly Guise) — the
+///     extraplanar shell's +2 AC clause. Sibling to Haste on the
+///     concentration-bound +2 AC lane; distinguished by the concurrent
+///     +60 ft fly speed (on `CONDITION_SPEED_BONUSES`) and typed
+///     resistances (radiant + poison, on the resistance lane).
+const CONDITION_AC_BONUSES: &[ConditionAcBonus] = &[
+    ConditionAcBonus {
+        source: Condition::ShieldOfFaith,
+        bonus: 2,
+    },
+    ConditionAcBonus {
+        source: Condition::Shielded,
+        bonus: 5,
+    },
+    ConditionAcBonus {
+        source: Condition::Hasted,
+        bonus: 2,
+    },
+    ConditionAcBonus {
+        source: Condition::Slowed,
+        bonus: -2,
+    },
+    ConditionAcBonus {
+        source: Condition::WardingBonded,
+        bonus: 1,
+    },
+    ConditionAcBonus {
+        source: Condition::OtherworldlyGuised,
+        bonus: 2,
     },
 ];
 
@@ -3561,12 +3719,17 @@ impl ActorInstance {
 
     /// True iff the actor holds any passive-feature-driven typed
     /// resistance to damage of type `dt`. Walks the shared
-    /// `PASSIVE_TYPED_RESISTANCES` cohort — each row is
-    /// `(flag_fn, damage_type)`. Read by `effective_damage` (folds
-    /// into the template-resistance lane) and `has_own_typed_reduction`
-    /// (the "does this actor already scale this type?" gate for Aura
-    /// of Warding stacking). A new passive typed resistance drops in
-    /// as a one-line cohort entry rather than another hand-rolled
+    /// `PASSIVE_TYPED_RESISTANCES` cohort — each row is a
+    /// `PassiveTypedResistance { flag, types }`; the flag returning
+    /// true grants half damage of every listed type. Read by
+    /// `effective_damage` (folds into the template-resistance lane)
+    /// and `has_own_typed_reduction` (the "does this actor already
+    /// scale this type?" gate for Aura of Warding stacking). Sibling
+    /// walk shape to `has_passive_typed_immunity` on the
+    /// `PASSIVE_TYPED_IMMUNITIES` cohort — same `entry.types.contains
+    /// (&dt) && (entry.flag)(self)` any-row predicate, different lane
+    /// (halving vs. zero). A new passive typed resistance drops in as
+    /// a one-line cohort entry rather than another hand-rolled
     /// `if dt == ... && self.has_...` branch here.
     fn has_passive_typed_resistance(&self, dt: DamageType) -> bool {
         PASSIVE_TYPED_RESISTANCES
@@ -4160,34 +4323,33 @@ impl ActorInstance {
         (raw_base.max(floor) + self.condition_ac_bonus()).max(0) as u32
     }
 
-    /// Flat AC contribution from active conditions. Shield of Faith
-    /// (+2 from the spell), Shielded (+5 from the Shield reaction spell
-    /// — RAW value), Mage Armored (sets minimum AC to 13 + DEX, which
-    /// we approximate as a flat top-up — see `armor_class`).
+    /// Flat AC contribution from active conditions — Shield of Faith
+    /// (+2 from the spell), Shield (+5 from the reaction spell, RAW
+    /// value), Haste (+2), Slow (-2), Warding Bond (+1), and Tasha's
+    /// Otherworldly Guise (+2). Walks the shared `CONDITION_AC_BONUSES`
+    /// cohort — each row is a `ConditionAcBonus { source, bonus }`;
+    /// every held source contributes its signed `bonus` to the sum, so
+    /// vertical stacking (Shield of Faith + Shielded + Hasted → +9 AC)
+    /// folds through the same walk as horizontal stacking (Hasted +
+    /// Slowed → 0 AC — the two riders cancel). Adding a future
+    /// condition-driven AC bump (a hypothetical Sanctuary +4 AC on the
+    /// caster, a Blur-adjacent visual-obscurement AC bump, etc.) lands
+    /// as a one-line entry in the cohort rather than another
+    /// `if self.has_condition(...) { bonus += N; }` branch here.
+    ///
+    /// Sibling to `condition_speed_bonus_from_table` on the
+    /// condition-driven cohort-walk lane — same filter-map-sum shape
+    /// (walk the cohort, sum every held row's magnitude), different
+    /// affected axis (AC points here vs. feet there). Mage Armored
+    /// (AC-floor lane, not a flat bump) is handled by `ac_floor`, not
+    /// this cohort — the two lanes are compositional (floor wins over
+    /// base, then this bonus stacks on top).
     pub fn condition_ac_bonus(&self) -> i32 {
-        let mut bonus = 0;
-        if self.has_condition(Condition::ShieldOfFaith) {
-            bonus += 2;
-        }
-        if self.has_condition(Condition::Shielded) {
-            bonus += 5;
-        }
-        if self.has_condition(Condition::Hasted) {
-            bonus += 2;
-        }
-        if self.has_condition(Condition::Slowed) {
-            bonus -= 2;
-        }
-        // 5e Warding Bond: +1 AC while bonded.
-        if self.has_condition(Condition::WardingBonded) {
-            bonus += 1;
-        }
-        // 5e Tasha's Otherworldly Guise: the extraplanar form's shell
-        // grants a flat +2 AC bump while the buff is up.
-        if self.has_condition(Condition::OtherworldlyGuised) {
-            bonus += 2;
-        }
-        bonus
+        CONDITION_AC_BONUSES
+            .iter()
+            .filter(|row| self.has_condition(row.source))
+            .map(|row| row.bonus)
+            .sum()
     }
 
     /// Effective AC floor from active AC-setting conditions. Mage Armor

@@ -714,3 +714,103 @@ pub static MARID_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         ..WARLOCK_TEMPLATE.clone()
     }
 });
+
+/// Dao Warlock — Otherworldly Patron **The Genie (Dao)** subclass build
+/// (TCE). Identical envelope to the baseline `WARLOCK_TEMPLATE` (CHA-
+/// primary half-caster with Pact Magic, Eldritch Blast + Hex + Witch
+/// Bolt at will, Agonizing / Repelling / Eldritch Mind invocations) with
+/// one subclass feature layered on: **Elemental Gift** (Genie subclass
+/// level 6, Dao variant) — passive **resistance to bludgeoning damage**.
+///
+/// The signature "the dao's stony grip shields me from clubs" tell —
+/// where a baseline Warlock eats a maul / warhammer / greatclub swing
+/// clean, the Dao Warlock halves the incoming bludgeoning damage. Read
+/// at the shared `PASSIVE_TYPED_RESISTANCES` cohort in
+/// `actor_template.rs` next to the Marid Elemental Gift's cold-halving
+/// row, Radiant Soul's radiant-halving row, and Fiendish Resilience's
+/// fire-halving row — same lane, different patron flavor and different
+/// damage axis. First user of the Bludgeoning slot on the passive
+/// typed-resistance lane; the physical damage trio (Bludgeoning /
+/// Piercing / Slashing) was uncovered by any passive typed-resistance
+/// cohort row until this template landed.
+///
+/// RAW's Genie Warlock (Dao variant) picks up other features not
+/// shipped on this template — **Genie's Vessel** (lv1: bonus-action
+/// bottle a creature into the dao vessel; a save-and-condition-install
+/// resource lane that needs a per-warlock vessel tracker), **Bottled
+/// Respite** (lv6: 10-min in-vessel short rest; sits outside combat),
+/// **Sanctuary Vessel** (lv10: refresh temp HP on party short rest inside
+/// the vessel), and **Limited Wish** (lv14 capstone: cast any lv6-or-lower
+/// spell on a 1d4-day cooldown). Only the lv6 Elemental Gift passive
+/// has a mechanical surface on the CR-4 chassis that plugs cleanly into
+/// the shared passive typed-resistance cohort, so we ship that half and
+/// leave the rest as future work — matching the way
+/// `MARID_WARLOCK_TEMPLATE` ships only the Elemental Gift resistance
+/// half of its RAW kit.
+///
+/// Sibling on the passive typed-resistance patron lane to:
+///   - **Elemental Gift (Marid)** (Marid Warlock lv6, TCE): Cold,
+///     sibling patron on the "Otherworldly Patron: The Genie" family —
+///     same feature name, different damage axis (Bludgeoning vs. Cold).
+///     The two never legally co-occur on a single build (RAW: one
+///     genie kind per warlock).
+///   - **Radiant Soul** (Celestial Warlock lv6, XGtE): Radiant.
+///   - **Fiendish Resilience** (Fiend Warlock lv10): Fire.
+///
+/// Sibling on the Otherworldly Patron subclass lane to
+/// `MARID_WARLOCK_TEMPLATE` (Marid genie kind — Cold),
+/// `FIEND_WARLOCK_TEMPLATE` (Dark One's Blessing + Dark One's Own Luck +
+/// Fiendish Resilience — the fiery kill-focused build),
+/// `UNDYING_WARLOCK_TEMPLATE` (Aspect of the Moon — the insomniac's
+/// build), `GREAT_OLD_ONE_WARLOCK_TEMPLATE` (Entropic Ward — the alien-
+/// awareness reactive build), `ARCHFEY_WARLOCK_TEMPLATE` (Beguiling
+/// Defenses — the Charmed-bounce build), and `CELESTIAL_WARLOCK_TEMPLATE`
+/// (Radiant Soul — the radiant-resistance build).
+///
+/// Ships the CR-4 template above the strict RAW lv6 gate for the
+/// same reason `MARID_WARLOCK_TEMPLATE` ships Elemental Gift (RAW lv6),
+/// `CELESTIAL_WARLOCK_TEMPLATE` ships Radiant Soul (RAW lv6),
+/// `GREAT_OLD_ONE_WARLOCK_TEMPLATE` ships Entropic Ward (RAW lv6), and
+/// `FIEND_WARLOCK_TEMPLATE` ships Fiendish Resilience (RAW lv10): class
+/// templates target a balanced playable level, not lockstep PHB
+/// progression.
+///
+/// Glyph 'D' — collides with the Draconic Sorcerer 'D' glyph, but the
+/// two never co-occur on a single team and the CHA-caster / STR-caster
+/// axes disambiguate them on the "glyph as encounter tell" pattern. If a
+/// hypothetical cross-team mix ever ships (Dao warlock on team A,
+/// Draconic sorcerer on team B), the team-color tint disambiguates them
+/// on the map. 'D' for the "Dao" identity (the warlock as a mortal
+/// bonded to an earth-and-stone genie sovereign of the Elemental Plane
+/// of Earth).
+pub static DAO_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Warlock envelope wholesale
+    // and layer on the one Dao Genie patron feature — Elemental Gift
+    // via the `DAO_ELEMENTAL_GIFT_TAG` passive-feature tag. The
+    // `..base.clone()` tail picks up every other field — stats, spell
+    // slots, save profs, invocation-driven cantrips — without an
+    // N-line field-by-field copy. Same shape as
+    // `MARID_WARLOCK_TEMPLATE`'s tag-only subclass build (Elemental
+    // Gift, Cold variant), `CELESTIAL_WARLOCK_TEMPLATE`'s tag-only
+    // subclass build (Radiant Soul), `ARCHFEY_WARLOCK_TEMPLATE`'s
+    // tag-only subclass build (Beguiling Defenses),
+    // `GREAT_OLD_ONE_WARLOCK_TEMPLATE`'s tag-only subclass build
+    // (Entropic Ward), `UNDYING_WARLOCK_TEMPLATE`'s tag-only subclass
+    // build (Aspect of the Moon), and the sorcerer / paladin / rogue /
+    // ranger subclass templates.
+    let mut features = WARLOCK_TEMPLATE.features.clone();
+    features.insert(crate::actions::class_features::DAO_ELEMENTAL_GIFT_TAG);
+    CreatureTemplate {
+        name: "Dao Warlock",
+        // 'D' — collides with the Draconic Sorcerer 'D', but the two
+        // subclass templates never legally co-occur on a single team
+        // (one glyph per team-color-and-team-id combo suffices to
+        // disambiguate them in a mixed encounter). Distinct from
+        // baseline warlock 'L', Fiend 'F', Undying 'U', Great Old One
+        // 'O', Archfey 'A', Celestial 'C', and Marid 'M'; 'D' for the
+        // "Dao" identity.
+        glyph: 'D',
+        features,
+        ..WARLOCK_TEMPLATE.clone()
+    }
+});

@@ -2076,6 +2076,75 @@ pub const RADIANT_SOUL_TAG: &str = "warlock.radiant_soul";
 /// lockstep PHB progression.
 pub const ELEMENTAL_GIFT_TAG: &str = "warlock.elemental_gift";
 
+/// 5e Warlock Otherworldly Patron — **The Genie (Dao)** — **Elemental
+/// Gift** subclass feature tag (level 6, TCE). Passive: the Dao-pact
+/// warlock gains **resistance to bludgeoning damage** — the dao's earth-
+/// flavored patron pact hardens the warlock's body against blunt-force
+/// hits. First user of the Bludgeoning slot on the passive typed-
+/// resistance lane — Cold is owned by Marid's `ELEMENTAL_GIFT_TAG`,
+/// Fire by Fiendish / Draconic Resilience, Lightning + Thunder by Heart
+/// of the Storm, Psychic by Psychic Defenses, and Radiant by Radiant
+/// Soul, so the Bludgeoning axis was uncovered on the passive-typed-
+/// resistance cohort until this row lands. Bludgeoning is one of the
+/// three most-common weapon damage types in RAW (alongside Piercing /
+/// Slashing) and the Dao's grant is the first passive lane pattern
+/// carrier for any physical damage type — a Dao warlock halves incoming
+/// morningstar / maul / greatclub / warhammer damage where a baseline
+/// Warlock eats the hit clean.
+///
+/// RAW's Elemental Gift picks a damage type based on the warlock's
+/// chosen genie kind: **Dao** (bludgeoning), **Djinni** (thunder),
+/// **Efreeti** (fire), **Marid** (cold). This tag ships the Dao variant
+/// alongside the pre-existing Marid variant (`ELEMENTAL_GIFT_TAG` above)
+/// — the two never legally co-occur on a single build (RAW: one genie
+/// kind per warlock), so the split-tag shape is a template-drift lock
+/// rather than a stacking concern. Future Djinni / Efreeti variants
+/// drop in as sibling tags with their own single-type slice entry in
+/// `PASSIVE_TYPED_RESISTANCES` — same "one feature tag drives one
+/// cohort row" pattern this tag and its Marid sibling already use.
+///
+/// RAW's Elemental Gift also grants a per-day 10-minute **flying speed
+/// equal to walking speed** clause; the flight half needs a per-cast
+/// timer / activated-buff surface not yet wired on this chassis. Left
+/// as future work — the resistance clause is the load-bearing defensive
+/// half and rides here alone, matching the way the Marid variant ships
+/// without the flight half.
+///
+/// Read at the shared `PASSIVE_TYPED_RESISTANCES` cohort in
+/// `actor_template.rs` next to Marid's Cold row, Radiant Soul's radiant
+/// row, Heart of the Storm's lightning + thunder row, and Psychic
+/// Defenses' psychic row. Single-type slice (Bludgeoning only) — same
+/// shape as the Marid Cold row and the Radiant Soul Radiant row on the
+/// single-type-per-genie-kind lane.
+///
+/// Sibling to `ELEMENTAL_GIFT_TAG` (Marid, Cold) on the Genie patron
+/// lane — same "one feature tag drives one cohort row" declarative-
+/// table pattern, different damage axis. Sibling to `RADIANT_SOUL_TAG` /
+/// `HEART_OF_THE_STORM_TAG` / `PSYCHIC_DEFENSES_TAG` on the Otherworldly
+/// Patron / Sorcerous Origin subclass passive lane — same "one feature
+/// tag drives one cohort row" declarative-table pattern.
+///
+/// Ships on `DAO_WARLOCK_TEMPLATE` — the Otherworldly Patron: The Genie
+/// (Dao) subclass template — alongside the baseline Warlock envelope.
+/// Distinct from `MARID_WARLOCK_TEMPLATE` (Marid genie kind — Cold),
+/// `FIEND_WARLOCK_TEMPLATE` (Dark One's Blessing + Dark One's Own Luck +
+/// Fiendish Resilience — the fiery kill-focused build),
+/// `UNDYING_WARLOCK_TEMPLATE` (Aspect of the Moon — the insomniac's
+/// build), `GREAT_OLD_ONE_WARLOCK_TEMPLATE` (Entropic Ward — the alien-
+/// awareness reactive build), `ARCHFEY_WARLOCK_TEMPLATE` (Beguiling
+/// Defenses — the Charmed-bounce build), `CELESTIAL_WARLOCK_TEMPLATE`
+/// (Radiant Soul — the radiant-resistance build), and the baseline
+/// `WARLOCK_TEMPLATE` (patron-less baseline).
+///
+/// Ships on the CR-4 template above the strict RAW lv6 gate for the
+/// same reason `MARID_WARLOCK_TEMPLATE` ships Elemental Gift (RAW lv6),
+/// `CELESTIAL_WARLOCK_TEMPLATE` ships Radiant Soul (RAW lv6),
+/// `GREAT_OLD_ONE_WARLOCK_TEMPLATE` ships Entropic Ward (RAW lv6), and
+/// `FIEND_WARLOCK_TEMPLATE` ships Fiendish Resilience (RAW lv10): class
+/// templates target a balanced playable level, not lockstep PHB
+/// progression.
+pub const DAO_ELEMENTAL_GIFT_TAG: &str = "warlock.dao_elemental_gift";
+
 /// 5e Sorcerer Sorcerous Origin — **Storm Sorcery** — **Heart of the
 /// Storm** subclass feature tag (level 6, XGtE). Passive: the sorcerer
 /// gains resistance to both **lightning** AND **thunder** damage AND
