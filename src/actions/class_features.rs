@@ -171,6 +171,13 @@ pub const BATTLE_MASTER_MANEUVERS: &[&str] = &[
     RALLY_TAG,
     COMMANDERS_STRIKE_TAG,
     DISTRACTING_ATTACK_TAG,
+    // Reaction maneuvers — both fire automatically on an incoming melee
+    // swing (no active action to spend on the fighter's turn), gated on
+    // the per-rest charge below and the target's reaction slot. Listed
+    // here so a short rest refreshes them uniformly with the bonus-
+    // action primes above.
+    PARRY_TAG,
+    RIPOSTE_TAG,
 ];
 
 /// Tags used by `ActorInstance::feature_available` / `spend_feature` to
@@ -4391,6 +4398,31 @@ pub static DISTRACTING_ATTACK: LazyLock<ManeuverPrime> = LazyLock::new(|| Maneuv
     timer: ConditionTimer::UntilStartOfNextTurn,
     log_line: "  distracting strike: fighter's next melee hit will rattle the target's guard.",
 });
+
+/// Class-feature tag for the Fighter's **Parry** Battle Master maneuver
+/// (once per short rest in our model, matching the shared superiority-
+/// dice pool). RAW: when another creature damages you with a melee
+/// attack, you can spend one superiority die as a reaction to reduce
+/// that damage by `1d8 + DEX modifier`. Unlike the bonus-action primes
+/// (Trip / Menacing / Disarming / Pushing / etc.), Parry has no active
+/// action to spend on your own turn — the fighter carries the passive
+/// `has_parry` flag on their template, and the resolve-attack chokepoint
+/// spends this charge automatically when a hit lands and the reaction
+/// is available. Refreshes on short rest via `BATTLE_MASTER_MANEUVERS`
+/// (which is spliced into `SHORT_REST_FEATURES`).
+pub const PARRY_TAG: &str = "fighter.parry";
+
+/// Class-feature tag for the Fighter's **Riposte** Battle Master maneuver
+/// (once per short rest in our model, matching the shared superiority-
+/// dice pool). RAW: when a creature misses you with a melee attack, you
+/// can spend one superiority die as a reaction to make a melee weapon
+/// attack against them. Same passive/auto-fire shape as `PARRY_TAG` —
+/// the fighter carries the `has_riposte` flag on their template, and
+/// the resolve-attack chokepoint's miss branch spends this charge
+/// automatically when the reaction is available and a melee weapon
+/// action is on the fighter's action list. Refreshes on short rest via
+/// `BATTLE_MASTER_MANEUVERS`.
+pub const RIPOSTE_TAG: &str = "fighter.riposte";
 
 /// Class-feature tag for the Wizard's Arcane Recovery — once per long
 /// rest, refreshes on long rest. RAW: once per day during a short rest,

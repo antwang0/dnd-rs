@@ -2,10 +2,10 @@ use crate::actions::class_features::{
     ACTION_SURGE, ACTION_SURGE_TAG, COMMANDERS_STRIKE, COMMANDERS_STRIKE_TAG, DISARMING_ATTACK,
     DISARMING_ATTACK_TAG, DISTRACTING_ATTACK, DISTRACTING_ATTACK_TAG, FEINTING_ATTACK,
     FEINTING_ATTACK_TAG, GOADING_ATTACK, GOADING_ATTACK_TAG, INDOMITABLE, INDOMITABLE_TAG,
-    LUNGING_ATTACK, LUNGING_ATTACK_TAG, MENACING_ATTACK, MENACING_ATTACK_TAG, PRECISION_ATTACK,
-    PRECISION_ATTACK_TAG, PUSHING_ATTACK, PUSHING_ATTACK_TAG, RALLY, RALLY_TAG, SECOND_WIND,
-    SECOND_WIND_TAG, SURVIVOR_TAG, SWEEPING_ATTACK, SWEEPING_ATTACK_TAG, TRIP_ATTACK,
-    TRIP_ATTACK_TAG,
+    LUNGING_ATTACK, LUNGING_ATTACK_TAG, MENACING_ATTACK, MENACING_ATTACK_TAG, PARRY_TAG,
+    PRECISION_ATTACK, PRECISION_ATTACK_TAG, PUSHING_ATTACK, PUSHING_ATTACK_TAG, RALLY, RALLY_TAG,
+    RIPOSTE_TAG, SECOND_WIND, SECOND_WIND_TAG, SURVIVOR_TAG, SWEEPING_ATTACK, SWEEPING_ATTACK_TAG,
+    TRIP_ATTACK, TRIP_ATTACK_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGSWORD, SCIMITAR};
@@ -223,7 +223,25 @@ pub static FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             RALLY_TAG,
             COMMANDERS_STRIKE_TAG,
             DISTRACTING_ATTACK_TAG,
+            // Reactive maneuvers — no active action to spend, fire
+            // automatically at the melee-attack chokepoint. Parry
+            // (1d8 + DEX damage reducer on hit) and Riposte (counter-
+            // attack on miss) each burn one per-rest charge + reaction
+            // when they land, giving the fighter a defensive lane the
+            // active-only maneuvers above don't cover.
+            PARRY_TAG,
+            RIPOSTE_TAG,
         ]),
+        // 5e Fighter Battle Master reactive maneuvers. The `has_parry`
+        // flag opts into the `1d8 + DEX` melee-damage reducer at the
+        // resolve-attack chokepoint (sibling to Uncanny Dodge / Deflect
+        // Missiles); `has_riposte` opts into the counter-attack-on-miss
+        // hook right after the miss log line. Both are separately gated
+        // by their per-rest feature charge (`PARRY_TAG` / `RIPOSTE_TAG`)
+        // so a fighter with the flag but no charge left simply eats
+        // damage / misses without firing.
+        has_parry: true,
+        has_riposte: true,
         has_extra_attack: true,
         // 5e Fighter **Fighting Style: Dueling** (lv1 pick): passive +2 to
         // damage rolls on melee weapon attacks. RAW "while wielding a

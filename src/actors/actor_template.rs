@@ -1337,6 +1337,22 @@ pub struct CreatureTemplate {
     /// flag and the attack-rider chokepoint that the rest of the
     /// reaction-based features use).
     pub has_deflect_missiles: bool,
+    /// 5e Fighter Battle Master **Parry** maneuver (feature-gated
+    /// reaction): when hit by a melee attack, spend a reaction plus one
+    /// superiority-die charge (`PARRY_TAG`) to reduce the damage by
+    /// `1d8 + DEX modifier`. Same "auto-fire when available" shape as
+    /// Uncanny Dodge / Deflect Missiles: the flag gates the reaction, the
+    /// per-rest charge caps the number of uses. Read at
+    /// `resolve_attack_outcome` alongside the sibling damage-reducers.
+    pub has_parry: bool,
+    /// 5e Fighter Battle Master **Riposte** maneuver (feature-gated
+    /// reaction): when a creature misses you with a melee attack, spend
+    /// a reaction plus one superiority-die charge (`RIPOSTE_TAG`) to make
+    /// a melee weapon attack against the attacker. Read at
+    /// `resolve_attack_outcome` after the miss branch — the target's
+    /// first melee action fires against the attacker via the same
+    /// side-effect chokepoint the opportunity-attack dispatcher uses.
+    pub has_riposte: bool,
     /// 5e Displacer Beast trait: the creature projects a displaced image.
     /// Attacks against it have disadvantage. Breaks on damage; restores
     /// at the start of the creature's next turn.
@@ -1978,6 +1994,8 @@ impl CreatureTemplate {
             has_evasion: false,
             has_uncanny_dodge: false,
             has_deflect_missiles: false,
+            has_parry: false,
+            has_riposte: false,
             has_displacement: false,
             has_danger_sense: false,
             has_pack_tactics: false,
@@ -2337,6 +2355,12 @@ pub struct ActorInstance {
     /// 5e Monk Deflect Missiles (level 3): reaction to reduce ranged
     /// weapon damage by 1d10 + DEX + level.
     has_deflect_missiles: bool,
+    /// 5e Fighter Battle Master Parry maneuver: feature-gated reaction to
+    /// reduce melee damage by 1d8 + DEX modifier.
+    has_parry: bool,
+    /// 5e Fighter Battle Master Riposte maneuver: feature-gated reaction
+    /// to make a melee weapon attack against an attacker who missed you.
+    has_riposte: bool,
     has_displacement: bool,
     has_danger_sense: bool,
     has_pack_tactics: bool,
@@ -2561,6 +2585,8 @@ impl ActorInstance {
             has_evasion: ct.has_evasion,
             has_uncanny_dodge: ct.has_uncanny_dodge,
             has_deflect_missiles: ct.has_deflect_missiles,
+            has_parry: ct.has_parry,
+            has_riposte: ct.has_riposte,
             has_displacement: ct.has_displacement,
             has_danger_sense: ct.has_danger_sense,
             has_pack_tactics: ct.has_pack_tactics,
@@ -2744,6 +2770,24 @@ impl ActorInstance {
 
     pub fn has_deflect_missiles(&self) -> bool {
         self.has_deflect_missiles
+    }
+
+    /// 5e Fighter Battle Master Parry maneuver: passive flag that
+    /// combined with an available `PARRY_TAG` feature charge and the
+    /// target's reaction fires a `1d8 + DEX modifier` damage reducer on
+    /// a melee hit. Read at `resolve_attack_outcome` alongside
+    /// Uncanny Dodge / Deflect Missiles.
+    pub fn has_parry(&self) -> bool {
+        self.has_parry
+    }
+
+    /// 5e Fighter Battle Master Riposte maneuver: passive flag that
+    /// combined with an available `RIPOSTE_TAG` feature charge and the
+    /// target's reaction fires a follow-up melee weapon attack against
+    /// the missed attacker. Read at `resolve_attack_outcome` in the miss
+    /// branch, right after the miss log line lands.
+    pub fn has_riposte(&self) -> bool {
+        self.has_riposte
     }
 
     pub fn has_displacement(&self) -> bool {
@@ -3334,6 +3378,39 @@ impl ActorInstance {
     /// First action in the actor's list whose `name()` matches `name`.
     pub fn find_action(&self, name: &str) -> Option<&'static (dyn Action + Send + Sync)> {
         self.actions.iter().find(|a| a.name() == name).copied()
+    }
+
+    /// First melee weapon action on this actor's action list — the
+    /// shared predicate used by both the opportunity-attack dispatcher
+    /// (`EncounterInstance::dispatch_opportunity_attacks`) and the
+    /// Battle Master Riposte reaction (`engine::attack::try_fire_riposte`).
+    /// Filters on the same three clauses:
+    ///
+    /// 1. `is_harmful()` — excludes touch-range buffs / heals (Cure
+    ///    Wounds is `SingleActor` with reach 1 but harmless — an ally
+    ///    shouldn't opportunity-heal a fleeing target).
+    /// 2. `SingleActor` schema — excludes AoE / burst / point-target
+    ///    spells; an opportunity attack / riposte hits one creature.
+    /// 3. `reach_tiles() <= MELEE_REACH` — excludes ranged / long-reach
+    ///    actions.
+    ///
+    /// Returns `None` when the actor has no eligible melee swing. Both
+    /// call sites previously open-coded this find-and-filter chain; the
+    /// helper centralizes it so a future tweak (e.g. "excludes
+    /// grapple / shove no-damage actions from the OA cohort") lands in
+    /// one place instead of two.
+    pub fn first_melee_weapon_action(
+        &self,
+    ) -> Option<&'static (dyn Action + Send + Sync)> {
+        use crate::actions::action_template::{MELEE_REACH, TargetingSchema};
+        self.actions
+            .iter()
+            .find(|act| {
+                act.is_harmful()
+                    && matches!(act.targeting_schema(), TargetingSchema::SingleActor)
+                    && act.reach_tiles().is_some_and(|r| r <= MELEE_REACH)
+            })
+            .copied()
     }
 
     /// Sum every carried item's `ItemBonuses` into one struct.

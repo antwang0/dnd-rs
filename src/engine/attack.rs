@@ -114,6 +114,158 @@ const CRIT_MELEE_EXTRA_DICE_SOURCES: &[(&str, fn(&crate::actors::actor_template:
     ("savage attacks", |a| if a.has_savage_attacks() { 1 } else { 0 }),
 ];
 
+/// Shared eligibility gate for target-side reactive self-clamp damage
+/// reducers — Uncanny Dodge (Rogue lv5), Deflect Missiles (Monk lv3),
+/// and Parry (Fighter Battle Master maneuver). All three fire on an
+/// incoming attack against the target and share the same gate shape:
+///
+/// 1. Target exists and is combat-active.
+/// 2. Target holds the passive flag (`passive_ok(target)` returns true).
+/// 3. Target has an unspent reaction slot.
+/// 4. Target has an unspent charge of `feature_tag` (skipped when the
+///    reducer is un-gated, i.e. Uncanny Dodge / Deflect Missiles).
+/// 5. Target can perceive the attacker — routes through
+///    `viewer_can_see` so an Invisible / Blurred / Displaced attacker
+///    (or a Blinded / Sphered target) can't provoke the reaction.
+///
+/// Returns `true` iff all gates pass. Kept as a `&self`-only read so
+/// callers can borrow the target for stat lookups (DEX / level) before
+/// swapping to `&mut encounter` for the die roll.
+///
+/// Centralizes the five-clause chain that each of the three reducers
+/// previously open-coded so that adding a future reactive reducer
+/// (Shield Master's shove-on-hit, a hypothetical Deflect Missiles
+/// analog for spell attacks) drops in as a one-line `is_eligible` call
+/// plus the reduction body.
+fn reactive_reducer_eligible(
+    encounter: &EncounterInstance,
+    target_id: usize,
+    attacker_id: usize,
+    passive_ok: fn(&crate::actors::actor_template::ActorInstance) -> bool,
+    feature_tag: Option<&'static str>,
+) -> bool {
+    let Some(target) = encounter.actors.get(&target_id) else {
+        return false;
+    };
+    if !target.is_combat_active() || !passive_ok(target) || !target.has_reaction() {
+        return false;
+    }
+    if feature_tag.is_some_and(|t| !target.feature_available(t)) {
+        return false;
+    }
+    encounter.viewer_can_see(target_id, attacker_id)
+}
+
+/// Consume the shared side of a reactive self-clamp damage reducer —
+/// spend the target's reaction slot and (optionally) the associated
+/// per-rest feature charge. Called after Uncanny Dodge / Deflect
+/// Missiles / Parry actually fire and reduce the swing's damage.
+///
+/// Pairs with `reactive_reducer_eligible` (the read-side gate) so the
+/// two ends of the reactive-reducer lifecycle share one chokepoint per
+/// side. Silent no-op if the target has already been cleaned up
+/// mid-swing (matches the defensive pattern the sibling reducers used
+/// before the refactor).
+fn spend_reactive_reducer(
+    encounter: &mut EncounterInstance,
+    target_id: usize,
+    feature_tag: Option<&'static str>,
+) {
+    if let Some(t) = encounter.actors.get_mut(&target_id) {
+        t.consume_resource(crate::engine::side_effects::Resource::Reaction);
+        if let Some(tag) = feature_tag {
+            t.spend_feature(tag);
+        }
+    }
+}
+
+/// 5e Fighter Battle Master **Riposte** maneuver — reactive melee
+/// counter-attack that fires when a melee attack MISSES the target and
+/// the target holds the `has_riposte` flag with an unspent `RIPOSTE_TAG`
+/// charge, an available reaction, and a suitable melee weapon action on
+/// their action list. Also gated on `viewer_can_see` so an Invisible /
+/// Blurred / Displaced attacker (or a Blinded fighter) can't be
+/// counter-struck (mirrors the Uncanny Dodge / Deflect Missiles sight
+/// gate). No-op on any missing prerequisite. The counter-attack fires
+/// via the same "run the underlying attack's side_effects" chokepoint
+/// the opportunity-attack dispatcher uses in `EncounterInstance`, so
+/// weapon-side riders (Bless, on-hit smite primes, etc.) fold in
+/// cleanly without a bespoke roll pipeline here.
+///
+/// Kept public so `spells.rs` can drive it from `spell_attack_outcome`
+/// if we later extend RAW to trigger Riposte on missed spell attacks
+/// too — the current RAW clause is melee-only so the caller in
+/// `resolve_attack_outcome` gates on `p.is_melee` at the call site.
+pub fn try_fire_riposte(
+    encounter: &mut EncounterInstance,
+    target_id: usize,
+    attacker_id: usize,
+) {
+    use crate::actions::action_template::MELEE_REACH;
+
+    // Shared eligibility gate (passive flag + reaction slot + per-rest
+    // charge + sight) — same helper the self-clamp reducers (Uncanny
+    // Dodge / Deflect Missiles / Parry) use. Riposte is a counter-attack
+    // rather than a damage clamp, but its five-clause gate is identical
+    // so both lanes route through the shared chokepoint.
+    if !reactive_reducer_eligible(
+        encounter,
+        target_id,
+        attacker_id,
+        |a| a.has_riposte(),
+        Some(crate::actions::class_features::RIPOSTE_TAG),
+    ) {
+        return;
+    }
+    // Find the target's first melee weapon action via the shared
+    // `first_melee_weapon_action` predicate — same helper that the
+    // opportunity-attack dispatcher uses on the reactor side. Filters
+    // out touch-range buffs / heals (Cure Wounds is `SingleActor` with
+    // reach 1 but harmless), ranged actions, and AoE bursts.
+    let Some(attack) = encounter
+        .actors
+        .get(&target_id)
+        .and_then(|target| target.first_melee_weapon_action())
+    else {
+        return;
+    };
+    // Confirm the attacker is still in range of the target — RAW: the
+    // riposte is a melee weapon attack, so the standard reach check
+    // must pass. Uses the encounter helper so multi-tile footprints
+    // resolve correctly.
+    let reach = attack.reach_tiles().unwrap_or(MELEE_REACH);
+    let Some(dist) = encounter.footprint_distance(target_id, attacker_id) else {
+        return;
+    };
+    if dist > reach {
+        return;
+    }
+
+    let target_name = encounter.actor_name(target_id);
+    let attacker_name = encounter.actor_name(attacker_id);
+    encounter.log(format!(
+        "[reaction] {} ripostes {} after the miss",
+        target_name, attacker_name
+    ));
+
+    // Fire the underlying attack's side_effects directly (matches the
+    // opportunity-attack dispatch shape). Cost consumption is bypassed
+    // — Riposte is a reaction, not a regular action, so we spend the
+    // reaction + feature charge below instead of the action's normal
+    // Action-slot cost.
+    let target_vec = vec![attacker_id];
+    let effects = attack.side_effects(encounter, target_id, Some(&target_vec), None, None);
+    for e in effects {
+        e.apply(encounter);
+    }
+    spend_reactive_reducer(
+        encounter,
+        target_id,
+        Some(crate::actions::class_features::RIPOSTE_TAG),
+    );
+    encounter.cleanup_dead_actors();
+}
+
 /// 5e Fighting Style: **Interception** — shared reduction helper for
 /// weapon and spell attacks. Finds the first eligible adjacent ally with
 /// the flag + reaction, rolls `1d10 + prof`, spends the ally's reaction,
@@ -400,6 +552,21 @@ pub fn resolve_attack_outcome(
         outcome,
     ));
     if !hit {
+        // 5e Fighter Battle Master **Riposte** maneuver: on a melee
+        // miss against a fighter with the passive `has_riposte` flag and
+        // an unspent `RIPOSTE_TAG` charge, spend the reaction + charge
+        // to fire a melee weapon attack against the attacker. RAW: "when
+        // a creature misses you with a melee attack, you can use your
+        // reaction and expend one superiority die to make a melee weapon
+        // attack against the creature." Gated on `is_melee` (RAW: melee
+        // miss only), sight (routes through `viewer_can_see` so an
+        // Invisible / Blurred / Displaced attacker can't be counter-
+        // struck), and the target holding a suitable melee action on
+        // their action list. Skipped on nat-1s AND non-melee misses so a
+        // whiffed longbow shot or spell attack doesn't burn the charge.
+        if p.is_melee {
+            try_fire_riposte(encounter, p.target_id, p.caster_id);
+        }
         return (Vec::new(), 0);
     }
     // 5e Mirror Image: a hit may instead strike a decoy. Shared with
@@ -540,28 +707,24 @@ pub fn resolve_attack_outcome(
     }
     // 5e Uncanny Dodge (Rogue 5): when hit by an attack, spend reaction
     // to halve the damage. Only fires if the target has the feature, a
-    // reaction available, and can see the attacker. The RAW "attacker
-    // you can see" clause routes through the shared `viewer_can_see`
-    // helper — covers Blinded on the target AND the attacker being
-    // illusion-concealed (Invisible / Blurred / Displaced) without the
-    // target holding a piercing sense. Pre-refactor this checked only
-    // `!Blinded`, letting an Invisible attacker still draw the Uncanny
-    // Dodge reaction charge even though RAW the rogue can't see them.
-    // `has_reaction()` covers Unconscious / Incapacitated / Stunned /
-    // Paralyzed / etc. via the shared `blocks_action_economy` cohort —
-    // no need to re-check them here. Same gate shape now used by
-    // Warding Flare (Light Cleric lv1 reaction) — both features
-    // consume the reaction on trigger only when the sight test passes.
-    if let Some(target) = encounter.actors.get(&p.target_id)
-        && target.has_uncanny_dodge()
-        && target.has_reaction()
-        && encounter.viewer_can_see(p.target_id, p.caster_id)
-    {
+    // reaction available, and can see the attacker. Eligibility gate
+    // (passive + reaction + sight; no per-rest feature charge here)
+    // routes through the shared `reactive_reducer_eligible` helper —
+    // covers Blinded on the target AND the attacker being illusion-
+    // concealed (Invisible / Blurred / Displaced) without the target
+    // holding a piercing sense. Consumption (reaction spend) routes
+    // through `spend_reactive_reducer`. Same gate shape now shared with
+    // Deflect Missiles / Parry below.
+    if reactive_reducer_eligible(
+        encounter,
+        p.target_id,
+        p.caster_id,
+        |a| a.has_uncanny_dodge(),
+        None,
+    ) {
         damage /= 2;
         encounter.log(format!("  uncanny dodge: damage halved to {}", damage));
-        if let Some(t) = encounter.actors.get_mut(&p.target_id) {
-            t.consume_resource(crate::engine::side_effects::Resource::Reaction);
-        }
+        spend_reactive_reducer(encounter, p.target_id, None);
     }
     // 5e Monk Deflect Missiles (level 3): when hit by a ranged weapon
     // attack, the monk can spend their reaction to reduce damage by
@@ -573,20 +736,20 @@ pub fn resolve_attack_outcome(
     // monk eats the full damage instead. Layered AFTER Uncanny Dodge so
     // a rare rogue/monk multiclass benefits from both halves cleanly
     // (RAW order doesn't matter since both are independent reactions).
-    // `has_reaction()` handles the Unconscious / Incapacitated /
-    // Stunned / Paralyzed lockouts via the shared `blocks_action_economy`
-    // cohort. The sight gate routes through `viewer_can_see` — same
-    // shape as Uncanny Dodge above — so an Invisible archer can't
-    // trigger a monk's deflect reaction charge either. RAW ties
-    // Deflect Missiles to catching the projectile mid-air, which
-    // conventionally requires seeing it coming.
+    // Eligibility + consume route through the shared reactive-reducer
+    // helpers — the sight gate covers Blinded on the target AND
+    // Invisible attackers uniformly with Uncanny Dodge / Parry.
     if !p.is_melee
         && damage > 0
-        && let Some(target) = encounter.actors.get(&p.target_id)
-        && target.has_deflect_missiles()
-        && target.has_reaction()
-        && encounter.viewer_can_see(p.target_id, p.caster_id)
+        && reactive_reducer_eligible(
+            encounter,
+            p.target_id,
+            p.caster_id,
+            |a| a.has_deflect_missiles(),
+            None,
+        )
     {
+        let target = &encounter.actors[&p.target_id];
         let dex_mod = target.ability_modifier(crate::engine::types::AbilityScoreType::Dexterity);
         let level = target.level() as i32;
         let raw = encounter.roll(&Dice::new(1, 10)) as i32;
@@ -597,9 +760,52 @@ pub fn resolve_attack_outcome(
             raw, dex_mod, level, reduction, damage, reduced
         ));
         damage = reduced;
-        if let Some(t) = encounter.actors.get_mut(&p.target_id) {
-            t.consume_resource(crate::engine::side_effects::Resource::Reaction);
-        }
+        spend_reactive_reducer(encounter, p.target_id, None);
+    }
+    // 5e Fighter Battle Master **Parry** maneuver: when a melee attack
+    // hits, spend a reaction + one `PARRY_TAG` charge to reduce damage
+    // by `1d8 + DEX modifier` (the RAW 5e superiority-die reducer).
+    // Gated on the same shape as Uncanny Dodge / Deflect Missiles via
+    // `reactive_reducer_eligible`, plus the per-rest feature charge:
+    //   - `is_melee` — RAW: "when a creature damages you with a melee
+    //     attack" (RAW's 2014 wording; 2024's phrasing is broader but
+    //     we keep the melee-only gate so the maneuver stays distinct
+    //     from Deflect Missiles' ranged-only lane),
+    //   - `damage > 0` — no work to clamp on a zero-damage hit,
+    //   - shared reactive-reducer eligibility handles the passive
+    //     flag, reaction slot, sight, and per-rest charge in one call.
+    // Layered after Deflect Missiles so the ordering stays "target-
+    // side self-clamps first, then ally-side clamps via Interception
+    // below" — a Battle Master fighter with a hypothetical monk
+    // multiclass would still eat the parry charge on a melee hit even
+    // after Deflect Missiles handled a ranged one earlier (RAW:
+    // reactions are per-round, and each reactive feature is
+    // independent).
+    if p.is_melee
+        && damage > 0
+        && reactive_reducer_eligible(
+            encounter,
+            p.target_id,
+            p.caster_id,
+            |a| a.has_parry(),
+            Some(crate::actions::class_features::PARRY_TAG),
+        )
+    {
+        let target = &encounter.actors[&p.target_id];
+        let dex_mod = target.ability_modifier(crate::engine::types::AbilityScoreType::Dexterity);
+        let raw = encounter.roll(&Dice::new(1, 8)) as i32;
+        let reduction = (raw + dex_mod).max(0) as u32;
+        let reduced = damage.saturating_sub(reduction);
+        encounter.log(format!(
+            "  parry: 1d8({}){:+} = -{} damage ({} → {})",
+            raw, dex_mod, reduction, damage, reduced
+        ));
+        damage = reduced;
+        spend_reactive_reducer(
+            encounter,
+            p.target_id,
+            Some(crate::actions::class_features::PARRY_TAG),
+        );
     }
     // 5e Fighting Style: **Interception** (XGtE). An adjacent ally
     // (within 5 ft of the target) with the style flag and an unspent
