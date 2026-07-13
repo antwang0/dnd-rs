@@ -286,6 +286,25 @@ const PASSIVE_TYPED_RESISTANCES: &[PassiveTypedResistance] = &[
         ),
         types: &[DamageType::Radiant],
     },
+    // 5e Warlock Genie (Marid) Patron **Elemental Gift** (level 6, TCE).
+    // RAW grants a per-genie-kind damage-type resistance; the Marid
+    // variant covers **cold** — the marid's water- and ice-flavored
+    // patron pact. First user of the Cold slot on the passive typed-
+    // resistance lane (Fiendish / Draconic own Fire, Heart of the Storm
+    // owns Lightning + Thunder, Psychic Defenses owns Psychic, Radiant
+    // Soul owns Radiant). Sibling row to Radiant Soul on the "typed
+    // resistance from an Otherworldly Patron" lane — same halving rule,
+    // different patron flavor and different damage axis. Ships on
+    // `MARID_WARLOCK_TEMPLATE` above its strict RAW lv6 gate for the
+    // same reason Radiant Soul (RAW lv6) ships on
+    // `CELESTIAL_WARLOCK_TEMPLATE` — class templates target a balanced
+    // playable level, not lockstep PHB progression.
+    PassiveTypedResistance {
+        flag: |a| a.has_passive_feature(
+            crate::actions::class_features::ELEMENTAL_GIFT_TAG,
+        ),
+        types: &[DamageType::Cold],
+    },
 ];
 
 /// One row in the `PASSIVE_TYPED_IMMUNITIES` cohort — a single passive

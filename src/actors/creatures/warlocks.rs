@@ -619,3 +619,98 @@ pub static CELESTIAL_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         ..WARLOCK_TEMPLATE.clone()
     }
 });
+
+/// Marid Warlock — Otherworldly Patron **The Genie (Marid)** subclass
+/// build (TCE). Identical envelope to the baseline `WARLOCK_TEMPLATE`
+/// (CHA-primary half-caster with Pact Magic, Eldritch Blast + Hex +
+/// Witch Bolt at will, Agonizing / Repelling / Eldritch Mind
+/// invocations) with one subclass feature layered on: **Elemental
+/// Gift** (Genie subclass level 6, Marid variant) — passive
+/// **resistance to cold damage**.
+///
+/// The signature "the marid's tides shield me from ice" tell — where a
+/// baseline Warlock eats a Cone of Cold / Ice Storm / Ray of Frost hit
+/// clean, the Marid Warlock halves the incoming cold damage. Read at
+/// the shared `PASSIVE_TYPED_RESISTANCES` cohort in `actor_template.rs`
+/// next to Radiant Soul's radiant-halving half and Fiendish Resilience's
+/// fire-halving half — same lane, different patron flavor and different
+/// damage axis. First user of the Cold slot on the passive typed-
+/// resistance lane; a party's fire-flavored caster (Fiendish / Draconic /
+/// Efreeti Warlock) and cold-flavored caster (Marid Warlock) now cover
+/// the two most common elemental blast types cleanly.
+///
+/// RAW's Genie Warlock (Marid variant) picks up other features not
+/// shipped on this template — **Genie's Vessel** (lv1: bonus-action
+/// bottle a creature into the marid vessel; a save-and-condition-install
+/// resource lane that needs a per-warlock vessel tracker), **Bottled
+/// Respite** (lv6: 10-min in-vessel short rest; sits outside combat),
+/// **Sanctuary Vessel** (lv10: refresh temp HP on party short rest inside
+/// the vessel), and **Limited Wish** (lv14 capstone: cast any lv6-or-lower
+/// spell on a 1d4-day cooldown). Only the lv6 Elemental Gift passive
+/// has a mechanical surface on the CR-4 chassis that plugs cleanly into
+/// the shared passive typed-resistance cohort, so we ship that half and
+/// leave the rest as future work.
+///
+/// Sibling on the passive typed-resistance patron lane to:
+///   - **Radiant Soul** (Celestial Warlock lv6, XGtE): Radiant, sibling
+///     patron on the "Otherworldly Patron passive typed-resistance"
+///     lane. Distinct on the damage axis (Radiant vs. Cold) — a
+///     hypothetical multi-patron carrier stacks both flag closures
+///     cleanly under the "one halving per damage instance" rule since
+///     the two rows never overlap on a single damage type. The two
+///     Otherworldly Patron picks never legally co-occur on a single
+///     build (RAW: one patron per warlock), so the distinct-axis
+///     composition matters only for cross-template invariants, not
+///     for a lawful PC build.
+///   - **Fiendish Resilience** (Fiend Warlock lv10): Fire — same
+///     patron-lane pattern, same RAW-scoped-to-patron-flavor damage
+///     axis. Distinct on the damage type: Fiend covers Fire, Marid
+///     covers Cold. Composes cleanly with the "one halving per damage
+///     instance" rule.
+///
+/// Sibling on the Otherworldly Patron subclass lane to
+/// `FIEND_WARLOCK_TEMPLATE` (Dark One's Blessing + Dark One's Own Luck +
+/// Fiendish Resilience — the fiery kill-focused build),
+/// `UNDYING_WARLOCK_TEMPLATE` (Aspect of the Moon — the insomniac's
+/// build), `GREAT_OLD_ONE_WARLOCK_TEMPLATE` (Entropic Ward — the alien-
+/// awareness reactive build), `ARCHFEY_WARLOCK_TEMPLATE` (Beguiling
+/// Defenses — the Charmed-bounce build), and `CELESTIAL_WARLOCK_TEMPLATE`
+/// (Radiant Soul — the radiant-resistance build).
+///
+/// Ships the CR-4 template above the strict RAW lv6 gate for the
+/// same reason `CELESTIAL_WARLOCK_TEMPLATE` ships Radiant Soul (RAW
+/// lv6), `GREAT_OLD_ONE_WARLOCK_TEMPLATE` ships Entropic Ward (RAW
+/// lv6), and `FIEND_WARLOCK_TEMPLATE` ships Fiendish Resilience (RAW
+/// lv10): class templates target a balanced playable level, not
+/// lockstep PHB progression.
+///
+/// Glyph 'M' — distinct from baseline warlock 'L', Fiend warlock 'F',
+/// Undying warlock 'U', Great Old One warlock 'O', Archfey warlock
+/// 'A', and Celestial warlock 'C'; 'M' for the "Marid" identity (the
+/// warlock as a mortal bonded to a water-and-ice genie sovereign of
+/// the Elemental Plane of Water).
+pub static MARID_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Warlock envelope wholesale
+    // and layer on the one Marid Genie patron feature — Elemental Gift
+    // via the `ELEMENTAL_GIFT_TAG` passive-feature tag. The
+    // `..base.clone()` tail picks up every other field — stats, spell
+    // slots, save profs, invocation-driven cantrips — without an
+    // N-line field-by-field copy. Same shape as
+    // `CELESTIAL_WARLOCK_TEMPLATE`'s tag-only subclass build (Radiant
+    // Soul), `ARCHFEY_WARLOCK_TEMPLATE`'s tag-only subclass build
+    // (Beguiling Defenses), `GREAT_OLD_ONE_WARLOCK_TEMPLATE`'s tag-only
+    // subclass build (Entropic Ward), `UNDYING_WARLOCK_TEMPLATE`'s
+    // tag-only subclass build (Aspect of the Moon), and the sorcerer /
+    // paladin / rogue / ranger subclass templates.
+    let mut features = WARLOCK_TEMPLATE.features.clone();
+    features.insert(crate::actions::class_features::ELEMENTAL_GIFT_TAG);
+    CreatureTemplate {
+        name: "Marid Warlock",
+        // 'M' — distinct from baseline warlock 'L', Fiend 'F',
+        // Undying 'U', Great Old One 'O', Archfey 'A', and Celestial
+        // 'C'; 'M' for the "Marid" identity.
+        glyph: 'M',
+        features,
+        ..WARLOCK_TEMPLATE.clone()
+    }
+});

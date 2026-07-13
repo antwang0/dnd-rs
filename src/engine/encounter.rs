@@ -54187,6 +54187,184 @@ mod tests {
         assert!(e.actors[&celestial].has_passive_feature(RADIANT_SOUL_TAG));
     }
 
+    /// 5e Warlock Genie (Marid) Patron **Elemental Gift** (lv6, TCE):
+    /// passive cold damage resistance. Baseline Warlock eats full cold;
+    /// Marid Warlock halves the incoming hit. Other damage types (Fire /
+    /// Radiant / Poison / Necrotic) land at full magnitude — the RAW
+    /// Marid variant grant is scoped to Cold alone. Locks the
+    /// `PASSIVE_TYPED_RESISTANCES` cohort row wire-through from
+    /// `has_passive_feature(ELEMENTAL_GIFT_TAG)` to the shared
+    /// `effective_damage` halving site. Sibling test to
+    /// `radiant_soul_halves_radiant_damage_on_celestial_warlock` on the
+    /// "typed resistance from an Otherworldly Patron" lane — same
+    /// halving-vs-full assertion shape, different damage axis (Cold
+    /// vs. Radiant) and different patron chassis.
+    #[test]
+    fn elemental_gift_halves_cold_damage_on_marid_warlock() {
+        use crate::actors::creatures::warlocks::{MARID_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let marid = e
+            .instantiate_creature(&MARID_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&marid].has_passive_feature(
+            crate::actions::class_features::ELEMENTAL_GIFT_TAG,
+        ));
+        assert!(!e.actors[&baseline].has_passive_feature(
+            crate::actions::class_features::ELEMENTAL_GIFT_TAG,
+        ));
+        // 20 cold → 10 (halved by Elemental Gift) on the Marid Warlock.
+        assert_eq!(
+            e.actors[&marid].effective_damage(20, DamageType::Cold),
+            10,
+            "marid warlock halves cold damage"
+        );
+        // Baseline warlock eats the full 20 cold.
+        assert_eq!(
+            e.actors[&baseline].effective_damage(20, DamageType::Cold),
+            20,
+            "baseline warlock takes full cold damage"
+        );
+        // Other damage types still take full damage on the Marid
+        // Warlock — the RAW subclass grant is scoped to Cold. Fire,
+        // Radiant, Poison, Necrotic all pass through unchanged; the
+        // patron-lane siblings (Fiendish / Radiant Soul / etc.) cover
+        // those types on their respective subclass chassis, not here.
+        assert_eq!(
+            e.actors[&marid].effective_damage(20, DamageType::Fire),
+            20,
+        );
+        assert_eq!(
+            e.actors[&marid].effective_damage(20, DamageType::Radiant),
+            20,
+        );
+        assert_eq!(
+            e.actors[&marid].effective_damage(20, DamageType::Poison),
+            20,
+        );
+        assert_eq!(
+            e.actors[&marid].effective_damage(20, DamageType::Necrotic),
+            20,
+        );
+    }
+
+    /// Elemental Gift plugs into `has_own_typed_reduction(Cold)` — the
+    /// "does this actor already scale this type?" gate used by Aura of
+    /// Warding to enforce the "one halving per damage instance" rule.
+    /// Locks the shared read chokepoint so a hypothetical Marid Warlock
+    /// / Ancients Paladin party sees the aura no-op cleanly on cold
+    /// hits (the /2 already fires via Elemental Gift; the aura would
+    /// otherwise stack a second /2 for /4 unless
+    /// `has_own_typed_reduction` picked it up here). Sibling to the
+    /// Radiant Soul / Draconic Resilience registration tests on the
+    /// same helper.
+    #[test]
+    fn elemental_gift_registers_own_typed_reduction_for_cold() {
+        use crate::actors::creatures::warlocks::{MARID_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let marid = e
+            .instantiate_creature(&MARID_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        // Marid warlock's Elemental Gift flag registers as an own
+        // typed reduction on the Cold lane so aura-style stacking
+        // no-ops.
+        assert!(
+            e.actors[&marid].has_own_typed_reduction(DamageType::Cold),
+            "Elemental Gift registers as own typed reduction on Cold"
+        );
+        // Baseline warlock without the tag has no own reduction on
+        // Cold — aura stacking would apply cleanly.
+        assert!(
+            !e.actors[&baseline].has_own_typed_reduction(DamageType::Cold),
+            "baseline warlock has no own cold reduction"
+        );
+    }
+
+    /// Template drift check: only the Marid Warlock ships the
+    /// `ELEMENTAL_GIFT_TAG` passive feature. The baseline / Fiend /
+    /// Undying / Great Old One / Archfey / Celestial warlock chassis do
+    /// NOT carry the tag — keeps the subclass tell scoped to the Marid
+    /// chassis so a future regression (e.g., accidental tag insertion
+    /// on `WARLOCK_TEMPLATE` bleeding into every subclass build via the
+    /// `..base.clone()` tail) is caught here. Sibling to
+    /// `radiant_soul_lands_only_on_celestial_warlock` on the same
+    /// "single-subclass-tag ownership" lock.
+    #[test]
+    fn elemental_gift_lands_only_on_marid_warlock() {
+        use crate::actions::class_features::ELEMENTAL_GIFT_TAG;
+        use crate::actors::creatures::warlocks::{
+            ARCHFEY_WARLOCK_TEMPLATE, CELESTIAL_WARLOCK_TEMPLATE, FIEND_WARLOCK_TEMPLATE,
+            GREAT_OLD_ONE_WARLOCK_TEMPLATE, MARID_WARLOCK_TEMPLATE, UNDYING_WARLOCK_TEMPLATE,
+            WARLOCK_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let baseline = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(1, 1), 0, 0)
+            .unwrap();
+        let fiend = e
+            .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(3, 1), 0, 0)
+            .unwrap();
+        let undying = e
+            .instantiate_creature(&UNDYING_WARLOCK_TEMPLATE, Coordinate::new(5, 1), 0, 0)
+            .unwrap();
+        let great_old_one = e
+            .instantiate_creature(&GREAT_OLD_ONE_WARLOCK_TEMPLATE, Coordinate::new(7, 1), 0, 0)
+            .unwrap();
+        let archfey = e
+            .instantiate_creature(&ARCHFEY_WARLOCK_TEMPLATE, Coordinate::new(9, 1), 0, 0)
+            .unwrap();
+        let celestial = e
+            .instantiate_creature(&CELESTIAL_WARLOCK_TEMPLATE, Coordinate::new(11, 1), 0, 0)
+            .unwrap();
+        let marid = e
+            .instantiate_creature(&MARID_WARLOCK_TEMPLATE, Coordinate::new(13, 1), 0, 0)
+            .unwrap();
+        // Only the Marid warlock ships the tag.
+        assert!(e.actors[&marid].has_passive_feature(ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&baseline].has_passive_feature(ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&fiend].has_passive_feature(ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&undying].has_passive_feature(ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&great_old_one].has_passive_feature(ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&archfey].has_passive_feature(ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&celestial].has_passive_feature(ELEMENTAL_GIFT_TAG));
+    }
+
+    /// Sanity: the Marid Warlock inherits the baseline Warlock envelope
+    /// through the `..WARLOCK_TEMPLATE.clone()` tail — Eldritch Blast's
+    /// signature invocations (Agonizing / Repelling / Eldritch Mind)
+    /// all carry through, alongside the subclass-only Elemental Gift
+    /// tag. Guards against a regression where the subclass template's
+    /// explicit `features` builder drops the baseline invocation set on
+    /// its way to inserting the new tag. Sibling to
+    /// `celestial_warlock_inherits_baseline_warlock_features` on the
+    /// same clone-and-layer lock.
+    #[test]
+    fn marid_warlock_inherits_baseline_warlock_features() {
+        use crate::actions::class_features::{
+            AGONIZING_BLAST_TAG, ELDRITCH_MIND_TAG, ELEMENTAL_GIFT_TAG, REPELLING_BLAST_TAG,
+        };
+        use crate::actors::creatures::warlocks::MARID_WARLOCK_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let marid = e
+            .instantiate_creature(&MARID_WARLOCK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Baseline invocations still carry through the clone.
+        assert!(e.actors[&marid].has_passive_feature(AGONIZING_BLAST_TAG));
+        assert!(e.actors[&marid].has_passive_feature(REPELLING_BLAST_TAG));
+        assert!(e.actors[&marid].has_passive_feature(ELDRITCH_MIND_TAG));
+        // Subclass tag lands on top.
+        assert!(e.actors[&marid].has_passive_feature(ELEMENTAL_GIFT_TAG));
+    }
+
     /// Cohort-shape refactor sanity: after promoting
     /// `TYPED_IMMUNITY_CONDITIONS` / `TYPED_RESISTANCE_CONDITIONS` /
     /// `CONDITION_DRIVEN_IMMUNITIES` from `&[(Condition, &[X])]` tuple
