@@ -24866,6 +24866,89 @@ mod tests {
         assert_eq!(e.actors[&bid].effective_damage(10, DamageType::Psychic), 10);
     }
 
+    /// Cohort-shape refactor sanity: after promoting the Bear Totem
+    /// inline branch in `has_condition_resistance` into the shared
+    /// `RAGE_GATED_BROAD_RESISTANCES` cohort table, every gating axis
+    /// still fires identically. Locks the promoted cohort against a
+    /// mis-mapping regression by exercising the four boolean-product
+    /// combinations of (raging, has-tag) and the two type-axis cases
+    /// (in `types_except` slice → passes through, out-of-slice →
+    /// halved) end-to-end:
+    ///   - !raging + tag: no halving (Rage gate off).
+    ///   - raging + !tag: no halving (tag gate off; a baseline Totem
+    ///     Barbarian without the Bear-flavor pick doesn't get the
+    ///     broad resistance).
+    ///   - raging + tag + Psychic (in the `types_except` slice): no
+    ///     halving (the exclusion carve-out fires).
+    ///   - raging + tag + Fire (out of the slice): halved.
+    ///
+    /// Sibling to `condition_driven_cohorts_preserve_behavior_after_struct_shape_refactor`
+    /// on the "cohort-shape refactor sanity" lane — same test intent
+    /// (lock the pre-cleanup vs. post-cleanup behavior equivalence),
+    /// different cohort.
+    #[test]
+    fn rage_gated_broad_resistances_cohort_matches_prior_inline_behavior() {
+        use crate::actions::class_features::RAGE;
+        use crate::actors::creatures::barbarians::{
+            TOTEM_BARBARIAN_TEMPLATE, WOLF_TOTEM_BARBARIAN_TEMPLATE,
+        };
+        use crate::conditions::Condition;
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        // Un-raged Bear Totem Barbarian (TOTEM_BARBARIAN_TEMPLATE is the
+        // Bear Spirit flavor): no cohort hit — tag alone is insufficient
+        // (the shared Rage gate is off).
+        let bear_unraged = e
+            .instantiate_creature(&TOTEM_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert_eq!(
+            e.actors[&bear_unraged].effective_damage(10, DamageType::Fire),
+            10,
+            "Bear Totem's broad resistance requires the Rage gate — tag alone doesn't halve"
+        );
+        // Raged Wolf Totem Barbarian (WOLF_TOTEM_BARBARIAN_TEMPLATE
+        // carries WOLF_TOTEM_TAG, not BEAR_TOTEM_TAG): no cohort hit on
+        // the broad-resistance lane (the tag gate is off; the baseline
+        // Raging BPS resistance still fires via TYPED_RESISTANCE_CONDITIONS
+        // but not the all-except-psychic clause). Fire — a typed
+        // damage type outside the BPS trio — lands full since Wolf lacks
+        // the Bear-flavor broad-resistance tag.
+        let wolf_raged = e
+            .instantiate_creature(&WOLF_TOTEM_BARBARIAN_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&wolf_raged).unwrap().reset_for_new_round();
+        let rage_effects = RAGE.side_effects(&mut e, wolf_raged, None, None, None);
+        for ef in rage_effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&wolf_raged].has_condition(Condition::Raging));
+        assert_eq!(
+            e.actors[&wolf_raged].effective_damage(10, DamageType::Fire),
+            10,
+            "Raging alone (without the Bear tag) doesn't halve non-BPS typed damage — only the promoted cohort row's tag gate does"
+        );
+        // Raged Bear Totem Barbarian: cohort row fires. Fire is out of
+        // the `types_except: &[Psychic]` slice → halved. Psychic is in
+        // the slice → passes through unchanged (the carve-out
+        // preserved from the pre-cleanup inline branch).
+        e.actors.get_mut(&bear_unraged).unwrap().reset_for_new_round();
+        let rage_effects = RAGE.side_effects(&mut e, bear_unraged, None, None, None);
+        for ef in rage_effects {
+            ef.apply(&mut e);
+        }
+        assert!(e.actors[&bear_unraged].has_condition(Condition::Raging));
+        assert_eq!(
+            e.actors[&bear_unraged].effective_damage(10, DamageType::Fire),
+            5,
+            "raging Bear Totem halves fire — cohort row fires (Fire is not in the types_except slice)"
+        );
+        assert_eq!(
+            e.actors[&bear_unraged].effective_damage(10, DamageType::Psychic),
+            10,
+            "raging Bear Totem does NOT halve psychic — cohort row's types_except carve-out fires (Psychic IS in the slice)"
+        );
+    }
+
     /// Wolf Totem Spirit (Barbarian Path of the Totem Warrior, alt-flavor):
     /// while raging, allies have advantage on melee attacks against any
     /// enemy footprint-adjacent to the wolf totem barbarian. Probes the

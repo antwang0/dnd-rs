@@ -151,6 +151,83 @@ const TYPED_RESISTANCE_CONDITIONS: &[ConditionDrivenTypedResistance] = &[
     },
 ];
 
+/// One row in the `RAGE_GATED_BROAD_RESISTANCES` cohort — a single
+/// passive-feature tag whose presence, combined with an active `Raging`
+/// condition, grants resistance to every damage type EXCEPT those in
+/// `types_except`. Sibling to `ConditionDrivenTypedResistance
+/// { source, types }` and `PassiveTypedResistance { flag, types }` on
+/// the "cohort row carries a slice of the affected axis" declarative-
+/// table pattern — same declarative shape, but the row's slice inverts
+/// the semantics (all-types-except vs. only-these-types). The compound
+/// gate (Raging condition + passive tag) folds the two-clause check
+/// into the row rather than a per-row flag closure, keeping the row
+/// literal declarative — same shape the `FailedSaveAddDieSource` /
+/// `ReactiveDisadvantageSource` cohorts use for their per-rest
+/// per-tag gating parameters.
+struct RageGatedBroadResistance {
+    /// Passive-feature tag whose presence gates the row. Read via
+    /// `has_passive_feature(tag)` on the checked actor. Distinct from
+    /// the `flag` closure shape on `PassiveTypedResistance` because
+    /// every row here shares the same additional Rage gate — folding
+    /// the closure to a bare tag drops the per-row `|a| a.has_condition
+    /// (Raging) && a.has_passive_feature(TAG)` boilerplate that would
+    /// duplicate on every future rage-gated broad-resistance entry.
+    tag: &'static str,
+    /// Damage types EXCLUDED from the row's resistance grant — a hit
+    /// on any type in this slice passes through unchanged even while
+    /// the row's flags are all live. Inverse of the `types` slice on
+    /// `ConditionDrivenTypedResistance` / `PassiveTypedResistance`,
+    /// which lists ONLY the types resisted. Bear Totem RAW resists
+    /// every damage type except psychic, so `&[DamageType::Psychic]`
+    /// is the natural literal.
+    types_except: &'static [DamageType],
+}
+
+/// Passive-tag-driven "broad resistance while raging" cohort read by
+/// `has_condition_resistance`. Every row pairs a passive-feature tag
+/// with an exclusion slice — an incoming damage instance of type `dt`
+/// is halved iff the actor holds the tag AND holds the `Raging`
+/// condition AND `dt` is NOT in the row's `types_except` slice. The
+/// row grants resistance under the same "one halving per damage
+/// instance" rule the other resistance lanes honor.
+///
+/// Pre-cleanup this cohort's single entry (Bear Totem Spirit) rode as
+/// an ad-hoc `if dt != DamageType::Psychic && self.has_condition
+/// (Raging) && self.has_passive_feature(BEAR_TOTEM_TAG) { return
+/// true; }` branch inline in `has_condition_resistance` — sibling to
+/// the ad-hoc branches the earlier cleanup passes promoted into
+/// `PASSIVE_TYPED_RESISTANCES` / `FLAG_DRIVEN_IMMUNITIES` /
+/// `PASSIVE_FEATURE_SPEED_BONUSES` / etc. The promotion drops the
+/// special-case branch and lets future rage-gated broad-resistance
+/// features (a hypothetical Storm Herald Tundra Storm Aura at higher
+/// levels that resists most damage types while raging, a future
+/// Ancestral Guardian broad-resistance rider, etc.) land as one-line
+/// entries in the declarative table rather than another inline
+/// if-branch chain in `has_condition_resistance`.
+///
+/// Entries:
+///   - **Bear Totem Spirit (Barbarian Path of the Totem Warrior lv3)**:
+///     resistance to every damage type except **psychic** while
+///     raging. Sibling row to the other rage-gated Totem Spirits on
+///     the `PASSIVE_FEATURE_SPEED_BONUSES` cohort (Tiger / Elk /
+///     Wolverine / Panther) — same "compound Raging + tag gate"
+///     pattern, different affected axis (broad resistance here vs.
+///     speed bonus there).
+///
+/// A new rage-gated broad-resistance feature drops in as a fresh row
+/// with its own `(tag, types_except)` pair; a feature that resists a
+/// SPECIFIC damage type instead (e.g. a hypothetical rage-gated
+/// single-type resistance) is a better fit for the sibling
+/// `PASSIVE_TYPED_RESISTANCES` cohort with a compound closure that
+/// includes the Rage gate (same shape the Tiger / Elk / Wolverine /
+/// Panther speed-bonus rows already use).
+const RAGE_GATED_BROAD_RESISTANCES: &[RageGatedBroadResistance] = &[
+    RageGatedBroadResistance {
+        tag: crate::actions::class_features::BEAR_TOTEM_TAG,
+        types_except: &[DamageType::Psychic],
+    },
+];
+
 /// One row in the `PASSIVE_TYPED_RESISTANCES` cohort — a single passive
 /// flag / tag that grants resistance to every damage type in `types`.
 /// The `flag` closure reads a racial / subclass passive-feature accessor
@@ -3404,17 +3481,27 @@ impl ActorInstance {
     }
 
     /// True iff the actor holds a condition that grants resistance to
-    /// damage of type `dt`. Walks two cohorts:
+    /// damage of type `dt`. Walks three cohorts:
     /// - `BLANKET_RESISTANCE_CONDITIONS`: conditions that resist *every*
     ///   damage type (Stoneskin / Globe of Invulnerability / Warding
     ///   Bond / Petrified).
+    /// - `RAGE_GATED_BROAD_RESISTANCES`: passive-tag-driven broad
+    ///   resistance rows gated by Raging — resistance to every damage
+    ///   type EXCEPT those in the row's `types_except` slice (Bear Totem
+    ///   Spirit → all-except-psychic while raging).
     /// - `TYPED_RESISTANCE_CONDITIONS`: conditions whose resistance only
     ///   applies to a curated subset of damage types (Investiture of
     ///   Flame → Fire, Raging → physical trio, Purified → Poison).
     ///
     /// Centralizes the per-condition resistance lookup so a new Investiture
     /// spell only needs a one-line entry in the typed cohort, and the
-    /// `effective_damage` site stays a single boolean read.
+    /// `effective_damage` site stays a single boolean read. Pre-cleanup
+    /// the Bear Totem row rode as an ad-hoc `if dt != Psychic && Raging
+    /// && has_passive_feature(BEAR_TOTEM_TAG)` inline branch here; the
+    /// promoted cohort drops the special case and lets future rage-gated
+    /// broad-resistance features land as one-line entries in
+    /// `RAGE_GATED_BROAD_RESISTANCES` rather than another inline
+    /// if-branch chain in this body.
     pub fn has_condition_resistance(&self, dt: DamageType) -> bool {
         if BLANKET_RESISTANCE_CONDITIONS
             .iter()
@@ -3422,16 +3509,19 @@ impl ActorInstance {
         {
             return true;
         }
-        // 5e Barbarian Path of the Totem Warrior — Bear Totem Spirit
-        // (level 3). While raging, resistance to every damage type except
-        // psychic. Folded into the condition-resistance lane so the
-        // standard "one halving per damage instance" rule still holds
-        // (Bear Totem doesn't stack with a separate template resistance,
-        // and is short-circuited by the BLANKET cohort above so Stoneskin
-        // / Globe / Petrified still win at the gate above).
-        if dt != DamageType::Psychic
-            && self.has_condition(Condition::Raging)
-            && self.has_passive_feature(crate::actions::class_features::BEAR_TOTEM_TAG)
+        // 5e "rage-gated broad resistance" cohort — currently one row
+        // (Bear Totem Spirit: all-except-psychic while raging). The
+        // Raging gate is shared across every row so it's checked once
+        // here; per-row differences live in the row's `tag` +
+        // `types_except` slice. Ordering vs. the TYPED cohort below
+        // doesn't matter — both grant the same "one halving" flag; the
+        // BLANKET short-circuit above still wins first for Stoneskin /
+        // Globe / Petrified so the "one halving per damage instance"
+        // rule still holds.
+        if self.has_condition(Condition::Raging)
+            && RAGE_GATED_BROAD_RESISTANCES.iter().any(|row| {
+                !row.types_except.contains(&dt) && self.has_passive_feature(row.tag)
+            })
         {
             return true;
         }
