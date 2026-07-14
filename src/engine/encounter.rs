@@ -54836,7 +54836,7 @@ mod tests {
     /// Radiant / Poison / Necrotic) land at full magnitude — the RAW
     /// Marid variant grant is scoped to Cold alone. Locks the
     /// `PASSIVE_TYPED_RESISTANCES` cohort row wire-through from
-    /// `has_passive_feature(ELEMENTAL_GIFT_TAG)` to the shared
+    /// `has_passive_feature(MARID_ELEMENTAL_GIFT_TAG)` to the shared
     /// `effective_damage` halving site. Sibling test to
     /// `radiant_soul_halves_radiant_damage_on_celestial_warlock` on the
     /// "typed resistance from an Otherworldly Patron" lane — same
@@ -54855,10 +54855,10 @@ mod tests {
             .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(4, 2), 0, 0)
             .unwrap();
         assert!(e.actors[&marid].has_passive_feature(
-            crate::actions::class_features::ELEMENTAL_GIFT_TAG,
+            crate::actions::class_features::MARID_ELEMENTAL_GIFT_TAG,
         ));
         assert!(!e.actors[&baseline].has_passive_feature(
-            crate::actions::class_features::ELEMENTAL_GIFT_TAG,
+            crate::actions::class_features::MARID_ELEMENTAL_GIFT_TAG,
         ));
         // 20 cold → 10 (halved by Elemental Gift) on the Marid Warlock.
         assert_eq!(
@@ -54933,7 +54933,7 @@ mod tests {
     }
 
     /// Template drift check: only the Marid Warlock ships the
-    /// `ELEMENTAL_GIFT_TAG` passive feature. The baseline / Fiend /
+    /// `MARID_ELEMENTAL_GIFT_TAG` passive feature. The baseline / Fiend /
     /// Undying / Great Old One / Archfey / Celestial warlock chassis do
     /// NOT carry the tag — keeps the subclass tell scoped to the Marid
     /// chassis so a future regression (e.g., accidental tag insertion
@@ -54943,7 +54943,7 @@ mod tests {
     /// "single-subclass-tag ownership" lock.
     #[test]
     fn elemental_gift_lands_only_on_marid_warlock() {
-        use crate::actions::class_features::ELEMENTAL_GIFT_TAG;
+        use crate::actions::class_features::MARID_ELEMENTAL_GIFT_TAG;
         use crate::actors::creatures::warlocks::{
             ARCHFEY_WARLOCK_TEMPLATE, CELESTIAL_WARLOCK_TEMPLATE, FIEND_WARLOCK_TEMPLATE,
             GREAT_OLD_ONE_WARLOCK_TEMPLATE, MARID_WARLOCK_TEMPLATE, UNDYING_WARLOCK_TEMPLATE,
@@ -54972,13 +54972,13 @@ mod tests {
             .instantiate_creature(&MARID_WARLOCK_TEMPLATE, Coordinate::new(13, 1), 0, 0)
             .unwrap();
         // Only the Marid warlock ships the tag.
-        assert!(e.actors[&marid].has_passive_feature(ELEMENTAL_GIFT_TAG));
-        assert!(!e.actors[&baseline].has_passive_feature(ELEMENTAL_GIFT_TAG));
-        assert!(!e.actors[&fiend].has_passive_feature(ELEMENTAL_GIFT_TAG));
-        assert!(!e.actors[&undying].has_passive_feature(ELEMENTAL_GIFT_TAG));
-        assert!(!e.actors[&great_old_one].has_passive_feature(ELEMENTAL_GIFT_TAG));
-        assert!(!e.actors[&archfey].has_passive_feature(ELEMENTAL_GIFT_TAG));
-        assert!(!e.actors[&celestial].has_passive_feature(ELEMENTAL_GIFT_TAG));
+        assert!(e.actors[&marid].has_passive_feature(MARID_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&baseline].has_passive_feature(MARID_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&fiend].has_passive_feature(MARID_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&undying].has_passive_feature(MARID_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&great_old_one].has_passive_feature(MARID_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&archfey].has_passive_feature(MARID_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&celestial].has_passive_feature(MARID_ELEMENTAL_GIFT_TAG));
     }
 
     /// Sanity: the Marid Warlock inherits the baseline Warlock envelope
@@ -54993,7 +54993,7 @@ mod tests {
     #[test]
     fn marid_warlock_inherits_baseline_warlock_features() {
         use crate::actions::class_features::{
-            AGONIZING_BLAST_TAG, ELDRITCH_MIND_TAG, ELEMENTAL_GIFT_TAG, REPELLING_BLAST_TAG,
+            AGONIZING_BLAST_TAG, ELDRITCH_MIND_TAG, MARID_ELEMENTAL_GIFT_TAG, REPELLING_BLAST_TAG,
         };
         use crate::actors::creatures::warlocks::MARID_WARLOCK_TEMPLATE;
         let mut e = ei_with_terrain(15, 15, &[]);
@@ -55005,7 +55005,7 @@ mod tests {
         assert!(e.actors[&marid].has_passive_feature(REPELLING_BLAST_TAG));
         assert!(e.actors[&marid].has_passive_feature(ELDRITCH_MIND_TAG));
         // Subclass tag lands on top.
-        assert!(e.actors[&marid].has_passive_feature(ELEMENTAL_GIFT_TAG));
+        assert!(e.actors[&marid].has_passive_feature(MARID_ELEMENTAL_GIFT_TAG));
     }
 
     /// 5e Warlock Genie (Dao) Patron **Elemental Gift** (lv6, TCE):
@@ -55128,7 +55128,7 @@ mod tests {
     /// tags each ride only their own subclass chassis).
     #[test]
     fn dao_elemental_gift_lands_only_on_dao_warlock() {
-        use crate::actions::class_features::{DAO_ELEMENTAL_GIFT_TAG, ELEMENTAL_GIFT_TAG};
+        use crate::actions::class_features::{DAO_ELEMENTAL_GIFT_TAG, MARID_ELEMENTAL_GIFT_TAG};
         use crate::actors::creatures::warlocks::{
             ARCHFEY_WARLOCK_TEMPLATE, CELESTIAL_WARLOCK_TEMPLATE, DAO_WARLOCK_TEMPLATE,
             FIEND_WARLOCK_TEMPLATE, GREAT_OLD_ONE_WARLOCK_TEMPLATE, MARID_WARLOCK_TEMPLATE,
@@ -55171,7 +55171,7 @@ mod tests {
         // And the Marid tag doesn't bleed onto the Dao chassis — the
         // two genie-variant tags each ride only their own subclass
         // build.
-        assert!(!e.actors[&dao].has_passive_feature(ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&dao].has_passive_feature(MARID_ELEMENTAL_GIFT_TAG));
     }
 
     /// Sanity: the Dao Warlock inherits the baseline Warlock envelope
@@ -55199,6 +55199,218 @@ mod tests {
         assert!(e.actors[&dao].has_passive_feature(ELDRITCH_MIND_TAG));
         // Subclass tag lands on top.
         assert!(e.actors[&dao].has_passive_feature(DAO_ELEMENTAL_GIFT_TAG));
+    }
+
+    /// Djinni Warlock's **Elemental Gift** (Genie subclass lv6, Djinni
+    /// variant) halves incoming thunder damage — the RAW subclass grant
+    /// folds through the shared `PASSIVE_TYPED_RESISTANCES` cohort's
+    /// `effective_damage` halving site. Sibling test to
+    /// `elemental_gift_halves_cold_damage_on_marid_warlock` and
+    /// `dao_elemental_gift_halves_bludgeoning_damage_on_dao_warlock`
+    /// on the "typed resistance from an Otherworldly Patron (Genie
+    /// kind)" lane — same halving-vs-full assertion shape, different
+    /// damage axis (Thunder vs. Cold / Bludgeoning) and different
+    /// genie flavor.
+    #[test]
+    fn djinni_elemental_gift_halves_thunder_damage_on_djinni_warlock() {
+        use crate::actors::creatures::warlocks::{DJINNI_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let djinni = e
+            .instantiate_creature(&DJINNI_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&djinni].has_passive_feature(
+            crate::actions::class_features::DJINNI_ELEMENTAL_GIFT_TAG,
+        ));
+        assert!(!e.actors[&baseline].has_passive_feature(
+            crate::actions::class_features::DJINNI_ELEMENTAL_GIFT_TAG,
+        ));
+        // 20 thunder → 10 (halved by Djinni Elemental Gift).
+        assert_eq!(
+            e.actors[&djinni].effective_damage(20, DamageType::Thunder),
+            10,
+            "djinni warlock halves thunder damage"
+        );
+        // Baseline warlock eats the full 20 thunder.
+        assert_eq!(
+            e.actors[&baseline].effective_damage(20, DamageType::Thunder),
+            20,
+            "baseline warlock takes full thunder damage"
+        );
+        // Other damage types still take full damage on the Djinni Warlock
+        // — the RAW subclass grant is scoped to Thunder. Cold, Fire,
+        // Radiant, Poison, Piercing, Bludgeoning, and Slashing all pass
+        // through unchanged; the patron-lane siblings (Marid Cold / Dao
+        // Bludgeoning / Radiant Soul / Fiendish Resilience) cover those
+        // types on their respective subclass chassis, not here.
+        assert_eq!(
+            e.actors[&djinni].effective_damage(20, DamageType::Cold),
+            20,
+        );
+        assert_eq!(
+            e.actors[&djinni].effective_damage(20, DamageType::Fire),
+            20,
+        );
+        assert_eq!(
+            e.actors[&djinni].effective_damage(20, DamageType::Radiant),
+            20,
+        );
+        assert_eq!(
+            e.actors[&djinni].effective_damage(20, DamageType::Bludgeoning),
+            20,
+        );
+        assert_eq!(
+            e.actors[&djinni].effective_damage(20, DamageType::Piercing),
+            20,
+        );
+        assert_eq!(
+            e.actors[&djinni].effective_damage(20, DamageType::Slashing),
+            20,
+        );
+        // Lightning too — Djinni's grant is scoped to Thunder only,
+        // unlike Heart of the Storm which covers both Lightning + Thunder
+        // on the multi-type slice. This distinction guards against a
+        // future accidental slice expansion that would over-cover the
+        // Djinni row's RAW-scoped grant.
+        assert_eq!(
+            e.actors[&djinni].effective_damage(20, DamageType::Lightning),
+            20,
+        );
+    }
+
+    /// Djinni Elemental Gift plugs into `has_own_typed_reduction(Thunder)`
+    /// — the "does this actor already scale this type?" gate used by
+    /// Aura of Warding to enforce the "one halving per damage instance"
+    /// rule. Locks the shared read chokepoint so a hypothetical Djinni
+    /// Warlock / Ancients Paladin party sees the aura no-op cleanly on
+    /// thunder hits (the /2 already fires via Elemental Gift; the aura
+    /// would otherwise stack a second /2 for /4 unless
+    /// `has_own_typed_reduction` picked it up here). Sibling to the
+    /// Marid / Dao Elemental Gift, Radiant Soul, and Draconic Resilience
+    /// registration tests on the same helper.
+    #[test]
+    fn djinni_elemental_gift_registers_own_typed_reduction_for_thunder() {
+        use crate::actors::creatures::warlocks::{DJINNI_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let djinni = e
+            .instantiate_creature(&DJINNI_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        // Djinni warlock's Elemental Gift flag registers as an own typed
+        // reduction on the Thunder lane so aura-style stacking no-ops.
+        assert!(
+            e.actors[&djinni].has_own_typed_reduction(DamageType::Thunder),
+            "Djinni Elemental Gift registers as own typed reduction on Thunder"
+        );
+        // Baseline warlock without the tag has no own reduction on
+        // Thunder — aura stacking would apply cleanly.
+        assert!(
+            !e.actors[&baseline].has_own_typed_reduction(DamageType::Thunder),
+            "baseline warlock has no own thunder reduction"
+        );
+    }
+
+    /// Template drift check: only the Djinni Warlock ships the
+    /// `DJINNI_ELEMENTAL_GIFT_TAG` passive feature. The baseline / Fiend
+    /// / Undying / Great Old One / Archfey / Celestial / Marid / Dao
+    /// warlock chassis do NOT carry the tag — keeps the subclass tell
+    /// scoped to the Djinni chassis so a future regression (e.g.,
+    /// accidental tag insertion on `WARLOCK_TEMPLATE` bleeding into
+    /// every subclass build via the `..base.clone()` tail) is caught
+    /// here. Sibling to `dao_elemental_gift_lands_only_on_dao_warlock`
+    /// and `elemental_gift_lands_only_on_marid_warlock` on the same
+    /// "single-subclass-tag ownership" lock — and mirror-locks the
+    /// three genie-variant tags never crossing chassis (the Marid, Dao,
+    /// and Djinni tags each ride only their own subclass chassis).
+    #[test]
+    fn djinni_elemental_gift_lands_only_on_djinni_warlock() {
+        use crate::actions::class_features::{
+            DAO_ELEMENTAL_GIFT_TAG, DJINNI_ELEMENTAL_GIFT_TAG, MARID_ELEMENTAL_GIFT_TAG,
+        };
+        use crate::actors::creatures::warlocks::{
+            ARCHFEY_WARLOCK_TEMPLATE, CELESTIAL_WARLOCK_TEMPLATE, DAO_WARLOCK_TEMPLATE,
+            DJINNI_WARLOCK_TEMPLATE, FIEND_WARLOCK_TEMPLATE, GREAT_OLD_ONE_WARLOCK_TEMPLATE,
+            MARID_WARLOCK_TEMPLATE, UNDYING_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(30, 15, &[]);
+        let baseline = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(1, 1), 0, 0)
+            .unwrap();
+        let fiend = e
+            .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(3, 1), 0, 0)
+            .unwrap();
+        let undying = e
+            .instantiate_creature(&UNDYING_WARLOCK_TEMPLATE, Coordinate::new(5, 1), 0, 0)
+            .unwrap();
+        let great_old_one = e
+            .instantiate_creature(&GREAT_OLD_ONE_WARLOCK_TEMPLATE, Coordinate::new(7, 1), 0, 0)
+            .unwrap();
+        let archfey = e
+            .instantiate_creature(&ARCHFEY_WARLOCK_TEMPLATE, Coordinate::new(9, 1), 0, 0)
+            .unwrap();
+        let celestial = e
+            .instantiate_creature(&CELESTIAL_WARLOCK_TEMPLATE, Coordinate::new(11, 1), 0, 0)
+            .unwrap();
+        let marid = e
+            .instantiate_creature(&MARID_WARLOCK_TEMPLATE, Coordinate::new(13, 1), 0, 0)
+            .unwrap();
+        let dao = e
+            .instantiate_creature(&DAO_WARLOCK_TEMPLATE, Coordinate::new(15, 1), 0, 0)
+            .unwrap();
+        let djinni = e
+            .instantiate_creature(&DJINNI_WARLOCK_TEMPLATE, Coordinate::new(17, 1), 0, 0)
+            .unwrap();
+        // Only the Djinni warlock ships the Djinni tag.
+        assert!(e.actors[&djinni].has_passive_feature(DJINNI_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&baseline].has_passive_feature(DJINNI_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&fiend].has_passive_feature(DJINNI_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&undying].has_passive_feature(DJINNI_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&great_old_one].has_passive_feature(DJINNI_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&archfey].has_passive_feature(DJINNI_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&celestial].has_passive_feature(DJINNI_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&marid].has_passive_feature(DJINNI_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&dao].has_passive_feature(DJINNI_ELEMENTAL_GIFT_TAG));
+        // And the Marid / Dao tags don't bleed onto the Djinni chassis —
+        // the three genie-variant tags each ride only their own subclass
+        // build.
+        assert!(!e.actors[&djinni].has_passive_feature(MARID_ELEMENTAL_GIFT_TAG));
+        assert!(!e.actors[&djinni].has_passive_feature(DAO_ELEMENTAL_GIFT_TAG));
+    }
+
+    /// Sanity: the Djinni Warlock inherits the baseline Warlock envelope
+    /// through the `..WARLOCK_TEMPLATE.clone()` tail — Eldritch Blast's
+    /// signature invocations (Agonizing / Repelling / Eldritch Mind) all
+    /// carry through, alongside the subclass-only Djinni Elemental Gift
+    /// tag. Guards against a regression where the subclass template's
+    /// explicit `features` builder drops the baseline invocation set on
+    /// its way to inserting the new tag. Sibling to
+    /// `dao_warlock_inherits_baseline_warlock_features` and
+    /// `marid_warlock_inherits_baseline_warlock_features` on the same
+    /// clone-and-layer lock.
+    #[test]
+    fn djinni_warlock_inherits_baseline_warlock_features() {
+        use crate::actions::class_features::{
+            AGONIZING_BLAST_TAG, DJINNI_ELEMENTAL_GIFT_TAG, ELDRITCH_MIND_TAG, REPELLING_BLAST_TAG,
+        };
+        use crate::actors::creatures::warlocks::DJINNI_WARLOCK_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let djinni = e
+            .instantiate_creature(&DJINNI_WARLOCK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Baseline invocations still carry through the clone.
+        assert!(e.actors[&djinni].has_passive_feature(AGONIZING_BLAST_TAG));
+        assert!(e.actors[&djinni].has_passive_feature(REPELLING_BLAST_TAG));
+        assert!(e.actors[&djinni].has_passive_feature(ELDRITCH_MIND_TAG));
+        // Subclass tag lands on top.
+        assert!(e.actors[&djinni].has_passive_feature(DJINNI_ELEMENTAL_GIFT_TAG));
     }
 
     /// Cohort-shape refactor sanity: after promoting

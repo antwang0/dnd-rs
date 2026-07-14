@@ -692,7 +692,7 @@ pub static CELESTIAL_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
 pub static MARID_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Subclass-of pattern: clone the baseline Warlock envelope wholesale
     // and layer on the one Marid Genie patron feature — Elemental Gift
-    // via the `ELEMENTAL_GIFT_TAG` passive-feature tag. The
+    // via the `MARID_ELEMENTAL_GIFT_TAG` passive-feature tag. The
     // `..base.clone()` tail picks up every other field — stats, spell
     // slots, save profs, invocation-driven cantrips — without an
     // N-line field-by-field copy. Same shape as
@@ -703,7 +703,7 @@ pub static MARID_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
     // tag-only subclass build (Aspect of the Moon), and the sorcerer /
     // paladin / rogue / ranger subclass templates.
     let mut features = WARLOCK_TEMPLATE.features.clone();
-    features.insert(crate::actions::class_features::ELEMENTAL_GIFT_TAG);
+    features.insert(crate::actions::class_features::MARID_ELEMENTAL_GIFT_TAG);
     CreatureTemplate {
         name: "Marid Warlock",
         // 'M' — distinct from baseline warlock 'L', Fiend 'F',
@@ -810,6 +810,104 @@ pub static DAO_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 'O', Archfey 'A', Celestial 'C', and Marid 'M'; 'D' for the
         // "Dao" identity.
         glyph: 'D',
+        features,
+        ..WARLOCK_TEMPLATE.clone()
+    }
+});
+
+/// Djinni Warlock — Otherworldly Patron **The Genie (Djinni)** subclass
+/// build (TCE). Identical envelope to the baseline `WARLOCK_TEMPLATE`
+/// (CHA-primary half-caster with Pact Magic, Eldritch Blast + Hex + Witch
+/// Bolt at will, Agonizing / Repelling / Eldritch Mind invocations) with
+/// one subclass feature layered on: **Elemental Gift** (Genie subclass
+/// level 6, Djinni variant) — passive **resistance to thunder damage**.
+///
+/// The signature "the djinni's storm-song blunts the thundercrack" tell
+/// — where a baseline Warlock eats a Shatter / Thunderwave / Thunderclap
+/// zap clean, the Djinni Warlock halves the incoming thunder damage.
+/// Read at the shared `PASSIVE_TYPED_RESISTANCES` cohort in
+/// `actor_template.rs` next to the Marid Elemental Gift's cold row, the
+/// Dao Elemental Gift's bludgeoning row, Radiant Soul's radiant row,
+/// Fiendish / Draconic Resilience's fire rows, Heart of the Storm's
+/// lightning + thunder row, and Psychic Defenses' psychic row — same
+/// lane, different patron flavor, different damage axis.
+///
+/// Third of the four RAW Genie variants to ship on the warlock family
+/// — completes the physical-element trio (Cold / Bludgeoning / Thunder)
+/// alongside `MARID_WARLOCK_TEMPLATE` (Cold, water/ice) and
+/// `DAO_WARLOCK_TEMPLATE` (Bludgeoning, earth/stone). The remaining
+/// **Efreeti** (Fire) variant is a semantic duplicate of Fiendish
+/// Resilience on the resistance axis (both grant Fire) and is left as
+/// future work — the four-genie completeness is a taxonomic goal, not
+/// a mechanical-coverage goal.
+///
+/// RAW's Genie Warlock (Djinni variant) picks up other features not
+/// shipped on this template — **Genie's Vessel** (lv1: bonus-action
+/// bottle a creature into the djinni vessel; a save-and-condition-install
+/// resource lane that needs a per-warlock vessel tracker), **Bottled
+/// Respite** (lv6: 10-min in-vessel short rest; sits outside combat),
+/// **Sanctuary Vessel** (lv10: refresh temp HP on party short rest inside
+/// the vessel), and **Limited Wish** (lv14 capstone: cast any lv6-or-lower
+/// spell on a 1d4-day cooldown). Only the lv6 Elemental Gift passive has
+/// a mechanical surface on the CR-4 chassis that plugs cleanly into the
+/// shared passive typed-resistance cohort, so we ship that half and
+/// leave the rest as future work — matching the way
+/// `MARID_WARLOCK_TEMPLATE` and `DAO_WARLOCK_TEMPLATE` each ship only the
+/// Elemental Gift resistance half of their RAW kit.
+///
+/// Sibling on the passive typed-resistance patron lane to:
+///   - **Elemental Gift (Marid)** (Marid Warlock lv6, TCE): Cold.
+///   - **Elemental Gift (Dao)** (Dao Warlock lv6, TCE): Bludgeoning.
+///     All three Genie variants share the "one feature tag drives one
+///     cohort row" declarative-table shape, different damage axis. Any
+///     two never legally co-occur on a single build (RAW: one genie
+///     kind per warlock).
+///   - **Radiant Soul** (Celestial Warlock lv6, XGtE): Radiant.
+///   - **Fiendish Resilience** (Fiend Warlock lv10): Fire.
+///   - **Heart of the Storm** (Storm Sorcerer lv6): Lightning + Thunder
+///     — overlaps this row on the Thunder axis, but the two never co-
+///     occur on a single chassis (Warlock vs. Sorcerer). A hypothetical
+///     multiclass carrier caps at a single /2 per Thunder hit via the
+///     "one halving per damage instance" rule.
+///
+/// Sibling on the Otherworldly Patron subclass lane to
+/// `MARID_WARLOCK_TEMPLATE` (Marid genie kind — Cold),
+/// `DAO_WARLOCK_TEMPLATE` (Dao genie kind — Bludgeoning),
+/// `FIEND_WARLOCK_TEMPLATE` (Dark One's Blessing + Dark One's Own Luck +
+/// Fiendish Resilience — the fiery kill-focused build),
+/// `UNDYING_WARLOCK_TEMPLATE` (Aspect of the Moon — the insomniac's
+/// build), `GREAT_OLD_ONE_WARLOCK_TEMPLATE` (Entropic Ward — the alien-
+/// awareness reactive build), `ARCHFEY_WARLOCK_TEMPLATE` (Beguiling
+/// Defenses — the Charmed-bounce build), and `CELESTIAL_WARLOCK_TEMPLATE`
+/// (Radiant Soul — the radiant-resistance build).
+///
+/// Ships the CR-4 template above the strict RAW lv6 gate for the same
+/// reason `MARID_WARLOCK_TEMPLATE` / `DAO_WARLOCK_TEMPLATE` ship
+/// Elemental Gift (RAW lv6): class templates target a balanced playable
+/// level, not lockstep PHB progression.
+///
+/// Glyph 'J' — distinct from baseline warlock 'L', Fiend 'F', Undying
+/// 'U', Great Old One 'O', Archfey 'A', Celestial 'C', Marid 'M', and
+/// Dao 'D'; 'J' for the "Djinni" identity (the warlock as a mortal
+/// bonded to an air-and-storm genie sovereign of the Elemental Plane
+/// of Air).
+pub static DJINNI_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Warlock envelope wholesale
+    // and layer on the one Djinni Genie patron feature — Elemental Gift
+    // via the `DJINNI_ELEMENTAL_GIFT_TAG` passive-feature tag. The
+    // `..base.clone()` tail picks up every other field — stats, spell
+    // slots, save profs, invocation-driven cantrips — without an
+    // N-line field-by-field copy. Same shape as `MARID_WARLOCK_TEMPLATE`
+    // / `DAO_WARLOCK_TEMPLATE` (their tag-only subclass builds) and the
+    // sorcerer / paladin / rogue / ranger subclass templates.
+    let mut features = WARLOCK_TEMPLATE.features.clone();
+    features.insert(crate::actions::class_features::DJINNI_ELEMENTAL_GIFT_TAG);
+    CreatureTemplate {
+        name: "Djinni Warlock",
+        // 'J' for the "Djinni" identity — distinct from baseline warlock
+        // 'L', Fiend 'F', Undying 'U', Great Old One 'O', Archfey 'A',
+        // Celestial 'C', Marid 'M', and Dao 'D'.
+        glyph: 'J',
         features,
         ..WARLOCK_TEMPLATE.clone()
     }

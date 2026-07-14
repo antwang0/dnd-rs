@@ -2021,16 +2021,17 @@ pub const RADIANT_SOUL_TAG: &str = "warlock.radiant_soul";
 ///
 /// RAW's Elemental Gift picks a damage type based on the warlock's
 /// chosen genie kind: **Dao** (bludgeoning), **Djinni** (thunder),
-/// **Efreeti** (fire), **Marid** (cold). We ship the Marid variant
-/// alone since (a) it targets a damage type not yet covered by any
-/// other passive typed-resistance row (Fire is covered by Fiendish /
-/// Draconic Resilience; Thunder is covered by Heart of the Storm;
-/// Bludgeoning has no other passive typed-resistance holder), and (b)
-/// Marid is the most mechanically distinct of the four genie kinds on
-/// the passive-resistance lane. A future Dao / Djinni / Efreeti variant
-/// drops in as a sibling tag with its own single-type slice entry in
-/// `PASSIVE_TYPED_RESISTANCES` — same "one feature tag drives one
-/// cohort row" pattern this tag already uses.
+/// **Efreeti** (fire), **Marid** (cold). This tag ships the Marid
+/// variant alongside the sibling `DAO_ELEMENTAL_GIFT_TAG` (Bludgeoning)
+/// and `DJINNI_ELEMENTAL_GIFT_TAG` (Thunder) — three of the four RAW
+/// genie kinds land on the passive typed-resistance cohort with their
+/// own single-type slice row. The three never legally co-occur on a
+/// single build (RAW: one genie kind per warlock), so the split-tag
+/// shape is a template-drift lock rather than a stacking concern. The
+/// remaining **Efreeti** (Fire) variant is a semantic duplicate of the
+/// Fiendish / Draconic Resilience Fire rows and is left as future
+/// work in favor of the three genie kinds whose damage axes are
+/// otherwise uncovered on the passive-resistance lane.
 ///
 /// RAW's Elemental Gift also grants a per-day 10-minute **flying speed
 /// equal to walking speed** clause; the flight half needs a per-cast
@@ -2081,14 +2082,14 @@ pub const RADIANT_SOUL_TAG: &str = "warlock.radiant_soul";
 /// lv6), and `FIEND_WARLOCK_TEMPLATE` ships Fiendish Resilience (RAW
 /// lv10): class templates target a balanced playable level, not
 /// lockstep PHB progression.
-pub const ELEMENTAL_GIFT_TAG: &str = "warlock.elemental_gift";
+pub const MARID_ELEMENTAL_GIFT_TAG: &str = "warlock.marid_elemental_gift";
 
 /// 5e Warlock Otherworldly Patron — **The Genie (Dao)** — **Elemental
 /// Gift** subclass feature tag (level 6, TCE). Passive: the Dao-pact
 /// warlock gains **resistance to bludgeoning damage** — the dao's earth-
 /// flavored patron pact hardens the warlock's body against blunt-force
 /// hits. First user of the Bludgeoning slot on the passive typed-
-/// resistance lane — Cold is owned by Marid's `ELEMENTAL_GIFT_TAG`,
+/// resistance lane — Cold is owned by Marid's `MARID_ELEMENTAL_GIFT_TAG`,
 /// Fire by Fiendish / Draconic Resilience, Lightning + Thunder by Heart
 /// of the Storm, Psychic by Psychic Defenses, and Radiant by Radiant
 /// Soul, so the Bludgeoning axis was uncovered on the passive-typed-
@@ -2102,7 +2103,7 @@ pub const ELEMENTAL_GIFT_TAG: &str = "warlock.elemental_gift";
 /// RAW's Elemental Gift picks a damage type based on the warlock's
 /// chosen genie kind: **Dao** (bludgeoning), **Djinni** (thunder),
 /// **Efreeti** (fire), **Marid** (cold). This tag ships the Dao variant
-/// alongside the pre-existing Marid variant (`ELEMENTAL_GIFT_TAG` above)
+/// alongside the pre-existing Marid variant (`MARID_ELEMENTAL_GIFT_TAG` above)
 /// — the two never legally co-occur on a single build (RAW: one genie
 /// kind per warlock), so the split-tag shape is a template-drift lock
 /// rather than a stacking concern. Future Djinni / Efreeti variants
@@ -2124,7 +2125,7 @@ pub const ELEMENTAL_GIFT_TAG: &str = "warlock.elemental_gift";
 /// shape as the Marid Cold row and the Radiant Soul Radiant row on the
 /// single-type-per-genie-kind lane.
 ///
-/// Sibling to `ELEMENTAL_GIFT_TAG` (Marid, Cold) on the Genie patron
+/// Sibling to `MARID_ELEMENTAL_GIFT_TAG` (Marid, Cold) on the Genie patron
 /// lane — same "one feature tag drives one cohort row" declarative-
 /// table pattern, different damage axis. Sibling to `RADIANT_SOUL_TAG` /
 /// `HEART_OF_THE_STORM_TAG` / `PSYCHIC_DEFENSES_TAG` on the Otherworldly
@@ -7818,3 +7819,72 @@ pub fn disciple_of_life_log_suffix(bonus: u32) -> String {
         format!("+{}(disciple of life)", bonus)
     }
 }
+
+/// 5e Warlock Otherworldly Patron — **The Genie (Djinni)** — **Elemental
+/// Gift** subclass feature tag (level 6, TCE). Passive: the Djinni-pact
+/// warlock gains **resistance to thunder damage** — the djinni's sky-
+/// and storm-flavored patron pact leaks its elemental affinity into the
+/// warlock's own resilience, hardening them against thundercracks,
+/// Shatter bursts, and Thunderwave shoves.
+///
+/// Third of the four RAW genie-kind variants of Elemental Gift to land
+/// on the passive typed-resistance cohort — completes the four-quadrant
+/// physical-element coverage grid on the "Genie patron" lane alongside
+/// **Marid** (Cold, water/ice) and **Dao** (Bludgeoning, earth/stone).
+/// The remaining **Efreeti** (Fire) variant is a semantic duplicate of
+/// Fiendish / Draconic Resilience on the resistance axis (all three
+/// share the Fire lane), so it would land as an alias tag rather than
+/// a fresh damage slot; that variant is left as future work in favor
+/// of the three genie kinds whose damage axes are otherwise uncovered.
+///
+/// RAW's Elemental Gift picks a damage type based on the warlock's
+/// chosen genie kind: **Dao** (bludgeoning), **Djinni** (thunder),
+/// **Efreeti** (fire), **Marid** (cold). This tag ships the Djinni
+/// variant alongside the pre-existing Marid (`MARID_ELEMENTAL_GIFT_TAG`) and
+/// Dao (`DAO_ELEMENTAL_GIFT_TAG`) variants — the three never legally
+/// co-occur on a single build (RAW: one genie kind per warlock), so the
+/// split-tag shape is a template-drift lock rather than a stacking
+/// concern. Overlaps the Thunder axis with **Heart of the Storm** on
+/// the Storm Sorcerer chassis (a different class), matching how the
+/// Fire axis overlaps between Fiendish / Draconic Resilience today —
+/// the shared "one halving per damage instance" rule caps a
+/// hypothetical multiclass Storm-Sorcerer / Djinni-Warlock at a single
+/// /2 per Thunder hit; the double coverage is a taxonomic tell rather
+/// than a stacking bug.
+///
+/// RAW's Elemental Gift also grants a per-day 10-minute **flying speed
+/// equal to walking speed** clause; the flight half needs a per-cast
+/// timer / activated-buff surface not yet wired on this chassis. Left
+/// as future work — the resistance clause is the load-bearing defensive
+/// half and rides here alone, matching the way the Marid and Dao
+/// variants ship without the flight half.
+///
+/// Read at the shared `PASSIVE_TYPED_RESISTANCES` cohort in
+/// `actor_template.rs` next to Marid's Cold row, Dao's Bludgeoning row,
+/// Radiant Soul's radiant row, Heart of the Storm's lightning + thunder
+/// row, and Psychic Defenses' psychic row. Single-type slice (Thunder
+/// only) — same shape as the Marid Cold / Dao Bludgeoning / Radiant
+/// Soul Radiant rows on the single-type-per-genie-kind lane.
+///
+/// Sibling to `MARID_ELEMENTAL_GIFT_TAG` (Marid, Cold) and
+/// `DAO_ELEMENTAL_GIFT_TAG` (Dao, Bludgeoning) on the Genie patron
+/// lane — same "one feature tag drives one cohort row" declarative-
+/// table pattern, different damage axis. Sibling to `RADIANT_SOUL_TAG`
+/// / `HEART_OF_THE_STORM_TAG` / `PSYCHIC_DEFENSES_TAG` on the
+/// Otherworldly Patron / Sorcerous Origin subclass passive lane — same
+/// "one feature tag drives one cohort row" declarative-table pattern.
+///
+/// Ships on `DJINNI_WARLOCK_TEMPLATE` — the Otherworldly Patron: The
+/// Genie (Djinni) subclass template — alongside the baseline Warlock
+/// envelope. Distinct from `MARID_WARLOCK_TEMPLATE` (Cold),
+/// `DAO_WARLOCK_TEMPLATE` (Bludgeoning), `FIEND_WARLOCK_TEMPLATE`
+/// (Fire), `UNDYING_WARLOCK_TEMPLATE` / `GREAT_OLD_ONE_WARLOCK_TEMPLATE`
+/// / `ARCHFEY_WARLOCK_TEMPLATE` / `CELESTIAL_WARLOCK_TEMPLATE` (their
+/// respective single-patron flavor tells), and the baseline
+/// `WARLOCK_TEMPLATE` (patron-less baseline).
+///
+/// Ships on the CR-4 template above the strict RAW lv6 gate for the
+/// same reason `MARID_WARLOCK_TEMPLATE` / `DAO_WARLOCK_TEMPLATE` ship
+/// Elemental Gift (RAW lv6) — class templates target a balanced
+/// playable level, not lockstep PHB progression.
+pub const DJINNI_ELEMENTAL_GIFT_TAG: &str = "warlock.djinni_elemental_gift";

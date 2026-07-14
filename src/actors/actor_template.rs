@@ -321,6 +321,17 @@ struct PassiveTypedResistance {
 ///     from an Otherworldly Patron (Genie kind)" lane; the two never
 ///     legally co-occur on a single build (RAW: one genie kind per
 ///     warlock).
+///   - **Elemental Gift (Warlock Genie Djinni Patron lv6, TCE)**:
+///     thunder resistance. Third of the four Genie kinds to land on
+///     this cohort — completes the physical-element trio (Cold /
+///     Bludgeoning / Thunder) alongside Marid and Dao. Overlaps the
+///     Thunder axis with Heart of the Storm on the Storm Sorcerer
+///     chassis (a different class); a hypothetical multiclass carrier
+///     caps at a single /2 per Thunder hit via the "one halving per
+///     damage instance" rule. Sibling to the Marid / Dao variants on
+///     the "typed resistance from an Otherworldly Patron (Genie kind)"
+///     lane; the three never legally co-occur on a single build (RAW:
+///     one genie kind per warlock).
 ///
 /// A new passive typed resistance (Circle of the Moon Wild Shape
 /// per-form types, Bladeling's Painful Quills necrotic resistance,
@@ -404,7 +415,7 @@ const PASSIVE_TYPED_RESISTANCES: &[PassiveTypedResistance] = &[
     // playable level, not lockstep PHB progression.
     PassiveTypedResistance {
         flag: |a| a.has_passive_feature(
-            crate::actions::class_features::ELEMENTAL_GIFT_TAG,
+            crate::actions::class_features::MARID_ELEMENTAL_GIFT_TAG,
         ),
         types: &[DamageType::Cold],
     },
@@ -429,6 +440,29 @@ const PASSIVE_TYPED_RESISTANCES: &[PassiveTypedResistance] = &[
             crate::actions::class_features::DAO_ELEMENTAL_GIFT_TAG,
         ),
         types: &[DamageType::Bludgeoning],
+    },
+    // 5e Warlock Genie (Djinni) Patron **Elemental Gift** (level 6, TCE).
+    // RAW grants a per-genie-kind damage-type resistance; the Djinni
+    // variant covers **thunder** — the djinni's storm- and sky-flavored
+    // patron pact hardens the warlock against thundercracks, Shatter
+    // bursts, and Thunderwave shoves. Overlaps the Thunder axis with
+    // Heart of the Storm (Storm Sorcerer lv6) on the "one halving per
+    // damage instance" rule — a hypothetical multiclass carrier caps
+    // at a single /2 per Thunder hit rather than double-halving. Third
+    // of the four Genie kinds to land here; the Efreeti (Fire) variant
+    // is a semantic duplicate of the Fiendish / Draconic Resilience
+    // Fire rows and is left as future work in favor of the three
+    // physical-element genie kinds whose damage axes are otherwise
+    // uncovered on the passive-resistance lane. Ships on
+    // `DJINNI_WARLOCK_TEMPLATE` above its strict RAW lv6 gate for the
+    // same reason `MARID_WARLOCK_TEMPLATE` and `DAO_WARLOCK_TEMPLATE`
+    // ship Elemental Gift (RAW lv6) — class templates target a
+    // balanced playable level, not lockstep PHB progression.
+    PassiveTypedResistance {
+        flag: |a| a.has_passive_feature(
+            crate::actions::class_features::DJINNI_ELEMENTAL_GIFT_TAG,
+        ),
+        types: &[DamageType::Thunder],
     },
 ];
 
