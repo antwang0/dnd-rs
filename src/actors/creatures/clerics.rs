@@ -1,8 +1,8 @@
 use crate::actions::class_features::{
-    DESTROY_UNDEAD_TAG, DIVINE_STRIKE, DIVINE_STRIKE_TAG, GUIDED_STRIKE, GUIDED_STRIKE_TAG,
-    PRESERVE_LIFE, PRESERVE_LIFE_TAG, RADIANCE_OF_THE_DAWN, RADIANCE_OF_THE_DAWN_TAG, TURN_UNDEAD,
-    TURN_UNDEAD_TAG, WAR_PRIEST, WAR_PRIEST_TAG, WARDING_FLARE_TAG, WRATH_OF_THE_STORM,
-    WRATH_OF_THE_STORM_TAG,
+    DESTROY_UNDEAD_TAG, DISCIPLE_OF_LIFE_TAG, DIVINE_STRIKE, DIVINE_STRIKE_TAG, GUIDED_STRIKE,
+    GUIDED_STRIKE_TAG, PRESERVE_LIFE, PRESERVE_LIFE_TAG, RADIANCE_OF_THE_DAWN,
+    RADIANCE_OF_THE_DAWN_TAG, TURN_UNDEAD, TURN_UNDEAD_TAG, WAR_PRIEST, WAR_PRIEST_TAG,
+    WARDING_FLARE_TAG, WRATH_OF_THE_STORM, WRATH_OF_THE_STORM_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::spells::{
@@ -406,6 +406,60 @@ pub static TEMPEST_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         name: "Tempest Cleric",
         glyph: 'S',
         actions,
+        features,
+        ..CLERIC_TEMPLATE.clone()
+    }
+});
+
+/// Life Domain Cleric — subclass build. Identical envelope to the
+/// baseline `CLERIC_TEMPLATE` (WIS-primary caster, Sacred Flame /
+/// Guiding Bolt / Cure Wounds / Bless / Turn Undead / Preserve Life /
+/// Divine Strike, full cleric spell ladder) with one subclass feature
+/// layered on: **Disciple of Life** (lv1 subclass passive) — every
+/// leveled heal the cleric casts pours an extra `2 + slot_level` HP
+/// into each target (RAW: any spell of 1st level or higher that
+/// restores hit points; the bonus lands per creature per cast, not per
+/// die).
+///
+/// The Life Domain's support-flavored sibling to Light (radiant burst
+/// + Warding Flare), War (extra weapon swing + accuracy prime), and
+/// Tempest (close-range lightning zap). Where the other domain
+/// subclasses hand the cleric a fresh offensive lever, Life leans into
+/// the healing lane the baseline cleric already carries and amplifies
+/// it in place:
+///   - Healing Word (lv1) heals 1d4 + WIS + 3 instead of 1d4 + WIS.
+///   - Cure Wounds (lv1) heals 1d8 + WIS + 3 instead of 1d8 + WIS.
+///   - Mass Healing Word (lv3) heals 1d4 + WIS + 5 *each* to up to 6
+///     allies instead of the flat 1d4 + WIS baseline.
+///   - Mass Cure Wounds (lv5) heals 3d8 + WIS + 7 *each* to up to 6
+///     allies inside the burst.
+/// Composes cleanly with Preserve Life (Channel Divinity) already on
+/// the baseline template — the Life Cleric's turn-1 opener is Preserve
+/// Life for the mass-stabilize pool, then Mass Healing Word (bonus
+/// action) for the +5-per-ally follow-up. The two features between
+/// them make the Life Cleric the strongest healer in the party at any
+/// given round.
+///
+/// Distinct from `CLERIC_TEMPLATE` (subclass-less baseline) and the
+/// War / Light / Tempest cousins so a Life-vs-Baseline / vs-War /
+/// vs-Light / vs-Tempest encounter renders unambiguously by name. Glyph
+/// 'V' (for Vita) so the Life Cleric shows up distinctly on the map
+/// next to baseline 'C', War 'W', Light 'L', and Tempest 'S'.
+pub static LIFE_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Cleric envelope wholesale
+    // and layer on the Disciple of Life passive tag. The
+    // `..CLERIC_TEMPLATE.clone()` tail picks up the full spell ladder,
+    // save profs, stats, and slots without an N-line field-by-field
+    // copy — same shape as WAR_CLERIC_TEMPLATE / LIGHT_CLERIC_TEMPLATE /
+    // TEMPEST_CLERIC_TEMPLATE. No new actions are pushed — Disciple of
+    // Life is a purely passive amplifier read at the leveled-heal
+    // chokepoints (HealSpell / CureWounds / MassHealingWord /
+    // MassCureWounds), not a fresh action surface.
+    let mut features = CLERIC_TEMPLATE.features.clone();
+    features.insert(DISCIPLE_OF_LIFE_TAG);
+    CreatureTemplate {
+        name: "Life Cleric",
+        glyph: 'V',
         features,
         ..CLERIC_TEMPLATE.clone()
     }

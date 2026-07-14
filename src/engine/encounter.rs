@@ -10203,6 +10203,101 @@ mod tests {
         assert!(!aei.validate(&e), "cure wounds is touch range only");
     }
 
+    /// A Life Cleric's Cure Wounds should heal exactly `2 + slot_level`
+    /// (= +3 at lvl 1) more HP than the baseline cleric on the same
+    /// roll — this pins the RAW **Disciple of Life** amplifier.
+    /// Same seed → same dice → the delta is purely the bonus.
+    #[test]
+    fn disciple_of_life_amplifies_cure_wounds_by_2_plus_slot() {
+        use crate::actions::spells::CURE_WOUNDS;
+        use crate::actors::creatures::clerics::{CLERIC_TEMPLATE, LIFE_CLERIC_TEMPLATE};
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        // The two runs are seed-identical: same encounter, same dice
+        // stream. Only the caster template differs, so the healed-HP
+        // delta between them isolates the Disciple of Life bonus.
+        let heal_amount_with = |template: &'static crate::actors::actor_template::CreatureTemplate| {
+            let tp = crate::engine::terrain_gen::TerrainGenParams {
+                width: 15,
+                height: 15,
+                branch_depth: 0,
+                branch_prob: 0.0,
+            };
+            let ap = ActorGenParams {
+                cr_target: 0.0,
+                n_teams: 0,
+                pc_template: None,
+                start_team: 0,
+            };
+            let mut e = EncounterInstance::from_params(&tp, &ap, Some(42)).unwrap();
+            e.terrain = vec![
+                TerrainInfo {
+                    terrain_type: TerrainType::Floor,
+                };
+                15 * 15
+            ];
+            let cleric = e
+                .instantiate_creature(template, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let ally = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+                .unwrap();
+            let max = e.actors[&ally].max_hitpoints();
+            // Take enough damage that both the base heal and the
+            // (base + 3) heal fit under the cap without clamping.
+            e.actors.get_mut(&ally).unwrap().take_damage(max - 1);
+            let before = e.actors[&ally].hitpoints();
+            e.pop_prompt();
+            let aei =
+                ActionExecutionInfo::new(&*CURE_WOUNDS, cleric, Some(vec![ally]), None, None);
+            assert!(aei.validate(&e), "cure wounds should validate at touch range");
+            e.push_action(aei);
+            e.process_stack();
+            e.actors[&ally].hitpoints() - before
+        };
+
+        let baseline = heal_amount_with(&CLERIC_TEMPLATE);
+        let life = heal_amount_with(&LIFE_CLERIC_TEMPLATE);
+        assert_eq!(
+            life,
+            baseline + 3,
+            "Disciple of Life should add exactly 2 + slot_level (=3 at lvl 1)"
+        );
+    }
+
+    /// Ensure the Disciple of Life bonus only fires when the caster
+    /// actually has the passive tag — a Wizard casting through the
+    /// same HealSpell shape (via Cure Wounds' plumbing) must NOT gain
+    /// the +3. This locks in the "Life Cleric-only" gate so a future
+    /// share of the tag with an unintended chassis wouldn't slip
+    /// through silently.
+    #[test]
+    fn disciple_of_life_gate_baseline_cleric_gets_no_bonus() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        let tp = crate::engine::terrain_gen::TerrainGenParams {
+            width: 15,
+            height: 15,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(0)).unwrap();
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let a = &e.actors[&cleric];
+        assert_eq!(
+            crate::actions::class_features::disciple_of_life_bonus(a, 1),
+            0,
+            "baseline cleric must not carry the Disciple of Life tag"
+        );
+    }
+
     #[test]
     fn fire_bolt_can_hit_and_damage() {
         use crate::actions::spells::FIRE_BOLT;

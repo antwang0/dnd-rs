@@ -7757,3 +7757,64 @@ pub const ROVING_TAG: &str = "ranger.roving";
 /// `passive_feature_speed_bonus` table stays declarative rather than
 /// scattering magic numbers into the accessor.
 pub const ROVING_SPEED_BONUS: f32 = 5.0;
+
+/// 5e Life Domain Cleric **Disciple of Life** (level 1 subclass feature).
+/// Passive: whenever the cleric uses a spell of level 1 or higher to
+/// restore hit points to a creature, that creature regains an additional
+/// `2 + slot_level` HP. The bonus rides once per creature per cast, not
+/// per healing die — so a Cure Wounds at level 1 heals `1d8 + WIS + 3`
+/// and Mass Cure Wounds at level 5 heals `3d8 + WIS + 7` to *each*
+/// creature caught in the burst.
+///
+/// Read at every leveled cleric-heal chokepoint (`HealSpell` for Cure
+/// Wounds / Healing Word, plus the ad-hoc `MassHealingWord` /
+/// `MassCureWounds` sites) via `disciple_of_life_bonus(caster,
+/// slot_level)`. The helper folds the "must be spell of lv≥1"
+/// gate — cantrip heals (Spare the Dying's stabilize is not a heal,
+/// and the current cantrip catalog has none) return 0 either way.
+///
+/// Ships on `LIFE_CLERIC_TEMPLATE` (the RAW gate is the domain pick at
+/// character creation — no RAW level gate to compare against). Sibling
+/// to the War / Light / Tempest domain subclass flavors — those layer
+/// on damage-oriented Channel Divinities (Guided Strike / Radiance of
+/// the Dawn / Wrath of the Storm), Life leans into the pure-support
+/// flavor by amplifying the healing lane the baseline cleric already
+/// carries. No per-rest charge and no condition gate — always-on
+/// passive read at the heal-amount site.
+pub const DISCIPLE_OF_LIFE_TAG: &str = "cleric.disciple_of_life";
+
+/// Compute the RAW Disciple of Life bonus for a heal cast at
+/// `spell_slot_lvl`. Returns `2 + spell_slot_lvl` when `caster` has the
+/// passive tag AND the slot is level 1+; returns 0 for the cantrip
+/// tier (no slot) or a caster without the tag. Callers add the return
+/// value onto their computed heal amount right before constructing the
+/// `Heal` side-effect so the boost hits every eligible target.
+///
+/// Single chokepoint so future changes (e.g. RAW-tightening to only
+/// spells the cleric prepared as a Life Domain spell) land in one
+/// place instead of across the ~4-5 heal-spell impls that call it.
+pub fn disciple_of_life_bonus(
+    caster: &crate::actors::actor_template::ActorInstance,
+    spell_slot_lvl: u32,
+) -> u32 {
+    if spell_slot_lvl == 0 || !caster.has_passive_feature(DISCIPLE_OF_LIFE_TAG) {
+        return 0;
+    }
+    2 + spell_slot_lvl
+}
+
+/// Companion to `disciple_of_life_bonus`: format the log-line suffix
+/// callers splice into their existing heal-log format string right
+/// before the ` = <amount> HP` tail. Returns `""` for `bonus == 0`
+/// (non-Life caster / cantrip heal) so the base log stays untouched,
+/// or `"+<n>(disciple of life)"` when the bonus fired. Keeps every
+/// leveled-heal call site to a single `format!` with a stitched-in
+/// `{}` rather than the earlier `if bonus > 0 { format!(...) } else
+/// { format!(...) }` two-branch shape at each site.
+pub fn disciple_of_life_log_suffix(bonus: u32) -> String {
+    if bonus == 0 {
+        String::new()
+    } else {
+        format!("+{}(disciple of life)", bonus)
+    }
+}

@@ -1207,11 +1207,23 @@ impl Action for HealSpell {
         let lvl = crate::engine::action_overrides::cast_level(overrides, self.spell_slot_lvl);
         let extra_dice = lvl - self.spell_slot_lvl;
         let dice = Dice::new(self.heal_dice.count + extra_dice, self.heal_dice.faces);
+        // 5e Life Domain Cleric **Disciple of Life** — the leveled-heal
+        // amplifier. Adds `2 + slot_level` on top of the roll for any
+        // spell of level 1+; returns 0 for a non-Life caster so the
+        // stock heal formula lands unchanged. Snapshot before the
+        // (mutable) roll so the borrow checker is happy.
+        let bonus = crate::actions::class_features::disciple_of_life_bonus(caster, lvl);
         let raw = encounter.roll(&dice) as i32;
-        let amount = (raw + ability_mod).max(1) as u32;
+        let base = (raw + ability_mod).max(1) as u32;
+        let amount = base + bonus;
         encounter.log(format!(
-            "  {}: {}({}){:+} = {} HP",
-            self.display_name, dice, raw, ability_mod, amount
+            "  {}: {}({}){:+}{} = {} HP",
+            self.display_name,
+            dice,
+            raw,
+            ability_mod,
+            crate::actions::class_features::disciple_of_life_log_suffix(bonus),
+            amount
         ));
         vec![Box::new(Heal {
             actor_id: target_id,
@@ -1388,90 +1400,34 @@ impl Action for HoldPerson {
 
 pub static HOLD_PERSON: LazyLock<HoldPerson> = LazyLock::new(|| HoldPerson {});
 
-/// Cure Wounds — 5e level-1 cleric/druid/bard spell. Touch range, no save:
-/// target regains 1d8 + caster's WIS modifier HP. Compared to Healing
-/// Word: Cure Wounds is a full Action (not bonus action) but heals more
-/// on average. Both consume a level-1 slot.
-pub struct CureWounds {}
-
-impl Action for CureWounds {
-    fn name(&self) -> &str {
-        "cure wounds"
-    }
-
-    fn aliases(&self) -> Vec<&str> {
-        vec!["cw", "cure"]
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-
-    fn reach_tiles(&self) -> Option<isize> {
-        // Touch range — must be footprint-adjacent to the target.
-        Some(1)
-    }
-
-    fn requires_los(&self) -> bool {
-        // Touch implicitly requires LOS, but the reach check already
-        // guarantees adjacency, so the LOS check is harmless overhead.
-        true
-    }
-
-    fn is_harmful(&self) -> bool {
-        false
-    }
-
-    fn cost(
-        &self,
-        _encounter: &EncounterInstance,
-        _caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        action_and_slot(crate::engine::action_overrides::cast_level(overrides, 1))
-    }
-
-    fn is_heal(&self) -> bool {
-        true
-    }
-
-    fn deals_damage(&self) -> bool {
-        false
-    }
-
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let wis_mod = caster.ability_modifier(AbilityScoreType::Wisdom);
-        let lvl = crate::engine::action_overrides::cast_level(overrides, 1);
-        let dice = lvl;
-        let raw = encounter.roll(&Dice::new(dice, 8)) as i32;
-        let amount = (raw + wis_mod).max(1) as u32;
-        encounter.log(format!(
-            "  cure wounds: {}d8({}){:+} = {} HP",
-            dice, raw, wis_mod, amount
-        ));
-        vec![Box::new(Heal {
-            actor_id: target_id,
-            amount,
-        })]
-    }
-}
-
-pub static CURE_WOUNDS: LazyLock<CureWounds> = LazyLock::new(|| CureWounds {});
+/// Cure Wounds — 5e level-1 cleric/druid/bard spell. Touch range, no
+/// save: target regains 1d8 + caster's WIS modifier HP (+1d8 per
+/// upcast level via the shared HealSpell upcasting rule). Compared to
+/// Healing Word: Cure Wounds is a full Action (not bonus action) but
+/// heals more on average. Both consume a level-1 slot.
+///
+/// Implemented via the shared `HealSpell` chassis — same code path as
+/// Healing Word, differing only in the (reach, action_cost, dice)
+/// tuple. Disciple of Life amplification, upcasting scaling, and log
+/// formatting all live on the `HealSpell::side_effects` path so a
+/// future healing-lane change (e.g. RAW-tightening the Disciple bonus
+/// to prepared Life-domain spells only) lands in one place.
+///
+/// `LazyLock<HealSpell>` (rather than `pub static ... = HealSpell {}`)
+/// so every existing `&*CURE_WOUNDS` call site — creature templates
+/// registering CURE_WOUNDS onto their action pool, engine tests
+/// building an ActionExecutionInfo against it — continues to compile
+/// without a mass rename.
+pub static CURE_WOUNDS: LazyLock<HealSpell> = LazyLock::new(|| HealSpell {
+    display_name: "cure wounds",
+    aliases: &["cw", "cure"],
+    reach: 1,
+    requires_los: true,
+    action_cost: Resource::Action,
+    spell_slot_lvl: 1,
+    heal_dice: Dice::new(1, 8),
+    ability: AbilityScoreType::Wisdom,
+});
 
 /// Fire Bolt — 5e wizard cantrip. Ranged spell attack: d20 + caster's
 /// INT modifier vs target AC. On hit: 1d10 fire damage. No save (it's
@@ -3766,11 +3722,20 @@ impl Action for MassHealingWord {
         let caster_loc = caster.location();
         let caster_size = get_tiles_from_size(caster.size());
         let wis_mod = caster.ability_modifier(AbilityScoreType::Wisdom);
+        // Mass Healing Word is a fixed level-3 slot in this engine (no
+        // upcasting exposed). Feed the fixed level to the Disciple of
+        // Life bonus so a Life Cleric adds +5 per target on top of the
+        // shared roll. Snapshot before the (mutable) roll.
+        let bonus = crate::actions::class_features::disciple_of_life_bonus(caster, 3);
         let raw = encounter.roll(&Dice::new(1, 4)) as i32;
-        let amount = (raw + wis_mod).max(1) as u32;
+        let base = (raw + wis_mod).max(1) as u32;
+        let amount = base + bonus;
         encounter.log(format!(
-            "  mass healing word: 1d4({}){:+} = {} HP each",
-            raw, wis_mod, amount
+            "  mass healing word: 1d4({}){:+}{} = {} HP each",
+            raw,
+            wis_mod,
+            crate::actions::class_features::disciple_of_life_log_suffix(bonus),
+            amount
         ));
         // RAW: pick up to 6 creatures. We snap to the closest 6 eligible
         // allies (combat-active OR dying — heals revive both).
@@ -5898,11 +5863,20 @@ impl Action for MassCureWounds {
         };
         let caster_team = caster.team();
         let wis_mod = caster.ability_modifier(AbilityScoreType::Wisdom);
+        // Mass Cure Wounds is fixed at the level-5 slot cost. Route the
+        // level through the Disciple of Life bonus for a Life Cleric's
+        // +7 per target on top of the shared roll. Snapshot before the
+        // (mutable) roll.
+        let bonus = crate::actions::class_features::disciple_of_life_bonus(caster, 5);
         let raw = encounter.roll(&Dice::new(3, 8)) as i32;
-        let amount = (raw + wis_mod).max(1) as u32;
+        let base = (raw + wis_mod).max(1) as u32;
+        let amount = base + bonus;
         encounter.log(format!(
-            "  mass cure wounds: 3d8({}){:+} = {} HP each",
-            raw, wis_mod, amount
+            "  mass cure wounds: 3d8({}){:+}{} = {} HP each",
+            raw,
+            wis_mod,
+            crate::actions::class_features::disciple_of_life_log_suffix(bonus),
+            amount
         ));
         const RADIUS: isize = 3;
         const MAX_TARGETS: usize = 6;
@@ -7095,8 +7069,8 @@ impl Action for HealSpellHigh {
     }
     fn side_effects(
         &self,
-        _encounter: &mut EncounterInstance,
-        _caster_id: usize,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
@@ -7105,10 +7079,29 @@ impl Action for HealSpellHigh {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
+        // Baseline heal is a flat 70 HP; a Life Cleric adds `2 + 6 = 8`
+        // via Disciple of Life. Snapshot the caster before the log site
+        // so the mutable borrow on `encounter` for `log(...)` doesn't
+        // collide with the caster read.
+        let bonus = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| crate::actions::class_features::disciple_of_life_bonus(a, 6))
+            .unwrap_or(0);
+        let amount = 70 + bonus;
+        // Only log if the bonus fired — the base 70 HP heal is already
+        // implicit in the Heal side-effect's own "heals N HP" line.
+        if bonus > 0 {
+            encounter.log(format!(
+                "  heal: 70{} = {} HP",
+                crate::actions::class_features::disciple_of_life_log_suffix(bonus),
+                amount
+            ));
+        }
         vec![
             Box::new(Heal {
                 actor_id: target_id,
-                amount: 70,
+                amount,
             }),
             Box::new(RemoveCondition {
                 actor_id: target_id,
@@ -19358,7 +19351,7 @@ impl Action for Regenerate {
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
-        _caster_id: usize,
+        caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
@@ -19366,9 +19359,22 @@ impl Action for Regenerate {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
+        // Snapshot the Disciple of Life bonus (+9 at slot 7) BEFORE the
+        // (mutable) roll — the borrow checker won't let the caster read
+        // outlive `encounter.roll`.
+        let bonus = encounter
+            .actors
+            .get(&caster_id)
+            .map(|a| crate::actions::class_features::disciple_of_life_bonus(a, 7))
+            .unwrap_or(0);
         let raw = encounter.roll(&Dice::new(4, 8));
-        let total = raw + 15;
-        encounter.log(format!("  regenerate: 4d8+15({}) = {} HP", raw, total));
+        let total = raw + 15 + bonus;
+        encounter.log(format!(
+            "  regenerate: 4d8+15({}){} = {} HP",
+            raw,
+            crate::actions::class_features::disciple_of_life_log_suffix(bonus),
+            total
+        ));
         vec![Box::new(Heal {
             actor_id: target_id,
             amount: total,
