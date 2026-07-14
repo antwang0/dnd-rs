@@ -341,6 +341,28 @@ pub fn resolve_attack_outcome(
     else {
         return (Vec::new(), 0);
     };
+    // 5e Swashbuckler Rogue Fancy Footwork (subclass level 3): every
+    // melee attack made by the attacker writes the target id onto
+    // their per-turn `melee_attack_targets_this_turn` ledger. Cleared
+    // at the attacker's own turn-start reset. The write is
+    // unconditional (no `has_fancy_footwork` gate) so the mark stays
+    // cheap; the OA-suppression read in `dispatch_opportunity_attacks`
+    // is where the flag gates the suppression. RAW's trigger is on
+    // "making a melee attack" — we place the mark BEFORE the Sanctuary
+    // save check below, so even a swing that bounces off a sanctified
+    // target still counts as an attempted attack (mirrors RAW's "if
+    // you make a melee attack" wording — the swing was attempted even
+    // if it was warded off). Written for weapon melee only via the
+    // `p.is_melee` gate — a spell attack routed through this chokepoint
+    // (currently only weapon-attack-shaped spells like Booming Blade
+    // and Green Flame Blade) picks up the mark too since they're
+    // engine-tagged `is_melee: true`, matching the RAW "melee attack
+    // roll" trigger.
+    if p.is_melee
+        && let Some(attacker) = encounter.actors.get_mut(&p.caster_id)
+    {
+        attacker.mark_melee_attacked_this_turn(p.target_id);
+    }
     // 5e Cover: intervening combat-active creatures bump the target's
     // effective AC (+2 for half cover, +5 for three-quarters). Adjacent
     // melee swings are exempt (the cover routine returns 0 at gap ≤ 1).

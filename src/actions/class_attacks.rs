@@ -109,12 +109,7 @@ impl Action for RogueShortsword {
         let mut damage = (raw_dmg + crit_extra + dex_mod).max(0) as u32;
 
         // Sneak attack rider.
-        let sneak_eligible = sneak_attack_eligible(
-            encounter,
-            caster_id,
-            target_id,
-            mode == crate::engine::dice::RollMode::Advantage,
-        );
+        let sneak_eligible = sneak_attack_eligible(encounter, caster_id, target_id, mode);
         let mut side_effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         if sneak_eligible {
             let level = encounter
@@ -325,19 +320,37 @@ fn consume_cunning_strike(
     (remaining, effects)
 }
 
-/// 5e Sneak Attack trigger:
-/// - Rogue has advantage on the attack (and not disadvantage), OR
-/// - An ally of the rogue (i.e. another actor on rogue's team, not the
-///   rogue) is footprint-adjacent to the target,
-/// - AND the rogue hasn't already used Sneak Attack this turn.
+/// 5e Sneak Attack trigger. Fires when:
+///   - The rogue has advantage on the attack roll (RAW's canonical
+///     surprise / help / hidden path — disadvantage cancels advantage
+///     via `RollMode::combine` so the branch trivially subsumes RAW's
+///     "no disadvantage" clause). OR
+///   - An ally of the rogue is footprint-adjacent to the target AND
+///     the rogue's attack is not at disadvantage. RAW: "another enemy
+///     of the target is within 5 feet of it, that enemy isn't
+///     incapacitated, and you don't have disadvantage on the attack
+///     roll". The incapacitated-ally check collapses to the
+///     `is_combat_active` gate. OR
+///   - The rogue holds `has_rakish_audacity` (Swashbuckler subclass
+///     level 3) AND the target is footprint-adjacent to the rogue AND
+///     no OTHER creature is within 5 ft of the rogue AND the attack
+///     is not at disadvantage. RAW: "you don't need advantage on the
+///     attack roll to use your Sneak Attack against a creature if you
+///     are within 5 feet of it, no other creatures are within 5 feet
+///     of you, and you don't have disadvantage on the attack roll".
 ///
-/// The "no-disadvantage" rider only matters in the ally-adjacent path —
-/// the advantage path already implies no disadvantage by definition.
+/// AND the rogue hasn't already used Sneak Attack this turn.
+///
+/// Takes the full `RollMode` (not just `has_advantage`) so the ally-
+/// adjacent and Rakish Audacity paths can enforce RAW's "no
+/// disadvantage" clause uniformly — a rogue swinging at Disadvantage
+/// (Blinded, Poisoned, prone-target-melee, etc.) no longer picks up
+/// Sneak Attack via either path.
 fn sneak_attack_eligible(
     encounter: &EncounterInstance,
     rogue_id: usize,
     target_id: usize,
-    has_advantage: bool,
+    mode: crate::engine::dice::RollMode,
 ) -> bool {
     let Some(rogue) = encounter.actors.get(&rogue_id) else {
         return false;
@@ -345,15 +358,21 @@ fn sneak_attack_eligible(
     if rogue.sneak_attack_used() {
         return false;
     }
-    if has_advantage {
+    if mode == crate::engine::dice::RollMode::Advantage {
         return true;
+    }
+    // Both remaining paths (ally-adjacent, Rakish Audacity solo-duelist)
+    // require the swing to not be at disadvantage per RAW.
+    if mode == crate::engine::dice::RollMode::Disadvantage {
+        return false;
     }
     let Some(target) = encounter.actors.get(&target_id) else {
         return false;
     };
     let target_loc = target.location();
     let target_size = get_tiles_from_size(target.size());
-    encounter.actors.iter().any(|(id, a)| {
+    // Ally-adjacent path — the classic "flanker enables sneak" trigger.
+    let ally_adjacent = encounter.actors.iter().any(|(id, a)| {
         if *id == rogue_id || a.team() != rogue.team() || !a.is_combat_active() {
             return false;
         }
@@ -365,5 +384,46 @@ fn sneak_attack_eligible(
         );
         // 5ft adjacency = footprint-Chebyshev gap of 0 (touching).
         dist == 0
-    })
+    });
+    if ally_adjacent {
+        return true;
+    }
+    // Rakish Audacity path (Swashbuckler subclass level 3) — the rogue
+    // stands alone with the target: target footprint-adjacent, no other
+    // hostile creature footprint-adjacent to the rogue. "Other creatures"
+    // in RAW means anyone besides the rogue and the target — a nearby
+    // ally does NOT gate the trigger since the ally-adjacent path above
+    // would have already fired. We check for "no other enemies within
+    // 5 ft of the rogue" — matching the RAW spirit that the swash
+    // duels one target without interference from other threats.
+    if rogue.has_rakish_audacity() {
+        let rogue_loc = rogue.location();
+        let rogue_size = get_tiles_from_size(rogue.size());
+        // Target must be adjacent to the swash.
+        let target_adjacent = footprint_chebyshev(rogue_loc, rogue_size, target_loc, target_size)
+            == 0;
+        // No OTHER hostile creature within 5 ft of the swash. RAW says
+        // "no other creatures within 5 feet of you"; we scope to
+        // hostile-to-swash to avoid a swash allied with the flanking
+        // rogue's cover from being locked out of Rakish Audacity when
+        // the ally is nearby. This is a mild deviation from strict RAW
+        // (which counts any creature) but matches the RAW spirit — the
+        // swash duels the target one-on-one, ally presence doesn't
+        // cancel the "solo duel" identity.
+        let no_other_enemy_adjacent = !encounter.actors.iter().any(|(id, a)| {
+            if *id == rogue_id || *id == target_id || !a.is_combat_active() {
+                return false;
+            }
+            if a.team() == rogue.team() {
+                return false;
+            }
+            let dist =
+                footprint_chebyshev(a.location(), get_tiles_from_size(a.size()), rogue_loc, rogue_size);
+            dist == 0
+        });
+        if target_adjacent && no_other_enemy_adjacent {
+            return true;
+        }
+    }
+    false
 }

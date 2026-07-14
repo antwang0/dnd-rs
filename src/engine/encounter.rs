@@ -1281,6 +1281,26 @@ impl EncounterInstance {
         consume_help: bool,
     ) -> RollMode {
         let mut mode = self.compute_attack_mode(attacker_id, target_id, is_melee);
+        // 5e Swashbuckler Rogue Fancy Footwork (subclass level 3):
+        // mirror of the mark placed at the top of
+        // `engine::attack::resolve_attack` — every melee attack that
+        // routes through this rider helper (Rogue Shortsword, Booming
+        // Blade / Green Flame Blade / Shocking Grasp spell melee
+        // touches, and any other inline attacker that calls this
+        // helper instead of `resolve_attack`) writes the target id
+        // onto the attacker's per-turn ledger. The write is
+        // unconditional (no `has_fancy_footwork` gate) so the mark
+        // stays cheap; the OA-suppression read in
+        // `dispatch_opportunity_attacks` is where the flag gates the
+        // suppression. Idempotent HashSet insert — a caller that
+        // routes through both this helper AND `resolve_attack` on the
+        // same swing (currently none does, but a future path could)
+        // still leaves the ledger in the correct state.
+        if is_melee
+            && let Some(attacker) = self.actors.get_mut(&attacker_id)
+        {
+            attacker.mark_melee_attacked_this_turn(target_id);
+        }
         // Help: one-shot advantage if the attacker has a grant against
         // this target. Pop it before the roll regardless of hit/miss so
         // it can't double-fire on a follow-up.
@@ -2799,11 +2819,29 @@ impl EncounterInstance {
         // triggered by your movement until the start of your next turn.
         // Bails before snapshotting the candidate list (and also covers
         // the no-such-actor case, since the mover doesn't exist).
-        let (mover_team, mover_size) = match self.actors.get(&mover_id) {
-            Some(a) if a.is_disengaging() => return,
-            Some(a) => (a.team(), get_tiles_from_size(a.size())),
-            None => return,
-        };
+        // 5e Swashbuckler Rogue Fancy Footwork (subclass level 3): the
+        // flag doesn't blanket-suppress OAs the way Disengage does — it
+        // only surgically suppresses OAs from reactors the swash has
+        // already made a melee attack against this turn. The blanket
+        // suppression here is Disengage's job; the surgical per-reactor
+        // skip lives inside the candidate loop below via
+        // `mover_fancy_footwork_targets`. Keeping the two lanes
+        // separate lets a Swashbuckler with a spent bonus action
+        // benefit from Fancy Footwork's targeted suppression without
+        // burning Cunning Disengage's bonus action.
+        let (mover_team, mover_size, mover_fancy_footwork_targets) =
+            match self.actors.get(&mover_id) {
+                Some(a) if a.is_disengaging() => return,
+                Some(a) => {
+                    let footwork_targets = if a.has_fancy_footwork() {
+                        Some(a.melee_attack_targets_this_turn_snapshot())
+                    } else {
+                        None
+                    };
+                    (a.team(), get_tiles_from_size(a.size()), footwork_targets)
+                }
+                None => return,
+            };
         // Snapshot reactor candidates up-front — the loop body will mutate
         // self, which would conflict with holding an iterator into self.actors.
         type OaCandidate = (usize, &'static (dyn crate::actions::action_template::Action + Send + Sync), Coordinate, usize, isize);
@@ -2843,6 +2881,22 @@ impl EncounterInstance {
             let still_in_reach =
                 footprint_chebyshev(r_loc, r_size, to, mover_size) <= reach;
             if !was_in_reach || still_in_reach {
+                continue;
+            }
+            // 5e Swashbuckler Rogue Fancy Footwork (subclass level 3):
+            // if the mover holds the flag AND has made a melee attack
+            // against this specific reactor during their current turn,
+            // that reactor's OA is silently suppressed. Sibling gate to
+            // Disengage above — Disengage blanket-suppresses every
+            // reactor's OA for the turn, Fancy Footwork surgically
+            // suppresses only the swash's melee-attack targets, so a
+            // swash-vs-swarm move-out fires OAs from any flanker the
+            // swash didn't swing at while sparing the ones they did.
+            // Snapshot the ledger up-front to avoid re-borrowing the
+            // mutating actor map inside the loop body.
+            if let Some(footwork_targets) = mover_fancy_footwork_targets.as_ref()
+                && footwork_targets.contains(&reactor_id)
+            {
                 continue;
             }
 
@@ -14624,6 +14678,79 @@ mod tests {
             }
         }
         assert!(sneak_seen, "ally-adjacent sneak attack should fire on a hit");
+    }
+
+    /// 5e Sneak Attack RAW: "you don't have disadvantage on the
+    /// attack roll" gates the ally-adjacent path. A rogue swinging
+    /// at disadvantage (Poisoned installs Poisoned condition →
+    /// disadvantage on attacks) with an ally next to the target
+    /// should NOT trigger sneak attack.
+    ///
+    /// Pins the fix that promoted `sneak_attack_eligible` from a
+    /// `has_advantage: bool` shape to a `mode: RollMode` shape,
+    /// closing a latent RAW deviation on the ally-adjacent path.
+    #[test]
+    fn rogue_sneak_attack_ally_adjacent_gated_by_no_disadvantage() {
+        use crate::actions::class_attacks::ROGUE_SHORTSWORD;
+        use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        let _ally = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(4, 4),
+                0,
+                1,
+            )
+            .unwrap();
+        // Poisoned installs Poisoned → disadvantage on attack rolls.
+        // Ally-adjacent path shouldn't fire while the rogue is at
+        // disadvantage.
+        e.actors
+            .get_mut(&rogue)
+            .unwrap()
+            .add_condition(Condition::Poisoned, ConditionTimer::Rounds(10));
+        let mut sneak_seen = false;
+        for _ in 0..200 {
+            let max = e.actors[&target].max_hitpoints();
+            e.actors.get_mut(&target).unwrap().heal(max);
+            e.actors.get_mut(&rogue).unwrap().reset_for_new_round();
+            // reset clears certain conditions — re-add Poisoned each
+            // iteration so the disadvantage stays sticky.
+            e.actors
+                .get_mut(&rogue)
+                .unwrap()
+                .add_condition(Condition::Poisoned, ConditionTimer::Rounds(10));
+            let log_before = e.messages().len();
+            let target_vec = vec![target];
+            let effects = ROGUE_SHORTSWORD.side_effects(
+                &mut e,
+                rogue,
+                Some(&target_vec),
+                None,
+                None,
+            );
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            if e.messages()[log_before..]
+                .iter()
+                .any(|line| line.contains("sneak attack"))
+            {
+                sneak_seen = true;
+                break;
+            }
+        }
+        assert!(
+            !sneak_seen,
+            "sneak attack should not fire on ally-adjacent path when rogue swings at disadvantage"
+        );
     }
 
     #[test]
@@ -55049,6 +55176,280 @@ mod tests {
         assert!(
             !e.actors[&a].has_condition(Condition::Frightened),
             "Heroic bounces Frightened install via the promoted CONDITION_DRIVEN_IMMUNITIES cohort row"
+        );
+    }
+
+    /// 5e Swashbuckler Rogue (XGtE) subclass template flags — the
+    /// baseline Rogue and Assassin don't ship them; the Swashbuckler
+    /// template does.
+    #[test]
+    fn swashbuckler_template_ships_rakish_audacity_and_fancy_footwork() {
+        use crate::actors::creatures::rogues::{
+            ASSASSIN_ROGUE_TEMPLATE, ROGUE_TEMPLATE, SWASHBUCKLER_ROGUE_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let baseline = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let assassin = e
+            .instantiate_creature(&ASSASSIN_ROGUE_TEMPLATE, Coordinate::new(5, 2), 0, 1)
+            .unwrap();
+        let swash = e
+            .instantiate_creature(&SWASHBUCKLER_ROGUE_TEMPLATE, Coordinate::new(8, 2), 0, 2)
+            .unwrap();
+        assert!(!e.actors[&baseline].has_rakish_audacity());
+        assert!(!e.actors[&baseline].has_fancy_footwork());
+        assert!(!e.actors[&assassin].has_rakish_audacity());
+        assert!(!e.actors[&assassin].has_fancy_footwork());
+        assert!(e.actors[&swash].has_rakish_audacity());
+        assert!(e.actors[&swash].has_fancy_footwork());
+    }
+
+    /// 5e Swashbuckler Rogue Rakish Audacity (subclass level 3) — the
+    /// CHA-mod initiative bump surfaces in `initiative_flat_bonus`
+    /// alongside Remarkable Athlete's `+ceil(prof / 2)`. The template
+    /// ships CHA 14 (+2 mod) so the delta is a nonzero +2 vs the
+    /// baseline rogue's CHA 10 (0 mod).
+    #[test]
+    fn rakish_audacity_bumps_initiative_flat_bonus_by_cha_mod() {
+        use crate::actors::creatures::rogues::{ROGUE_TEMPLATE, SWASHBUCKLER_ROGUE_TEMPLATE};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let baseline = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let swash = e
+            .instantiate_creature(&SWASHBUCKLER_ROGUE_TEMPLATE, Coordinate::new(5, 2), 0, 1)
+            .unwrap();
+        let baseline_bonus = e.actors[&baseline].initiative_flat_bonus();
+        let swash_bonus = e.actors[&swash].initiative_flat_bonus();
+        let swash_cha_mod = e.actors[&swash]
+            .ability_modifier(crate::engine::types::AbilityScoreType::Charisma);
+        // Sanity: the swash template ships CHA 14 (+2 mod) so the
+        // Rakish Audacity bump is meaningful. If a future template
+        // tweak drops CHA back to 10, this assertion catches the
+        // regression before it silently zeros out the feature's tell.
+        assert!(
+            swash_cha_mod >= 2,
+            "swashbuckler template should ship a positive CHA mod for Rakish Audacity to matter"
+        );
+        assert_eq!(swash_bonus, baseline_bonus + swash_cha_mod);
+    }
+
+    /// 5e Swashbuckler Rogue Fancy Footwork (subclass level 3) — a
+    /// melee target of the swash on their turn should NOT OA the swash
+    /// as they move away. Contrast with the baseline
+    /// `opportunity_attack_fires_when_leaving_reach` test where the
+    /// zombie reactor's reaction is consumed.
+    #[test]
+    fn fancy_footwork_suppresses_oa_from_swash_melee_target() {
+        use crate::actions::class_attacks::ROGUE_SHORTSWORD;
+        use crate::actors::creatures::rogues::SWASHBUCKLER_ROGUE_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let swash = e
+            .instantiate_creature(&SWASHBUCKLER_ROGUE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Adjacent hostile zombie — mover_reach 1 so a step to (15, 5)
+        // leaves reach.
+        let reactor = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        // Sanity: reactor starts with reaction available.
+        assert!(e.actors[&reactor].can_consume_resource(Resource::Reaction));
+        // Swash makes a melee attack against the reactor first — writes
+        // the reactor id onto the swash's per-turn ledger via
+        // `resolve_attack`.
+        let tv = vec![reactor];
+        let effects =
+            ROGUE_SHORTSWORD.side_effects(&mut e, swash, Some(&tv), None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        assert!(
+            e.actors[&swash].has_melee_attacked_this_turn(reactor),
+            "the swash's melee attack should populate their per-turn ledger"
+        );
+        // Refill the reactor in case the shortsword dropped them.
+        if e.actors.contains_key(&reactor) {
+            let max = e.actors[&reactor].max_hitpoints();
+            e.actors.get_mut(&reactor).unwrap().heal(max);
+        }
+        // Swash walks away past the reactor's reach.
+        MoveActor {
+            actor_id: swash,
+            path: vec![Coordinate::new(15, 5)],
+        }
+        .apply(&mut e);
+        // Reactor's reaction slot should still be intact — Fancy
+        // Footwork silently suppressed the OA.
+        assert!(
+            e.actors[&reactor].can_consume_resource(Resource::Reaction),
+            "Fancy Footwork should suppress the OA from a target the swash melee-attacked this turn"
+        );
+    }
+
+    /// Fancy Footwork does NOT suppress OAs from reactors the swash
+    /// didn't melee-attack this turn. Verifies the surgical scope of
+    /// the flag — a flanker the swash never swung at still gets to
+    /// OA them.
+    #[test]
+    fn fancy_footwork_does_not_suppress_oa_from_untouched_reactor() {
+        use crate::actors::creatures::rogues::SWASHBUCKLER_ROGUE_TEMPLATE;
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let swash = e
+            .instantiate_creature(&SWASHBUCKLER_ROGUE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Adjacent hostile — the swash NEVER swings at this reactor.
+        let untouched = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        assert!(e.actors[&untouched].can_consume_resource(Resource::Reaction));
+        // Swash walks away — the untouched reactor's OA should still
+        // fire, and their reaction slot should be spent.
+        MoveActor {
+            actor_id: swash,
+            path: vec![Coordinate::new(15, 5)],
+        }
+        .apply(&mut e);
+        if e.actors.contains_key(&untouched) {
+            assert!(
+                !e.actors[&untouched].can_consume_resource(Resource::Reaction),
+                "an untouched OA reactor should still spend their reaction"
+            );
+        }
+    }
+
+    /// 5e Swashbuckler Rogue Rakish Audacity Sneak Attack path — the
+    /// swash lands Sneak Attack against an adjacent target with no
+    /// other creatures near even with no flanking ally. Contrasts with
+    /// the baseline rogue, which needs the ally-adjacent path.
+    #[test]
+    fn rakish_audacity_grants_solo_sneak_attack_path() {
+        use crate::actions::class_attacks::ROGUE_SHORTSWORD;
+        use crate::actors::creatures::rogues::{ROGUE_TEMPLATE, SWASHBUCKLER_ROGUE_TEMPLATE};
+
+        // Baseline rogue: alone with target, no ally adjacent → no
+        // sneak attack should fire.
+        {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            let rogue = e
+                .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            let mut sneak_seen = false;
+            for _ in 0..200 {
+                let max = e.actors[&target].max_hitpoints();
+                e.actors.get_mut(&target).unwrap().heal(max);
+                e.actors.get_mut(&rogue).unwrap().reset_for_new_round();
+                let log_before = e.messages().len();
+                let tv = vec![target];
+                let effects =
+                    ROGUE_SHORTSWORD.side_effects(&mut e, rogue, Some(&tv), None, None);
+                for eff in effects {
+                    eff.apply(&mut e);
+                }
+                if e.messages()[log_before..]
+                    .iter()
+                    .any(|l| l.contains("sneak attack"))
+                {
+                    sneak_seen = true;
+                    break;
+                }
+            }
+            assert!(
+                !sneak_seen,
+                "baseline rogue alone with target should NOT trigger sneak attack"
+            );
+        }
+
+        // Swashbuckler: alone with target, no ally adjacent → Rakish
+        // Audacity's solo-duelist path should trigger sneak attack.
+        {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            let swash = e
+                .instantiate_creature(&SWASHBUCKLER_ROGUE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            let mut sneak_seen = false;
+            for _ in 0..200 {
+                let max = e.actors[&target].max_hitpoints();
+                e.actors.get_mut(&target).unwrap().heal(max);
+                e.actors.get_mut(&swash).unwrap().reset_for_new_round();
+                let log_before = e.messages().len();
+                let tv = vec![target];
+                let effects =
+                    ROGUE_SHORTSWORD.side_effects(&mut e, swash, Some(&tv), None, None);
+                for eff in effects {
+                    eff.apply(&mut e);
+                }
+                if e.messages()[log_before..]
+                    .iter()
+                    .any(|l| l.contains("sneak attack"))
+                {
+                    sneak_seen = true;
+                    break;
+                }
+            }
+            assert!(
+                sneak_seen,
+                "swashbuckler alone with adjacent target should trigger sneak attack via Rakish Audacity"
+            );
+        }
+    }
+
+    /// Rakish Audacity's solo-duelist path is gated by the "no other
+    /// enemy within 5 ft of the rogue" clause. When a second hostile
+    /// is footprint-adjacent to the swash, the path closes and no
+    /// sneak attack fires (unless a different path — ally-adjacent /
+    /// advantage — is open, which isn't the case here).
+    #[test]
+    fn rakish_audacity_gate_closes_when_second_enemy_adjacent_to_swash() {
+        use crate::actions::class_attacks::ROGUE_SHORTSWORD;
+        use crate::actors::creatures::rogues::SWASHBUCKLER_ROGUE_TEMPLATE;
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let swash = e
+            .instantiate_creature(&SWASHBUCKLER_ROGUE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        // Second hostile footprint-adjacent to the swash (not the
+        // target). This should close the Rakish Audacity path AND the
+        // ally-adjacent path is also closed (they're a hostile, not an
+        // ally).
+        let _second = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 6), 1, 1)
+            .unwrap();
+        let mut sneak_seen = false;
+        for _ in 0..200 {
+            let max = e.actors[&target].max_hitpoints();
+            e.actors.get_mut(&target).unwrap().heal(max);
+            e.actors.get_mut(&swash).unwrap().reset_for_new_round();
+            let log_before = e.messages().len();
+            let tv = vec![target];
+            let effects =
+                ROGUE_SHORTSWORD.side_effects(&mut e, swash, Some(&tv), None, None);
+            for eff in effects {
+                eff.apply(&mut e);
+            }
+            if e.messages()[log_before..]
+                .iter()
+                .any(|l| l.contains("sneak attack"))
+            {
+                sneak_seen = true;
+                break;
+            }
+        }
+        assert!(
+            !sneak_seen,
+            "second adjacent enemy should close the Rakish Audacity path"
         );
     }
 }

@@ -1878,6 +1878,70 @@ pub struct CreatureTemplate {
     /// effects targeting those abilities (skill checks, social mods)
     /// don't route through `roll_save`. Read by `compute_save_mode`.
     pub has_gnome_cunning: bool,
+    /// 5e Swashbuckler Rogue (XGtE) level-3 subclass feature —
+    /// **Rakish Audacity**. Two-part passive: (a) add the holder's
+    /// Charisma modifier to initiative rolls, and (b) Sneak Attack
+    /// qualifies without an ally adjacent to the target so long as no
+    /// creature other than the target is within 5 ft of the target
+    /// (RAW: "you don't need advantage on the attack roll to use your
+    /// Sneak Attack against a creature if you are within 5 feet of it,
+    /// no other creatures are within 5 feet of you, and you don't have
+    /// disadvantage on the attack roll"). The advantage-clause survives
+    /// intact via the existing Sneak Attack eligibility ladder — this
+    /// flag only opens the second, no-ally path.
+    ///
+    /// Read at two chokepoints:
+    ///   - `initiative_flat_bonus` — the CHA-mod bump joins the same
+    ///     "flat number added to initiative total" lane as Remarkable
+    ///     Athlete's `+ceil(prof / 2)`. Composes cleanly with
+    ///     `rolls_initiative_with_advantage` (Feral Instinct) so a
+    ///     hypothetical Barbarian / Swashbuckler multiclass rolls with
+    ///     advantage AND stacks CHA-mod on top.
+    ///   - `class_attacks::sneak_attack_eligible` — the "solo duelist"
+    ///     path fires when no OTHER hostile creature is within 5 ft of
+    ///     the target (footprint-adjacent), the target is footprint-
+    ///     adjacent to the swashbuckler, and the swash has not swung
+    ///     with disadvantage this turn. Distinct from the ally-adjacency
+    ///     path (an ally within 5 ft of the target) — the swash covers
+    ///     the "no one else is here" gap.
+    ///
+    /// Ships on `SWASHBUCKLER_ROGUE_TEMPLATE`; no other current template
+    /// carries the flag. Sibling on the "template flag opens a new
+    /// Sneak Attack qualification path" lane to Steady Aim (bonus-action
+    /// self-advantage, already on the baseline rogue chassis) — Rakish
+    /// Audacity is the passive version.
+    pub has_rakish_audacity: bool,
+    /// 5e Swashbuckler Rogue (XGtE) level-3 subclass feature —
+    /// **Fancy Footwork**. Passive template flag: on the swashbuckler's
+    /// turn, any creature they make a melee attack against can't make
+    /// opportunity attacks against them for the rest of the turn. RAW:
+    /// "During your turn, if you make a melee attack against a
+    /// creature, that creature can't make opportunity attacks against
+    /// you for the rest of your turn."
+    ///
+    /// Read at `EncounterInstance::dispatch_opportunity_attacks`
+    /// alongside the `is_disengaging()` gate: when the swashbuckler
+    /// moves out of a reactor's reach, each candidate reactor id is
+    /// checked against the swash's per-turn "melee-attacked" ledger
+    /// (`melee_attack_targets_this_turn`). If the reactor was on the
+    /// swash's melee-attack list this turn AND the swash holds this
+    /// flag, that reactor's OA is silently suppressed. Other reactors
+    /// (an untouched flanker the swash never swung at) still fire OAs
+    /// normally.
+    ///
+    /// The ledger is marked at the top of `resolve_attack` for
+    /// `is_melee` swings — every melee action routing through the
+    /// shared attack chokepoint (shortsword, dagger, monk unarmed,
+    /// smite riders, opportunity attacks themselves) writes the
+    /// target id into the swash's ledger. Cleared at the swash's
+    /// turn-start reset alongside the other per-turn HashSets.
+    ///
+    /// Ships on `SWASHBUCKLER_ROGUE_TEMPLATE`; no other current template
+    /// carries the flag. Sibling to Disengage — Disengage suppresses
+    /// ALL OAs for the turn, Fancy Footwork surgically suppresses only
+    /// the swash's chosen melee targets, freeing the swash's bonus
+    /// action for Cunning Strike primes rather than Cunning Disengage.
+    pub has_fancy_footwork: bool,
     /// 5e Dragonborn Draconic Ancestry: damage type matching the chosen
     /// ancestor (Red / Gold = Fire, Blue / Bronze = Lightning, etc.).
     /// Read by `BreathWeapon` to type its 5-tile cone and consumed by
@@ -2037,6 +2101,8 @@ impl CreatureTemplate {
             has_fiendish_resilience: false,
             has_draconic_resilience: false,
             has_gnome_cunning: false,
+            has_rakish_audacity: false,
+            has_fancy_footwork: false,
             draconic_ancestry: None,
             sorcery_points: 0,
             death_burst: None,
@@ -2465,6 +2531,27 @@ pub struct ActorInstance {
     has_draconic_resilience: bool,
     /// 5e Gnome Cunning. See `CreatureTemplate` docs.
     has_gnome_cunning: bool,
+    /// 5e Swashbuckler Rogue Rakish Audacity (level 3). See
+    /// `CreatureTemplate` docs.
+    has_rakish_audacity: bool,
+    /// 5e Swashbuckler Rogue Fancy Footwork (level 3). See
+    /// `CreatureTemplate` docs.
+    has_fancy_footwork: bool,
+    /// 5e Swashbuckler Rogue Fancy Footwork ledger: targets this actor
+    /// has made a melee attack against during their current turn. Read
+    /// in `EncounterInstance::dispatch_opportunity_attacks` — a target
+    /// on this list can't OA the swashbuckler as they move away.
+    /// Cleared alongside the other per-turn HashSets in
+    /// `reset_for_new_round`, so the "rest of your turn" clause snaps
+    /// off the moment initiative advances past the swash.
+    ///
+    /// Written unconditionally at the top of every melee attack chokepoint
+    /// (`engine::attack::resolve_attack`, gated on `p.is_melee`) so the
+    /// ledger stays populated regardless of whether the holder actually
+    /// carries the Fancy Footwork flag — the read-side check gates on the
+    /// flag, keeping the write-side a single unconditional insert. A
+    /// non-swashbuckler attacker's ledger just goes unread.
+    melee_attack_targets_this_turn: HashSet<usize>,
     /// 5e Dragonborn Draconic Ancestry damage type, if any. Drives the
     /// breath weapon's typing and the matching damage resistance.
     draconic_ancestry: Option<DamageType>,
@@ -2632,6 +2719,9 @@ impl ActorInstance {
             has_fiendish_resilience: ct.has_fiendish_resilience,
             has_draconic_resilience: ct.has_draconic_resilience,
             has_gnome_cunning: ct.has_gnome_cunning,
+            has_rakish_audacity: ct.has_rakish_audacity,
+            has_fancy_footwork: ct.has_fancy_footwork,
+            melee_attack_targets_this_turn: HashSet::new(),
             draconic_ancestry: ct.draconic_ancestry,
             sorcery_points: ct.sorcery_points,
             sorcery_points_max: ct.sorcery_points,
@@ -3150,6 +3240,54 @@ impl ActorInstance {
     /// rarely originate from non-magical sources in this engine).
     pub fn has_gnome_cunning(&self) -> bool {
         self.has_gnome_cunning
+    }
+
+    /// 5e Swashbuckler Rogue Rakish Audacity (level 3) — passive
+    /// two-part class feature: (a) +CHA-mod to initiative, and (b) a
+    /// second Sneak Attack qualification path that fires when the swash
+    /// stands alone with the target. Read by `initiative_flat_bonus`
+    /// and `class_attacks::sneak_attack_eligible`.
+    pub fn has_rakish_audacity(&self) -> bool {
+        self.has_rakish_audacity
+    }
+
+    /// 5e Swashbuckler Rogue Fancy Footwork (level 3) — passive class
+    /// feature: melee attack targets can't OA the swashbuckler for the
+    /// rest of the turn. Read by
+    /// `EncounterInstance::dispatch_opportunity_attacks`.
+    pub fn has_fancy_footwork(&self) -> bool {
+        self.has_fancy_footwork
+    }
+
+    /// 5e Swashbuckler Rogue Fancy Footwork ledger read: has this actor
+    /// made a melee attack against `target_id` during their current
+    /// turn? Called from `dispatch_opportunity_attacks` when the mover
+    /// holds `has_fancy_footwork`; a `true` result skips the reactor's
+    /// OA silently.
+    pub fn has_melee_attacked_this_turn(&self, target_id: usize) -> bool {
+        self.melee_attack_targets_this_turn.contains(&target_id)
+    }
+
+    /// Mark `target_id` on the melee-attack ledger. Called from the top
+    /// of `engine::attack::resolve_attack` on every melee swing
+    /// (`p.is_melee == true`), unconditionally — the Fancy Footwork
+    /// read-side gates on the flag, so a non-swashbuckler attacker's
+    /// ledger just goes unread. Keeping the write unconditional avoids
+    /// a per-swing flag lookup on the attack hot path.
+    pub fn mark_melee_attacked_this_turn(&mut self, target_id: usize) {
+        self.melee_attack_targets_this_turn.insert(target_id);
+    }
+
+    /// Snapshot the melee-attack ledger as an owned `HashSet` so the
+    /// caller can drop the immutable borrow on `&self` before the
+    /// engine loop mutates the actor map. Used by
+    /// `dispatch_opportunity_attacks` — the OA candidate-scan loop
+    /// mutates `self.actors`, so any borrow into the mover has to
+    /// materialize into a plain-data snapshot up-front. Callers that
+    /// only need to check one id at a time should prefer
+    /// `has_melee_attacked_this_turn` instead.
+    pub fn melee_attack_targets_this_turn_snapshot(&self) -> HashSet<usize> {
+        self.melee_attack_targets_this_turn.clone()
     }
 
     /// 5e Dragonborn Draconic Ancestry — damage type of the breath weapon
@@ -4790,6 +4928,17 @@ impl ActorInstance {
             // prof 3→+2, prof 4→+2, prof 5→+3, prof 6→+3.
             bonus += (self.proficiency_bonus() + 1) / 2;
         }
+        if self.has_rakish_audacity {
+            // 5e Swashbuckler Rogue Rakish Audacity (level 3, XGtE):
+            // add the holder's Charisma modifier to initiative rolls.
+            // Composes additively with Remarkable Athlete's
+            // `+ceil(prof / 2)` on a hypothetical Champion Fighter /
+            // Swashbuckler Rogue multiclass — both bumps join the same
+            // total. Sibling to `rolls_initiative_with_advantage`
+            // (Feral Instinct) — this helper stacks a scalar, that one
+            // flips the roll shape.
+            bonus += self.ability_modifier(AbilityScoreType::Charisma);
+        }
         bonus
     }
 
@@ -4846,6 +4995,16 @@ impl ActorInstance {
         // repeat-attackers only spans the attacker's own turn — the
         // "rest of the turn" clause in RAW.
         self.hit_targets_this_turn.clear();
+        // 5e Swashbuckler Rogue Fancy Footwork (subclass level 3):
+        // per-turn ledger of targets this actor has made a melee attack
+        // against. Cleared at turn-start so the OA-suppression window
+        // only spans the swash's own turn — the "rest of your turn"
+        // clause in RAW. Written unconditionally on every melee attack
+        // (see `mark_melee_attacked_this_turn`); read-side gated on
+        // `has_fancy_footwork` in the OA dispatcher, so a non-swash
+        // attacker's ledger populates and clears the same as the
+        // swash's without any read-side effect.
+        self.melee_attack_targets_this_turn.clear();
         // 5e Fighter Champion — Survivor (level 18): passive at-start-of-
         // turn regen. While combat-active AND at or below half max HP,
         // the holder regains `5 + CON modifier` HP (floor 1, so a -2 CON

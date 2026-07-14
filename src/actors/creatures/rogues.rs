@@ -136,3 +136,89 @@ pub static ASSASSIN_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         ..ROGUE_TEMPLATE.clone()
     }
 });
+
+/// Swashbuckler Rogue — Roguish Archetype **Swashbuckler** subclass
+/// build (XGtE). Identical envelope to the baseline `ROGUE_TEMPLATE`
+/// (level-7 build, shortsword + cunning suite, evasion, uncanny dodge,
+/// elusive, slippery mind, blindsense) with two subclass features
+/// layered on:
+///
+/// - **Fancy Footwork** (level 3): passive template flag. RAW: "on
+///   your turn, if you make a melee attack against a creature, that
+///   creature can't make opportunity attacks against you for the rest
+///   of your turn." Read at
+///   `EncounterInstance::dispatch_opportunity_attacks` — every reactor
+///   the swash has swung at this turn (tracked in
+///   `melee_attack_targets_this_turn`) is silently skipped when the
+///   swash moves out of their reach. Distinct from Disengage / Cunning
+///   Disengage: those blanket-suppress every OA on the turn; Fancy
+///   Footwork surgically suppresses only the swash's chosen melee
+///   targets, freeing the bonus action for a Cunning Strike prime
+///   instead. The engine also collapses the "on your turn" clause
+///   because the ledger is cleared at the swash's own turn-start
+///   reset — a swash who's not on their turn hasn't cleared / marked
+///   anyone, so the suppression naturally vanishes.
+///
+/// - **Rakish Audacity** (level 3): passive two-part template flag.
+///   RAW: "you gain the following benefits: (1) you can add your
+///   Charisma modifier to your initiative rolls; (2) you don't need
+///   advantage on the attack roll to use your Sneak Attack against a
+///   creature if you are within 5 feet of it, no other creatures are
+///   within 5 feet of you, and you don't have disadvantage on the
+///   attack roll." Read at two chokepoints:
+///     - `initiative_flat_bonus`: the CHA-mod bump joins the same
+///       "flat number added to initiative total" lane as Remarkable
+///       Athlete.
+///     - `class_attacks::sneak_attack_eligible`: opens a third Sneak
+///       Attack qualification path (the "solo duelist" path) — the
+///       swash reliably lands Sneak Attack on their turn even without
+///       a flanking ally.
+///
+/// Pairs naturally with the rogue's Steady Aim: the swash opens with
+/// advantage (Steady Aim) → guaranteed Sneak Attack, then uses Fancy
+/// Footwork to dance away without eating OAs. RAW's high-mobility
+/// duelist tell — the swash reliably lands Sneak Attack on their turn
+/// (Rakish Audacity's solo-duelist path fires when the swash stands
+/// alone with the target, and Steady Aim is the fallback when they
+/// don't) and then hops out of reach without penalty (Fancy Footwork
+/// covers the retreat).
+///
+/// Distinct from `ROGUE_TEMPLATE` (Thief-equivalent baseline) and
+/// `ASSASSIN_ROGUE_TEMPLATE` (Assassinate — advantage on first-turn
+/// swings). The three lanes converge on the same "reliable Sneak
+/// Attack" identity from different angles: Assassin via advantage,
+/// Swashbuckler via the solo-duelist path, baseline Rogue via Steady
+/// Aim's bonus-action advantage prime.
+///
+/// Ships the CR-1 template above the strict RAW level-3 gate for the
+/// same reason `ASSASSIN_ROGUE_TEMPLATE` ships Assassinate on the
+/// CR-1 chassis: class templates target a balanced playable level.
+/// Glyph 'S' — distinct from baseline rogue 'R' and Assassin 'A'; 'S'
+/// for "Swashbuckler" reads as a cavalier duelist.
+pub static SWASHBUCKLER_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Rogue envelope wholesale
+    // and flip the two subclass template flags. The `..base.clone()`
+    // tail picks up every other field — actions, save profs, evasion,
+    // uncanny dodge, elusive, slippery mind, blindsense — without an
+    // N-line field-by-field copy. Same shape as
+    // `ASSASSIN_ROGUE_TEMPLATE`.
+    //
+    // Bump CHA from the baseline rogue's 10 to 14 (+2 mod) so Rakish
+    // Audacity's CHA-mod initiative bump has teeth. RAW's Swashbuckler
+    // is a CHA-flavored duelist — the subclass features (Rakish
+    // Audacity, Panache at lv9, Elegant Maneuver at lv13) all key off
+    // Charisma, so the higher stat lands on the archetype's identity
+    // rather than the shared-with-baseline STR 10 / CHA 10 stat block.
+    // Matches the bard's CHA 16 primary spread on the "CHA-flavored PC
+    // class template" lane — the rogue chassis's DEX 16 primary stays
+    // intact for the shortsword's attack roll, so the bump is additive
+    // rather than a stat swap.
+    CreatureTemplate {
+        name: "Swashbuckler Rogue",
+        glyph: 'S',
+        charisma: 14,
+        has_rakish_audacity: true,
+        has_fancy_footwork: true,
+        ..ROGUE_TEMPLATE.clone()
+    }
+});
