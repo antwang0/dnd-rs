@@ -55413,6 +55413,175 @@ mod tests {
         assert!(e.actors[&djinni].has_passive_feature(DJINNI_ELEMENTAL_GIFT_TAG));
     }
 
+    /// Necromancy Wizard's **Inured to Undeath** (School of Necromancy
+    /// subclass lv10, PHB) halves incoming necrotic damage — the RAW
+    /// subclass grant folds through the shared `PASSIVE_TYPED_RESISTANCES`
+    /// cohort's `effective_damage` halving site. Sibling test to
+    /// `elemental_gift_halves_cold_damage_on_marid_warlock` /
+    /// `dao_elemental_gift_halves_bludgeoning_damage_on_dao_warlock` /
+    /// `djinni_elemental_gift_halves_thunder_damage_on_djinni_warlock`
+    /// on the "typed resistance from a subclass template" lane — same
+    /// halving-vs-full assertion shape, different subclass chassis
+    /// (Wizard Arcane Tradition vs. Warlock Otherworldly Patron) and
+    /// different damage axis (Necrotic vs. Cold / Bludgeoning / Thunder).
+    #[test]
+    fn inured_to_undeath_halves_necrotic_damage_on_necromancy_wizard() {
+        use crate::actors::creatures::wizards::{NECROMANCY_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let necro = e
+            .instantiate_creature(&NECROMANCY_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&necro].has_passive_feature(
+            crate::actions::class_features::INURED_TO_UNDEATH_TAG,
+        ));
+        assert!(!e.actors[&baseline].has_passive_feature(
+            crate::actions::class_features::INURED_TO_UNDEATH_TAG,
+        ));
+        // 20 necrotic → 10 (halved by Inured to Undeath).
+        assert_eq!(
+            e.actors[&necro].effective_damage(20, DamageType::Necrotic),
+            10,
+            "necromancy wizard halves necrotic damage"
+        );
+        // Baseline wizard eats the full 20 necrotic.
+        assert_eq!(
+            e.actors[&baseline].effective_damage(20, DamageType::Necrotic),
+            20,
+            "baseline wizard takes full necrotic damage"
+        );
+        // Other damage types still take full damage on the Necromancy
+        // Wizard — the RAW subclass grant is scoped to Necrotic. Cold,
+        // Fire, Radiant, Psychic, Bludgeoning, Piercing, Slashing,
+        // Lightning, and Thunder all pass through unchanged; the sibling
+        // subclass rows (Marid Cold / Dao Bludgeoning / Djinni Thunder /
+        // Radiant Soul / Fiendish Resilience / Heart of the Storm /
+        // Psychic Defenses) cover those types on their respective
+        // subclass chassis, not here.
+        assert_eq!(
+            e.actors[&necro].effective_damage(20, DamageType::Cold),
+            20,
+        );
+        assert_eq!(
+            e.actors[&necro].effective_damage(20, DamageType::Fire),
+            20,
+        );
+        assert_eq!(
+            e.actors[&necro].effective_damage(20, DamageType::Radiant),
+            20,
+        );
+        assert_eq!(
+            e.actors[&necro].effective_damage(20, DamageType::Psychic),
+            20,
+        );
+        assert_eq!(
+            e.actors[&necro].effective_damage(20, DamageType::Bludgeoning),
+            20,
+        );
+        assert_eq!(
+            e.actors[&necro].effective_damage(20, DamageType::Piercing),
+            20,
+        );
+        assert_eq!(
+            e.actors[&necro].effective_damage(20, DamageType::Slashing),
+            20,
+        );
+        assert_eq!(
+            e.actors[&necro].effective_damage(20, DamageType::Lightning),
+            20,
+        );
+        assert_eq!(
+            e.actors[&necro].effective_damage(20, DamageType::Thunder),
+            20,
+        );
+    }
+
+    /// Inured to Undeath plugs into `has_own_typed_reduction(Necrotic)`
+    /// — the "does this actor already scale this type?" gate used by
+    /// Aura of Warding to enforce the "one halving per damage instance"
+    /// rule. Locks the shared read chokepoint so a hypothetical
+    /// Necromancy Wizard / Ancients Paladin party sees the aura no-op
+    /// cleanly on necrotic hits (the /2 already fires via Inured to
+    /// Undeath; the aura would otherwise stack a second /2 for /4 unless
+    /// `has_own_typed_reduction` picked it up here). Sibling to the
+    /// Marid / Dao / Djinni Elemental Gift, Radiant Soul, and Draconic
+    /// Resilience registration tests on the same helper.
+    #[test]
+    fn inured_to_undeath_registers_own_typed_reduction_for_necrotic() {
+        use crate::actors::creatures::wizards::{NECROMANCY_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let necro = e
+            .instantiate_creature(&NECROMANCY_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        // Necromancy wizard's Inured to Undeath flag registers as an
+        // own typed reduction on the Necrotic lane so aura-style stacking
+        // no-ops.
+        assert!(
+            e.actors[&necro].has_own_typed_reduction(DamageType::Necrotic),
+            "Inured to Undeath registers as own typed reduction on Necrotic"
+        );
+        // Baseline wizard without the tag has no own reduction on
+        // Necrotic — aura stacking would apply cleanly.
+        assert!(
+            !e.actors[&baseline].has_own_typed_reduction(DamageType::Necrotic),
+            "baseline wizard has no own necrotic reduction"
+        );
+    }
+
+    /// Template drift check: only the Necromancy Wizard ships the
+    /// `INURED_TO_UNDEATH_TAG` passive feature. The baseline wizard
+    /// chassis does NOT carry the tag — keeps the subclass tell scoped
+    /// to the Necromancy chassis so a future regression (e.g., accidental
+    /// tag insertion on `WIZARD_TEMPLATE` bleeding into every subclass
+    /// build via the `..base.clone()` tail) is caught here. Sibling to
+    /// `djinni_elemental_gift_lands_only_on_djinni_warlock` on the same
+    /// "single-subclass-tag ownership" lock.
+    #[test]
+    fn inured_to_undeath_lands_only_on_necromancy_wizard() {
+        use crate::actions::class_features::INURED_TO_UNDEATH_TAG;
+        use crate::actors::creatures::wizards::{NECROMANCY_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let baseline = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(1, 1), 0, 0)
+            .unwrap();
+        let necro = e
+            .instantiate_creature(&NECROMANCY_WIZARD_TEMPLATE, Coordinate::new(3, 1), 0, 0)
+            .unwrap();
+        assert!(e.actors[&necro].has_passive_feature(INURED_TO_UNDEATH_TAG));
+        assert!(!e.actors[&baseline].has_passive_feature(INURED_TO_UNDEATH_TAG));
+    }
+
+    /// Sanity: the Necromancy Wizard inherits the baseline Wizard
+    /// envelope through the `..WIZARD_TEMPLATE.clone()` tail — the
+    /// baseline Arcane Recovery feature carries through, alongside the
+    /// subclass-only Inured to Undeath tag. Guards against a regression
+    /// where the subclass template's explicit `features` builder drops
+    /// the baseline feature set on its way to inserting the new tag.
+    /// Sibling to `djinni_warlock_inherits_baseline_warlock_features`
+    /// on the same clone-and-layer lock.
+    #[test]
+    fn necromancy_wizard_inherits_baseline_wizard_features() {
+        use crate::actions::class_features::{ARCANE_RECOVERY_TAG, INURED_TO_UNDEATH_TAG};
+        use crate::actors::creatures::wizards::NECROMANCY_WIZARD_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let necro = e
+            .instantiate_creature(&NECROMANCY_WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Baseline feature still carries through the clone.
+        assert!(e.actors[&necro].has_passive_feature(ARCANE_RECOVERY_TAG));
+        // Subclass tag lands on top.
+        assert!(e.actors[&necro].has_passive_feature(INURED_TO_UNDEATH_TAG));
+    }
+
     /// Cohort-shape refactor sanity: after promoting
     /// `TYPED_IMMUNITY_CONDITIONS` / `TYPED_RESISTANCE_CONDITIONS` /
     /// `CONDITION_DRIVEN_IMMUNITIES` from `&[(Condition, &[X])]` tuple

@@ -7888,3 +7888,63 @@ pub fn disciple_of_life_log_suffix(bonus: u32) -> String {
 /// Elemental Gift (RAW lv6) — class templates target a balanced
 /// playable level, not lockstep PHB progression.
 pub const DJINNI_ELEMENTAL_GIFT_TAG: &str = "warlock.djinni_elemental_gift";
+
+/// 5e Wizard Arcane Tradition — **School of Necromancy** — **Inured to
+/// Undeath** subclass feature tag (level 10, PHB). Passive: the
+/// necromancer's long study of death and undeath leaves the body
+/// hardened against the necrotic touch — the wizard gains **resistance
+/// to necrotic damage**.
+///
+/// RAW pairs the necrotic resistance with a "your hit-point maximum
+/// can't be reduced" clause — the engine doesn't yet model max-HP-drain
+/// mechanics (Wraith / Vampire's life-drain hit rider) as a first-class
+/// surface, so the max-HP-can't-be-reduced clause has no combat surface
+/// to gate today and is left as future work. The resistance clause is
+/// the load-bearing defensive half and rides here alone, matching the
+/// way Radiant Soul ships without the +CHA-mod damage rider and Marid /
+/// Dao / Djinni Elemental Gift each ship without the per-day flight
+/// clause.
+///
+/// First user of the **Necrotic** slot on the passive typed-resistance
+/// lane — Cold is owned by Marid's `MARID_ELEMENTAL_GIFT_TAG`, Fire by
+/// Fiendish / Draconic Resilience, Lightning + Thunder by Heart of the
+/// Storm, Psychic by Psychic Defenses, Radiant by Radiant Soul,
+/// Bludgeoning by Dao's `DAO_ELEMENTAL_GIFT_TAG`, and Thunder by
+/// Djinni's `DJINNI_ELEMENTAL_GIFT_TAG`; Necrotic was uncovered on the
+/// passive-typed-resistance cohort until this row lands. Necrotic is a
+/// signature damage type of the wizard's own undead spell list
+/// (Chill Touch cantrip, Ray of Enfeeblement, Vampiric Touch, Blight,
+/// Circle of Death, Finger of Death, Negative Energy Flood) — the
+/// necromancer's own kit stops trickling back onto its own chassis on
+/// a friendly-fire miscast under the halving rule.
+///
+/// Read at the shared `PASSIVE_TYPED_RESISTANCES` cohort in
+/// `actor_template.rs` next to the Warlock Elemental Gift rows (Marid
+/// Cold / Dao Bludgeoning / Djinni Thunder), Radiant Soul's radiant
+/// row, Fiendish / Draconic Resilience's fire rows, Heart of the
+/// Storm's lightning + thunder row, and Psychic Defenses' psychic row.
+/// Single-type slice (Necrotic only) — same shape as the Marid Cold /
+/// Dao Bludgeoning / Djinni Thunder / Radiant Soul Radiant single-type
+/// rows on the single-type-per-subclass lane.
+///
+/// Sibling to `MARID_ELEMENTAL_GIFT_TAG` / `DAO_ELEMENTAL_GIFT_TAG` /
+/// `DJINNI_ELEMENTAL_GIFT_TAG` / `RADIANT_SOUL_TAG` /
+/// `HEART_OF_THE_STORM_TAG` / `PSYCHIC_DEFENSES_TAG` on the "one
+/// feature tag drives one cohort row" declarative-table pattern —
+/// different source chassis (Wizard Arcane Tradition vs. Warlock
+/// Otherworldly Patron / Sorcerer Sorcerous Origin) and different
+/// damage axis.
+///
+/// Ships on `NECROMANCY_WIZARD_TEMPLATE` — the first Wizard Arcane
+/// Tradition subclass template on the wizard chassis (the baseline
+/// `WIZARD_TEMPLATE` shipped no subclass template before this feature).
+/// Distinct from the baseline `WIZARD_TEMPLATE` (patron-less baseline
+/// with Arcane Recovery).
+///
+/// Ships on the CR-0.5 wizard chassis above the strict RAW lv10 gate
+/// for the same reason `MARID_WARLOCK_TEMPLATE` / `DAO_WARLOCK_TEMPLATE`
+/// / `DJINNI_WARLOCK_TEMPLATE` ship Elemental Gift (RAW lv6) and
+/// `ABERRANT_MIND_SORCERER_TEMPLATE` ships Psychic Defenses (RAW lv14)
+/// — class templates target a balanced playable level, not lockstep
+/// PHB progression.
+pub const INURED_TO_UNDEATH_TAG: &str = "wizard.inured_to_undeath";

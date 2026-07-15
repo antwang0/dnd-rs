@@ -332,6 +332,15 @@ struct PassiveTypedResistance {
 ///     the "typed resistance from an Otherworldly Patron (Genie kind)"
 ///     lane; the three never legally co-occur on a single build (RAW:
 ///     one genie kind per warlock).
+///   - **Inured to Undeath (Wizard School of Necromancy lv10, PHB)**:
+///     necrotic resistance. First user of the **Necrotic** slot on this
+///     cohort — Cold / Fire / Lightning / Thunder / Psychic / Radiant /
+///     Bludgeoning were already covered by the sibling patron / bloodline
+///     rows, and Necrotic was the last commonly-encountered spell-lane
+///     damage type left uncovered. First Wizard-chassis row on the
+///     cohort (every prior row came off Warlock / Sorcerer subclasses);
+///     matches the "Wizard finally lands its first subclass template"
+///     milestone the `NECROMANCY_WIZARD_TEMPLATE` ships alongside.
 ///
 /// A new passive typed resistance (Circle of the Moon Wild Shape
 /// per-form types, Bladeling's Painful Quills necrotic resistance,
@@ -463,6 +472,33 @@ const PASSIVE_TYPED_RESISTANCES: &[PassiveTypedResistance] = &[
             crate::actions::class_features::DJINNI_ELEMENTAL_GIFT_TAG,
         ),
         types: &[DamageType::Thunder],
+    },
+    // 5e Wizard Arcane Tradition **School of Necromancy** — **Inured to
+    // Undeath** (level 10, PHB). RAW grants resistance to necrotic damage
+    // (paired with a max-HP-can't-be-reduced clause that has no combat
+    // surface on today's engine and is left as future work). First user
+    // of the **Necrotic** slot on the passive typed-resistance lane —
+    // Cold is owned by Marid's Elemental Gift, Fire by Fiendish /
+    // Draconic Resilience, Lightning + Thunder by Heart of the Storm,
+    // Psychic by Psychic Defenses, Radiant by Radiant Soul, Bludgeoning
+    // by Dao's Elemental Gift, and Thunder by Djinni's Elemental Gift;
+    // Necrotic was uncovered on the passive-typed-resistance cohort
+    // until this row lands. Necrotic is a signature damage type of the
+    // wizard's own undead spell list (Chill Touch / Ray of Enfeeblement
+    // / Vampiric Touch / Blight / Circle of Death / Finger of Death /
+    // Negative Energy Flood) — the necromancer's own kit stops
+    // trickling back onto its own chassis on a friendly-fire miscast
+    // under the halving rule. Ships on `NECROMANCY_WIZARD_TEMPLATE`
+    // above its strict RAW lv10 gate for the same reason
+    // `MARID_WARLOCK_TEMPLATE` / `DAO_WARLOCK_TEMPLATE` /
+    // `DJINNI_WARLOCK_TEMPLATE` ship Elemental Gift (RAW lv6) —
+    // class templates target a balanced playable level, not lockstep
+    // PHB progression.
+    PassiveTypedResistance {
+        flag: |a| a.has_passive_feature(
+            crate::actions::class_features::INURED_TO_UNDEATH_TAG,
+        ),
+        types: &[DamageType::Necrotic],
     },
 ];
 

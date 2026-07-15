@@ -613,3 +613,109 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ..CreatureTemplate::defaults()
     }
 });
+
+/// Necromancy Wizard — Arcane Tradition **School of Necromancy**
+/// subclass build (PHB). Identical envelope to the baseline
+/// `WIZARD_TEMPLATE` (INT-primary full-caster with the archmage-tier
+/// spell loadout, Arcane Recovery for mid-encounter slot regen) with
+/// one subclass feature layered on: **Inured to Undeath** (Necromancy
+/// subclass level 10, PHB) — passive **resistance to necrotic damage**.
+///
+/// The signature "the necromancer's flesh has grown accustomed to the
+/// grave-cold" tell — where a baseline Wizard eats a Chill Touch / Ray
+/// of Enfeeblement / Vampiric Touch / Blight / Finger of Death /
+/// Negative Energy Flood clean, the Necromancy Wizard halves the
+/// incoming necrotic damage. The wizard's own necromancy spell list
+/// stops trickling back onto its own chassis on a friendly-fire
+/// miscast under the halving rule — a Necromancer casting Vampiric
+/// Touch at self-caster-adjacent range (a hypothetical support-ally
+/// heal drain) eats /2 the reflected necrotic instead of the full
+/// amount.
+///
+/// Read at the shared `PASSIVE_TYPED_RESISTANCES` cohort in
+/// `actor_template.rs` next to the Warlock Elemental Gift rows (Marid
+/// Cold / Dao Bludgeoning / Djinni Thunder), Radiant Soul's radiant
+/// row, Fiendish / Draconic Resilience's fire rows, Heart of the
+/// Storm's lightning + thunder row, and Psychic Defenses' psychic row
+/// — same lane, different subclass flavor, different damage axis
+/// (Necrotic vs. Cold / Fire / Lightning + Thunder / Psychic / Radiant
+/// / Bludgeoning / Thunder).
+///
+/// **First subclass template on the wizard chassis** — the baseline
+/// `WIZARD_TEMPLATE` shipped no subclass template before this feature,
+/// leaving the wizard the only PC-facing class without a subclass
+/// build. Rounds out the class subclass-template coverage matrix (every
+/// other PC class — barbarian, bard, cleric, druid, fighter, monk,
+/// paladin, ranger, rogue, sorcerer, warlock — already ships at least
+/// one subclass template).
+///
+/// RAW's School of Necromancy picks up other features not shipped on
+/// this template — **Grim Harvest** (lv2: regain HP = 2x spell level
+/// when killing a creature with a spell of lv1+, 3x for necromancy
+/// spells; needs a per-cast "did this spell kill?" hook and a
+/// per-spell school tag on every wizard spell), **Undead Thralls**
+/// (lv6: Animate Dead / Create Undead riders — extra minion, +wiz
+/// level HP on summoned undead; needs an Animate Dead ally-summon
+/// spell surface and a per-minion buff hook), **Command Undead**
+/// (lv14 capstone: CHA-save undead-domination lane; needs a per-target
+/// domination install on the Undead creature type). Only the lv10
+/// Inured to Undeath passive has a mechanical surface on the CR-0.5
+/// chassis that plugs cleanly into the shared passive typed-resistance
+/// cohort, so we ship that half and leave the rest as future work —
+/// matching the way `MARID_WARLOCK_TEMPLATE` / `DAO_WARLOCK_TEMPLATE` /
+/// `DJINNI_WARLOCK_TEMPLATE` each ship only the Elemental Gift
+/// resistance half of their RAW Genie patron kit.
+///
+/// Sibling on the passive typed-resistance subclass lane to:
+///   - **Elemental Gift (Marid)** (Marid Warlock lv6, TCE): Cold.
+///   - **Elemental Gift (Dao)** (Dao Warlock lv6, TCE): Bludgeoning.
+///   - **Elemental Gift (Djinni)** (Djinni Warlock lv6, TCE): Thunder.
+///   - **Radiant Soul** (Celestial Warlock lv6, XGtE): Radiant.
+///   - **Fiendish Resilience** (Fiend Warlock lv10): Fire.
+///   - **Draconic Resilience** (Draconic Sorcerer lv6): Fire.
+///   - **Heart of the Storm** (Storm Sorcerer lv6): Lightning + Thunder.
+///   - **Psychic Defenses** (Aberrant Mind Sorcerer lv14, TCE): Psychic.
+///     All share the "one feature tag drives one cohort row"
+///     declarative-table pattern, different damage axis and different
+///     source chassis (this is the first wizard-chassis row on the
+///     cohort).
+///
+/// Sibling on the Arcane Tradition subclass lane to the baseline
+/// `WIZARD_TEMPLATE` (patron-less baseline with Arcane Recovery).
+///
+/// Ships on the CR-0.5 wizard chassis above the strict RAW lv10 gate
+/// for the same reason `MARID_WARLOCK_TEMPLATE` / `DAO_WARLOCK_TEMPLATE`
+/// / `DJINNI_WARLOCK_TEMPLATE` ship Elemental Gift (RAW lv6) and
+/// `ABERRANT_MIND_SORCERER_TEMPLATE` ships Psychic Defenses (RAW lv14):
+/// class templates target a balanced playable level, not lockstep PHB
+/// progression.
+///
+/// Glyph 'N' — 'N' for the "Necromancy" identity. Distinct from
+/// baseline wizard 'M' (mage). Collides with no other current PC
+/// template glyph — the two never legally co-occur on a single team
+/// (one glyph per team-color-and-team-id combo suffices to disambiguate
+/// them in a mixed encounter).
+pub static NECROMANCY_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    // Subclass-of pattern: clone the baseline Wizard envelope wholesale
+    // and layer on the one Necromancy Arcane Tradition subclass feature
+    // — Inured to Undeath via the `INURED_TO_UNDEATH_TAG` passive-
+    // feature tag. The `..base.clone()` tail picks up every other field
+    // — stats, spell slots, save profs, the full wizard cantrip / lv1-9
+    // spell loadout, and the Arcane Recovery feature — without an
+    // N-line field-by-field copy. Same shape as the sibling Warlock
+    // Genie / Celestial / Archfey subclass templates on
+    // `MARID_WARLOCK_TEMPLATE` / `DAO_WARLOCK_TEMPLATE` /
+    // `DJINNI_WARLOCK_TEMPLATE` / `CELESTIAL_WARLOCK_TEMPLATE` /
+    // `ARCHFEY_WARLOCK_TEMPLATE`, and the sorcerer / paladin / rogue /
+    // ranger subclass templates on the same clone-and-layer lane.
+    let mut features = WIZARD_TEMPLATE.features.clone();
+    features.insert(crate::actions::class_features::INURED_TO_UNDEATH_TAG);
+    CreatureTemplate {
+        name: "Necromancy Wizard",
+        // 'N' for the "Necromancy" identity — distinct from baseline
+        // wizard 'M' (mage).
+        glyph: 'N',
+        features,
+        ..WIZARD_TEMPLATE.clone()
+    }
+});
