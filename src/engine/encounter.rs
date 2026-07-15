@@ -55582,6 +55582,47 @@ mod tests {
         assert!(e.actors[&necro].has_passive_feature(INURED_TO_UNDEATH_TAG));
     }
 
+    /// Cohort-promotion sanity: after promoting `condition_save_bonus`
+    /// from the inline `if self.has_condition(...) { bonus += N; }`
+    /// chain to a shared `CONDITION_SAVE_BONUSES` cohort walk (matching
+    /// the shape of the sibling `CONDITION_AC_BONUSES` cohort), every
+    /// existing row still fires identically. Exercises Inspired (+3
+    /// save) and WardingBonded (+1 save) plus their combination —
+    /// vertical stacking (Inspired + WardingBonded → +4 saves) folds
+    /// through the same filter-map-sum walk as horizontal stacking on
+    /// the sibling `CONDITION_AC_BONUSES` cohort.
+    #[test]
+    fn condition_save_bonus_cohort_preserves_behavior_after_promotion() {
+        use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::{ApplicableSideEffect, ApplyCondition};
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let a = e
+            .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Baseline: no save-bump condition, no cohort bonus.
+        assert_eq!(e.actors[&a].condition_save_bonus(), 0);
+        // Inspired alone: +3 saves via the Inspired row.
+        ApplyCondition {
+            actor_id: a,
+            condition: Condition::Inspired,
+            timer: ConditionTimer::Rounds(10),
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&a].condition_save_bonus(), 3);
+        // Inspired + WardingBonded: +4 saves via the summed cohort
+        // walk — the same filter-map-sum shape the AC cohort uses for
+        // its vertical stacking on Shield of Faith + Shielded + Hasted.
+        ApplyCondition {
+            actor_id: a,
+            condition: Condition::WardingBonded,
+            timer: ConditionTimer::Rounds(10),
+        }
+        .apply(&mut e);
+        assert_eq!(e.actors[&a].condition_save_bonus(), 4);
+    }
+
     /// Cohort-shape refactor sanity: after promoting
     /// `TYPED_IMMUNITY_CONDITIONS` / `TYPED_RESISTANCE_CONDITIONS` /
     /// `CONDITION_DRIVEN_IMMUNITIES` from `&[(Condition, &[X])]` tuple

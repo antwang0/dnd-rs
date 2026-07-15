@@ -1211,6 +1211,88 @@ const CONDITION_AC_BONUSES: &[ConditionAcBonus] = &[
     },
 ];
 
+/// One row in the `CONDITION_SAVE_BONUSES` cohort — a single condition
+/// whose presence contributes a flat saving-throw delta to the holder.
+/// Sibling to `ConditionAcBonus { source, bonus }` on the "single-
+/// condition source + signed magnitude" cohort lane — same declarative
+/// row shape, different affected axis (save roll here vs. AC there) and
+/// different unit (integer save points vs. integer AC points). The
+/// delta is signed for the same reason `ConditionAcBonus.bonus` is
+/// signed: a hypothetical save-debuff row (a future "Cursed → -1 saves"
+/// entry) would sit on the same table as the +1 / +3 buff rows without
+/// a separate cohort. Bless / Bane deliberately don't ride this cohort
+/// — their d4 die lives on `bless_bane_attack_die` and their +N / -N
+/// flat lives on `save_bonus_buff`, so including them here would
+/// double-count.
+struct ConditionSaveBonus {
+    /// Source condition whose presence gates the row. Every save-bump
+    /// buff currently uses a plain single-condition gate, so this is a
+    /// bare `Condition` matching the `ConditionAcBonus.source` shape.
+    /// A future compound-gate save buff (a hypothetical "+2 saves while
+    /// Concentrating on a specific spell") would either widen this row
+    /// to a `flag` closure or land as a sibling cohort with the
+    /// compound predicate — the shape is deliberately narrower here
+    /// than a closure-based cohort to keep the common single-condition
+    /// case a bare row.
+    source: Condition,
+    /// Signed save delta contributed while `source` is held. Positive
+    /// for a buff (Inspired +3, WardingBonded +1); a future negative
+    /// entry for a save-debuff would sit here as a signed delta.
+    /// Summed by `condition_save_bonus` so vertical stacking (Inspired
+    /// + WardingBonded → +4 saves) folds through the same walk as
+    /// horizontal stacking on the sibling `CONDITION_AC_BONUSES`
+    /// cohort.
+    bonus: i32,
+}
+
+/// Condition-driven save-bonus cohort read by
+/// `ActorInstance::condition_save_bonus`. Every row's `bonus` is summed
+/// (signed) when the row's `source` condition is held; the resulting
+/// delta is added to the actor's save total via the shared save-mode
+/// composition path. Adding a fresh condition-driven save bump (a
+/// hypothetical "Guided → +CHA on saves" future entry, a "Heroic → +1
+/// on saves" future entry, etc.) lands as a one-line entry here rather
+/// than another `if self.has_condition(...) { bonus += N; }` branch in
+/// `condition_save_bonus`.
+///
+/// Sibling to `CONDITION_AC_BONUSES` on the "single-condition source +
+/// signed magnitude" cohort pattern — the two tables split by affected
+/// axis: save delta here vs. AC delta there. Same filter-map-sum walk
+/// shape, same signed-delta convention, same "one row per source
+/// condition" ordering discipline.
+///
+/// Entries (order doesn't affect the summed total; grouped by
+/// buff-vs-debuff flavor for readability):
+///   - **Bardic Inspiration** (`Inspired`, +3 saves): the bard's
+///     signature Inspired die (RAW scales d6→d8→d10→d12 by bard
+///     level); collapses to the d6-average (+3) matching the twin
+///     `Inspired → +3 attacks` row on the sibling
+///     `condition_attack_bonus` path. Consumed by
+///     `clear_attack_advantage_riders` so the bonus doesn't double-
+///     fire across multiple checks.
+///   - **Warding Bond** (`WardingBonded`, +1 saves): the Cleric /
+///     Paladin lv2 abjuration; installs the `WardingBonded` condition
+///     on the bonded ally. RAW grants +1 AC AND +1 saves AND resistance
+///     to all damage AND mirror damage — the +1 save clause lives
+///     here, the +1 AC clause on the sibling `CONDITION_AC_BONUSES`
+///     cohort's WardingBonded row, the resistance and mirror-damage
+///     clauses on their own lanes.
+///
+/// A new condition-driven save bump (a future Sanctuary +N save on
+/// the caster, a hypothetical Bard Song of Rest save aura, etc.) lands
+/// as a fresh one-line row here rather than another inline if-branch
+/// in `condition_save_bonus`.
+const CONDITION_SAVE_BONUSES: &[ConditionSaveBonus] = &[
+    ConditionSaveBonus {
+        source: Condition::Inspired,
+        bonus: 3,
+    },
+    ConditionSaveBonus {
+        source: Condition::WardingBonded,
+        bonus: 1,
+    },
+];
+
 /// Lifecycle state of an actor's hit points. Replaces the previous
 /// `dying: bool` + `stable: bool` pair so the four meaningful states are
 /// type-checked, and the death-save counters are scoped to the only
@@ -4847,17 +4929,28 @@ impl ActorInstance {
     /// rationale for excluding Bless / Bane: their +2 / -2 lives on
     /// `save_bonus_buff` and their d4 die on `bless_bane_attack_die`,
     /// so this lane is condition-only flat bonuses (Bardic
-    /// Inspiration: +3 d6-average).
+    /// Inspiration: +3 d6-average; Warding Bond: +1 to saves while
+    /// bonded). Walks the shared `CONDITION_SAVE_BONUSES` cohort —
+    /// each row is a `ConditionSaveBonus { source, bonus }`; every
+    /// held source contributes its signed `bonus` to the sum, so
+    /// vertical stacking (Inspired + WardingBonded → +4 saves) folds
+    /// through the same walk as horizontal stacking on the sibling
+    /// `CONDITION_AC_BONUSES` cohort. Adding a future condition-driven
+    /// save bump (a hypothetical Sanctuary +N save on the caster, a
+    /// Bard Song of Rest save aura, etc.) lands as a one-line entry in
+    /// the cohort rather than another `if self.has_condition(...)
+    /// { bonus += N; }` branch here.
+    ///
+    /// Sibling to `condition_ac_bonus` on the condition-driven
+    /// cohort-walk lane — same filter-map-sum shape (walk the cohort,
+    /// sum every held row's magnitude), different affected axis (save
+    /// points here vs. AC points there).
     pub fn condition_save_bonus(&self) -> i32 {
-        let mut bonus = 0;
-        if self.has_condition(Condition::Inspired) {
-            bonus += 3;
-        }
-        // 5e Warding Bond: +1 saving throws while bonded.
-        if self.has_condition(Condition::WardingBonded) {
-            bonus += 1;
-        }
-        bonus
+        CONDITION_SAVE_BONUSES
+            .iter()
+            .filter(|row| self.has_condition(row.source))
+            .map(|row| row.bonus)
+            .sum()
     }
 
     pub fn attack_bonus_buff(&self) -> i32 {
