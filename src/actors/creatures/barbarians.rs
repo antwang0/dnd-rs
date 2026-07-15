@@ -12,19 +12,38 @@ use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
-/// Shared totem-barbarian build. Every Path of the Totem Warrior sub
-/// (Bear / Wolf / Eagle / Tiger) lands on the same level-9 envelope —
-/// 76 HP (9d12+18), AC 15 (unarmored), STR/CON 18, Reckless Attack /
-/// Brutal Critical 1d / Relentless Rage. The only per-totem swaps are
-/// (a) display name + glyph, (b) the totem feature tag in `features`,
-/// and (c) an optional extra action (Eagle Dive on the Eagle variant).
-/// One helper collapses the four 30-line struct literals into a single
-/// call per LazyLock — adding a fifth sub (Wild Heart 2024 Elk / Wolverine
-/// / etc.) lands as a one-line entry.
-fn totem_barbarian_template(
+/// Shared level-9 barbarian subclass build. Every barbarian subclass
+/// template that pairs the standard Rage / Reckless Attack / Relentless
+/// Rage / Fast Movement / Danger Sense / Feral Instinct / Persistent
+/// Rage / Brutal Critical(1d) / Extra Attack envelope with **one
+/// subclass feature tag** (and optionally one extra action) lands here.
+/// The per-subclass swaps are (a) display name + glyph, (b) the
+/// subclass feature tag in `features`, and (c) an optional extra
+/// action (Eagle Dive on the Eagle Totem variant).
+///
+/// Users:
+///   - **Path of the Totem Warrior / Wild Heart** (Bear / Wolf / Eagle
+///     / Tiger / Elk / Wolverine / Panther) — the totem-spirit family
+///     (RAW lv3 subclass tell for each), the original users of this
+///     helper.
+///   - **Path of the Storm Herald (Sea)** — Storm Soul (Sea) passive
+///     lightning resistance (RAW lv6 tell); shares the same level-9
+///     envelope with a distinct subclass tag on a distinct primal path.
+///
+/// The subclass-of pattern (single-tag layer on top of a shared
+/// envelope) matches the way `MARID_WARLOCK_TEMPLATE` /
+/// `DAO_WARLOCK_TEMPLATE` / `DJINNI_WARLOCK_TEMPLATE` /
+/// `CELESTIAL_WARLOCK_TEMPLATE` / `NECROMANCY_WIZARD_TEMPLATE` layer
+/// their single-tag subclass tells on top of their respective baseline
+/// class envelopes — this helper is the barbarian-family analogue,
+/// collapsing what would otherwise be N ~30-line struct literals into a
+/// single call per `LazyLock`. Adding a new subclass with the same
+/// envelope (Path of the Battlerager, another Storm Herald variant,
+/// etc.) lands as a one-line entry.
+fn subclass_barbarian_template(
     name: &'static str,
     glyph: char,
-    totem_tag: &'static str,
+    subclass_tag: &'static str,
     extra_actions: &[&'static (dyn Action + Send + Sync)],
 ) -> CreatureTemplate {
     let mut actions = DEFAULT_ACTIONS.clone();
@@ -55,7 +74,7 @@ fn totem_barbarian_template(
             AbilityScoreType::Strength,
             AbilityScoreType::Constitution,
         ]),
-        features: HashSet::from([RAGE_TAG, totem_tag, RELENTLESS_RAGE_TAG, FAST_MOVEMENT_TAG]),
+        features: HashSet::from([RAGE_TAG, subclass_tag, RELENTLESS_RAGE_TAG, FAST_MOVEMENT_TAG]),
         has_danger_sense: true,
         has_extra_attack: true,
         brutal_critical_dice: 1,
@@ -201,7 +220,7 @@ pub static TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
     // `has_condition_resistance` so Bear Totem composes with the level-11
     // Relentless Rage save-intercept — a Bear Totem barbarian halves the
     // incoming hit *and* gets a chance to pin at 1 HP if it still kills.
-    totem_barbarian_template("Totem Barbarian", 'T', BEAR_TOTEM_TAG, &[])
+    subclass_barbarian_template("Totem Barbarian", 'T', BEAR_TOTEM_TAG, &[])
 });
 
 /// Wolf Totem Barbarian — Path of the Totem Warrior, **Wolf Spirit** flavor
@@ -224,7 +243,7 @@ pub static TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
 /// Attack). Glyph 'W' so wolf-vs-bear-vs-eagle renders unambiguously on
 /// the map next to baseline Barbarian 'B' / Totem 'T'.
 pub static WOLF_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    totem_barbarian_template("Wolf Totem Barbarian", 'W', WOLF_TOTEM_TAG, &[])
+    subclass_barbarian_template("Wolf Totem Barbarian", 'W', WOLF_TOTEM_TAG, &[])
 });
 
 /// Eagle Totem Barbarian — Path of the Totem Warrior, **Eagle Spirit** flavor
@@ -244,7 +263,7 @@ pub static WOLF_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock:
 /// unambiguously on the map next to baseline Barbarian 'B' / Totem 'T'
 /// / Wolf 'W'.
 pub static EAGLE_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    totem_barbarian_template(
+    subclass_barbarian_template(
         "Eagle Totem Barbarian",
         'A',
         EAGLE_TOTEM_TAG,
@@ -270,7 +289,7 @@ pub static EAGLE_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock
 /// tiger-vs-eagle-vs-wolf-vs-bear-vs-baseline renders unambiguously on the
 /// map.
 pub static TIGER_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    totem_barbarian_template("Tiger Totem Barbarian", 'I', TIGER_TOTEM_TAG, &[])
+    subclass_barbarian_template("Tiger Totem Barbarian", 'I', TIGER_TOTEM_TAG, &[])
 });
 
 /// Elk Totem Barbarian — Path of the Totem Warrior, **Elk Spirit** flavor
@@ -298,7 +317,7 @@ pub static TIGER_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock
 /// baseline Barbarian 'B', Totem/Bear 'T', Wolf 'W', Eagle 'A', Tiger
 /// 'I', Zealot handled separately).
 pub static ELK_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    totem_barbarian_template("Elk Totem Barbarian", 'E', ELK_TOTEM_TAG, &[])
+    subclass_barbarian_template("Elk Totem Barbarian", 'E', ELK_TOTEM_TAG, &[])
 });
 
 /// Wolverine Totem Barbarian — Path of the Wild Heart, **Wolverine
@@ -326,7 +345,7 @@ pub static ELK_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
 /// baseline Barbarian 'B', Totem/Bear 'T', Wolf 'W', Eagle 'A',
 /// Tiger 'I', Elk 'E', Zealot 'X').
 pub static WOLVERINE_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    totem_barbarian_template("Wolverine Totem Barbarian", 'V', WOLVERINE_TOTEM_TAG, &[])
+    subclass_barbarian_template("Wolverine Totem Barbarian", 'V', WOLVERINE_TOTEM_TAG, &[])
 });
 
 /// Panther Totem Barbarian — Path of the Totem Warrior, **Panther
@@ -353,7 +372,83 @@ pub static WOLVERINE_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = Lazy
 /// baseline Barbarian 'B', Totem/Bear 'T', Wolf 'W', Eagle 'A',
 /// Tiger 'I', Elk 'E', Wolverine 'V', Zealot 'X').
 pub static PANTHER_TOTEM_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    totem_barbarian_template("Panther Totem Barbarian", 'P', PANTHER_TOTEM_TAG, &[])
+    subclass_barbarian_template("Panther Totem Barbarian", 'P', PANTHER_TOTEM_TAG, &[])
+});
+
+/// Sea Storm Herald Barbarian — Path of the Storm Herald, **Sea** flavor
+/// (level 6 subclass tell, XGtE). First non-totem user of the shared
+/// `subclass_barbarian_template` helper — same level-9 envelope as the
+/// totem-warrior family (76 HP, AC 15, STR / CON 18, Reckless Attack /
+/// Brutal Critical 1d / Relentless Rage / Feral Instinct / Persistent
+/// Rage / Fast Movement / Danger Sense) with the subclass feature
+/// swapped from a totem-spirit tag to the sea storm herald's passive
+/// lightning-resistance tell.
+///
+/// Headline mechanic: **Storm Soul (Sea)** — passive **resistance to
+/// lightning damage**. Read at the shared `PASSIVE_TYPED_RESISTANCES`
+/// cohort in `actor_template.rs` next to Heart of the Storm's
+/// lightning + thunder row, the Warlock Elemental Gift rows (Marid
+/// Cold / Dao Bludgeoning / Djinni Thunder), Radiant Soul's radiant
+/// row, Fiendish / Draconic Resilience's fire rows, Psychic Defenses'
+/// psychic row, and Inured to Undeath's necrotic row — same halving
+/// rule, different subclass source. First **Barbarian**-chassis row on
+/// that cohort (every prior row came off a racial trait or a Warlock /
+/// Sorcerer / Wizard subclass).
+///
+/// Distinct from every other barbarian subclass template:
+///   - Distinct from the **Totem Warrior / Wild Heart family** (Bear /
+///     Wolf / Eagle / Tiger / Elk / Wolverine / Panther) in that the
+///     resistance is **always-on**, not rage-gated — a Sea Storm
+///     Herald outside of rage still halves the incoming Chain
+///     Lightning / Lightning Bolt. Distinct from Bear Totem's rage-
+///     gated broad resistance (on `RAGE_GATED_BROAD_RESISTANCES`) on
+///     both axis (typed, not broad) and gate (always-on, not rage-
+///     gated).
+///   - Distinct from the **Berserker Barbarian** (Frenzy bonus-action
+///     swing + Mindless Rage) and **Zealot Barbarian** (Divine Fury
+///     radiant on-hit rider + Iron Mind WIS-save + Zealous Presence
+///     ally-buff) on the entire subclass feature axis — Storm Herald
+///     is a defensive resistance chassis rather than an offensive /
+///     resource-focused chassis.
+///
+/// RAW's Path of the Storm Herald picks up other features not shipped
+/// on this template — **Storm Aura (Sea)** (lv3: while raging, one
+/// enemy within 10 ft eats a DEX-save 1d6-per-half-barbarian-level
+/// lightning bolt at the start of each of the barbarian's turns; a
+/// per-turn friend-agnostic aura mechanic that needs a per-turn aura
+/// fire hook and a target-picking policy), **Shielding Storm** (lv10:
+/// allies within 10 ft of the raging barbarian ALSO gain Storm Soul's
+/// resistance; an ally-aura extension mechanic that needs a per-tile
+/// ally sweep at the resistance-lookup chokepoint), and **Raging
+/// Storm (Sea)** (lv14: reaction-on-attacker-hit STR-save vs. knock-
+/// prone rider). Only the lv6 Storm Soul passive has a mechanical
+/// surface that plugs cleanly into the shared passive typed-
+/// resistance cohort, so we ship that half and leave the rest as
+/// future work — matching the way `NECROMANCY_WIZARD_TEMPLATE` ships
+/// only the lv10 Inured to Undeath passive half of its RAW School of
+/// Necromancy kit, and `MARID_WARLOCK_TEMPLATE` /
+/// `DAO_WARLOCK_TEMPLATE` / `DJINNI_WARLOCK_TEMPLATE` each ship only
+/// the Elemental Gift resistance half of their RAW Genie patron kit.
+///
+/// Ships on the CR-4 (level-9) barbarian chassis at (or above) its
+/// strict RAW lv6 gate for the same reason `MARID_WARLOCK_TEMPLATE` /
+/// `DAO_WARLOCK_TEMPLATE` / `DJINNI_WARLOCK_TEMPLATE` ship Elemental
+/// Gift (RAW lv6), `NECROMANCY_WIZARD_TEMPLATE` ships Inured to
+/// Undeath (RAW lv10), and `ABERRANT_MIND_SORCERER_TEMPLATE` ships
+/// Psychic Defenses (RAW lv14) — class templates target a balanced
+/// playable level, not lockstep PHB progression.
+///
+/// Glyph 'H' (for storm Herald) — distinct from every other barbarian
+/// subclass glyph (baseline Barbarian 'B', Totem/Bear 'T', Wolf 'W',
+/// Eagle 'A', Tiger 'I', Elk 'E', Wolverine 'V', Panther 'P',
+/// Berserker 'Z', Zealot 'X'). 'H' for the "storm Herald" identity.
+pub static SEA_STORM_HERALD_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    subclass_barbarian_template(
+        "Sea Storm Herald Barbarian",
+        'H',
+        crate::actions::class_features::STORM_SOUL_SEA_TAG,
+        &[],
+    )
 });
 
 /// Berserker Barbarian — Path of the Berserker subclass build. Identical

@@ -341,6 +341,19 @@ struct PassiveTypedResistance {
 ///     cohort (every prior row came off Warlock / Sorcerer subclasses);
 ///     matches the "Wizard finally lands its first subclass template"
 ///     milestone the `NECROMANCY_WIZARD_TEMPLATE` ships alongside.
+///   - **Storm Soul (Sea) (Barbarian Path of the Storm Herald lv6,
+///     XGtE)**: lightning resistance. First **Barbarian**-chassis row
+///     on this cohort — every prior row came off a racial trait or a
+///     Warlock / Sorcerer / Wizard subclass. Overlaps the Lightning
+///     axis with Heart of the Storm (Storm Sorcerer lv6, Lightning +
+///     Thunder) on a different chassis; the two never legally co-
+///     occur on a single build (Barbarian vs. Sorcerer subclass), and
+///     a hypothetical multiclass carrier caps at a single /2 per
+///     Lightning hit via the "one halving per damage instance" rule.
+///     Distinct from the barbarian chassis's rage-gated broad
+///     resistance (Bear Totem, `RAGE_GATED_BROAD_RESISTANCES`) on
+///     both axis (typed, not broad) and gate (always-on, not rage-
+///     gated).
 ///
 /// A new passive typed resistance (Circle of the Moon Wild Shape
 /// per-form types, Bladeling's Painful Quills necrotic resistance,
@@ -499,6 +512,32 @@ const PASSIVE_TYPED_RESISTANCES: &[PassiveTypedResistance] = &[
             crate::actions::class_features::INURED_TO_UNDEATH_TAG,
         ),
         types: &[DamageType::Necrotic],
+    },
+    // 5e Barbarian Primal Path **Path of the Storm Herald (Sea)** —
+    // **Storm Soul (Sea)** (level 6, XGtE). RAW grants resistance to
+    // lightning damage (paired with a swim-speed + water-breathing
+    // clause that has no combat surface on today's engine and is left
+    // as future work). First Barbarian-chassis row on the passive
+    // typed-resistance lane — every prior row came off a racial trait
+    // or a Warlock / Sorcerer / Wizard subclass. Overlaps the Lightning
+    // axis with Heart of the Storm (Storm Sorcerer lv6) on a different
+    // chassis; the two never legally co-occur on a single build
+    // (Barbarian vs. Sorcerer subclass) and a hypothetical multiclass
+    // carrier caps at a single /2 per Lightning hit under the "one
+    // halving per damage instance" rule. Distinct from the barbarian
+    // chassis's rage-gated broad resistance (Bear Totem,
+    // `RAGE_GATED_BROAD_RESISTANCES`) on both axis (typed, not broad)
+    // and gate (always-on, not rage-gated). Ships on
+    // `SEA_STORM_HERALD_BARBARIAN_TEMPLATE` at (or above) its strict
+    // RAW lv6 gate for the same reason `MARID_WARLOCK_TEMPLATE` /
+    // `DAO_WARLOCK_TEMPLATE` / `DJINNI_WARLOCK_TEMPLATE` ship
+    // Elemental Gift (RAW lv6) — class templates target a balanced
+    // playable level, not lockstep PHB progression.
+    PassiveTypedResistance {
+        flag: |a| a.has_passive_feature(
+            crate::actions::class_features::STORM_SOUL_SEA_TAG,
+        ),
+        types: &[DamageType::Lightning],
     },
 ];
 

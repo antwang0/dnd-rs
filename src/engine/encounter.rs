@@ -55582,6 +55582,216 @@ mod tests {
         assert!(e.actors[&necro].has_passive_feature(INURED_TO_UNDEATH_TAG));
     }
 
+    /// Sea Storm Herald Barbarian's **Storm Soul (Sea)** (Path of the
+    /// Storm Herald subclass lv6, XGtE) halves incoming lightning
+    /// damage — the RAW subclass grant folds through the shared
+    /// `PASSIVE_TYPED_RESISTANCES` cohort's `effective_damage` halving
+    /// site. Sibling test to
+    /// `inured_to_undeath_halves_necrotic_damage_on_necromancy_wizard`
+    /// / `elemental_gift_halves_cold_damage_on_marid_warlock` /
+    /// `djinni_elemental_gift_halves_thunder_damage_on_djinni_warlock`
+    /// on the "typed resistance from a subclass template" lane — same
+    /// halving-vs-full assertion shape, different subclass chassis
+    /// (Barbarian Primal Path vs. Wizard Arcane Tradition / Warlock
+    /// Otherworldly Patron) and different damage axis (Lightning vs.
+    /// Necrotic / Cold / Thunder).
+    #[test]
+    fn storm_soul_sea_halves_lightning_damage_on_sea_storm_herald() {
+        use crate::actors::creatures::barbarians::{
+            BARBARIAN_TEMPLATE, SEA_STORM_HERALD_BARBARIAN_TEMPLATE,
+        };
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sea = e
+            .instantiate_creature(&SEA_STORM_HERALD_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&sea].has_passive_feature(
+            crate::actions::class_features::STORM_SOUL_SEA_TAG,
+        ));
+        assert!(!e.actors[&baseline].has_passive_feature(
+            crate::actions::class_features::STORM_SOUL_SEA_TAG,
+        ));
+        // 20 lightning → 10 (halved by Storm Soul (Sea)).
+        assert_eq!(
+            e.actors[&sea].effective_damage(20, DamageType::Lightning),
+            10,
+            "sea storm herald halves lightning damage",
+        );
+        // Baseline barbarian eats the full 20 lightning.
+        assert_eq!(
+            e.actors[&baseline].effective_damage(20, DamageType::Lightning),
+            20,
+            "baseline barbarian takes full lightning damage",
+        );
+        // Other damage types still take full damage on the Sea Storm
+        // Herald outside of rage — the RAW subclass grant is scoped to
+        // Lightning. Cold, Fire, Radiant, Psychic, Necrotic, Thunder,
+        // and Acid all pass through unchanged (Bear Totem's rage-gated
+        // broad resistance covers Bludgeoning / Piercing / Slashing on
+        // a different chassis / gate, and the barbarian's own Raging
+        // condition covers the same physical trio on the same chassis
+        // — neither is Lightning). The sibling subclass rows cover
+        // those damage types on their respective chassis, not here.
+        assert_eq!(
+            e.actors[&sea].effective_damage(20, DamageType::Cold),
+            20,
+        );
+        assert_eq!(
+            e.actors[&sea].effective_damage(20, DamageType::Fire),
+            20,
+        );
+        assert_eq!(
+            e.actors[&sea].effective_damage(20, DamageType::Radiant),
+            20,
+        );
+        assert_eq!(
+            e.actors[&sea].effective_damage(20, DamageType::Psychic),
+            20,
+        );
+        assert_eq!(
+            e.actors[&sea].effective_damage(20, DamageType::Necrotic),
+            20,
+        );
+        assert_eq!(
+            e.actors[&sea].effective_damage(20, DamageType::Thunder),
+            20,
+        );
+        assert_eq!(
+            e.actors[&sea].effective_damage(20, DamageType::Acid),
+            20,
+        );
+    }
+
+    /// Storm Soul (Sea) plugs into `has_own_typed_reduction(Lightning)`
+    /// — the "does this actor already scale this type?" gate used by
+    /// Aura of Warding to enforce the "one halving per damage instance"
+    /// rule. Locks the shared read chokepoint so a hypothetical Sea
+    /// Storm Herald Barbarian / Ancients Paladin party sees the aura
+    /// no-op cleanly on lightning hits (the /2 already fires via Storm
+    /// Soul; the aura would otherwise stack a second /2 for /4 unless
+    /// `has_own_typed_reduction` picked it up here). Sibling to the
+    /// Marid / Dao / Djinni Elemental Gift, Radiant Soul, Draconic
+    /// Resilience, and Inured to Undeath registration tests on the
+    /// same helper.
+    #[test]
+    fn storm_soul_sea_registers_own_typed_reduction_for_lightning() {
+        use crate::actors::creatures::barbarians::{
+            BARBARIAN_TEMPLATE, SEA_STORM_HERALD_BARBARIAN_TEMPLATE,
+        };
+        use crate::engine::types::DamageType;
+
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sea = e
+            .instantiate_creature(&SEA_STORM_HERALD_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        // Sea storm herald's Storm Soul (Sea) flag registers as an own
+        // typed reduction on the Lightning lane so aura-style stacking
+        // no-ops.
+        assert!(
+            e.actors[&sea].has_own_typed_reduction(DamageType::Lightning),
+            "Storm Soul (Sea) registers as own typed reduction on Lightning",
+        );
+        // Baseline barbarian without the tag has no own reduction on
+        // Lightning — aura stacking would apply cleanly.
+        assert!(
+            !e.actors[&baseline].has_own_typed_reduction(DamageType::Lightning),
+            "baseline barbarian has no own lightning reduction",
+        );
+    }
+
+    /// Template drift check: only the Sea Storm Herald Barbarian ships
+    /// the `STORM_SOUL_SEA_TAG` passive feature. Neither the baseline
+    /// Barbarian nor any of the totem-family subclass templates (Bear
+    /// / Wolf / Eagle / Tiger / Elk / Wolverine / Panther) nor the
+    /// Berserker / Zealot subclass templates carry the tag — keeps the
+    /// subclass tell scoped to its own chassis so a future regression
+    /// (e.g., accidental tag insertion into the shared
+    /// `subclass_barbarian_template` helper bleeding into every
+    /// subclass build) is caught here. Sibling to
+    /// `djinni_elemental_gift_lands_only_on_djinni_warlock` /
+    /// `inured_to_undeath_lands_only_on_necromancy_wizard` on the
+    /// same "single-subclass-tag ownership" lock.
+    #[test]
+    fn storm_soul_sea_lands_only_on_sea_storm_herald_barbarian() {
+        use crate::actions::class_features::STORM_SOUL_SEA_TAG;
+        use crate::actors::creatures::barbarians::{
+            BARBARIAN_TEMPLATE, BERSERKER_BARBARIAN_TEMPLATE, ELK_TOTEM_BARBARIAN_TEMPLATE,
+            SEA_STORM_HERALD_BARBARIAN_TEMPLATE, TOTEM_BARBARIAN_TEMPLATE,
+            ZEALOT_BARBARIAN_TEMPLATE,
+        };
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let sea = e
+            .instantiate_creature(&SEA_STORM_HERALD_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let baseline = e
+            .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+            .unwrap();
+        let bear = e
+            .instantiate_creature(&TOTEM_BARBARIAN_TEMPLATE, Coordinate::new(6, 2), 0, 0)
+            .unwrap();
+        let elk = e
+            .instantiate_creature(&ELK_TOTEM_BARBARIAN_TEMPLATE, Coordinate::new(8, 2), 0, 0)
+            .unwrap();
+        let berserker = e
+            .instantiate_creature(&BERSERKER_BARBARIAN_TEMPLATE, Coordinate::new(10, 2), 0, 0)
+            .unwrap();
+        let zealot = e
+            .instantiate_creature(&ZEALOT_BARBARIAN_TEMPLATE, Coordinate::new(12, 2), 0, 0)
+            .unwrap();
+        assert!(e.actors[&sea].has_passive_feature(STORM_SOUL_SEA_TAG));
+        assert!(!e.actors[&baseline].has_passive_feature(STORM_SOUL_SEA_TAG));
+        assert!(!e.actors[&bear].has_passive_feature(STORM_SOUL_SEA_TAG));
+        assert!(!e.actors[&elk].has_passive_feature(STORM_SOUL_SEA_TAG));
+        assert!(!e.actors[&berserker].has_passive_feature(STORM_SOUL_SEA_TAG));
+        assert!(!e.actors[&zealot].has_passive_feature(STORM_SOUL_SEA_TAG));
+    }
+
+    /// Sanity: the Sea Storm Herald Barbarian inherits the shared
+    /// level-9 barbarian subclass envelope through the
+    /// `subclass_barbarian_template` helper — Rage, Fast Movement,
+    /// Relentless Rage, Persistent Rage, Feral Instinct, Danger
+    /// Sense, Extra Attack, and Brutal Critical(1d) all carry
+    /// through alongside the subclass-only Storm Soul (Sea) tag.
+    /// Guards against a regression where the helper drops the
+    /// baseline feature set on its way to inserting the subclass
+    /// tag. Sibling to `necromancy_wizard_inherits_baseline_wizard_features`
+    /// on the same clone-and-layer lock, but on a helper-driven
+    /// (rather than `..base.clone()`-driven) lane — this test locks
+    /// the shared `subclass_barbarian_template` inheritance path.
+    #[test]
+    fn sea_storm_herald_inherits_shared_barbarian_envelope() {
+        use crate::actions::class_features::{
+            FAST_MOVEMENT_TAG, RAGE_TAG, RELENTLESS_RAGE_TAG, STORM_SOUL_SEA_TAG,
+        };
+        use crate::actors::creatures::barbarians::SEA_STORM_HERALD_BARBARIAN_TEMPLATE;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let sea = e
+            .instantiate_creature(&SEA_STORM_HERALD_BARBARIAN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Baseline barbarian envelope features still carry through.
+        assert!(e.actors[&sea].has_passive_feature(RAGE_TAG));
+        assert!(e.actors[&sea].has_passive_feature(FAST_MOVEMENT_TAG));
+        assert!(e.actors[&sea].has_passive_feature(RELENTLESS_RAGE_TAG));
+        // Subclass tag lands on top.
+        assert!(e.actors[&sea].has_passive_feature(STORM_SOUL_SEA_TAG));
+        // Level-9 chassis inherits: Danger Sense (lv2, DEX-save
+        // advantage), Feral Instinct (lv7, initiative advantage),
+        // Persistent Rage (lv15, doubled rage duration), Extra Attack
+        // (lv5), Brutal Critical(1d) (lv9 melee crit rider).
+        assert!(e.actors[&sea].has_danger_sense());
+        assert!(e.actors[&sea].has_feral_instinct());
+        assert!(e.actors[&sea].has_persistent_rage());
+        assert!(e.actors[&sea].has_extra_attack());
+        assert_eq!(e.actors[&sea].brutal_critical_dice(), 1);
+    }
+
     /// Cohort-promotion sanity: after promoting `condition_save_bonus`
     /// from the inline `if self.has_condition(...) { bonus += N; }`
     /// chain to a shared `CONDITION_SAVE_BONUSES` cohort walk (matching
