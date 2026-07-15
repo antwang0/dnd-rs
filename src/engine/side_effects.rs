@@ -137,7 +137,35 @@ impl ApplicableSideEffect for DealDamage {
             return;
         };
         let name = actor.name().to_string();
-        let outcome = actor.take_damage(self.amount);
+        // Apply 5e resistance / immunity / vulnerability BEFORE the HP
+        // subtraction so downstream logic (concentration DC, dying delta)
+        // uses the adjusted amount.
+        let raw = self.amount;
+        let adjusted = actor.adjust_damage(raw, self.damage_type);
+        if adjusted != raw {
+            let tag = if adjusted == 0 {
+                "immune"
+            } else if actor.is_resistant_to(self.damage_type)
+                && actor.is_vulnerable_to(self.damage_type)
+            {
+                "resist+vuln"
+            } else if actor.is_resistant_to(self.damage_type) {
+                "resist"
+            } else {
+                "vuln"
+            };
+            ei.log(format!(
+                "  {} {:?} damage: {} \u{2192} {} ({})",
+                name, self.damage_type, raw, adjusted, tag
+            ));
+        }
+        if adjusted == 0 {
+            return;
+        }
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let outcome = actor.take_damage(adjusted);
         let was_concentrating = actor.is_concentrating();
         // actor borrow ends here.
 
@@ -155,7 +183,7 @@ impl ApplicableSideEffect for DealDamage {
             }
             DamageOutcome::Reduced if was_concentrating => {
                 // 5e: take damage while concentrating → CON save vs DC max(10, dmg/2).
-                let dc = ((self.amount / 2) as i32).max(10);
+                let dc = ((adjusted / 2) as i32).max(10);
                 let save = ei.roll_save(
                     self.actor_id,
                     crate::engine::types::AbilityScoreType::Constitution,

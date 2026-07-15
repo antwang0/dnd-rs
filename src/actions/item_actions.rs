@@ -12,6 +12,7 @@ use crate::{
 };
 
 const POTION_OF_HEALING_NAME: &str = "Potion of Healing";
+const POTION_OF_GREATER_HEALING_NAME: &str = "Potion of Greater Healing";
 const SCROLL_OF_FIREBALL_NAME: &str = "Scroll of Fireball";
 
 /// Drink a Potion of Healing. Self-targeted, costs an Action, heals
@@ -36,6 +37,10 @@ impl Action for DrinkHealingPotion {
 
     fn is_harmful(&self) -> bool {
         false
+    }
+
+    fn is_healing(&self) -> bool {
+        true
     }
 
     fn cost(
@@ -97,6 +102,87 @@ impl Action for DrinkHealingPotion {
 
 pub static DRINK_HEALING_POTION: DrinkHealingPotion = DrinkHealingPotion {};
 
+/// Same shape as `DrinkHealingPotion`, better dice (4d4+4 → 8-20 HP).
+/// Kept as a distinct action struct so the item's on_use points at the
+/// right thing; the two actions are otherwise mechanically identical.
+pub struct DrinkGreaterHealingPotion {}
+
+impl Action for DrinkGreaterHealingPotion {
+    fn name(&self) -> &str {
+        "drink greater healing potion"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["gpotion", "greater-drink"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn is_healing(&self) -> bool {
+        true
+    }
+
+    fn cost(
+        &self,
+        _encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_item_named(POTION_OF_GREATER_HEALING_NAME))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let raw = encounter.roll(&Dice::new(4, 4)) as i32;
+        let amount = (raw + 4).max(1) as u32;
+        let removed = encounter
+            .actors
+            .get_mut(&caster_id)
+            .is_some_and(|a| a.remove_item_by_name(POTION_OF_GREATER_HEALING_NAME));
+        if !removed {
+            return Vec::new();
+        }
+        encounter.log(format!(
+            "  potion of greater healing: 4d4({}){:+} = {} HP",
+            raw, 4, amount
+        ));
+        vec![Box::new(Heal {
+            actor_id: caster_id,
+            amount,
+        })]
+    }
+}
+
+pub static DRINK_GREATER_HEALING_POTION: DrinkGreaterHealingPotion = DrinkGreaterHealingPotion {};
+
 /// Read a Scroll of Fireball: pick a target tile, every actor whose
 /// footprint touches the burst takes 6d6 fire on a failed DEX save vs
 /// DC 15, half on success. Consumes the scroll. No spell-slot cost
@@ -123,6 +209,10 @@ impl Action for ReadFireballScroll {
 
     fn requires_los(&self) -> bool {
         true
+    }
+
+    fn damage_types(&self) -> &'static [DamageType] {
+        &[DamageType::Fire]
     }
 
     fn cost(

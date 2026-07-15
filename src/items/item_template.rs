@@ -119,9 +119,50 @@ pub static SCROLL_OF_FIREBALL: Item = Item {
     on_use: Some(&crate::actions::item_actions::READ_FIREBALL_SCROLL),
 };
 
+/// Better healer than the standard potion. Restores 4d4+4 HP (7-20 range).
+pub static POTION_OF_GREATER_HEALING: Item = Item {
+    name: "Potion of Greater Healing",
+    glyph: 'P',
+    bonuses: ItemBonuses {
+        ac: 0,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: Some(&crate::actions::item_actions::DRINK_GREATER_HEALING_POTION),
+};
+
+/// Shield trinket: +2 AC when carried. Passive only.
+pub static SHIELD: Item = Item {
+    name: "Shield",
+    glyph: 'S',
+    bonuses: ItemBonuses {
+        ac: 2,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: None,
+};
+
+/// Studded leather chest — +1 AC. Layered on top of the actor's base AC
+/// alongside any Ring / Cloak / Shield already carried.
+pub static STUDDED_LEATHER: Item = Item {
+    name: "Studded Leather Armor",
+    glyph: 'l',
+    bonuses: ItemBonuses {
+        ac: 1,
+        max_hp: 0,
+        speed: 0,
+        save: 0,
+    },
+    on_use: None,
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
-/// rotation without touching call sites.
+/// rotation without touching call sites. Regular healing potion appears
+/// twice on purpose (bias toward common consumables).
 pub static LOOT_POOL: &[&Item] = &[
     &RING_OF_PROTECTION,
     &BOOTS_OF_STRIDING,
@@ -130,4 +171,7 @@ pub static LOOT_POOL: &[&Item] = &[
     &POTION_OF_HEALING,
     &POTION_OF_HEALING,
     &SCROLL_OF_FIREBALL,
+    &POTION_OF_GREATER_HEALING,
+    &SHIELD,
+    &STUDDED_LEATHER,
 ];

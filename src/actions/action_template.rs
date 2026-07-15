@@ -4,7 +4,7 @@ use crate::engine::{
     action_overrides::ActionOverride,
     encounter::EncounterInstance,
     side_effects::{ApplicableSideEffect, ConsumeResource, Resource},
-    types::Coordinate,
+    types::{Coordinate, DamageType},
 };
 
 /// Reach for melee/touch actions, expressed as a footprint-Chebyshev gap cap.
@@ -54,6 +54,28 @@ pub trait Action {
     /// accidentally pick them as enemy attacks.
     fn is_harmful(&self) -> bool {
         true
+    }
+
+    /// Primary damage types this action deals, if any. Attacks return
+    /// their weapon's damage type; multi-type actions (e.g. acid spit
+    /// splash also acid) can list every type. Non-damaging actions
+    /// (Skip / Move / Dodge / Hold Person) return an empty slice.
+    ///
+    /// Consumed by the AI's target-selection heuristic to prefer targets
+    /// vulnerable to the action's damage and avoid immune targets. The
+    /// engine itself does NOT use this — actual damage numbers still
+    /// flow through `adjust_damage` on the target.
+    fn damage_types(&self) -> &'static [DamageType] {
+        &[]
+    }
+
+    /// True if this action restores HP to its target. Cure Wounds,
+    /// Healing Word, and the drink-potion actions override this. The AI
+    /// uses it to distinguish healing spells (fix a dying / bloodied
+    /// ally) from buffs (Bless / Help) that also fall under
+    /// `!is_harmful` but don't put HP back on the sheet.
+    fn is_healing(&self) -> bool {
+        false
     }
 
     fn side_effects(

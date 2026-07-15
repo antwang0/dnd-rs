@@ -42,6 +42,10 @@ impl Action for Longbow {
         true
     }
 
+    fn damage_types(&self) -> &'static [DamageType] {
+        &[DamageType::Piercing]
+    }
+
     fn cost(
         &self,
         _encounter: &EncounterInstance,
@@ -109,6 +113,10 @@ impl Action for Slam {
 
     fn reach_tiles(&self) -> Option<isize> {
         Some(MELEE_REACH)
+    }
+
+    fn damage_types(&self) -> &'static [DamageType] {
+        &[DamageType::Bludgeoning]
     }
 
     fn cost(
@@ -180,6 +188,10 @@ impl Action for TripAttack {
 
     fn reach_tiles(&self) -> Option<isize> {
         Some(MELEE_REACH)
+    }
+
+    fn damage_types(&self) -> &'static [DamageType] {
+        &[DamageType::Bludgeoning]
     }
 
     fn cost(
@@ -279,6 +291,10 @@ impl Action for AcidSpit {
 
     fn requires_los(&self) -> bool {
         true
+    }
+
+    fn damage_types(&self) -> &'static [DamageType] {
+        &[DamageType::Acid]
     }
 
     fn cost(
@@ -407,6 +423,9 @@ impl Action for Scimitar {
     fn reach_tiles(&self) -> Option<isize> {
         Some(MELEE_REACH)
     }
+    fn damage_types(&self) -> &'static [DamageType] {
+        &[DamageType::Slashing]
+    }
     fn cost(
         &self,
         _e: &EncounterInstance,
@@ -478,6 +497,9 @@ impl Action for Shortbow {
     fn requires_los(&self) -> bool {
         true
     }
+    fn damage_types(&self) -> &'static [DamageType] {
+        &[DamageType::Piercing]
+    }
     fn cost(
         &self,
         _e: &EncounterInstance,
@@ -543,6 +565,9 @@ impl Action for Greatclub {
     }
     fn reach_tiles(&self) -> Option<isize> {
         Some(2)
+    }
+    fn damage_types(&self) -> &'static [DamageType] {
+        &[DamageType::Bludgeoning]
     }
     fn cost(
         &self,
@@ -612,6 +637,9 @@ impl Action for WolfBite {
     fn reach_tiles(&self) -> Option<isize> {
         Some(MELEE_REACH)
     }
+    fn damage_types(&self) -> &'static [DamageType] {
+        &[DamageType::Piercing]
+    }
     fn cost(
         &self,
         _e: &EncounterInstance,
@@ -673,6 +701,144 @@ impl Action for WolfBite {
     }
 }
 pub static WOLF_BITE: LazyLock<WolfBite> = LazyLock::new(|| WolfBite {});
+
+/// Battleaxe — STR-based 1d8 slashing melee, standard martial weapon.
+/// Used by orcs and similar bruisers; distinguished from Scimitar by die
+/// size and damage type.
+pub struct Battleaxe {}
+
+impl Action for Battleaxe {
+    fn name(&self) -> &str {
+        "battleaxe"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bx", "axe"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> &'static [DamageType] {
+        &[DamageType::Slashing]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let str_mod = modifier_from_score(
+            caster.ability_score(crate::engine::types::AbilityScoreType::Strength),
+        );
+        let attack_bonus = caster.attack_bonus();
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+        weapon_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            attack_bonus,
+            target_ac,
+            Dice::new(1, 8),
+            str_mod,
+            DamageType::Slashing,
+            true,
+        )
+    }
+}
+pub static BATTLEAXE: LazyLock<Battleaxe> = LazyLock::new(|| Battleaxe {});
+
+/// Rat bite — Tiny footprint melee attack. Pathetic 1d1 damage (single
+/// point) but rats come in numbers. Illustrates a very-low-damage attack
+/// and Tiny-size behaviour.
+pub struct RatBite {}
+
+impl Action for RatBite {
+    fn name(&self) -> &str {
+        "rat bite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["rbite", "nibble"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> &'static [DamageType] {
+        &[DamageType::Piercing]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        let Some(target_id) = target_ids.and_then(|ids| ids.first().copied()) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // Rats use DEX to hit (finesse) and no bonus to damage.
+        let dex_mod = modifier_from_score(
+            caster.ability_score(crate::engine::types::AbilityScoreType::Dexterity),
+        );
+        let Some(target_ac) = encounter.actors.get(&target_id).map(|a| a.armor_class() as i32)
+        else {
+            return Vec::new();
+        };
+        weapon_attack(
+            encounter,
+            caster_id,
+            target_id,
+            self.name(),
+            dex_mod,
+            target_ac,
+            Dice::new(1, 4),
+            0,
+            DamageType::Piercing,
+            true,
+        )
+    }
+}
+pub static RAT_BITE: LazyLock<RatBite> = LazyLock::new(|| RatBite {});
 
 /// Wraps another action and runs it `count` times for one Action-slot
 /// expenditure. Reach / LOS / targeting schema are inherited from the
@@ -777,6 +943,8 @@ fn weapon_attack(
 ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
     let mode = encounter.compute_attack_mode(caster_id, target_id, is_melee);
     let raw_attack = encounter.roll_d20_with_mode(mode) as i32;
+    // Help expires the moment we swing, whether we hit or miss (RAW).
+    encounter.consume_help_on_attack(caster_id);
     let is_crit = raw_attack == 20;
     let attack_total = raw_attack + attack_bonus;
     // Crits auto-hit regardless of AC. Otherwise compare normally.

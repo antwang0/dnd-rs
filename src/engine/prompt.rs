@@ -51,7 +51,11 @@ impl Prompt {
                 )
             })?;
 
-        let target_ids: Vec<usize> = Vec::new();
+        // Text input only parses point args today ("X,Y" or relative
+        // "r2u3"); actor-targeted actions (Sacred Flame, Longbow, ...)
+        // go through the arrow-key picker in the UI, not the input box.
+        // Once we grow actor identifiers the parser understands (e.g.
+        // "Zombie 0", "Z1"), we'd re-introduce target_ids here.
         let mut target_locations: Vec<Coordinate> = Vec::new();
 
         while let Some(tok) = tokens.pop_front() {
@@ -70,11 +74,7 @@ impl Prompt {
         let aei = ActionExecutionInfo::new(
             action,
             self.actor_id,
-            if target_ids.is_empty() {
-                None
-            } else {
-                Some(target_ids)
-            },
+            None,
             if target_locations.is_empty() {
                 None
             } else {

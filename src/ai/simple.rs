@@ -5,6 +5,11 @@ use crate::engine::dice::RollMode;
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
+/// HP threshold below which self-preservation kicks in (as a fraction of
+/// max HP). Under this line the AI will try a healing potion / self-heal
+/// before any offensive tactic.
+const SELF_HEAL_THRESHOLD: f32 = 0.30;
+
 /// Tactical heuristic AI. The decision pipeline runs in priority order:
 /// 1. **Kite**: if I have a ranged attack and an enemy is in melee reach
 ///    of me, step away (one tile) before attacking. Repeated calls per
@@ -34,7 +39,14 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 2. Kite if we're a ranged attacker under melee threat.
+        // 2. Emergency self-heal: below the threshold, drink a healing
+        //    potion if we're carrying one. Skip when at full HP or when
+        //    outside the danger zone so we don't waste consumables.
+        if let Some(aei) = try_self_heal_potion(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3. Kite if we're a ranged attacker under melee threat.
         if has_ranged_attack(encounter, actor_id)
             && under_melee_threat(encounter, actor_id)
             && let Some(aei) = try_step_away_from_threats(encounter, actor_id)
@@ -69,9 +81,75 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 8. Nothing useful. End the turn.
+        // 8. Nothing offensive available but under melee threat — Dodge
+        //    to make ourselves harder to hit until next round.
+        if under_melee_threat(encounter, actor_id)
+            && let Some(aei) = try_dodge(encounter, actor_id)
+        {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 9. Nothing useful. End the turn.
         skip_or_await(encounter, actor_id)
     }
+}
+
+/// Invoke the actor's Dodge action if they have it and can afford it.
+/// Falls out silently otherwise — caller drops to Skip.
+fn try_dodge(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let dodge = actor.actions.iter().find(|a| a.name() == "dodge").copied()?;
+    let aei = ActionExecutionInfo::new(dodge, actor_id, None, None, None);
+    if aei.validate(encounter) {
+        Some(aei)
+    } else {
+        None
+    }
+}
+
+/// If the actor is wounded past `SELF_HEAL_THRESHOLD` and is carrying a
+/// healing potion, drink it. Prefers the greater potion when both are
+/// carried (more HP restored per Action). Doesn't self-cast Cure Wounds /
+/// Healing Word — those go to allies via `try_support_heal`; self-heal
+/// via those spells would just be lower-value than a potion.
+fn try_self_heal_potion(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let hp = actor.hitpoints() as f32;
+    let max = actor.max_hitpoints().max(1) as f32;
+    if hp / max >= SELF_HEAL_THRESHOLD {
+        return None;
+    }
+    // Prefer the greater potion when it's available.
+    let preferred = [
+        "drink greater healing potion",
+        "drink healing potion",
+    ];
+    for name in preferred {
+        if let Some(action) = actor.actions.iter().find(|a| a.name() == name).copied() {
+            let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
+            if aei.validate(encounter) {
+                return Some(aei);
+            }
+        }
+        // Not on template — check dynamically-available (from inventory).
+        if let Some(action) = actor
+            .available_actions()
+            .into_iter()
+            .find(|a| a.name() == name)
+        {
+            let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
+            if aei.validate(encounter) {
+                return Some(aei);
+            }
+        }
+    }
+    None
 }
 
 /// If the actor is Prone, return the StandUp action invocation. The action
@@ -273,12 +351,16 @@ fn try_support_heal(
     let actor = encounter.actors.get(&actor_id)?;
     let my_team = actor.team();
 
-    // Helpful actions only — `is_harmful=false` guards against ever
-    // picking an attack here. SingleActor schema so we can pick a target.
+    // Healing actions only: single-actor + `is_healing = true`. This
+    // deliberately excludes buffs (Bless, Help) even though they also
+    // pass `is_harmful=false` — they don't restore HP, so applying them
+    // to a dying ally leaves the ally dying.
     let heal_actions: Vec<&'static (dyn Action + Send + Sync)> = actor
         .actions
         .iter()
-        .filter(|a| !a.is_harmful() && matches!(a.targeting_schema(), TargetingSchema::SingleActor))
+        .filter(|a| {
+            a.is_healing() && matches!(a.targeting_schema(), TargetingSchema::SingleActor)
+        })
         .copied()
         .collect();
     if heal_actions.is_empty() {
@@ -491,10 +573,16 @@ fn try_attack_focus_fire(
     best.map(|(_, _, _, aei)| aei)
 }
 
-/// Among the actor's SingleActor actions, the longest-reach one whose
-/// reach covers the current footprint distance to `target_id`. Doesn't
-/// validate cost / LOS; the caller wraps it in `ActionExecutionInfo` and
-/// validates.
+/// Among the actor's SingleActor attacks that reach `target_id`, pick the
+/// best one. "Best" is a multi-key score:
+///  1. Damage effectiveness vs the target's resistances: vulnerable >
+///     neutral > resistant > immune. An attack with every damage type
+///     immune is skipped entirely — no point swinging.
+///  2. Longer reach preferred when the effectiveness tier ties (so we
+///     use a longbow over a melee scimitar on a far target).
+///
+/// Doesn't validate cost / LOS; the caller wraps in `ActionExecutionInfo`
+/// and re-validates.
 fn best_attack_against(
     actor: &crate::actors::actor_template::ActorInstance,
     encounter: &EncounterInstance,
@@ -507,7 +595,33 @@ fn best_attack_against(
         target.location(),
         get_tiles_from_size(target.size()),
     );
-    let mut best: Option<(isize, &(dyn Action + Send + Sync))> = None;
+    // Higher score = better. 2 vuln, 1 neutral, 0 resist, -1 immune (per
+    // action). Actions with no declared damage type score 1 (neutral —
+    // we don't know, don't penalize).
+    let effectiveness = |action: &(dyn Action + Send + Sync)| -> i32 {
+        let types = action.damage_types();
+        if types.is_empty() {
+            return 1;
+        }
+        let mut best = i32::MIN;
+        for t in types {
+            let s = if target.is_immune_to(*t) {
+                -1
+            } else if target.is_vulnerable_to(*t) {
+                2
+            } else if target.is_resistant_to(*t) {
+                0
+            } else {
+                1
+            };
+            if s > best {
+                best = s;
+            }
+        }
+        best
+    };
+
+    let mut best: Option<(i32, isize, &(dyn Action + Send + Sync))> = None;
     for &action in &actor.actions {
         if !matches!(action.targeting_schema(), TargetingSchema::SingleActor) {
             continue;
@@ -523,12 +637,17 @@ fn best_attack_against(
         if dist > reach {
             continue;
         }
-        if best.is_some_and(|(r, _)| r >= reach) {
+        let eff = effectiveness(action);
+        // Skip attacks the target is fully immune to — no reason to swing.
+        if eff < 0 {
             continue;
         }
-        best = Some((reach, action));
+        let candidate = (eff, reach, action);
+        if best.is_none_or(|(be, br, _)| (candidate.0, candidate.1) > (be, br)) {
+            best = Some(candidate);
+        }
     }
-    best
+    best.map(|(_, reach, action)| (reach, action))
 }
 
 /// BFS-step toward the lowest-HP visible enemy. Falls back to step toward

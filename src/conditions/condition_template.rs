@@ -3,11 +3,6 @@
 /// while `Prone`; `can_consume_resource` blocks Action/BonusAction/Reaction
 /// while `Stunned`). New variants land here and then plug into the
 /// relevant accessor — no central dispatcher.
-///
-/// Durations aren't tracked yet: conditions persist until something
-/// explicitly removes them via `RemoveCondition`. Round-tracked durations
-/// (e.g. "stunned for 1 round") need a turn-end hook the engine doesn't
-/// have yet; deferred.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Condition {
     /// Speed = 0; ranged attacks against you have disadvantage; melee
@@ -20,6 +15,22 @@ pub enum Condition {
     /// Disadvantage on attack rolls and ability checks. Marker only today
     /// (no advantage/disadvantage system yet).
     Poisoned,
+    /// Cannot see; automatically fails sight-based checks. Attack rolls
+    /// against a blinded creature have advantage, and the blinded
+    /// creature's attack rolls have disadvantage.
+    Blinded,
+    /// Marker for a creature that took the Dodge action this turn.
+    /// Attackers roll at disadvantage; DEX saves gain advantage. Cleared
+    /// automatically when the creature's next turn starts.
+    Dodging,
+    /// Marker for a creature that took the Disengage action this turn —
+    /// their movement doesn't provoke opportunity attacks until the start
+    /// of their next turn. Consumed by the OA reactor.
+    Disengaged,
+    /// Marker for a creature that has been Helped — their next attack
+    /// rolls at advantage, then the buff is consumed. See
+    /// `EncounterInstance::compute_attack_mode`.
+    Helped,
 }
 
 impl Condition {
@@ -28,6 +39,10 @@ impl Condition {
             Condition::Prone => "prone",
             Condition::Stunned => "stunned",
             Condition::Poisoned => "poisoned",
+            Condition::Blinded => "blinded",
+            Condition::Dodging => "dodging",
+            Condition::Disengaged => "disengaged",
+            Condition::Helped => "helped",
         }
     }
 }

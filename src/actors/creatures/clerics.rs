@@ -1,5 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::spells::{HEALING_WORD, HOLD_PERSON, SACRED_BURST, SACRED_FLAME};
+use crate::actions::spells::{
+    BLESS, CURE_WOUNDS, GUIDING_BOLT, HEALING_WORD, HOLD_PERSON, SACRED_BURST, SACRED_FLAME,
+};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{Language, Size, SpecialSense};
 use std::collections::HashSet;
@@ -14,6 +16,9 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*SACRED_BURST);
     actions.push(&*HEALING_WORD);
     actions.push(&*HOLD_PERSON);
+    actions.push(&*CURE_WOUNDS);
+    actions.push(&*GUIDING_BOLT);
+    actions.push(&*BLESS);
     CreatureTemplate {
         name: "Cleric",
         glyph: 'C',
@@ -37,5 +42,8 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 3 level-1 slots (Healing Word) + 2 level-2 slots (Hold Person).
         spell_slots_by_level: vec![3, 2],
         rolls_death_saves: false,
+        resistances: HashSet::new(),
+        immunities: HashSet::new(),
+        vulnerabilities: HashSet::new(),
     }
 });

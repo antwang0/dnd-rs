@@ -77,7 +77,7 @@ use crate::items::item_template::{Item, ItemBonuses};
 use crate::{
     actions::action_template::Action,
     engine::{
-        types::{AbilityScoreType, Language, Size, Skill, SpecialSense},
+        types::{AbilityScoreType, DamageType, Language, Size, Skill, SpecialSense},
         util::modifier_from_score,
     },
 };
@@ -120,6 +120,15 @@ pub struct CreatureTemplate {
     /// Default for new templates: `false`. Player characters override
     /// to `true` so they get the standard 3-success / 3-failure cycle.
     pub rolls_death_saves: bool,
+    /// Damage types this creature takes at 1/2 damage. 5e undead resist
+    /// necrotic; a fire elemental resists fire, etc.
+    pub resistances: HashSet<DamageType>,
+    /// Damage types that deal no damage at all. Skeletons/zombies are
+    /// immune to poison; constructs to psychic, etc.
+    pub immunities: HashSet<DamageType>,
+    /// Damage types this creature takes at 2× damage. Undead usually
+    /// take vulnerability to radiant; ice creatures to fire; etc.
+    pub vulnerabilities: HashSet<DamageType>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -136,21 +145,23 @@ pub struct SpellSlotManager {
 }
 
 impl SpellSlotManager {
+    /// Index a 1-based spell level into the internal 0-based vec. Level 0
+    /// is not a real spell slot (cantrips consume no slot); return None so
+    /// callers treat "no such slot" and "level 0" the same way instead of
+    /// underflowing `lvl - 1` on u32.
+    fn slot_index(lvl: u32) -> Option<usize> {
+        if lvl == 0 { None } else { Some((lvl - 1) as usize) }
+    }
+
     pub fn spell_slots(&self, lvl: u32) -> SpellSlotInfo {
-        let i_usize = (lvl - 1) as usize;
-        if let Some(ssi) = self.ssi_by_lvl.get(i_usize) {
-            ssi.clone()
-        } else {
-            SpellSlotInfo {
-                max_spell_slots: 0,
-                spell_slots: 0,
-            }
-        }
+        let empty = SpellSlotInfo { max_spell_slots: 0, spell_slots: 0 };
+        let Some(i) = Self::slot_index(lvl) else { return empty };
+        self.ssi_by_lvl.get(i).cloned().unwrap_or(empty)
     }
 
     pub fn consume_spell_slot(&mut self, lvl: u32) -> bool {
-        let i_usize = (lvl - 1) as usize;
-        if let Some(ssi) = self.ssi_by_lvl.get_mut(i_usize) {
+        let Some(i) = Self::slot_index(lvl) else { return false };
+        if let Some(ssi) = self.ssi_by_lvl.get_mut(i) {
             if ssi.spell_slots == 0 {
                 return false;
             }
@@ -162,8 +173,8 @@ impl SpellSlotManager {
     }
 
     pub fn restore_spell_slot(&mut self, lvl: u32, qty: u32) -> bool {
-        let i_usize = (lvl - 1) as usize;
-        if let Some(ssi) = self.ssi_by_lvl.get_mut(i_usize) {
+        let Some(i) = Self::slot_index(lvl) else { return false };
+        if let Some(ssi) = self.ssi_by_lvl.get_mut(i) {
             if ssi.spell_slots + qty > ssi.max_spell_slots {
                 return false;
             }
@@ -181,20 +192,16 @@ impl SpellSlotManager {
     }
 
     pub fn increase_max_spell_slot(&mut self, lvl: u32, qty: u32) {
-        if lvl == 0 {
-            return;
-        }
-
-        let i_usize = (lvl - 1) as usize;
-        for _ in self.ssi_by_lvl.len()..=i_usize {
+        let Some(i) = Self::slot_index(lvl) else { return };
+        while self.ssi_by_lvl.len() <= i {
             self.ssi_by_lvl.push(SpellSlotInfo {
                 max_spell_slots: 0,
                 spell_slots: 0,
             });
         }
 
-        self.ssi_by_lvl[i_usize].max_spell_slots += qty;
-        self.ssi_by_lvl[i_usize].spell_slots += qty;
+        self.ssi_by_lvl[i].max_spell_slots += qty;
+        self.ssi_by_lvl[i].spell_slots += qty;
     }
 
     pub fn warlock_spell_slots(&self) -> SpellSlotInfo {
@@ -287,6 +294,14 @@ pub struct ActorInstance {
     /// future "respawn at last campsite" mechanics can rebuild it; we
     /// don't decrement on level up so total-earned stays inspectable.
     xp: u32,
+    /// 5e damage resistances (½ damage after adjustment), immunities (0
+    /// damage), and vulnerabilities (2× damage). Adjustment order in 5e is
+    /// resistance/vulnerability last, so we compute `raw → immune? → 2× →
+    /// ½`. All three are copied from the template and stay fixed for the
+    /// actor's life (no temporary resistance grants yet).
+    damage_resistances: HashSet<DamageType>,
+    damage_immunities: HashSet<DamageType>,
+    damage_vulnerabilities: HashSet<DamageType>,
 }
 
 impl ActorInstance {
@@ -353,7 +368,45 @@ impl ActorInstance {
             rolls_death_saves: ct.rolls_death_saves,
             level: 1,
             xp: 0,
+            damage_resistances: ct.resistances.clone(),
+            damage_immunities: ct.immunities.clone(),
+            damage_vulnerabilities: ct.vulnerabilities.clone(),
         })
+    }
+
+    /// Apply 5e damage-adjustment rules to `amount` of `damage_type`:
+    /// - immune → 0 (bypass everything else)
+    /// - vulnerable → doubled
+    /// - resistant → halved (round down)
+    ///
+    /// Order matters: 5e stacks resistance × vulnerability multiplicatively
+    /// (net 1×) rather than cancelling, but we round after each step so a
+    /// creature both resistant and vulnerable to a type ends up with
+    /// `(amount * 2) / 2 = amount`, i.e. neutral. That matches RAW.
+    pub fn adjust_damage(&self, amount: u32, damage_type: DamageType) -> u32 {
+        if self.damage_immunities.contains(&damage_type) {
+            return 0;
+        }
+        let mut adjusted = amount;
+        if self.damage_vulnerabilities.contains(&damage_type) {
+            adjusted = adjusted.saturating_mul(2);
+        }
+        if self.damage_resistances.contains(&damage_type) {
+            adjusted /= 2;
+        }
+        adjusted
+    }
+
+    pub fn is_immune_to(&self, damage_type: DamageType) -> bool {
+        self.damage_immunities.contains(&damage_type)
+    }
+
+    pub fn is_resistant_to(&self, damage_type: DamageType) -> bool {
+        self.damage_resistances.contains(&damage_type)
+    }
+
+    pub fn is_vulnerable_to(&self, damage_type: DamageType) -> bool {
+        self.damage_vulnerabilities.contains(&damage_type)
     }
 
     pub fn rolls_death_saves(&self) -> bool {

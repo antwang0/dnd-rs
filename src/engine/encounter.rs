@@ -1,6 +1,8 @@
 use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
 use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+use crate::actors::creatures::orcs::ORC_TEMPLATE;
+use crate::actors::creatures::rats::RAT_TEMPLATE;
 use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
 use crate::actors::creatures::slimes::SLIME_TEMPLATE;
 use crate::actors::creatures::wolves::WOLF_TEMPLATE;
@@ -296,8 +298,13 @@ impl EncounterInstance {
     /// 5e clauses we model today:
     /// - Attacker Prone → disadvantage on all attacks.
     /// - Attacker Poisoned → disadvantage.
+    /// - Attacker Blinded → disadvantage.
+    /// - Attacker Helped → advantage (consumed on the attack; see
+    ///   `consume_help_on_attack`).
     /// - Target Prone → melee attacks have advantage, ranged have disadvantage.
     /// - Target Stunned → advantage on attacks vs them.
+    /// - Target Blinded → advantage.
+    /// - Target Dodging → disadvantage on attacks vs them.
     ///
     /// Multiple sources of the same direction don't stack; opposing
     /// sources cancel via `RollMode::combine`.
@@ -316,6 +323,12 @@ impl EncounterInstance {
             if attacker.has_condition(Condition::Poisoned) {
                 mode = mode.combine(RollMode::Disadvantage);
             }
+            if attacker.has_condition(Condition::Blinded) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
+            if attacker.has_condition(Condition::Helped) {
+                mode = mode.combine(RollMode::Advantage);
+            }
         }
         if let Some(target) = self.actors.get(&target_id) {
             if target.has_condition(Condition::Prone) {
@@ -328,24 +341,48 @@ impl EncounterInstance {
             if target.has_condition(Condition::Stunned) {
                 mode = mode.combine(RollMode::Advantage);
             }
+            if target.has_condition(Condition::Blinded) {
+                mode = mode.combine(RollMode::Advantage);
+            }
+            if target.has_condition(Condition::Dodging) {
+                mode = mode.combine(RollMode::Disadvantage);
+            }
         }
         mode
     }
 
-    /// Compute the save-roll mode for an actor's ability save. Today
-    /// `Poisoned` imposes disadvantage on all saves derived from ability
-    /// checks (we conflate save-vs-check until we model that distinction).
+    /// Called by weapon-attack helpers immediately after they've rolled
+    /// the attack: if the attacker had the Helped buff, strip it so it
+    /// only benefits one attack. Returns true if the buff was consumed.
+    pub fn consume_help_on_attack(&mut self, attacker_id: usize) -> bool {
+        use crate::conditions::Condition;
+        let Some(attacker) = self.actors.get_mut(&attacker_id) else {
+            return false;
+        };
+        attacker.remove_condition(Condition::Helped)
+    }
+
+    /// Compute the save-roll mode for an actor's ability save. Today:
+    /// - Poisoned imposes disadvantage on all saves.
+    /// - Dodging grants advantage on Dexterity saves (RAW 5e).
     pub fn compute_save_mode(
         &self,
         actor_id: usize,
-        _ability: crate::engine::types::AbilityScoreType,
+        ability: crate::engine::types::AbilityScoreType,
     ) -> RollMode {
         use crate::conditions::Condition;
+        use crate::engine::types::AbilityScoreType;
         let mut mode = RollMode::Normal;
-        if let Some(actor) = self.actors.get(&actor_id)
-            && actor.has_condition(Condition::Poisoned)
-        {
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return mode;
+        };
+        if actor.has_condition(Condition::Poisoned) {
             mode = mode.combine(RollMode::Disadvantage);
+        }
+        if ability == AbilityScoreType::Dexterity
+            && actor.has_condition(Condition::Dodging)
+        {
+            mode = mode.combine(RollMode::Advantage);
         }
         mode
     }
@@ -598,12 +635,21 @@ impl EncounterInstance {
         to: Coordinate,
     ) {
         use crate::actions::action_template::{MELEE_REACH, TargetingSchema};
+        use crate::conditions::Condition;
         use crate::engine::side_effects::Resource;
 
-        let (mover_team, mover_size) = match self.actors.get(&mover_id) {
-            Some(a) => (a.team(), get_tiles_from_size(a.size())),
+        let (mover_team, mover_size, mover_disengaged) = match self.actors.get(&mover_id) {
+            Some(a) => (
+                a.team(),
+                get_tiles_from_size(a.size()),
+                a.has_condition(Condition::Disengaged),
+            ),
             None => return,
         };
+        // Disengaged movement doesn't provoke — the buff was paid for.
+        if mover_disengaged {
+            return;
+        }
 
         // Snapshot reactor candidates up-front — the loop body will mutate
         // self, which would conflict with holding an iterator into self.actors.
@@ -618,11 +664,16 @@ impl EncounterInstance {
                 if !a.can_consume_resource(Resource::Reaction) {
                     return None;
                 }
+                // Opportunity attacks require a melee-reach *attack*.
+                // Non-harmful single-actor actions (Help, Healing Word)
+                // would incorrectly pass the schema/reach check without
+                // this guard and end up buffing the mover.
                 let attack = a
                     .actions
                     .iter()
                     .find(|act| {
-                        matches!(act.targeting_schema(), TargetingSchema::SingleActor)
+                        act.is_harmful()
+                            && matches!(act.targeting_schema(), TargetingSchema::SingleActor)
                             && act.reach_tiles().is_some_and(|r| r <= MELEE_REACH)
                     })
                     .copied()?;
@@ -977,6 +1028,8 @@ impl EncounterInstance {
             &GOBLIN_TEMPLATE,
             &OGRE_TEMPLATE,
             &WOLF_TEMPLATE,
+            &ORC_TEMPLATE,
+            &RAT_TEMPLATE,
         ]
     }
 
@@ -3010,5 +3063,203 @@ mod tests {
 
         let enemy_count = next.actors.values().filter(|a| a.team() != 0).count();
         assert!(enemy_count > 0, "expected enemies on teams 1+");
+    }
+
+    #[test]
+    fn zombie_is_immune_to_poison() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let before = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 20,
+            damage_type: DamageType::Poison,
+        }
+        .apply(&mut e);
+        assert_eq!(
+            e.actors[&id].hitpoints(),
+            before,
+            "poison should be a no-op on a zombie (immune)"
+        );
+    }
+
+    #[test]
+    fn zombie_takes_double_radiant() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Cap HP up so a big vulnerable hit doesn't kill outright.
+        let start = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 4,
+            damage_type: DamageType::Radiant,
+        }
+        .apply(&mut e);
+        // Vulnerable → 4 → 8 damage taken.
+        assert_eq!(e.actors[&id].hitpoints(), start.saturating_sub(8));
+    }
+
+    #[test]
+    fn zombie_takes_half_necrotic() {
+        use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+        use crate::engine::types::DamageType;
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let start = e.actors[&id].hitpoints();
+        DealDamage {
+            actor_id: id,
+            amount: 6,
+            damage_type: DamageType::Necrotic,
+        }
+        .apply(&mut e);
+        // Resistant → 6 → 3 damage.
+        assert_eq!(e.actors[&id].hitpoints(), start.saturating_sub(3));
+    }
+
+    #[test]
+    fn dodge_grants_disadvantage_to_attackers() {
+        use crate::actions::default_actions::DODGE;
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let dodger = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        // Bootstrap: pop the auto-prompt so dodger can queue their Dodge.
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*DODGE, dodger, None, None, None);
+        e.push_action(aei);
+        e.process_stack();
+        assert_eq!(
+            e.compute_attack_mode(attacker, dodger, true),
+            RollMode::Disadvantage
+        );
+    }
+
+    #[test]
+    fn disengage_suppresses_opportunity_attack() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::{ApplicableSideEffect, MoveActor, Resource};
+
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let mover = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let reactor = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // Manually apply Disengaged to the mover.
+        e.actors
+            .get_mut(&mover)
+            .unwrap()
+            .add_condition(Condition::Disengaged, ConditionTimer::Rounds(1));
+        // Move well out of reach — no OA should fire.
+        MoveActor {
+            actor_id: mover,
+            path: vec![Coordinate::new(15, 5)],
+        }
+        .apply(&mut e);
+        assert!(
+            e.actors[&reactor].can_consume_resource(Resource::Reaction),
+            "disengaged mover should not have provoked an OA"
+        );
+    }
+
+    #[test]
+    fn help_action_targets_ally() {
+        use crate::actions::default_actions::HELP;
+        use crate::conditions::Condition;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let helper = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 0, 1)
+            .unwrap();
+        e.pop_prompt();
+        let aei = ActionExecutionInfo::new(&*HELP, helper, Some(vec![ally]), None, None);
+        assert!(aei.validate(&e), "help should target adjacent ally");
+        e.push_action(aei);
+        e.process_stack();
+        assert!(e.actors[&ally].has_condition(Condition::Helped));
+    }
+
+    #[test]
+    fn help_rejects_enemy_target() {
+        use crate::actions::default_actions::HELP;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let helper = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let enemy = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        let aei = ActionExecutionInfo::new(&*HELP, helper, Some(vec![enemy]), None, None);
+        assert!(!aei.validate(&e), "help should reject enemy targets");
+    }
+
+    #[test]
+    fn helped_grants_advantage_on_attack_and_expires() {
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::dice::RollMode;
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let attacker = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&attacker)
+            .unwrap()
+            .add_condition(Condition::Helped, ConditionTimer::Rounds(1));
+        assert_eq!(
+            e.compute_attack_mode(attacker, target, true),
+            RollMode::Advantage
+        );
+        // Consuming the buff removes it.
+        assert!(e.consume_help_on_attack(attacker));
+        assert!(!e.actors[&attacker].has_condition(Condition::Helped));
+    }
+
+    #[test]
+    fn opportunity_attack_skips_non_harmful_helper_actions() {
+        // Regression guard: default actions include HELP (a SingleActor
+        // reach-1 action). The OA dispatcher must skip it — otherwise a
+        // reactor with Help but no melee attack would "OA" and end up
+        // buffing the enemy that provoked them.
+        use crate::actions::default_actions::HELP;
+        use crate::actions::monster_attacks::SLAM;
+        use crate::actions::action_template::Action;
+        // Sanity: assumptions still hold.
+        let help: &dyn Action = &*HELP;
+        assert!(!help.is_harmful(), "HELP should be non-harmful");
+        let slam: &dyn Action = &*SLAM;
+        assert!(slam.is_harmful(), "SLAM should be harmful");
+    }
+
+    #[test]
+    fn spell_slot_level_zero_is_no_op() {
+        let mut e = ei_with_terrain(10, 10, &[]);
+        let id = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Should not underflow / panic on level 0.
+        let mgr = &mut e.actors.get_mut(&id).unwrap().spell_slot_manager;
+        assert_eq!(mgr.spell_slots(0).max_spell_slots, 0);
+        assert!(!mgr.consume_spell_slot(0));
+        assert!(!mgr.restore_spell_slot(0, 1));
     }
 }

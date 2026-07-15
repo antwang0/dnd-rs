@@ -166,6 +166,47 @@ pub fn render_map(
     );
 }
 
+/// Sorted, lowercase damage-type name lists per resistance bucket for an
+/// actor. Returned in `(immunities, resistances, vulnerabilities)` order.
+/// Empty vecs mean the actor has no entries in that bucket. Sorted for
+/// stable rendering.
+fn damage_profile_labels(
+    actor: &crate::actors::actor_template::ActorInstance,
+) -> (Vec<String>, Vec<String>, Vec<String>) {
+    use crate::engine::types::DamageType;
+    let all = [
+        DamageType::Acid,
+        DamageType::Bludgeoning,
+        DamageType::Cold,
+        DamageType::Fire,
+        DamageType::Force,
+        DamageType::Lightning,
+        DamageType::Necrotic,
+        DamageType::Piercing,
+        DamageType::Poison,
+        DamageType::Psychic,
+        DamageType::Radiant,
+        DamageType::Slashing,
+        DamageType::Thunder,
+    ];
+    let short = |d: DamageType| -> String {
+        format!("{:?}", d).to_lowercase()
+    };
+    let mut imm = Vec::new();
+    let mut res = Vec::new();
+    let mut vul = Vec::new();
+    for d in all {
+        if actor.is_immune_to(d) {
+            imm.push(short(d));
+        } else if actor.is_vulnerable_to(d) {
+            vul.push(short(d));
+        } else if actor.is_resistant_to(d) {
+            res.push(short(d));
+        }
+    }
+    (imm, res, vul)
+}
+
 fn hp_bar_spans(current: u32, max: u32, width: usize) -> Vec<Span<'static>> {
     if max == 0 {
         return vec![];
@@ -350,6 +391,22 @@ pub fn render_sideinfo(
             format!("Conditions: {}", labels.join(", ")),
             Style::default().fg(Color::Yellow),
         )));
+    }
+    // Show resistance / immunity / vulnerability if the actor has any.
+    // Ordered so scanning the panel top-down mirrors DnD damage-adjust
+    // order (immune → vuln → resist).
+    let (imm, res, vul) = damage_profile_labels(curr_actor);
+    for (label, entries, color) in [
+        ("Immune", imm, Color::LightBlue),
+        ("Vuln", vul, Color::LightRed),
+        ("Resist", res, Color::LightGreen),
+    ] {
+        if !entries.is_empty() {
+            stats_lines.push(Line::from(Span::styled(
+                format!("{}: {}", label, entries.join(", ")),
+                Style::default().fg(color),
+            )));
+        }
     }
     frame.render_widget(
         Paragraph::new(stats_lines)
